@@ -14,13 +14,14 @@ const std = @import("std");
 const assert = std.debug.assert;
 const modules = @import("build/modules.zig");
 const lint = @import("build/lint.zig");
+const bench = @import("build/bench.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
-const source_directories = [_][]const u8{ "build", "src", "tools" };
+const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
 
 /// Every directory the tools/lint rules read: the sources above plus the documents, which the
 /// markdown rule covers.
-const lint_rule_directories = [_][]const u8{ "build", "src", "tools", "docs" };
+const lint_rule_directories = [_][]const u8{ "bench", "build", "src", "tools", "docs" };
 
 /// The Markdown files at the top of the tree, which the markdown rule reads beside `docs`.
 const lint_rule_files = [_][]const u8{ "CLAUDE.md", "README.md" };
@@ -97,6 +98,10 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(run);
         tool_test_step.dependOn(run);
     }
+
+    const bench_steps = bench.add(b, target);
+    test_step.dependOn(bench_steps.compile);
+    test_step.dependOn(bench_steps.harness_tests);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
     add_commit_lint_step(b, pepegrillo, install_step);

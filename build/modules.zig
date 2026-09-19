@@ -2,16 +2,15 @@
 //! `@import` only what this file gives it, so the dependency direction is enforced by the build
 //! and not by review (CLAUDE.md, Layout).
 //!
-//! The skeleton holds `core` alone, which imports nothing. docs/decisions/0001-interface.md names
-//! the modules that follow once the decision records are accepted: `sim`, `uring`, `kqueue` and
-//! `bench` in version one, and `adapter` after it. None of them exists yet, because no loop code
-//! is written before that review.
+//! `core` imports nothing. docs/decisions/0001-interface.md names the modules that follow:
+//! `uring` and `kqueue` in version one, each importing `core`, and `adapter` after it. `bench/` is
+//! outside `src/` and outside this graph; build/bench.zig wires it.
 const std = @import("std");
 
 /// Each module's root is the file named after its directory (`src/core/core.zig`), which lists
 /// the module's API as `pub const` declarations and runs every file's tests.
 pub const Modules = struct {
-    /// The named limits and the types every other module will share. Imports nothing.
+    /// The types the caller sees, the slot table, the timer heap and the named limits.
     core: *std.Build.Module,
 };
 
