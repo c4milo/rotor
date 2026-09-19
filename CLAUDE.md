@@ -153,6 +153,13 @@ narrowest target that can catch it: `zig build test-<module>`.
   executables' compile, the hook check and the format check. Every change passes it before it
   is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
+- Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
+  module's test executable that runs under Linux, and the io_uring probe `tools/uring_probe.zig`,
+  for Linux on the host's CPU architecture into `zig-out/linux/`, and runs none of them. The
+  script runs them in Docker with `seccomp=unconfined`, the probe first, and stops at the first
+  failure. It prints the kernel release the container sees, because decision 2 sets the floor at
+  Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
+  the kernel lacks. `zig build test` does not run it: it needs Docker.
 - Format: `zig build fmt`.
 - Commit messages: `zig build hooks` once after cloning points `core.hooksPath` at `.githooks`;
   `zig build lint-commits` checks `origin/main..HEAD`. `.githooks/pre-push` is a copy of

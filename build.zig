@@ -7,6 +7,10 @@
 //! points this clone's core.hooksPath at .githooks; neither is part of `zig build test`, because
 //! commit shape is a property of the history, not of the code.
 //!
+//! `zig build test-linux` builds the test executables and the io_uring probe for Linux under
+//! zig-out/linux/ and runs none of them; tools/linux_test.sh runs them in Docker
+//! (build/linux.zig).
+//!
 //! The library has no dependencies. The tools take one: pepegrillo, a lazy package in
 //! build.zig.zon that only the root build requests, so a project depending on rotor never fetches
 //! it. The module graph is build/modules.zig.
@@ -15,6 +19,7 @@ const assert = std.debug.assert;
 const modules = @import("build/modules.zig");
 const lint = @import("build/lint.zig");
 const bench = @import("build/bench.zig");
+const linux = @import("build/linux.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
 const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
@@ -103,6 +108,8 @@ pub fn build(b: *std.Build) void {
     const bench_steps = bench.add(b, target);
     test_step.dependOn(bench_steps.compile);
     test_step.dependOn(bench_steps.harness_tests);
+
+    linux.add(b, optimize);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
     add_commit_lint_step(b, pepegrillo, install_step);
