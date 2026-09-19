@@ -5,7 +5,9 @@
 //! unless it is the whole value of a `const` declaration or a container field, which names it.
 //! `test` and `comptime` blocks are not read: a test states the numbers it checks, and a layout
 //! assert checks a number rather than using one as a limit. `constants.zig` is not read, because
-//! that is where the names live.
+//! that is where the names live. A file whose name ends in `_test`, and the conformance suite
+//! under `src/conformance/`, are tests from their first line to their last, helpers included, so
+//! they are not read either.
 //!
 //! The rule is pepegrillo's `magic_numbers`. This file holds rotor's configuration of it.
 
@@ -18,7 +20,9 @@ pub const config: magic_numbers.Config = .{
     .scope = .{
         .extensions = &.{lint.paths.zig_extension},
         .include_directories = &.{"src"},
+        .exclude_directories = &.{"src/conformance"},
         .exclude_basenames = &.{"constants.zig"},
+        .exclude_stem_segment = "_test",
     },
 };
 
@@ -56,8 +60,10 @@ test "magic-numbers passes a named limit and a comptime layout assert" {
     , &.{});
 }
 
-test "magic-numbers flags an inline array length under src and skips constants.zig" {
+test "magic-numbers flags an inline array length under src and skips constants and tests" {
     try expect_findings("src/uring/uring_reap.zig", failing_fixture, &.{"integer literal 256"});
     try expect_findings("src/uring/constants.zig", failing_fixture, &.{});
+    try expect_findings("src/uring/uring_reap_test.zig", failing_fixture, &.{});
+    try expect_findings("src/conformance/conformance_tcp.zig", failing_fixture, &.{});
     try expect_findings("bench/echo.zig", failing_fixture, &.{});
 }
