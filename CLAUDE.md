@@ -77,6 +77,11 @@ and confirm a test fails. Report the result as `CAUGHT` or `NOT CAUGHT` per muta
 commit body. A `NOT CAUGHT` means a test is missing; write it. Measure a mutation against the
 narrowest target that can catch it: `zig build test-<module>`.
 
+An assertion is a check too. A Zig test cannot expect a panic in its own process, so an assertion
+a caller's mistake can reach gets a scenario under `tools/halt/`, which `zig build halt-check`
+runs in a child process that must die by a signal. A mutation that deletes such an assertion is
+measured against `zig build halt-check`.
+
 ## Conventions
 
 - Zig 0.16. One library, no binary, plus the harness under `bench/`.
@@ -103,8 +108,8 @@ narrowest target that can catch it: `zig build test-<module>`.
 
 - A commit message is a Conventional Commit: `type(scope)!: description`, with the scope and the
   `!` optional. The type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
-  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `adapter`, `bench`,
-  `tools`. A scope outside that set is a warning.
+  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `conformance`,
+  `adapter`, `bench`, `tools`. A scope outside that set is a warning.
 - The description is imperative, starts with a lowercase letter, and ends without a period. The
   subject line stays at or under 72 columns.
 - Exactly one blank line separates the body from the subject. A body line stays at or under 100
@@ -120,8 +125,10 @@ narrowest target that can catch it: `zig build test-<module>`.
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
   nothing; `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;
-  nothing imports `bench`. Only `core` exists today. `bench/` sits outside `src/` and outside the
-  graph; `build/bench.zig` wires it.
+  nothing imports `bench`. `core` and `uring` exist today. `conformance` imports `core` and the
+  backend under test, which the build hands it as its `backend` import, so one suite tests every
+  backend (decision 10). `bench/` sits outside `src/` and outside the graph; `build/bench.zig`
+  wires it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
 - Tests belong in the file they test.
@@ -149,7 +156,8 @@ narrowest target that can catch it: `zig build test-<module>`.
 - Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src` and `tools`,
   then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import, markdown,
   file-length and magic-numbers. A canary tree in `build/lint.zig` proves every rule runs.
-- Test: `zig build test` — the lint, every module's unit tests, the tools' own tests, the bench
+- Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
+  skips on a host its backend cannot run on), the halt check, the tools' own tests, the bench
   executables' compile, the hook check and the format check. Every change passes it before it
   is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
@@ -160,6 +168,12 @@ narrowest target that can catch it: `zig build test-<module>`.
   failure. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. `zig build test` does not run it: it needs Docker.
+- Linux benchmarks: `zig build bench-linux` builds the io_uring benchmarks of `bench/uring/` for
+  the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
+  `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A
+  number from Docker's virtual machine may guide work and never goes in `docs/costs.md`.
+- Halt check: `zig build halt-check` — every scenario of `tools/halt/` must reach its violating
+  statement and die by a signal, and the canary's scenarios must not.
 - Format: `zig build fmt`.
 - Commit messages: `zig build hooks` once after cloning points `core.hooksPath` at `.githooks`;
   `zig build lint-commits` checks `origin/main..HEAD`. `.githooks/pre-push` is a copy of
@@ -174,21 +188,26 @@ narrowest target that can catch it: `zig build test-<module>`.
 Each milestone ends with a gate that runs in `zig build test`, and with a report of the
 measured numbers, the losing ones included.
 
-- Milestone 0: the cost probes of `bench/costs/`, and `docs/costs.md` filled for both machines.
+The owner's order, given on 2026-09-19: finish the implementation first, and benchmark at the end.
+
 - Milestone 1: `core`, with seeded property tests, and the `uring` backend. Gate: the
-  conformance suite and the fabricated-completion tests pass under Linux, and decision 8's
-  experiment is reported.
-- Milestone 2: the harness, and the first comparison on Linux. Echo at N connections with 4 KiB
-  and 64 KiB payloads, sequential and random O_DIRECT reads, timer churn, accept storm; each on
-  1 core and N cores, even and skewed; one cross-core message on its own. Throughput and p50,
-  p99, p999. libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version, in the same
-  harness, in the same run.
-- Milestone 3: `kqueue`. Gate: the same conformance suite passes on macOS.
-- Milestone 4: the full comparison on both machines, the losing runs included.
+  conformance suite and the fabricated-completion tests pass under Linux
+  (`bash tools/linux_test.sh`), and the halt check passes.
+- Milestone 2: the `kqueue` backend (decision 12). Gate: the same conformance suite passes on
+  macOS.
+- Milestone 3: measurement. The cost probes of `bench/costs/` fill `docs/costs.md` for both
+  machines, and decision 8's experiment is run and reported.
+- Milestone 4: the harness and the comparison. Echo at N connections with 4 KiB and 64 KiB
+  payloads, sequential and random O_DIRECT reads, timer churn, accept storm; each on 1 core and
+  N cores, even and skewed; one cross-core message on its own. Throughput and p50, p99, p999.
+  libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
+  (`bench/competitors/README.md`), in the same harness, in the same run, the losing runs
+  included.
 
 ## Where the work stands
 
-The owner accepted the nine decision records for implementation on 2026-09-19 without ruling on
-their open questions, so the implementation follows the proposed answer to each. Milestones 0 and
-1 are in progress: the cost probes, and `core` with the `uring` backend. `docs/costs.md` has no
-measured cell yet, and no kernel backend exists. Decision 10 dropped the simulator.
+The owner accepted the decision records for implementation on 2026-09-19 without ruling on their
+open questions, so the implementation follows the proposed answer to each. Decision 10 dropped
+the simulator. Milestone 1 is landing: `core` and the `uring` backend pass the conformance suite
+under Linux in Docker. Milestone 2, the `kqueue` backend, is next. `docs/costs.md` has no measured
+cell yet, and the `linux` machine is not named.
