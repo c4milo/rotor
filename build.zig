@@ -78,6 +78,7 @@ pub fn build(b: *std.Build) void {
 
     const unit_test_modules = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "core", .module = graph.core },
+        .{ .name = "uring", .module = graph.uring },
     };
     for (unit_test_modules) |entry| {
         const unit_tests = b.addTest(.{ .name = entry.name, .root_module = entry.module });
