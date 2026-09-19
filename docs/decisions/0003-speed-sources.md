@@ -111,7 +111,7 @@ Removes: cache lines touched per operation.
 
 Arithmetic: stompy's `Completion` measures 80 bytes, by `@sizeOf` on the development machine, so
 every in-flight operation spans two 64-byte lines. rotor's slot record is meant to be 64 bytes,
-aligned to 64 (`completion_bytes` in `src/core/constants.zig`), and an `Event` is 16 bytes, so a
+aligned to 64 (`slot_bytes` in `src/core/constants.zig`), and an `Event` is 16 bytes, so a
 reap of 32 reads 8 lines in order. Going from two lines to one saves at most one C2 or C3 per
 operation, 3 to 50 ns, and only when the record has left L1.
 
