@@ -11,8 +11,24 @@ const Event = core.Event;
 
 const tag_ping = 1;
 const tag_pong = 2;
-/// Posts the first loop sends before the second loop has published its ring, at most.
+/// Posts the first loop sends before the second loop has published its ring, at most: with a
+/// pause of a millisecond after each, a fifth of a second.
 const post_attempts_max = 200;
+
+/// How long the first loop waits between two posts that found no ring.
+const pause_ns = core.constants.ns_per_ms;
+
+/// Waits one `pause_ns` through the loop itself, with a timer, so the other thread gets time to
+/// start: a post that finds no ring ends in the same tick, and 200 of them take no time at all.
+fn pause(harness: *Harness) !void {
+    const timer: core.Operation = .{
+        .user_data = 0,
+        .kind = .{ .timer = .{ .after_ns = pause_ns } },
+    };
+    try harness.submit(&.{timer}, &.{});
+    var events: [1]Event = undefined;
+    try harness.collect(&events);
+}
 
 const Peer = struct {
     registry: *backend.Registry,
@@ -66,6 +82,7 @@ test "a message crosses to a loop on another thread and its answer comes back" {
             error.LoopNotFound => false,
             else => return err,
         };
+        if (!posted) try pause(&harness);
     }
     try testing.expect(posted);
 
