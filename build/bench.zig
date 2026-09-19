@@ -4,7 +4,10 @@
 //!
 //! A measurement is always built ReleaseSafe, the mode rotor ships in, whatever `-Drelease` says:
 //! a Debug number describes nothing a consumer runs.
+//!
+//! The pinned competitors are wired by build/competitors.zig, under their own step.
 const std = @import("std");
+const competitors = @import("competitors.zig");
 
 pub const Steps = struct {
     /// Compiles every bench executable, so `zig build test` fails when one stops building.
@@ -38,6 +41,8 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     const run_harness_tests = &b.addRunArtifact(harness_tests).step;
     const harness_step = b.step("test-bench-harness", "Run the bench/harness tests alone");
     harness_step.dependOn(run_harness_tests);
+
+    competitors.add(b, target);
 
     return .{ .compile = &costs.step, .harness_tests = run_harness_tests };
 }

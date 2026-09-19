@@ -11,6 +11,28 @@
             .hash = "pepegrillo-0.0.0-axiFUHyeBgAlPF-MB2DJbTzgioBT6p2BWO-KifOE8RDY",
             .lazy = true,
         },
+        // The two competitors below are what the harness measures rotor against, pinned so that
+        // a comparison names the exact source it ran (CLAUDE.md, Milestones 2 and 4). The owner's
+        // brief requires both, so they are sanctioned dependencies. They are bench-only and never
+        // linked into the library. Both are lazy, and build/competitors.zig requests them only
+        // under `zig build bench-competitors`, so neither `zig build test` nor a project that
+        // depends on rotor fetches them. bench/competitors/README.md holds the pins.
+        //
+        // libuv v1.52.1, the stable release of 2026-03-06: the tag names commit
+        // 1cfa32ff59c076ffb6ed735bbc8c18361558661f. It ships no build.zig, so
+        // build/competitors.zig compiles its C sources.
+        .libuv = .{
+            .url = "https://github.com/libuv/libuv/archive/refs/tags/v1.52.1.tar.gz",
+            .hash = "N-V-__8AACwTRQDmmfDj0GPrcObUmVnktArTdpjkEvRZXTx0",
+            .lazy = true,
+        },
+        // libxev at the head of its main branch on 2026-09-19, which builds with Zig 0.16.0. It
+        // has no release tag, so the pin is the commit.
+        .libxev = .{
+            .url = "https://github.com/mitchellh/libxev/archive/9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf.tar.gz",
+            .hash = "libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F",
+            .lazy = true,
+        },
     },
     .paths = .{
         "build.zig",
