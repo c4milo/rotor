@@ -13,15 +13,15 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
+const constants = @import("constants.zig");
 const linux = std.os.linux;
 
 const Code = core.Code;
 const E = linux.E;
 
 /// The largest errno Linux returns, so a completion's result in [-errno_max, -1] is an errno
-/// (recalled: `MAX_ERRNO` in the kernel's include/linux/err.h). `core.constants` holds the same
-/// number, to keep a message's result out of that range, and does not publish it.
-const errno_max: i32 = 4095;
+/// (recalled: `MAX_ERRNO` in the kernel's include/linux/err.h).
+const errno_max = constants.errno_max;
 
 /// The integer an `E` holds.
 const Errno = @typeInfo(E).@"enum".tag_type;
@@ -96,9 +96,9 @@ pub fn code_of(errno: E, context: Context) Code {
         // quota of blocks on it is used up (EDQUOT). write(2), fsync(2).
         .NOSPC, .DQUOT => .no_space_left,
         // What the errno of a post says about its target ring: the helper names each situation.
-        // For every other operation these four are `unexpected`.
+        // For every other operation these five are `unexpected`.
         .OVERFLOW => code_of_post(context, .mailbox_full),
-        .BADFD, .NXIO, .BADF => code_of_post(context, .loop_not_found),
+        .BADFD, .NXIO, .BADF, .OWNERDEAD => code_of_post(context, .loop_not_found),
         else => .unexpected,
     };
     assert(code != .timeout);
@@ -126,6 +126,8 @@ fn code_of_no_buffers(context: Context) Code {
 ///   (`IORING_SETUP_R_DISABLED`, Linux 6.12).
 /// - EBADF, `loop_not_found`: the descriptor the post names is not open, because the target
 ///   loop closed its ring (`io_issue_sqe` in io_uring/io_uring.c).
+/// - EOWNERDEAD, `loop_not_found`: the thread that owned the target ring has exited
+///   (`io_msg_data_remote` in io_uring/msg_ring.c, Linux 6.12).
 /// - ENXIO, `loop_not_found`: recalled. `io_uring_enter` answers ENXIO for a ring that is being
 ///   torn down. No path of io_uring/msg_ring.c returns it in Linux 6.1 or 6.12.
 fn code_of_post(context: Context, code: Code) Code {
@@ -222,7 +224,8 @@ const rows = [_]Row{
     .{ .errno = .FAULT, .code = .unexpected },
     .{ .errno = .OPNOTSUPP, .code = .unexpected },
     .{ .errno = .TIME, .code = .unexpected },
-    .{ .errno = .OWNERDEAD, .context = post, .code = .unexpected },
+    .{ .errno = .OWNERDEAD, .context = post, .code = .loop_not_found },
+    .{ .errno = .OWNERDEAD, .code = .unexpected },
 };
 
 test "every arm of the map yields its code, and an arm that reads the context obeys it" {
@@ -234,7 +237,7 @@ test "every arm of the map yields its code, and an arm that reads the context ob
 
 test "the map names 20 errnos for every operation and 4 more for a post, and no other" {
     const contexts = [_]Context{ .{}, group, post };
-    const named = [_]u32{ 20, 20, 24 };
+    const named = [_]u32{ 20, 20, 25 };
     for (contexts, named) |context, expected| {
         var count: u32 = 0;
         for (1..4096) |number| {
