@@ -205,9 +205,10 @@ Removes: a cross-thread handoff per file operation, which is at least one wake a
 switches, several microseconds, against an O_DIRECT read that io_uring issues from the
 submitting thread when the filesystem allows it.
 
-Test: sequential and random O_DIRECT reads against libuv, where libuv uses its pool. The harness
-asserts one thread per loop and reports every io_uring worker thread the kernel started
-(`0004-threading.md`).
+Test: sequential and random O_DIRECT reads against libuv twice: with its default thread pool,
+and with its opt-in io_uring path for file operations, which starts a kernel polling thread
+(`IORING_SETUP_SQPOLL`). The harness asserts one thread per loop and reports every io_uring
+worker thread the kernel started (`0004-threading.md`).
 
 ### 7. Cache-aware completion layout
 
@@ -249,5 +250,5 @@ is made of small ones.
 
 1. Is CPU per operation, and the throughput per core that follows from it, the right headline,
    given that the arithmetic rules out a latency headline?
-2. Should the libuv and libxev columns be verified now, before acceptance, and not at
-   milestone 4?
+2. Answered on 2026-09-19: the libuv and libxev columns are verified against the pinned sources
+   above, and five cells changed. `bench/competitors/README.md` holds the pins.

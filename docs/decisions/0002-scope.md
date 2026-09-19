@@ -59,7 +59,8 @@ three choices for a file operation:
 
 1. Run `pread` or `pwrite` inline at submit on the loop thread, with `F_NOCACHE` set at open,
    and deliver the completion at the next tick.
-2. Hand it to a thread pool, as libuv does and, as recalled, libxev does for kqueue.
+2. Hand it to a thread pool, as libuv does, and as libxev does for kqueue when the caller hands
+   it one (`0003-speed-sources.md` cites both).
 3. Refuse it.
 
 The decision is choice 1. It blocks the loop for the duration of the read, which is C12, about
