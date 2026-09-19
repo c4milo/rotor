@@ -1,0 +1,89 @@
+//! The map from an errno to a `core.Code`: the branch an operation that succeeded never takes.
+//! On kqueue the backend makes each system call itself, so the errno is the call's own.
+//!
+//! Two errnos never reach this map. EAGAIN means the descriptor is not ready: the operation waits
+//! for readiness and is tried again (decision 12, point 1). EINTR means a signal interrupted the
+//! call before it transferred anything: the backend makes the call again.
+//!
+//! The map names `std.posix.E`, the errno of the target the module is built for, and matches by
+//! name, so it compiles and its tests run on every host.
+const std = @import("std");
+const assert = std.debug.assert;
+const core = @import("core");
+
+pub const E = std.posix.E;
+
+/// True when the call transferred nothing and the backend handles the errno itself.
+pub fn is_handled_by_the_backend(errno: E) bool {
+    return errno == .AGAIN or errno == .INTR or errno == .INPROGRESS;
+}
+
+/// The code a failed call's errno carries.
+pub fn code_of(errno: E) core.Code {
+    assert(errno != .SUCCESS);
+    assert(!is_handled_by_the_backend(errno));
+    return switch (errno) {
+        // The kernel had no memory, or no socket buffer space, for the call.
+        .NOMEM, .NOBUFS => .system_resources,
+        // accept(2): the process, or the system, has no free descriptor.
+        .MFILE, .NFILE => .descriptor_limit,
+        .CONNRESET => .connection_reset,
+        .CONNREFUSED => .connection_refused,
+        // accept(2): the peer gave up before the accept.
+        .CONNABORTED => .connection_aborted,
+        // The peer stopped answering: TCP's own timeout.
+        .TIMEDOUT => .connection_timed_out,
+        .PIPE => .broken_pipe,
+        .NOTCONN => .not_connected,
+        .NETUNREACH, .HOSTUNREACH, .NETDOWN, .HOSTDOWN => .network_unreachable,
+        .IO => .input_output,
+        .NOSPC, .DQUOT => .no_space_left,
+        else => .unexpected,
+    };
+}
+
+const testing = std.testing;
+
+const Row = struct { errno: E, code: core.Code };
+
+const rows = [_]Row{
+    .{ .errno = .NOMEM, .code = .system_resources },
+    .{ .errno = .NOBUFS, .code = .system_resources },
+    .{ .errno = .MFILE, .code = .descriptor_limit },
+    .{ .errno = .NFILE, .code = .descriptor_limit },
+    .{ .errno = .CONNRESET, .code = .connection_reset },
+    .{ .errno = .CONNREFUSED, .code = .connection_refused },
+    .{ .errno = .CONNABORTED, .code = .connection_aborted },
+    .{ .errno = .TIMEDOUT, .code = .connection_timed_out },
+    .{ .errno = .PIPE, .code = .broken_pipe },
+    .{ .errno = .NOTCONN, .code = .not_connected },
+    .{ .errno = .NETUNREACH, .code = .network_unreachable },
+    .{ .errno = .HOSTUNREACH, .code = .network_unreachable },
+    .{ .errno = .NETDOWN, .code = .network_unreachable },
+    .{ .errno = .HOSTDOWN, .code = .network_unreachable },
+    .{ .errno = .IO, .code = .input_output },
+    .{ .errno = .NOSPC, .code = .no_space_left },
+    .{ .errno = .DQUOT, .code = .no_space_left },
+    .{ .errno = .BADF, .code = .unexpected },
+    .{ .errno = .INVAL, .code = .unexpected },
+};
+
+test "every errno the map names carries its code, and one it does not name is unexpected" {
+    for (rows) |row| try testing.expectEqual(row.code, code_of(row.errno));
+}
+
+test "the backend keeps would-block, interrupted and in-progress to itself" {
+    try testing.expect(is_handled_by_the_backend(.AGAIN));
+    try testing.expect(is_handled_by_the_backend(.INTR));
+    try testing.expect(is_handled_by_the_backend(.INPROGRESS));
+    for (rows) |row| try testing.expect(!is_handled_by_the_backend(row.errno));
+}
+
+test "no errno maps to a code that only the loop itself produces" {
+    for (rows) |row| {
+        const code = code_of(row.errno);
+        try testing.expect(code != .canceled and code != .timeout);
+        try testing.expect(code != .mailbox_full and code != .loop_not_found);
+        try testing.expect(code != .buffers_exhausted and code != .would_block);
+    }
+}

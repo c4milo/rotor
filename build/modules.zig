@@ -4,9 +4,9 @@
 //!
 //! `core` imports nothing. `uring` imports `core`. `conformance` imports `core` and one backend,
 //! which this file hands it as its `backend` import, so one suite tests every backend
-//! (decision 10). docs/decisions/0001-interface.md names the modules that follow: `kqueue` in
-//! version one, importing `core`, and `adapter` after it. `bench/` is outside `src/` and outside
-//! this graph; build/bench.zig wires it.
+//! (decision 10). `kqueue` imports `core`. docs/decisions/0001-interface.md names the module that
+//! follows: `adapter`, after version one. `bench/` is outside `src/` and outside this graph;
+//! build/bench.zig wires it.
 const std = @import("std");
 
 /// Each module's root is the file named after its directory (`src/core/core.zig`), which lists
@@ -18,6 +18,8 @@ pub const Modules = struct {
     uring: *std.Build.Module,
     /// The conformance suite with `uring` as the backend under test. It skips off Linux.
     conformance_uring: *std.Build.Module,
+    /// The macOS backend, over kqueue. Its pure parts are tested on every host.
+    kqueue: *std.Build.Module,
 };
 
 pub fn add(
@@ -31,7 +33,14 @@ pub fn add(
     const conformance_uring = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_uring.addImport("core", core);
     conformance_uring.addImport("backend", uring);
-    return .{ .core = core, .uring = uring, .conformance_uring = conformance_uring };
+    const kqueue = create(b, "src/kqueue/kqueue.zig", target, optimize);
+    kqueue.addImport("core", core);
+    return .{
+        .core = core,
+        .uring = uring,
+        .conformance_uring = conformance_uring,
+        .kqueue = kqueue,
+    };
 }
 
 fn create(
