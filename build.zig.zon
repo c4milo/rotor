@@ -1,0 +1,21 @@
+.{
+    .name = .rotor,
+    .version = "0.0.0",
+    .fingerprint = 0x29e3041344319961, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        // Developer tooling only, never linked into the library. Lazy, and requested only when
+        // rotor is the root build, so a project that depends on rotor never fetches it.
+        .pepegrillo = .{
+            .url = "git+https://github.com/c4milo/pepegrillo#a9de1835d214106deab9b6e5e9d8808b1ba21d0a",
+            .hash = "pepegrillo-0.0.0-axiFUHyeBgAlPF-MB2DJbTzgioBT6p2BWO-KifOE8RDY",
+            .lazy = true,
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "build",
+        "src",
+    },
+}
