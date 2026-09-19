@@ -24,9 +24,28 @@ pub const user_data_cancel: u64 = 1;
 /// the close itself (decision 5, rule 6). Consumed like `user_data_cancel`.
 pub const user_data_close_cancel: u64 = 2;
 
+/// The alignment of the memory a provided-buffer ring sits in. The kernel wants it aligned to a
+/// page, and a page is 4, 16 or 64 KiB depending on how the kernel was built, so rotor asks for
+/// the largest and is right on all three.
+pub const buffer_ring_alignment = 64 * 1024;
+
+/// The largest errno Linux returns. A completion's result in [-errno_max, -1] is an operation
+/// that failed; a result below that range is a message another loop posted.
+pub const errno_max: i32 = 4095;
+
+/// The bit a `post` sets in the 32 bits io_uring delivers as the message's result, above the tag.
+/// It makes the result negative and below `-errno_max` for every tag `core` admits, so the reap
+/// tells a message from a failed operation by one compare, on any kernel that has `MSG_RING`.
+pub const message_result_flag: u32 = 1 << 31;
+
 comptime {
     const assert = std.debug.assert;
+    const tag_max = @import("core").constants.message_tag_max;
+    const lowest_message_result: i32 = @bitCast(tag_max | message_result_flag);
+    assert(lowest_message_result < -errno_max);
+    assert(tag_max & message_result_flag == 0);
     assert(std.math.isPowerOfTwo(entries_max));
+    assert(std.math.isPowerOfTwo(buffer_ring_alignment));
     assert(enter_retries_max >= 1);
     assert(kernel_workers_max >= 1);
     assert(user_data_cancel >> 32 == 0);

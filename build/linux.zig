@@ -52,6 +52,8 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     // never does, because its tests need the kernel of a Mac.
     const unit_tests = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "core", .module = graph.core },
+        .{ .name = "uring", .module = graph.uring },
+        .{ .name = "conformance-uring", .module = graph.conformance_uring },
     };
 
     const stamp = b.addSystemCommand(&.{"touch"});

@@ -71,6 +71,7 @@ pub const Operation = struct {
         fdatasync,
         timer,
         post,
+        nop,
     };
 
     pub const Kind = union(Code) {
@@ -85,6 +86,7 @@ pub const Operation = struct {
         fdatasync: Fdatasync,
         timer: Timer,
         post: Post,
+        nop: void,
     };
 
     /// Result: the accepted socket. With `multishot`, one event flagged `more` per connection
@@ -125,6 +127,9 @@ pub const Operation = struct {
     /// Result: 0, once `after_ns` nanoseconds have passed since the tick that submitted it.
     pub const Timer = struct { after_ns: u64 };
 
+    // `nop`: result 0. The kernel does nothing, so its cost is the loop's own and the ring's: what
+    // the cost probes and the assertion experiment of decision 8 submit.
+
     /// Result: 0 once the message is in the target's mailbox, or `mailbox_full`.
     pub const Post = struct { target: LoopId, message: Message };
 
@@ -156,6 +161,7 @@ pub const Operation = struct {
                 assert(operation.timeout_ns == 0);
                 assert(timer.after_ns <= constants.timeout_ns_max);
             },
+            .nop => assert(operation.timeout_ns == 0),
             .post => |post| {
                 assert(operation.timeout_ns == 0);
                 assert(post.target < constants.loops_max);

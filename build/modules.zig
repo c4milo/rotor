@@ -2,9 +2,11 @@
 //! `@import` only what this file gives it, so the dependency direction is enforced by the build
 //! and not by review (CLAUDE.md, Layout).
 //!
-//! `core` imports nothing. `uring` imports `core`. docs/decisions/0001-interface.md names the
-//! modules that follow: `kqueue` in version one, importing `core`, and `adapter` after it.
-//! `bench/` is outside `src/` and outside this graph; build/bench.zig wires it.
+//! `core` imports nothing. `uring` imports `core`. `conformance` imports `core` and one backend,
+//! which this file hands it as its `backend` import, so one suite tests every backend
+//! (decision 10). docs/decisions/0001-interface.md names the modules that follow: `kqueue` in
+//! version one, importing `core`, and `adapter` after it. `bench/` is outside `src/` and outside
+//! this graph; build/bench.zig wires it.
 const std = @import("std");
 
 /// Each module's root is the file named after its directory (`src/core/core.zig`), which lists
@@ -14,6 +16,8 @@ pub const Modules = struct {
     core: *std.Build.Module,
     /// The Linux backend, over io_uring. Its pure parts are tested on every host.
     uring: *std.Build.Module,
+    /// The conformance suite with `uring` as the backend under test. It skips off Linux.
+    conformance_uring: *std.Build.Module,
 };
 
 pub fn add(
@@ -24,7 +28,10 @@ pub fn add(
     const core = create(b, "src/core/core.zig", target, optimize);
     const uring = create(b, "src/uring/uring.zig", target, optimize);
     uring.addImport("core", core);
-    return .{ .core = core, .uring = uring };
+    const conformance_uring = create(b, "src/conformance/conformance.zig", target, optimize);
+    conformance_uring.addImport("core", core);
+    conformance_uring.addImport("backend", uring);
+    return .{ .core = core, .uring = uring, .conformance_uring = conformance_uring };
 }
 
 fn create(

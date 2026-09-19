@@ -137,6 +137,7 @@ pub const Slot = extern struct {
                 slot.descriptor = 0;
                 slot.offset = timer.after_ns;
             },
+            .nop => slot.descriptor = 0,
             .post => |post| {
                 slot.descriptor = post.target;
                 slot.buffer = post.message.payload;
