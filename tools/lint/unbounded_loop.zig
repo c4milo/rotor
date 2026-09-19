@@ -78,7 +78,7 @@ test "unbounded-loop flags a drain with no limit and a while (true) with no brea
 }
 
 test "unbounded-loop reads src/ alone" {
-    try testing.expect(config.scope.applies("src/sim/sim.zig"));
+    try testing.expect(config.scope.applies("src/core/core.zig"));
     try testing.expect(!config.scope.applies("bench/echo.zig"));
     try testing.expect(!config.scope.applies("tools/lint/main.zig"));
 }

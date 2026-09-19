@@ -6,6 +6,9 @@ So this record states a provisional rule, the experiment that confirms or change
 thresholds, all fixed before the numbers exist. Milestones 2 and 3 run the experiment and report
 the numbers, and the rule is then ratified or amended here.
 
+Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
+no simulator for them to run in.
+
 ## The collision
 
 TigerStyle keeps assertions on in production, roughly two per function. The Performance Hints

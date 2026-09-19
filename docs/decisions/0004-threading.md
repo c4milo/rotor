@@ -5,6 +5,11 @@ did not rule on the open questions below, so the implementation follows the prop
 each until a ruling changes it. This record argues with the owner's position in two places: file
 ownership and SO_REUSEPORT on macOS.
 
+Amended on 2026-09-19 by decision 10: the replay argument for shared-nothing now concerns a
+consumer's own simulator, which can reproduce one queue's order and cannot reproduce a race
+between threads. The simulator test under "How it is checked" is replaced by a test that posts
+between two loops on two real threads.
+
 ## Context
 
 The position under review: the loop is shared-nothing and single-threaded by construction. It

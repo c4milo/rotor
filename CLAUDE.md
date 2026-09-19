@@ -1,9 +1,8 @@
 # rotor rules
 
 rotor is an event loop and I/O layer in Zig 0.16: a completion-based core over Linux io_uring and
-macOS kqueue, with a deterministic simulated backend. Its goal is to beat libuv, libxev and
-Zig's own `std.Io` implementations on named workloads, and to show it in a harness anyone can
-re-run. Home: github.com/c4milo/rotor.
+macOS kqueue. Its goal is to beat libuv, libxev and Zig's own `std.Io` implementations on named
+workloads, and to show it in a harness anyone can re-run. Home: github.com/c4milo/rotor.
 
 It is a standalone library. stompy is meant to become its first consumer
 (`docs/decisions/0006-stompy-lineage.md`). rotor never depends on stompy and never names it in
@@ -29,20 +28,22 @@ The architecture depends on every rule in this section.
    named in a `constants.zig` with a doc comment, never written inline. Assertions stay on in
    production, roughly two per function, covering positive and negative space; decision 8 says
    which ones live on the hot path.
-2. **Determinism.** One seed replays byte-identically across hosts and build modes. Nothing in
-   `core` or `sim` reads the host clock, the PRNG, uninitialised memory, or a pointer value.
-   Every sampling decision inside the simulator comes from the seeded generator and the op
-   clock (decision 9).
-3. **The simulator precedes the backend it tests.** Do not write a backend before the simulated
-   backend and its fault injection can drive the same surface. Every test runs against the
-   simulator.
+2. **Determinism where rotor decides.** A loop's behaviour is a function of what the caller
+   submits and what the kernel answers. Nothing in `core` reads the host clock, `std.Random`,
+   uninitialised memory, or a pointer value; a property test draws from `core.random` and names
+   its seed when it fails. A sampling decision is a function of the operation sequence, never of
+   the clock (decision 9).
+3. **No simulator; the real kernel is the test** (decision 10). One conformance suite written
+   against the `Loop` surface runs on both backends. Paths the kernel will not produce on demand
+   are tested with fabricated completions. The surface names no kernel type, so a consumer that
+   needs deterministic replay substitutes its own twin.
 4. **Shared-nothing.** A loop belongs to one thread. It holds no lock, starts no thread, and
    never moves work between cores on its own. The one call another thread may make is `post`
    (decision 4).
 5. **Every operation ends with exactly one final event**, and its buffer belongs to the loop
    until then (decision 5).
-6. **Invariants are code.** A violated invariant halts with the seed and the op that produced
-   it.
+6. **Invariants are code.** A violated invariant halts, and a property test that finds one
+   prints the seed that replays it.
 
 ## Performance discipline
 
@@ -79,7 +80,7 @@ narrowest target that can catch it: `zig build test-<module>`.
 ## Conventions
 
 - Zig 0.16. One library, no binary, plus the harness under `bench/`.
-- Names spell words out: `completion_bytes`, not `cmpl_sz`. Kernel vocabulary stays as the
+- Names spell words out: `slot_bytes`, not `slot_sz`. Kernel vocabulary stays as the
   kernel spells it (`sqe`, `cqe`, `kevent`, `msg_ring`). One-letter names only for loop indices.
   `_bytes` and `_len` count bytes; `_max` names a limit.
 - Functions stay at cognitive complexity 15 or less, scored by `tools/cognitive_complexity.zig`.
@@ -102,8 +103,8 @@ narrowest target that can catch it: `zig build test-<module>`.
 
 - A commit message is a Conventional Commit: `type(scope)!: description`, with the scope and the
   `!` optional. The type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
-  `ci`, `chore`. Scopes track the module graph: `core`, `sim`, `uring`, `kqueue`, `adapter`,
-  `bench`, `tools`. A scope outside that set is a warning.
+  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `adapter`, `bench`,
+  `tools`. A scope outside that set is a warning.
 - The description is imperative, starts with a lowercase letter, and ends without a period. The
   subject line stays at or under 72 columns.
 - Exactly one blank line separates the body from the subject. A body line stays at or under 100
@@ -118,8 +119,9 @@ narrowest target that can catch it: `zig build test-<module>`.
 - `build.zig` stays short: build options and the module graph. Helpers belong in `build/`.
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
-  nothing; `sim`, `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;
-  nothing imports `bench`. Only `core` exists today.
+  nothing; `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;
+  nothing imports `bench`. Only `core` exists today. `bench/` sits outside `src/` and outside the
+  graph; `build/bench.zig` wires it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
 - Tests belong in the file they test.
@@ -147,8 +149,9 @@ narrowest target that can catch it: `zig build test-<module>`.
 - Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src` and `tools`,
   then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import, markdown,
   file-length and magic-numbers. A canary tree in `build/lint.zig` proves every rule runs.
-- Test: `zig build test` — the lint, every module's unit tests, the tools' own tests, the hook
-  check and the format check. Every change passes it before it is committed.
+- Test: `zig build test` — the lint, every module's unit tests, the tools' own tests, the bench
+  executables' compile, the hook check and the format check. Every change passes it before it
+  is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
 - Format: `zig build fmt`.
 - Commit messages: `zig build hooks` once after cloning points `core.hooksPath` at `.githooks`;
@@ -165,20 +168,20 @@ Each milestone ends with a gate that runs in `zig build test`, and with a report
 measured numbers, the losing ones included.
 
 - Milestone 0: the cost probes of `bench/costs/`, and `docs/costs.md` filled for both machines.
-- Milestone 1: `core` and `sim`. The simulated backend with its op clock, seeded completion
-  order, and faults: short reads, partial writes, `EAGAIN`, `ENOMEM`, cancellation races, torn
-  operations. Gate: byte-identical replay of every seed, with statistics off and on.
-- Milestone 2: `uring`. Gate: the simulator's tests pass on the real backend under Linux, and
-  decision 8's experiment is reported.
-- Milestone 3: `kqueue`. Same gate on macOS.
-- Milestone 4: the harness. Echo at N connections with 4 KiB and 64 KiB payloads, sequential
-  and random O_DIRECT reads, timer churn, accept storm; each on 1 core and N cores, even and
-  skewed; one cross-core message on its own. Throughput and p50, p99, p999. libuv, libxev,
-  `std.Io.Uring` and `std.Io.Threaded` pinned by version, in the same harness, in the same run.
+- Milestone 1: `core`, with seeded property tests, and the `uring` backend. Gate: the
+  conformance suite and the fabricated-completion tests pass under Linux, and decision 8's
+  experiment is reported.
+- Milestone 2: the harness, and the first comparison on Linux. Echo at N connections with 4 KiB
+  and 64 KiB payloads, sequential and random O_DIRECT reads, timer churn, accept storm; each on
+  1 core and N cores, even and skewed; one cross-core message on its own. Throughput and p50,
+  p99, p999. libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version, in the same
+  harness, in the same run.
+- Milestone 3: `kqueue`. Gate: the same conformance suite passes on macOS.
+- Milestone 4: the full comparison on both machines, the losing runs included.
 
 ## Where the work stands
 
 The owner accepted the nine decision records for implementation on 2026-09-19 without ruling on
 their open questions, so the implementation follows the proposed answer to each. Milestones 0 and
-1 are in progress: the cost probes, and `core` with the simulated backend. `docs/costs.md` has no
-measured cell yet, and no kernel backend exists.
+1 are in progress: the cost probes, and `core` with the `uring` backend. `docs/costs.md` has no
+measured cell yet, and no kernel backend exists. Decision 10 dropped the simulator.

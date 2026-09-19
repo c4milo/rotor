@@ -3,6 +3,12 @@
 Status: accepted for implementation on 2026-09-19. This record resolves the third collision
 between the Abseil Performance Hints and the project rules.
 
+Amended on 2026-09-19 by decision 10: rotor has no simulator, so the rules about the simulator's
+streams (the second bullet of rule 2, rule 3, the first bullet of rule 4) and the three-trace
+replay gate have nothing to apply to. Rules 1, 2, 5 and 6 stand: statistics never steer control
+flow, the sampling decision is a function of the operation sequence, and a consumer's simulator
+that replays the same calls therefore sees the same samples.
+
 ## The collision
 
 The Performance Hints say statistics are sampled and never unconditional. A sampling decision

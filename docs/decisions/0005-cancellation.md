@@ -4,6 +4,11 @@ Status: accepted for implementation on 2026-09-19. The owner gave the instructio
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
+Amended on 2026-09-19 by decision 10: rotor has no simulator. "What the simulator injects" is
+replaced by tests that hand the backend fabricated completions in each order rule 2 allows, the
+buffer poisoning of rule 3 is dropped, and the mutations under "How it is checked" run against
+those tests and the conformance suite.
+
 ## Context
 
 An operation submitted to io_uring is in the kernel. Cancelling it is a request, and the kernel

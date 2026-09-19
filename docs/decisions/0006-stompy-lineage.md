@@ -4,6 +4,11 @@ Status: accepted for implementation on 2026-09-19. The owner gave the instructio
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
+Amended on 2026-09-19 by decision 10: rotor carries no simulated backend. The last row of "What
+rotor changes", reason 2 of "Why stompy should depend on rotor" and open question 2 no longer
+hold. stompy keeps its own simulator, which presents rotor's surface or sits behind stompy's `io`
+facade.
+
 ## Context
 
 stompy carries `src/io/`, 974 lines: `io.zig` 478, `linux.zig` 374, `stub.zig` 63 and

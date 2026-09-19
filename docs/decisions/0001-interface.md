@@ -4,6 +4,10 @@ Status: accepted for implementation on 2026-09-19. The owner gave the instructio
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
+Amended on 2026-09-19 by decision 10: rotor carries no simulated backend, so the `sim` row of the
+module table and the phrase "the three backends" no longer hold. The backends are `uring` and
+`kqueue`, and a consumer that needs a deterministic twin of the surface brings its own.
+
 ## Context
 
 Zig 0.16 defines `std.Io`, an interface of function pointers. rotor can implement that table

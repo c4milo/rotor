@@ -1,7 +1,7 @@
-//! determinism: one seed replays byte-identically (CLAUDE.md non-negotiable 2). Nothing in `core`
-//! or `sim` reads the host clock, the PRNG, or the entropy source. The simulator's clock is the
-//! op clock and its every draw comes from its own seeded generator, and that holds for sampling
-//! decisions too (docs/decisions/0009-sampling-and-replay.md).
+//! determinism: a loop's behaviour is a function of what the caller submits and what the kernel
+//! answers (CLAUDE.md non-negotiable 2). Nothing in `core` reads the host clock, the PRNG, or the
+//! entropy source: a property test draws from `core.random`, and a sampling decision is a
+//! function of the operation sequence (docs/decisions/0009-sampling-and-replay.md).
 //!
 //! Over every `.zig` file under `src/` but not under a kernel backend, the rule flags a chain
 //! that starts with `std.time`, `std.Random` or `std.crypto.random` at a dot boundary, and a
@@ -27,7 +27,7 @@ const forbidden_raw_prefixes = [_][]const u8{"std.posix.clock_"};
 /// The modules that talk to a kernel and so may read its clock.
 const kernel_backend_directories = [_][]const u8{ "src/uring", "src/kqueue" };
 
-const reason = "the simulator replays from its seed and its op clock alone";
+const reason = "core reads no clock and draws from core.random alone";
 
 pub const config: forbidden_references.Config = .{
     .name = "determinism",
@@ -63,7 +63,7 @@ const failing_fixture: [:0]const u8 =
 test "determinism passes a sampling decision drawn from the op clock" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    const findings = try harness.run(arena_state.allocator(), Rule, "src/sim/sample.zig",
+    const findings = try harness.run(arena_state.allocator(), Rule, "src/core/sample.zig",
         \\pub fn sample(op: u64) bool {
         \\    return op & constants.sample_mask == 0;
         \\}
@@ -75,7 +75,7 @@ test "determinism flags the clock, the PRNG and the entropy source" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const findings = try harness.run(arena, Rule, "src/sim/sample.zig", failing_fixture);
+    const findings = try harness.run(arena, Rule, "src/core/sample.zig", failing_fixture);
     try harness.expect_messages(findings, &.{
         "reference to std.time.nanoTimestamp: " ++ reason,
         "reference to std.Random.DefaultPrng.init: " ++ reason,
@@ -84,9 +84,9 @@ test "determinism flags the clock, the PRNG and the entropy source" {
     });
 }
 
-test "determinism reads core and sim and not the kernel backends" {
+test "determinism reads core and not the kernel backends" {
     try testing.expect(config.scope.applies("src/core/completion.zig"));
-    try testing.expect(config.scope.applies("src/sim/sim.zig"));
+    try testing.expect(config.scope.applies("src/core/random.zig"));
     try testing.expect(!config.scope.applies("src/uring/uring.zig"));
     try testing.expect(!config.scope.applies("src/kqueue/kqueue.zig"));
     try testing.expect(!config.scope.applies("bench/echo.zig"));

@@ -35,9 +35,9 @@ const harness = lint.harness;
 test "relative-import passes module names, siblings and the module root from a subdirectory" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    const findings = try harness.run(arena_state.allocator(), Rule, "src/sim/fault/fault_draw.zig",
+    const findings = try harness.run(arena_state.allocator(), Rule, "src/uring/ring/ring_setup.zig",
         \\const core = @import("core");
-        \\const sibling = @import("fault_class.zig");
+        \\const sibling = @import("ring_probe.zig");
         \\const constants = @import("../constants.zig");
     );
     try harness.expect_messages(findings, &.{});
@@ -46,7 +46,7 @@ test "relative-import passes module names, siblings and the module root from a s
 test "relative-import flags a path into another module and an absolute path" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
-    const findings = try harness.run(arena_state.allocator(), Rule, "src/sim/sim.zig",
+    const findings = try harness.run(arena_state.allocator(), Rule, "src/uring/uring.zig",
         \\const core = @import("../core/core.zig");
         \\const pinned = @import("/Users/someone/rotor/src/core/core.zig");
     );
