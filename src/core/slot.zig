@@ -8,7 +8,7 @@
 //! here first.
 //!
 //! Field order puts the 8-byte fields first and the 1-byte fields last, so the struct has no
-//! padding between fields. The 6 spare bytes are declared, so adding a field is a decision.
+//! padding between fields. The 2 spare bytes are declared, so adding a field is a decision.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
@@ -22,7 +22,7 @@ pub const heap_position_none: u32 = std.math.maxInt(u32);
 /// `next` of a slot that ends a list.
 pub const next_none: u32 = std.math.maxInt(u32);
 
-const reserved_bytes = 6;
+const reserved_bytes = 2;
 
 pub const Slot = extern struct {
     /// The caller's value, copied into every event of the operation.
@@ -45,6 +45,10 @@ pub const Slot = extern struct {
     next: u32,
     /// Where the slot's deadline sits in the timer heap, or `heap_position_none`.
     heap_position: u32,
+    /// The final event's result while the slot is `finishing`: the loop produced the result
+    /// itself (a timer that fired, a cancel that won before the kernel saw the operation), and
+    /// `tick` reads it here when it hands the event to the caller.
+    result: i32,
     /// The registered buffer that contains the buffer, or the provided-buffer group, as `flags`
     /// says.
     buffer_index: u16,
@@ -92,6 +96,7 @@ pub const Slot = extern struct {
         slot.heap_position = heap_position_none;
         slot.flags = .{};
         slot.retries = 0;
+        slot.result = 0;
         slot.buffer = 0;
         slot.offset = 0;
         slot.len = 0;
@@ -201,7 +206,7 @@ fn claimed() Slot {
 test "a slot is one 64-byte cache line with no padding" {
     try testing.expectEqual(64, @sizeOf(Slot));
     try testing.expectEqual(64, @alignOf(Slot));
-    try testing.expectEqual(58, @offsetOf(Slot, "reserved"));
+    try testing.expectEqual(62, @offsetOf(Slot, "reserved"));
 }
 
 test "fill flattens a read: descriptor, buffer, length, offset, deadline, registration" {

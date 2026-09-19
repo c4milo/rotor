@@ -41,6 +41,8 @@ pub const Code = enum(u8) {
     buffers_exhausted,
     /// A `post` found the target loop's mailbox full.
     mailbox_full,
+    /// A `post` named a loop that has not started or has stopped.
+    loop_not_found,
     unexpected,
 };
 
@@ -62,6 +64,7 @@ pub const Error = error{
     NoSpaceLeft,
     BuffersExhausted,
     MailboxFull,
+    LoopNotFound,
     Unexpected,
 };
 
@@ -145,6 +148,7 @@ pub fn error_of(code: Code) Error {
         .no_space_left => error.NoSpaceLeft,
         .buffers_exhausted => error.BuffersExhausted,
         .mailbox_full => error.MailboxFull,
+        .loop_not_found => error.LoopNotFound,
         .unexpected => error.Unexpected,
     };
 }
@@ -200,7 +204,7 @@ test "the codes keep their published values" {
         .descriptor_limit,     .connection_reset, .connection_refused, .connection_aborted,
         .connection_timed_out, .broken_pipe,      .not_connected,      .network_unreachable,
         .input_output,         .no_space_left,    .buffers_exhausted,  .mailbox_full,
-        .unexpected,
+        .loop_not_found,       .unexpected,
     };
     try testing.expectEqual(@typeInfo(Code).@"enum".fields.len, published.len);
     for (published, 1..) |code, value| try testing.expectEqual(value, @intFromEnum(code));

@@ -46,6 +46,13 @@ pub const transfer_bytes_max: u32 = 0x7fff_f000;
 /// The most loops and remotes one process may hold, which bounds a `LoopId` (decision 4).
 pub const loops_max: u16 = 256;
 
+/// The largest tag a `Message` may carry. io_uring delivers a posted message as a completion
+/// whose 32-bit result is the sender's to choose, and a result in [-4095, -1] is an errno. The
+/// uring backend sets the top bit of the tag, so a message's result is below -4095 and never
+/// reads as an operation's. A tag at or below this value leaves that range clear on Linux 5.18
+/// and later, with no kernel flag to depend on.
+pub const message_tag_max: u32 = 0x7fff_f000;
+
 /// Times a backend resubmits one operation after the kernel completes it with EAGAIN or EINTR
 /// having transferred nothing, before the caller hears of it (decision 6, kept from stompy).
 pub const transfer_retries_max: u8 = 16;
@@ -58,6 +65,9 @@ pub const registered_buffers_max: u16 = 1024;
 pub const buffer_groups_max: u16 = 16;
 pub const buffers_per_group_max: u16 = 32768;
 
+/// The largest errno Linux returns, so the most negative result an operation can have.
+const errno_max: u32 = 4095;
+
 comptime {
     const assert = std.debug.assert;
     assert(std.math.isPowerOfTwo(slot_bytes));
@@ -69,6 +79,8 @@ comptime {
     assert(timeout_ns_max >= wait_ns_max);
     assert(transfer_bytes_max <= std.math.maxInt(i32));
     assert(loops_max >= 2);
+    assert(message_tag_max < 1 << 31);
+    assert((1 << 31) - message_tag_max > errno_max);
     assert(transfer_retries_max >= 1);
     assert(std.math.isPowerOfTwo(buffers_per_group_max));
 }

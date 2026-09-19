@@ -16,7 +16,7 @@ pub const Descriptor = i32;
 pub const LoopId = u16;
 
 /// What one loop posts to another: 16 bytes. Anything larger travels as an index or a pointer in
-/// `payload`, into memory the two sides agreed on.
+/// `payload`, into memory the two sides agreed on. `tag` is at most `constants.message_tag_max`.
 pub const Message = extern struct {
     payload: u64,
     tag: u32,
@@ -159,6 +159,7 @@ pub const Operation = struct {
             .post => |post| {
                 assert(operation.timeout_ns == 0);
                 assert(post.target < constants.loops_max);
+                assert(post.message.tag <= constants.message_tag_max);
             },
         }
     }
