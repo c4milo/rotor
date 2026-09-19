@@ -178,5 +178,7 @@ measured numbers, the losing ones included.
 
 ## Where the work stands
 
-The nine decision records are proposed and await the owner's review. `docs/costs.md` has no
-measured cell. No loop code exists, and none is written until the records are accepted.
+The owner accepted the nine decision records for implementation on 2026-09-19 without ruling on
+their open questions, so the implementation follows the proposed answer to each. Milestones 0 and
+1 are in progress: the cost probes, and `core` with the simulated backend. `docs/costs.md` has no
+measured cell yet, and no kernel backend exists.

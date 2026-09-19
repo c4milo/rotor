@@ -1,6 +1,6 @@
 # 7. Where the hot path may buy speed with ugliness
 
-Status: proposed on 2026-09-19, awaiting review. This record resolves the first collision
+Status: accepted for implementation on 2026-09-19. This record resolves the first collision
 between the Abseil Performance Hints and the project rules.
 
 ## The collision

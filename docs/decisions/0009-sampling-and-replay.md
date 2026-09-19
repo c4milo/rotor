@@ -1,6 +1,6 @@
 # 9. Sampling and counters that do not break replay
 
-Status: proposed on 2026-09-19, awaiting review. This record resolves the third collision
+Status: accepted for implementation on 2026-09-19. This record resolves the third collision
 between the Abseil Performance Hints and the project rules.
 
 ## The collision

@@ -1,6 +1,8 @@
 # 1. Interface: a completion-based core, with a std.Io adapter over it
 
-Status: proposed on 2026-09-19, awaiting review.
+Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+did not rule on the open questions below, so the implementation follows the proposed answer to
+each until a ruling changes it.
 
 ## Context
 

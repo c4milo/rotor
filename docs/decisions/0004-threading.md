@@ -1,7 +1,9 @@
 # 4. Threading model: one shared-nothing loop per core
 
-Status: proposed on 2026-09-19, awaiting review. This record argues with the owner's position
-in two places: file ownership and SO_REUSEPORT on macOS.
+Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+did not rule on the open questions below, so the implementation follows the proposed answer to
+each until a ruling changes it. This record argues with the owner's position in two places: file
+ownership and SO_REUSEPORT on macOS.
 
 ## Context
 

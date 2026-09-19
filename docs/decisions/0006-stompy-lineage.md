@@ -1,6 +1,8 @@
 # 6. What rotor keeps from stompy's I/O layer, what it changes, and why stompy should move
 
-Status: proposed on 2026-09-19, awaiting review.
+Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+did not rule on the open questions below, so the implementation follows the proposed answer to
+each until a ruling changes it.
 
 ## Context
 

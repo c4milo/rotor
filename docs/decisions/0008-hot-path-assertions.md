@@ -1,10 +1,10 @@
 # 8. Which assertions live on the hot path
 
-Status: proposed on 2026-09-19, awaiting review. **The measurement this record depends on has
-not been made.** No submit path and no reap path exists to measure, and the brief forbids
-writing them before this review. So this record states a provisional rule, the experiment that
-confirms or changes it, and the thresholds, all fixed before the numbers exist. Milestones 2
-and 3 run the experiment and report the numbers, and the rule is then ratified or amended here.
+Status: accepted for implementation on 2026-09-19. **The measurement this record depends on has
+not been made.** No submit path and no reap path existed to measure when this record was written.
+So this record states a provisional rule, the experiment that confirms or changes it, and the
+thresholds, all fixed before the numbers exist. Milestones 2 and 3 run the experiment and report
+the numbers, and the rule is then ratified or amended here.
 
 ## The collision
 

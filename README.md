@@ -4,7 +4,8 @@ rotor is an event loop and I/O layer in Zig 0.16: a completion-based core over L
 macOS kqueue, with a deterministic simulated backend and a benchmark harness that gates every
 speed claim.
 
-**Status: design under review.** No loop code exists yet. Start with:
+**Status: version one is being built, milestone by milestone.** No kernel backend exists yet.
+Start with:
 
 - `docs/decisions/`, the nine decision records, each with the alternatives it beat.
 - `docs/costs.md`, the latency table every design argument cites. Its measured columns are empty.
