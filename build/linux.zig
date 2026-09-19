@@ -96,7 +96,7 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
 }
 
 /// Linux on the build host's CPU architecture, musl ABI, baseline CPU model.
-fn container_target(b: *std.Build) std.Build.ResolvedTarget {
+pub fn container_target(b: *std.Build) std.Build.ResolvedTarget {
     const target = b.resolveTargetQuery(.{
         .cpu_arch = b.graph.host.result.cpu.arch,
         .os_tag = .linux,

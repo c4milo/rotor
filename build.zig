@@ -20,6 +20,7 @@ const modules = @import("build/modules.zig");
 const lint = @import("build/lint.zig");
 const bench = @import("build/bench.zig");
 const halt = @import("build/halt.zig");
+const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
@@ -114,6 +115,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(bench_steps.harness_tests);
 
     linux.add(b, optimize);
+    bench_linux.add(b);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
     add_commit_lint_step(b, pepegrillo, install_step);
