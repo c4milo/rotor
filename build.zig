@@ -19,6 +19,7 @@ const assert = std.debug.assert;
 const modules = @import("build/modules.zig");
 const lint = @import("build/lint.zig");
 const bench = @import("build/bench.zig");
+const halt = @import("build/halt.zig");
 const linux = @import("build/linux.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
@@ -105,6 +106,8 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(run);
         tool_test_step.dependOn(run);
     }
+
+    test_step.dependOn(halt.add(b, graph, target, optimize));
 
     const bench_steps = bench.add(b, target);
     test_step.dependOn(bench_steps.compile);

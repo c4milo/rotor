@@ -9,6 +9,15 @@ the numbers, and the rule is then ratified or amended here.
 Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
 no simulator for them to run in.
 
+Amended on 2026-09-19 after the slot table landed: "How it is checked" asks for a test that
+violates each class A and B assertion and expects the halt. A Zig test cannot expect a panic in
+its own process, so the slot table's commit reports four deleted assertions as NOT CAUGHT. The
+check is now `zig build halt-check`, part of `zig build test`: `tools/halt_check.zig` runs each
+scenario of `tools/halt/` in a child process and requires it to reach its violating statement and
+then die by a signal. A canary whose scenarios do not halt must fail the check. An assertion a
+caller's mistake can reach gets a scenario; a mutation that deletes one is measured against `zig
+build halt-check`.
+
 ## The collision
 
 TigerStyle keeps assertions on in production, roughly two per function. The Performance Hints
