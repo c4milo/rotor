@@ -1,6 +1,6 @@
-//! The submit path: `submit` claims a slot per operation and queues it, and `flush` turns queued
-//! slots into submission entries. `prepare` is the pure part, a slot in and a submission entry
-//! out, and it is tested on every host.
+//! The submit path: `core.Tables.submit` claims a slot per operation and queues it, and `flush`
+//! here turns queued slots into submission entries. `prepare` is the pure part, a slot in and a
+//! submission entry out, and it is tested on every host.
 //!
 //! One of the six hot files decision 7 names. This is the plain version: no technique of that
 //! decision's list is used, and docs/hot-path-ledger.md has no row for this file.
@@ -14,8 +14,6 @@ const uring = @import("uring.zig");
 
 const Loop = uring.Loop;
 const Slot = core.Slot;
-const Operation = core.Operation;
-const Handle = core.Handle;
 
 /// What `prepare` needs beside the slot, because the slot cannot hold it.
 pub const Extra = struct {
@@ -28,51 +26,29 @@ pub const Extra = struct {
     target_ring: core.Descriptor = -1,
 };
 
-/// Claims a slot for each operation, in order, until the table is full, and returns how many it
-/// took. Writes each taken operation's handle to `handles` when the caller passed any. Makes no
-/// system call: the next `tick` submits.
-pub fn submit(loop: *Loop, operations: []const Operation, handles: []Handle) u32 {
-    assert(operations.len <= core.constants.batch_max);
-    assert(handles.len == 0 or handles.len == operations.len);
-    var taken: u32 = 0;
-    for (operations) |*operation| {
-        operation.assert_valid();
-        const index = loop.table.claim() orelse break;
-        const slot = loop.table.at(index);
-        slot.fill(operation);
-        // A loop that posts to itself would wait on a completion only its own tick can reap.
-        assert(slot.code != .post or slot.descriptor != loop.id);
-        loop.pending.push(loop.table.slots, index);
-        if (handles.len != 0) handles[taken] = loop.table.handle_of(index);
-        taken += 1;
-    }
-    loop.operation_sequence +%= taken;
-    assert(taken <= operations.len);
-    return taken;
-}
-
 /// Hands queued slots to the kernel, oldest first, until the submission ring is full. A timer
 /// takes no entry: it is armed in the heap. A slot cancelled while it waited finishes here,
 /// and the kernel never sees it (decision 5, rule 2).
 pub fn flush(loop: *Loop) void {
-    const queued = loop.pending.count;
+    const tables = &loop.tables;
+    const queued = tables.pending.count;
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
-        const index = loop.pending.peek() orelse break;
-        const slot = loop.table.at(index);
+        const index = tables.pending.peek() orelse break;
+        const slot = tables.table.at(index);
         assert(slot.state == .queued);
         if (slot.flags.cancel_requested) {
-            _ = loop.pending.pop(loop.table.slots);
-            loop.finish_local(index, core.event.result_of(loop.cancel_code(slot)));
+            _ = tables.pending.pop(tables.table.slots);
+            tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
         } else if (slot.code == .timer) {
-            _ = loop.pending.pop(loop.table.slots);
+            _ = tables.pending.pop(tables.table.slots);
             slot.state = .submitted;
-            loop.timers.arm(index, loop.now_ns + slot.offset);
+            tables.arm(index, slot);
         } else if (!flush_entry(loop, index, slot)) {
             break;
         }
     }
-    assert(loop.pending.count <= queued);
+    assert(tables.pending.count <= queued);
 }
 
 /// Fills the entry, or the two entries of a `close`, for one slot. False when the submission
@@ -86,20 +62,19 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
         .post => {
             extra.target_ring = loop.registry_descriptor(slot);
             if (extra.target_ring < 0) {
-                _ = loop.pending.pop(loop.table.slots);
-                loop.finish_local(index, core.event.result_of(.loop_not_found));
+                _ = loop.tables.pending.pop(loop.tables.table.slots);
+                loop.tables.finish_local(index, core.event.result_of(.loop_not_found));
                 return true;
             }
         },
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
     }
-    _ = loop.pending.pop(loop.table.slots);
-    prepare(loop.ring.get_sqe().?, slot, loop.table.handle_of(index).to_bits(), extra);
+    _ = loop.tables.pending.pop(loop.tables.table.slots);
+    const user_data = loop.tables.table.handle_of(index).to_bits();
+    prepare(loop.ring.get_sqe().?, slot, user_data, extra);
     slot.state = .submitted;
-    if (slot.timeout_ns != 0 and !loop.timers.is_armed(index)) {
-        loop.timers.arm(index, loop.now_ns + slot.timeout_ns);
-    }
+    loop.tables.arm(index, slot);
     return true;
 }
 

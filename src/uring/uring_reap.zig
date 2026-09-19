@@ -63,7 +63,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (cqe.res < 0) return complete_negative(loop, cqe);
     if (cqe.user_data >> handle_generation_shift == 0) return null;
     const handle = Handle.from_bits(cqe.user_data);
-    const slot = loop.table.at(handle.index);
+    const slot = loop.tables.table.at(handle.index);
     assert(slot.generation == handle.generation);
     assert(slot.state == .submitted);
     const event: Event = .{
@@ -71,7 +71,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         .result = cqe.res,
         .flags = @bitCast(cqe.flags & flags_passed),
     };
-    if (!event.flags.more) loop.finish(handle.index, slot);
+    if (!event.flags.more) loop.tables.finish(handle.index, slot);
     return event;
 }
 
@@ -82,14 +82,14 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (cqe.res < -constants.errno_max) return message_of(cqe);
     if (cqe.user_data >> handle_generation_shift == 0) return null;
     const handle = Handle.from_bits(cqe.user_data);
-    const slot = loop.table.at(handle.index);
+    const slot = loop.tables.table.at(handle.index);
     assert(slot.generation == handle.generation);
     assert(slot.state == .submitted);
     const errno = errno_module.errno_of(cqe.res);
     if (should_retry(slot, errno)) {
         slot.retries += 1;
         slot.state = .queued;
-        loop.pending.push(loop.table.slots, handle.index);
+        loop.tables.pending.push(loop.tables.table.slots, handle.index);
         return null;
     }
     var code = errno_module.code_of(errno, .{
@@ -105,7 +105,7 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (code == .canceled and slot.flags.timed_out) code = .timeout;
     var event = Event.failure(slot.user_data, code);
     event.flags.more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
-    if (!event.flags.more) loop.finish(handle.index, slot);
+    if (!event.flags.more) loop.tables.finish(handle.index, slot);
     return event;
 }
 

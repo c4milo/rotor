@@ -41,11 +41,11 @@ const Fixture = struct {
         var handles: [1]Handle = undefined;
         const taken = fixture.loop.submit(&.{operation}, &handles);
         std.debug.assert(taken == 1);
-        const loop = &fixture.loop;
-        const index = loop.pending.pop(loop.table.slots).?;
-        const slot = loop.table.at(index);
+        const tables = &fixture.loop.tables;
+        const index = tables.pending.pop(tables.table.slots).?;
+        const slot = tables.table.at(index);
         slot.state = .submitted;
-        if (slot.timeout_ns != 0) loop.timers.arm(index, loop.now_ns + slot.timeout_ns);
+        tables.arm(index, slot);
         return handles[0];
     }
 
@@ -93,7 +93,7 @@ test "a completion yields one final event with the caller's user data and frees 
     try testing.expectEqual(@as(u32, 17), try event.outcome());
     try testing.expect(event.is_final());
     try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
-    try testing.expectEqual(@as(?*core.Slot, null), fixture.loop.table.lookup(handle));
+    try testing.expectEqual(@as(?*core.Slot, null), fixture.loop.tables.table.lookup(handle));
 }
 
 test "EAGAIN resubmits without an event, and past the bound the caller hears would_block" {
@@ -104,11 +104,11 @@ test "EAGAIN resubmits without an event, and past the bound the caller hears wou
     var round: u32 = 0;
     while (round < core.constants.transfer_retries_max) : (round += 1) {
         try testing.expectEqual(@as(?Event, null), fixture.fail(handle, .AGAIN));
-        const slot = loop.table.lookup(handle).?;
+        const slot = loop.tables.table.lookup(handle).?;
         try testing.expectEqual(core.Slot.State.queued, slot.state);
         try testing.expectEqual(round + 1, slot.retries);
         // What `flush` does to a queued slot.
-        _ = loop.pending.pop(loop.table.slots).?;
+        _ = loop.tables.pending.pop(loop.tables.table.slots).?;
         slot.state = .submitted;
     }
     const event = fixture.fail(handle, .INTR).?;
@@ -146,7 +146,7 @@ test "an operation a cancel waits for is not resubmitted: the caller hears cance
     const event = fixture.fail(handle, .AGAIN).?;
     try testing.expectError(error.Canceled, event.outcome());
     try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
-    try testing.expectEqual(@as(u32, 0), fixture.loop.pending.count);
+    try testing.expectEqual(@as(u32, 0), fixture.loop.tables.pending.count);
 }
 
 test "bytes that moved win over a cancel, and an operation that finished first keeps its result" {
@@ -167,18 +167,19 @@ test "a cancel the loop issued for a deadline says timeout, and a completion dis
     fixture.init();
     const timed = fixture.timed_receive(1);
     const loop = &fixture.loop;
-    try testing.expectEqual(@as(u32, 1), loop.timers.count);
-    const slot = loop.table.lookup(timed).?;
+    try testing.expectEqual(@as(u32, 1), loop.tables.timers.count);
+    const slot = loop.tables.table.lookup(timed).?;
     // What `expire` does when the deadline passes.
-    try testing.expectEqual(@as(?u32, timed.index), loop.timers.pop_due(core.constants.ns_per_ms));
+    const due = loop.tables.timers.pop_due(core.constants.ns_per_ms);
+    try testing.expectEqual(@as(?u32, timed.index), due);
     slot.flags.timed_out = true;
     cancel_module.request(loop, timed.index, slot);
     try testing.expectError(error.Timeout, fixture.fail(timed, .CANCELED).?.outcome());
 
     const in_time = fixture.timed_receive(2);
-    try testing.expectEqual(@as(u32, 1), loop.timers.count);
+    try testing.expectEqual(@as(u32, 1), loop.tables.timers.count);
     try testing.expectEqual(@as(u32, 9), try fixture.complete(in_time.to_bits(), 9, 0).?.outcome());
-    try testing.expectEqual(@as(u32, 0), loop.timers.count);
+    try testing.expectEqual(@as(u32, 0), loop.tables.timers.count);
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }
 
@@ -213,7 +214,7 @@ test "a posted message is an event of no operation, even when its payload reads 
     try testing.expectEqual(handle.to_bits(), event.user_data);
     try testing.expectEqual(@as(i32, 42), event.result);
     try testing.expectEqual(@as(u32, 1), fixture.loop.in_flight());
-    try testing.expect(fixture.loop.table.lookup(handle) != null);
+    try testing.expect(fixture.loop.tables.table.lookup(handle) != null);
 }
 
 test "the completions the backend consumes itself yield no event" {
@@ -231,12 +232,12 @@ test "a timer cancels at once with no kernel involved, and a queued operation at
     fixture.init();
     const loop = &fixture.loop;
     const timer = fixture.start(.{ .user_data = 9, .kind = .{ .timer = .{ .after_ns = 5 } } });
-    loop.timers.arm(timer.index, 5);
+    try testing.expectEqual(@as(u32, 1), loop.tables.timers.count);
     loop.cancel(timer);
-    try testing.expectEqual(@as(u32, 0), loop.timers.count);
+    try testing.expectEqual(@as(u32, 0), loop.tables.timers.count);
     try testing.expectEqual(@as(u32, 0), loop.cancels.count);
-    try testing.expectEqual(@as(u32, 1), loop.finished.count);
-    const slot = loop.table.lookup(timer).?;
+    try testing.expectEqual(@as(u32, 1), loop.tables.finished.count);
+    const slot = loop.tables.table.lookup(timer).?;
     try testing.expectEqual(core.Slot.State.finishing, slot.state);
     try testing.expectEqual(core.event.result_of(.canceled), slot.result);
     // The final event is not delivered from inside `cancel`: the slot stays claimed until a tick.

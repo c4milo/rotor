@@ -35,37 +35,22 @@ const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
 const Slot = core.Slot;
-const SlotList = core.slot_list.SlotList;
-const SlotTable = core.slot_table.SlotTable;
+const Tables = core.Tables;
 const TimerHeap = core.timer_heap.TimerHeap;
 const Layout = core.layout.Layout;
 const HandleQueue = cancel_module.HandleQueue;
 
-/// One per thread, and its address is that thread's identity: a loop compares it against the
-/// address it recorded at init, which costs one thread-local address and one compare (C21).
-threadlocal var thread_marker: u8 = 0;
-
 pub const Loop = struct {
     ring: ring_module.Ring,
-    table: SlotTable,
-    timers: TimerHeap,
-    /// Slots that are `queued`, oldest first: claimed, and waiting for a submission entry.
-    pending: SlotList,
-    /// Slots that are `finishing`, oldest first: each holds its final result in `Slot.result`.
-    finished: SlotList,
+    /// What a loop holds whatever its kernel: the slot table, the timer heap, the pending and
+    /// finished lists, the clock, the owner.
+    tables: Tables,
     /// Handles `cancel` named whose operations the kernel holds, waiting for an entry.
     cancels: HandleQueue,
     /// The kernel's form of the address of each `connect` of the flush in progress. The kernel
     /// reads them while `enter` runs, and `tick` reuses the storage after it.
     addresses: []address.Storage,
     addresses_used: u32,
-    /// The monotonic clock as `tick` last read it.
-    now_ns: u64,
-    /// Operations accepted since init: what a sampling decision is a function of (decision 9).
-    operation_sequence: u64,
-    /// The address of the owning thread's `thread_marker`.
-    owner: usize,
-    id: core.LoopId,
     registry: ?*Registry,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
@@ -104,7 +89,7 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.ring = try ring_module.Ring.init(options.entries);
-        if (loop.registry) |registry| registry.set(loop.id, loop.ring.descriptor());
+        if (loop.registry) |registry| registry.set(loop.tables.id, loop.ring.descriptor());
     }
 
     /// Everything but the ring: what the paths that enter no kernel run on, so their tests
@@ -124,16 +109,9 @@ pub const Loop = struct {
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
         loop.addresses = layout.take(memory, address.Storage, options.entries);
         assert(layout.bytes == memory_bytes(options));
-        loop.table.init(slots);
-        loop.timers.init(entries, slots);
+        loop.tables.init(slots, entries, options.id);
         loop.cancels.init(handles);
-        loop.pending = SlotList.empty;
-        loop.finished = SlotList.empty;
         loop.addresses_used = 0;
-        loop.now_ns = 0;
-        loop.operation_sequence = 0;
-        loop.owner = @intFromPtr(&thread_marker);
-        loop.id = options.id;
         loop.registry = options.registry;
         loop.groups = @splat(buffers.Group.none);
         loop.buffers_registered = false;
@@ -141,31 +119,37 @@ pub const Loop = struct {
 
     /// Every operation must have had its final event (decision 5, rule 7).
     pub fn deinit(loop: *Loop) void {
-        loop.assert_owner();
-        loop.assert_empty();
-        if (loop.registry) |registry| registry.clear(loop.id);
+        loop.tables.assert_owner();
+        loop.tables.assert_empty();
+        if (loop.registry) |registry| registry.clear(loop.tables.id);
         loop.ring.deinit();
     }
 
     /// Halts when an operation has not had its final event. `deinit` calls it before it touches
     /// the ring.
     pub fn assert_empty(loop: *const Loop) void {
-        assert(loop.in_flight() == 0);
-        assert(loop.pending.count == 0 and loop.finished.count == 0);
+        loop.tables.assert_empty();
+    }
+
+    /// Halts when another thread calls into the loop (decision 4).
+    pub fn assert_owner(loop: *const Loop) void {
+        loop.tables.assert_owner();
     }
 
     /// Operations submitted whose final event the caller has not been handed.
     pub fn in_flight(loop: *const Loop) u32 {
-        return loop.table.in_use();
+        return loop.tables.in_flight();
     }
 
+    /// Claims a slot per operation until the table is full, and returns how many it took. Makes
+    /// no system call: the next `tick` submits.
     pub fn submit(loop: *Loop, operations: []const Operation, handles: []Handle) u32 {
-        loop.assert_owner();
-        return submit_module.submit(loop, operations, handles);
+        loop.tables.assert_owner();
+        return loop.tables.submit(operations, handles);
     }
 
     pub fn cancel(loop: *Loop, handle: Handle) void {
-        loop.assert_owner();
+        loop.tables.assert_owner();
         cancel_module.cancel(loop, handle);
     }
 
@@ -183,45 +167,12 @@ pub const Loop = struct {
         return loop.groups[group_id].bytes_of(buffer_id);
     }
 
-    /// Halts when another thread calls into the loop (decision 4): a call from the wrong thread
-    /// is a programmer error, and by the time it is seen the tables may already be torn.
-    pub fn assert_owner(loop: *const Loop) void {
-        assert(loop.owner == @intFromPtr(&thread_marker));
-    }
-
-    /// The kernel produced the operation's last completion: its deadline is disarmed and its
-    /// slot released, as the event is handed to the caller (decision 5, rule 1).
-    pub fn finish(loop: *Loop, index: u32, slot: *Slot) void {
-        assert(slot.state == .submitted);
-        if (slot.heap_position != core.slot.heap_position_none) loop.timers.disarm(index);
-        loop.table.release(index);
-    }
-
-    /// The loop produced the operation's final result itself. The slot waits on `finished`, and
-    /// the next `tick` hands its event over and releases it.
-    pub fn finish_local(loop: *Loop, index: u32, result: i32) void {
-        const slot = loop.table.at(index);
-        assert(slot.state == .queued or slot.state == .submitted);
-        if (slot.heap_position != core.slot.heap_position_none) loop.timers.disarm(index);
-        slot.state = .finishing;
-        slot.result = result;
-        loop.finished.push(loop.table.slots, index);
-    }
-
-    /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for
-    /// its deadline, `canceled` when the caller did (decision 5, rule 4).
-    pub fn cancel_code(loop: *const Loop, slot: *const Slot) core.Code {
-        _ = loop;
-        assert(slot.flags.cancel_requested);
-        return if (slot.flags.timed_out) .timeout else .canceled;
-    }
-
     /// The ring of the loop a `post` names, or a negative value when there is none.
     pub fn registry_descriptor(loop: *const Loop, slot: *const Slot) core.Descriptor {
         assert(slot.code == .post);
         const registry = loop.registry orelse return registry_module.descriptor_none;
         const target: core.LoopId = @intCast(slot.descriptor);
-        assert(target != loop.id);
+        assert(target != loop.tables.id);
         return registry.get(target);
     }
 };

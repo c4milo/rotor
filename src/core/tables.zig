@@ -1,0 +1,218 @@
+//! `Tables`: what a loop holds and does whatever kernel it runs on. Both backends embed one, so
+//! a slot is claimed, a deadline fires, a cancel is asked for and a final event is handed over
+//! by the same code on io_uring and on kqueue (decisions 5 and 11). What differs between them is
+//! what happens to an operation the kernel holds, and that stays in the backend.
+//!
+//! A loop belongs to the thread that initialised it (decision 4). `assert_owner` compares the
+//! address of a thread-local byte against the one `init` recorded: one thread-local address and
+//! one compare (C21), with no system call.
+const std = @import("std");
+const assert = std.debug.assert;
+const constants = @import("constants.zig");
+const event_module = @import("event.zig");
+const handle_module = @import("handle.zig");
+const operation_module = @import("operation.zig");
+const slot_module = @import("slot.zig");
+const slot_list_module = @import("slot_list.zig");
+const slot_table_module = @import("slot_table.zig");
+const timer_heap_module = @import("timer_heap.zig");
+
+const Code = event_module.Code;
+const Event = event_module.Event;
+const Handle = handle_module.Handle;
+const LoopId = operation_module.LoopId;
+const Operation = operation_module.Operation;
+const Slot = slot_module.Slot;
+const SlotList = slot_list_module.SlotList;
+const SlotTable = slot_table_module.SlotTable;
+const TimerHeap = timer_heap_module.TimerHeap;
+
+/// One per thread, and its address is that thread's identity.
+threadlocal var thread_marker: u8 = 0;
+
+/// What the backend must do about a cancel that `request_cancel` accepted.
+pub const CancelAction = enum {
+    /// Nothing: the operation was already marked, was still queued, or was a timer, which the
+    /// tables ended themselves.
+    none,
+    /// The kernel holds the operation, and only the backend can reach it there.
+    backend,
+};
+
+pub const Tables = struct {
+    table: SlotTable,
+    timers: TimerHeap,
+    /// Slots that are `queued`, oldest first: claimed, and waiting for the backend's flush.
+    pending: SlotList,
+    /// Slots that are `finishing`, oldest first: each holds its final result in `Slot.result`.
+    finished: SlotList,
+    /// The monotonic clock as the backend's tick last read it.
+    now_ns: u64,
+    /// Operations accepted since init: what a sampling decision is a function of (decision 9).
+    operation_sequence: u64,
+    /// The address of the owning thread's `thread_marker`.
+    owner: usize,
+    id: LoopId,
+
+    /// Must run on the thread that will own the loop.
+    pub fn init(tables: *Tables, slots: []Slot, entries: []TimerHeap.Entry, id: LoopId) void {
+        assert(id < constants.loops_max);
+        assert(entries.len == slots.len);
+        tables.table.init(slots);
+        tables.timers.init(entries, slots);
+        tables.pending = SlotList.empty;
+        tables.finished = SlotList.empty;
+        tables.now_ns = 0;
+        tables.operation_sequence = 0;
+        tables.owner = @intFromPtr(&thread_marker);
+        tables.id = id;
+    }
+
+    /// Halts when another thread calls into the loop: a call from the wrong thread is a
+    /// programmer error, and by the time it is seen the tables may already be torn.
+    pub fn assert_owner(tables: *const Tables) void {
+        assert(tables.owner == @intFromPtr(&thread_marker));
+    }
+
+    /// Halts when an operation has not had its final event (decision 5, rule 7).
+    pub fn assert_empty(tables: *const Tables) void {
+        assert(tables.in_flight() == 0);
+        assert(tables.pending.count == 0 and tables.finished.count == 0);
+    }
+
+    /// Operations submitted whose final event the caller has not been handed.
+    pub fn in_flight(tables: *const Tables) u32 {
+        return tables.table.in_use();
+    }
+
+    /// Claims a slot for each operation, in order, until the table is full, and returns how many
+    /// it took. Writes each taken operation's handle to `handles` when the caller passed any.
+    /// Enters no kernel: the backend's next tick flushes the pending list.
+    pub fn submit(tables: *Tables, operations: []const Operation, handles: []Handle) u32 {
+        assert(operations.len <= constants.batch_max);
+        assert(handles.len == 0 or handles.len == operations.len);
+        var taken: u32 = 0;
+        for (operations) |*operation| {
+            operation.assert_valid();
+            const index = tables.table.claim() orelse break;
+            const slot = tables.table.at(index);
+            slot.fill(operation);
+            // A loop that posts to itself would wait on an event only its own tick can produce.
+            assert(slot.code != .post or slot.descriptor != tables.id);
+            tables.pending.push(tables.table.slots, index);
+            if (handles.len != 0) handles[taken] = tables.table.handle_of(index);
+            taken += 1;
+        }
+        tables.operation_sequence +%= taken;
+        assert(taken <= operations.len);
+        return taken;
+    }
+
+    /// The kernel produced the operation's last completion: its deadline is disarmed and its
+    /// slot released, as the event is handed to the caller (decision 5, rule 1).
+    pub fn finish(tables: *Tables, index: u32, slot: *Slot) void {
+        assert(slot.state == .submitted);
+        if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
+        tables.table.release(index);
+    }
+
+    /// The loop produced the operation's final result itself. The slot waits on `finished`, and
+    /// the next `drain_finished` hands its event over and releases it: never the call that
+    /// produced the result (decision 5, rule 2).
+    pub fn finish_local(tables: *Tables, index: u32, result: i32) void {
+        const slot = tables.table.at(index);
+        assert(slot.state == .queued or slot.state == .submitted);
+        if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
+        slot.state = .finishing;
+        slot.result = result;
+        tables.finished.push(tables.table.slots, index);
+    }
+
+    /// Hands the caller the final events the loop produced itself, oldest first, and releases
+    /// their slots: the moment decision 5, rule 1 names.
+    pub fn drain_finished(tables: *Tables, events: []Event) u32 {
+        var produced: u32 = 0;
+        while (produced < events.len) : (produced += 1) {
+            const index = tables.finished.pop(tables.table.slots) orelse break;
+            const slot = tables.table.at(index);
+            assert(slot.state == .finishing);
+            events[produced] = .{
+                .user_data = slot.user_data,
+                .result = slot.result,
+                .flags = .{},
+            };
+            tables.table.release(index);
+        }
+        assert(produced <= events.len);
+        return produced;
+    }
+
+    /// Marks `slot` for cancellation, once, and ends it when the tables can: a timer lives in
+    /// the heap, so its cancel is synchronous and has no race (decision 5, rule 5). A queued
+    /// slot is ended by the backend's flush, which finds the mark before the kernel sees the
+    /// operation. The loop calls this itself when a deadline passes, with `timed_out` set.
+    pub fn request_cancel(tables: *Tables, index: u32, slot: *Slot) CancelAction {
+        assert(slot.state != .free and slot.state != .finishing);
+        if (slot.flags.cancel_requested) return .none;
+        slot.flags.cancel_requested = true;
+        if (slot.state == .queued) return .none;
+        if (slot.code != .timer) return .backend;
+        tables.timers.disarm(index);
+        tables.finish_local(index, event_module.result_of(cancel_code(slot)));
+        return .none;
+    }
+
+    /// The slot `handle` names when a cancel can still reach it, or null: the handle went stale,
+    /// which is legal (decision 5, rule 2), or the final event is already queued.
+    pub fn cancellable(tables: *Tables, handle: Handle) ?*Slot {
+        const slot = tables.table.lookup(handle) orelse return null;
+        return if (slot.state == .finishing) null else slot;
+    }
+
+    /// Finishes every timer that is due, and returns the next operation whose deadline passed,
+    /// marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
+    /// more is due. At most the heap's entries can be due, which bounds the loop.
+    pub fn next_expired(tables: *Tables) ?u32 {
+        const armed = tables.timers.count;
+        var popped: u32 = 0;
+        while (popped < armed) : (popped += 1) {
+            const index = tables.timers.pop_due(tables.now_ns) orelse return null;
+            const slot = tables.table.at(index);
+            assert(slot.state == .submitted);
+            if (slot.code != .timer) {
+                slot.flags.timed_out = true;
+                return index;
+            }
+            tables.finish_local(index, 0);
+        }
+        return null;
+    }
+
+    /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a
+    /// timer. A slot being resubmitted keeps the deadline it has.
+    pub fn arm(tables: *Tables, index: u32, slot: *const Slot) void {
+        const after_ns = if (slot.code == .timer) slot.offset else slot.timeout_ns;
+        assert(after_ns <= constants.timeout_ns_max);
+        if (slot.code != .timer and after_ns == 0) return;
+        if (tables.timers.is_armed(index)) return;
+        tables.timers.arm(index, tables.now_ns + after_ns);
+    }
+
+    /// How long a tick may block: not at all while queued work waits for the next flush, and
+    /// never past the nearest deadline. Null means do not block.
+    pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
+        assert(wait_ns <= constants.wait_ns_max);
+        if (wait_ns == 0) return null;
+        if (tables.pending.count != 0 or tables.finished.count != 0) return null;
+        const earliest = tables.timers.earliest_ns() orelse return wait_ns;
+        if (earliest <= tables.now_ns) return null;
+        return @min(wait_ns, earliest - tables.now_ns);
+    }
+};
+
+/// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its
+/// deadline, `canceled` when the caller did (decision 5, rule 4).
+pub fn cancel_code(slot: *const Slot) Code {
+    assert(slot.flags.cancel_requested);
+    return if (slot.flags.timed_out) .timeout else .canceled;
+}

@@ -67,28 +67,17 @@ pub const HandleQueue = struct {
 /// final event names nothing, and that is legal: the caller cannot avoid the race between a
 /// reap and a cancel (decision 5, rule 2).
 pub fn cancel(loop: *Loop, handle: Handle) void {
-    const slot = loop.table.lookup(handle) orelse return;
-    if (slot.state == .finishing) return;
+    const slot = loop.tables.cancellable(handle) orelse return;
     request(loop, handle.index, slot);
 }
 
-/// Marks `slot` for cancellation, once. The loop calls this itself when a deadline passes, with
-/// `flags.timed_out` already set.
+/// Marks `slot` for cancellation. `core.Tables` ends what it can end itself, a timer or a slot
+/// still queued; an operation the kernel holds gets its handle queued for a cancel entry. The
+/// loop calls this itself when a deadline passes, with `flags.timed_out` already set.
 pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
-    if (slot.flags.cancel_requested) return;
-    slot.flags.cancel_requested = true;
-    switch (slot.state) {
-        .queued => {},
-        .submitted => {
-            if (slot.code == .timer) {
-                loop.timers.disarm(index);
-                loop.finish_local(index, core.event.result_of(loop.cancel_code(slot)));
-            } else {
-                loop.cancels.push(loop.table.handle_of(index));
-            }
-        },
-        .finishing, .free => unreachable,
-    }
+    if (loop.tables.request_cancel(index, slot) != .backend) return;
+    assert(slot.state == .submitted);
+    loop.cancels.push(loop.tables.table.handle_of(index));
 }
 
 /// Gives every waiting cancel a submission entry, oldest first. A handle gone stale is dropped.
@@ -99,7 +88,7 @@ pub fn flush(loop: *Loop) void {
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
         const handle = loop.cancels.pop().?;
-        const slot = loop.table.lookup(handle) orelse continue;
+        const slot = loop.tables.table.lookup(handle) orelse continue;
         if (slot.state != .submitted) continue;
         assert(slot.flags.cancel_requested);
         if (loop.ring.get_sqe()) |sqe| {

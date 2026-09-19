@@ -13,6 +13,7 @@ pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
 pub const surface = @import("surface.zig");
+pub const tables = @import("tables.zig");
 pub const timer_heap = @import("timer_heap.zig");
 
 pub const Address = operation.Address;
@@ -25,6 +26,7 @@ pub const LoopId = operation.LoopId;
 pub const Message = operation.Message;
 pub const Operation = operation.Operation;
 pub const Slot = slot.Slot;
+pub const Tables = tables.Tables;
 
 test {
     _ = constants;
@@ -37,5 +39,7 @@ test {
     _ = slot_list;
     _ = slot_table;
     _ = surface;
+    _ = tables;
+    _ = @import("tables_test.zig");
     _ = timer_heap;
 }
