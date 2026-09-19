@@ -8,6 +8,7 @@ pub const errno = @import("kqueue_errno.zig");
 pub const mailbox = @import("kqueue_mailbox.zig");
 pub const sync = @import("kqueue_sync.zig");
 pub const testing = @import("kqueue_testing.zig");
+pub const waiters = @import("kqueue_waiters.zig");
 
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag.isDarwin();
@@ -19,4 +20,6 @@ test {
     _ = mailbox;
     _ = sync;
     _ = testing;
+    _ = waiters;
+    _ = @import("kqueue_waiters_test.zig");
 }
