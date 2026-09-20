@@ -39,7 +39,8 @@ The architecture depends on every rule in this section.
    needs deterministic replay substitutes its own twin.
 4. **Shared-nothing.** A loop belongs to one thread. It holds no lock, starts no thread, and
    never moves work between cores on its own. The one call another thread may make is `post`
-   (decision 4).
+   (decision 4). A caller may hand a loop threads the loop itself never starts: decision 18
+   allows a caller-supplied pool for the operations a backend cannot do without blocking.
 5. **Every operation ends with exactly one final event**, and its buffer belongs to the loop
    until then (decision 5).
 6. **Invariants are code.** A violated invariant halts, and a property test that finds one

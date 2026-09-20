@@ -19,9 +19,15 @@ Three separate questions asked on 2026-09-20 resolved to the same missing compon
 
 Two rules already written decide the answer, and they decide it together.
 
-- **colibri owns no I/O.** `0006-stompy-lineage.md` states it: "colibri owns no I/O by its first
-  non-negotiable and is not a consumer." colibri is an HTTP client and server as a state machine:
-  bytes in, bytes out.
+- **colibri owns no I/O.** Its own first non-negotiable, read on 2026-09-20: "colibri owns no
+  I/O. No socket, no file descriptor, no `poll`, no thread." `0006-stompy-lineage.md` states the
+  same fact more briefly. colibri is an **HTTP/2 and HTTP/3** library, client and server, as a
+  state machine: bytes in, bytes out.
+- **colibri already defines the TLS interface, and chapulin already fills it.** colibri's
+  `src/tls/tls.zig` is "the TLS provider vtable, in both modes", and says "no production
+  implementation is in this tree". The two modes are **record mode, which serves h2**, and **QUIC
+  mode, which serves h3, where RFC 9001 §4 replaces the record layer**. So the shape of the
+  chapulin interface is not this layer's to invent; it exists.
 - **rotor's loop starts no thread and decides no threading.** CLAUDE.md non-negotiable 4 and
   `0004-threading.md`. rotor offers one loop per thread and a way to post between loops; it never
   places a thread or opens a connection on its own.
@@ -39,15 +45,25 @@ word may be the better one.
 
 ### What it owns
 
-| job | why it lands here and nowhere else |
-|---|---|
-| Owns a rotor `Loop` and ticks it | rotor decides no threading, so a consumer decides it |
-| Drives chapulin as a buffer-in, buffer-out state machine | chapulin does the crypto; something must carry its bytes to a socket |
-| Holds the bytes of a TLS record that arrived in pieces | see "What it needs from rotor" below |
-| Resolves names | resolution is I/O, and colibri owns none |
-| Races A and AAAA, and races connects (RFC 8305) | connection sequencing is I/O |
-| Holds the connection pool | pooling is I/O, and it is what collapses lookup volume |
-| Holds decision 16's test of chapulin's server role | it is the only thing that can start a chapulin server under a loop |
+**It has two halves, because colibri speaks two protocols.** h2 runs over TLS over TCP, and h3
+runs over QUIC, where the handshake is bound into the transport rather than wrapped around a byte
+stream. colibri's TLS vtable already names these as record mode and QUIC mode, and they are not
+variations of one job.
+
+| job | half | why it lands here and nowhere else |
+|---|---|---|
+| Owns a rotor `Loop` and ticks it | both | rotor decides no threading, so a consumer decides it |
+| Carries bytes between a socket and colibri's record-mode TLS provider | h2 | chapulin does the crypto; something must move the bytes |
+| Holds the bytes of a TLS record that arrived in pieces | h2 | see "What it needs from rotor" below |
+| Owns a QUIC endpoint: datagrams, packet pacing, loss detection, connection migration | h3 | all of it is I/O, and `quic` may not import HTTP in colibri either |
+| Resolves names | both | resolution is I/O, and colibri owns none |
+| Races A and AAAA, and races connects (RFC 8305) | both | connection sequencing is I/O |
+| Holds the connection pool | h2 | pooling is I/O, and it is what collapses lookup volume |
+| Holds decision 16's test of chapulin's server role | both | it is the only thing that can start a chapulin server under a loop |
+
+The h3 half is much the larger, and it is the reason `0015-datagrams.md` exists. A reader who
+takes "the transport" to mean a TLS wrapper around a socket has the h2 half and none of the h3
+one.
 
 ### What it does not own
 
@@ -160,21 +176,17 @@ it describes (CLAUDE.md).
 
 ## Open questions
 
-1. **Is chapulin's C ABI buffer-in, buffer-out, or socket-shaped?**
-   `0016-c-abi-for-c-consumers.md` says chapulin exports between nine and sixteen symbols and does
-   not say their shape. If chapulin owns a descriptor and reads it itself, no event loop can drive
-   it, and making it a state machine is chapulin's work and comes first. This decides whether the
-   transport is glue or a rewrite, and reading chapulin's header answers it.
+1. **Is chapulin's C ABI buffer-in, buffer-out, or socket-shaped?** **Answered on 2026-09-20:
+   buffer-shaped, and it cannot be otherwise.** chapulin fills colibri's TLS provider vtable, and
+   colibri's first non-negotiable forbids it a socket or a file descriptor, so nothing chapulin is
+   handed through that vtable can be an fd. colibri links it by `-Dchapulin-client=<checkout>` and
+   `-Dchapulin-server=<checkout>`. The transport is glue and not a rewrite.
 2. **Which tree owns it?** Its own, or a binary in colibri's tree that is not colibri the library.
-3. **Does colibri speak HTTP/3?** `0015-datagrams.md` names "colibri's QUIC transport and
-   chapulin's" as the two consumers that justified datagrams, and leans on there being two: "a
-   surface with two consumers is settled by what both need and not by what one happens to do
-   first." The owner said on 2026-09-20 that colibri is an HTTP client and server.
-   `0002-scope.md` does not contradict that: it named no consumer at all, and said the need
-   "arrives with whoever embeds colibri". So the question is 0015's alone. If colibri is HTTP/1.1
-   and HTTP/2, this layer is TCP and TLS and carries no QUIC, and 0015's second consumer is not
-   colibri. If colibri speaks HTTP/3, the layer is different in kind, because QUIC binds the
-   handshake into the transport and chapulin would not sit on a byte stream at all.
+3. **Does colibri speak HTTP/3?** **Answered on 2026-09-20: yes.** colibri's own CLAUDE.md calls
+   it "an HTTP/2 and HTTP/3 library — client and server", and its modules include `quic`, `h3`
+   and `qpack`. So `0015-datagrams.md`'s two-consumer argument stands as written, and this layer
+   has the two halves the table above gives it. An earlier reading of this record had colibri at
+   HTTP/1.1 and HTTP/2 and doubted 0015 on that basis; the doubt was wrong and is withdrawn.
 4. **Is colibri's client hostname set bounded or unbounded?** A bounded set behind a pool makes
    `getaddrinfo` on one worker enough: the cache hits after warm-up and the worker goes cold. An
    unbounded set makes that worker the ceiling, and a nameserver that hangs blocks the queue behind
@@ -183,7 +195,9 @@ it describes (CLAUDE.md).
    `nsswitch.conf`, macOS split-horizon DNS, `.local`, `ndots` and source-port randomization are
    each a way to resolve differently from the rest of the machine. Whichever it is, the answer
    reaches the loop by one of the three routes named in "The gap" above.
-5. **Should `Remote` be built, or should decision 4 drop it?** It is described and absent. Either
-   answer is fine; the two records disagreeing with the code is not.
+5. **Should `Remote` be built, or should decision 4 drop it?** **Answered on 2026-09-20: built.**
+   `0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes
+   on a thread that owns no loop. That also settles the resolver route in question 4: a
+   `getaddrinfo` worker uses the same door.
 6. **What does a TLS handshake cost rotor's buffer group?** The measurement named above. It is the
    one number that could send a requirement back to rotor.

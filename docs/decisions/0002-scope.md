@@ -75,6 +75,13 @@ consumer builds, tests and debugs on a Mac with real sockets and real files. The
 on macOS and records its numbers, and no file-workload number from macOS is published as a
 claim. Socket and timer numbers from macOS are reported as what they are: kqueue on a laptop.
 
+**Amended on 2026-09-20 by `0018-a-caller-supplied-thread-pool.md`.** The three choices above are
+four. The fourth is a thread pool the **caller** supplies, which libxev takes and which this
+record did not weigh: the loop still starts no thread, and the consumer decides. Choice 1 stays
+available and stops being the default, because a measured 2.8 ms stall that nothing reports is
+worse than a refusal. The consequence above holds, with "unless the consumer supplies threads"
+added to it.
+
 ### Minimum kernel
 
 Linux 6.1. The io_uring features version one depends on, with the kernel each arrived in, as

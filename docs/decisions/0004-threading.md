@@ -205,6 +205,12 @@ loop uses a `Remote`, a handle registered at init that counts against `loops_max
 is the producer end of a ring pair, and on io_uring it is a small ring created for that thread,
 used only to submit `MSG_RING`.
 
+**`Remote` is described here and exists in no file under `src/`**, found on 2026-09-20 and
+recorded by `0017-the-layer-that-owns-the-loop.md`. Until it is built, a thread that owns no loop
+cannot post at all: `submit` calls `assert_owner`, which halts rather than returning an error.
+`0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes on
+exactly such a thread, and that record rules that it is built.
+
 Everything else is the owner's alone. What the loop does when another thread calls it:
 
 - The loop holds a thread-local variable that `init` sets to the loop's address. Every public
