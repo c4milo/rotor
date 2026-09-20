@@ -172,8 +172,16 @@ fn close_all() void {
     }
 }
 
+/// How long after the deadline a span waits for the operations still in flight before it calls
+/// the server stalled. A round trip that has not come back in this long is not a slow one.
+const stall_grace_ns = 5 * core.constants.ns_per_s;
+
 /// Runs for `seconds` and returns the span it actually measured. Every connection starts a round
 /// trip at the top and keeps one in flight until the deadline passes.
+///
+/// A span that reaches its deadline with operations still in flight ends anyway and fails: a
+/// candidate that stops answering must not hang the harness, and must never be reported as a
+/// number. `cancel_all` and `drain` then leave the loop empty, as decision 5, rule 7 requires.
 fn run_span(client: *Client, seconds: u64) !u64 {
     const started_ns = now_ns();
     client.deadline_ns = started_ns + seconds * core.constants.ns_per_s;
@@ -183,13 +191,20 @@ fn run_span(client: *Client, seconds: u64) !u64 {
 
     var events: [events_max]Event = undefined;
     var in_flight = client.options.connections;
-    while (in_flight != 0) {
+    const stall_ns = client.deadline_ns + stall_grace_ns;
+    while (in_flight != 0 and now_ns() < stall_ns) {
         const count = try client.loop.tick(&events, core.constants.ns_per_ms);
         for (events[0..count]) |event| {
             if (!handle(client, event)) in_flight -= 1;
         }
     }
-    return now_ns() - started_ns;
+    const span_ns = now_ns() - started_ns;
+    if (in_flight != 0) {
+        client.loop.cancel_all();
+        try client.loop.drain(&events);
+        return error.CandidateStalled;
+    }
+    return span_ns;
 }
 
 /// Sends the payload. The round trip's clock starts here.

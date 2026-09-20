@@ -94,6 +94,22 @@ Open for the harness:
   thread pool, and the io_uring ring that `UV_LOOP_USE_IO_URING_SQPOLL` plus `UV_USE_IO_URING=1`
   turn on.
 
+## An open question about libuv_echo, to settle before any comparison is published
+
+`libuv_echo` gives each connection one buffer and calls `uv_read_stop` while the echo write is
+using it, then `uv_read_start` again when the write ends. That avoids an allocation per message,
+which libuv's own `test/echo-server.c` does not: it calls `malloc` in `alloc_cb` and frees after
+the write.
+
+What is not settled is whether the stop and start are free. libuv batches its watcher changes, so
+a stop and a start inside one loop iteration may cancel out and cost nothing, or may cost an
+`epoll_ctl` per message. If they cost, this file handicaps libuv and every row it appears in is
+wrong in rotor's favour.
+
+The alternative shape is two buffers per connection, read into one while writing the other, which
+never stops reading and never allocates. Measure both before publishing a comparison, and keep
+the faster one. Until that is done, no libuv row of the echo workload is evidence.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.

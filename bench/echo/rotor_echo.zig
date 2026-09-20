@@ -108,6 +108,15 @@ pub fn main(init: std.process.Init) !void {
         .kind = .{ .accept = .{ .listener = listener, .multishot = true } },
     }}, &.{});
 
+    // The harness waits for this line before it connects, as it does for the competitors'.
+    var out_buffer: [128]u8 = undefined;
+    var out = std.Io.File.stdout().writer(init.io, &out_buffer);
+    try out.interface.print("rotor_echo: rotor {s} listening on 127.0.0.1:{d}\n", .{
+        @tagName(builtin.os.tag),
+        port,
+    });
+    try out.interface.flush();
+
     var events: [events_max]Event = undefined;
     while (true) {
         const count = try loop.tick(&events, core.constants.ns_per_s);

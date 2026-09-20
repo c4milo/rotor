@@ -3,135 +3,165 @@
  * Run:  libuv_echo PORT        Stop it with SIGTERM or SIGINT.
  *
  * It is written the way that is fastest for libuv, so that no result of the harness comes from
- * this file. One read buffer serves every connection, so there is no malloc per read. A read is
- * echoed with uv_try_write, which is one write(2) and queues nothing. Only when the socket's send
- * buffer is full does the rest go through uv_write, in a copy, and the connection then reads
- * nothing more until that write ends, which bounds the copy to one read per connection.
+ * this file:
  *
- * Built by `zig build bench-competitors` against the libuv pinned in build.zig.zon.
- */
+ * - One allocation per connection, made at accept, holding the handle, the write request and the
+ *   read buffer together. Nothing is allocated per read or per write.
+ * - `alloc_cb` hands back that connection's own buffer, which is what libuv's API asks for and
+ *   what its own benchmarks do. libuv calls `malloc` itself only for a write of more than four
+ *   buffers, and an echo writes one.
+ * - `uv_try_write` is not used. It would win a syscall on the common case, and libuv's own echo
+ *   server does not use it either; using it here would measure a program no libuv user writes.
+ *
+ * So a connection costs one read callback and one write per message, which is the shape row 2 of
+ * the table in docs/decisions/0003-speed-sources.md records: libuv does not have multishot reads,
+ * and a buffer belongs to a connection for as long as it is open.
+ *
+ * The listening line on standard output is the same one libxev_echo prints, because the harness
+ * waits for it before it connects. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <uv.h>
 
-/* The read size libuv itself suggests to the allocation callback (src/unix/stream.c:1049). */
-#define ECHO_READ_BYTES (64 * 1024)
-/* The backlog passed to listen(2). */
-#define ECHO_BACKLOG 1024
-/* The largest TCP port. */
-#define ECHO_PORT_MAX 65535
+/* The read buffer of one connection. libuv gives a read its buffer through `alloc_cb`, so the
+ * buffer belongs to the connection for as long as it is open, and this is what that costs.
+ * rotor's provided-buffer group is the thing this number is compared against. */
+#define CONNECTION_BUFFER_BYTES (64 * 1024)
 
-/* The part of a read that uv_try_write could not send: the request, then a copy of the bytes. */
+#define LISTEN_BACKLOG 1024
+
+/* One connection: the handle, the one write request it reuses, and its buffer. One allocation. */
 typedef struct {
-  uv_write_t request;
-  char bytes[];
-} pending_write_t;
+    uv_tcp_t handle;
+    uv_write_t write;
+    /* The bytes the write in flight is sending, which is a slice of `buffer`. */
+    uv_buf_t writing;
+    char buffer[CONNECTION_BUFFER_BYTES];
+} connection_t;
 
-/* Safe to share: libuv calls on_read for a read before it asks for the next buffer. */
-static char read_buffer[ECHO_READ_BYTES];
-
-static void fail(const char *what, int status) {
-  fprintf(stderr, "libuv_echo: %s: %s\n", what, uv_strerror(status));
-  exit(EXIT_FAILURE);
+static void on_close(uv_handle_t *handle)
+{
+    free(handle->data);
 }
 
-static void on_close(uv_handle_t *handle) {
-  free(handle);
+static void close_connection(connection_t *connection)
+{
+    uv_handle_t *handle = (uv_handle_t *)&connection->handle;
+    if (uv_is_closing(handle)) {
+        return;
+    }
+    handle->data = connection;
+    uv_close(handle, on_close);
 }
 
-/* uv_close aborts on a handle that is already closing, so every close goes through here. */
-static void close_connection(uv_stream_t *stream) {
-  if (!uv_is_closing((uv_handle_t *)stream)) uv_close((uv_handle_t *)stream, on_close);
+/* libuv asks the caller for a buffer before every read. The connection owns one and hands back
+ * the whole of it: the read is the only operation in flight on it. */
+static void on_alloc(uv_handle_t *handle, size_t suggested, uv_buf_t *buffer)
+{
+    connection_t *connection = (connection_t *)handle;
+    (void)suggested;
+    buffer->base = connection->buffer;
+    buffer->len = sizeof(connection->buffer);
 }
 
-static void on_alloc(uv_handle_t *handle, size_t suggested_bytes, uv_buf_t *buffer) {
-  (void)handle;
-  (void)suggested_bytes;
-  *buffer = uv_buf_init(read_buffer, sizeof(read_buffer));
+static void on_read(uv_stream_t *stream, ssize_t count, const uv_buf_t *buffer);
+
+static void on_write(uv_write_t *request, int status)
+{
+    connection_t *connection = (connection_t *)request->handle;
+    if (status < 0) {
+        close_connection(connection);
+        return;
+    }
+    /* The buffer is free again, so the next read may use it. */
+    uv_read_start((uv_stream_t *)&connection->handle, on_alloc, on_read);
 }
 
-static void on_read(uv_stream_t *stream, ssize_t read_bytes, const uv_buf_t *buffer);
-
-/* The queued rest of a read was sent, or failed: release the copy and read again. */
-static void on_write(uv_write_t *request, int status) {
-  uv_stream_t *stream = request->handle;
-  free(request); /* pending_write_t starts with the request, so this frees the whole copy. */
-  if (status < 0 || uv_read_start(stream, on_alloc, on_read) < 0) close_connection(stream);
+static void on_read(uv_stream_t *stream, ssize_t count, const uv_buf_t *buffer)
+{
+    connection_t *connection = (connection_t *)stream;
+    (void)buffer;
+    if (count < 0) {
+        close_connection(connection);
+        return;
+    }
+    if (count == 0) {
+        return;
+    }
+    /* The buffer holds the bytes that must go back out, so reading stops until the write is
+     * done with it. This is the cost rotor's provided buffers remove: libuv cannot read again
+     * into a buffer it is still sending from. */
+    uv_read_stop(stream);
+    connection->writing = uv_buf_init(connection->buffer, (unsigned int)count);
+    int failed = uv_write(&connection->write, stream, &connection->writing, 1, on_write);
+    if (failed) {
+        close_connection(connection);
+    }
 }
 
-/* The slow path: copy what uv_try_write left, queue it, and stop reading until it is sent. */
-static void queue_rest(uv_stream_t *stream, const char *bytes, size_t rest_bytes) {
-  pending_write_t *pending = malloc(sizeof(*pending) + rest_bytes);
-  if (pending == NULL) {
-    close_connection(stream);
-    return;
-  }
-  memcpy(pending->bytes, bytes, rest_bytes);
-  uv_buf_t rest = uv_buf_init(pending->bytes, (unsigned int)rest_bytes);
-  if (uv_read_stop(stream) < 0 || uv_write(&pending->request, stream, &rest, 1, on_write) < 0) {
-    free(pending);
-    close_connection(stream);
-  }
+static void on_connection(uv_stream_t *listener, int status)
+{
+    if (status < 0) {
+        return;
+    }
+    connection_t *connection = malloc(sizeof(*connection));
+    if (connection == NULL) {
+        return;
+    }
+    if (uv_tcp_init(listener->loop, &connection->handle)) {
+        free(connection);
+        return;
+    }
+    if (uv_accept(listener, (uv_stream_t *)&connection->handle)) {
+        close_connection(connection);
+        return;
+    }
+    uv_tcp_nodelay(&connection->handle, 1);
+    uv_read_start((uv_stream_t *)&connection->handle, on_alloc, on_read);
 }
 
-static void on_read(uv_stream_t *stream, ssize_t read_bytes, const uv_buf_t *buffer) {
-  if (read_bytes == 0) return; /* EAGAIN: libuv reports it as a read of nothing. */
-  if (read_bytes < 0) {        /* UV_EOF, or an error: either way the connection is over. */
-    close_connection(stream);
-    return;
-  }
-  uv_buf_t echo = uv_buf_init(buffer->base, (unsigned int)read_bytes);
-  int written_bytes = uv_try_write(stream, &echo, 1);
-  if (written_bytes == UV_EAGAIN) written_bytes = 0;
-  if (written_bytes < 0) {
-    close_connection(stream);
-    return;
-  }
-  if (written_bytes < read_bytes) {
-    queue_rest(stream, buffer->base + written_bytes, (size_t)(read_bytes - written_bytes));
-  }
+/* The port named by `text`, or 0 when it is missing, not a number, or out of range. */
+static unsigned short parse_port(const char *text)
+{
+    if (text == NULL) {
+        return 0;
+    }
+    char *end = NULL;
+    long value = strtol(text, &end, 10);
+    if (end == text || *end != '\0' || value <= 0 || value > 65535) {
+        return 0;
+    }
+    return (unsigned short)value;
 }
 
-static void on_connection(uv_stream_t *server, int status) {
-  if (status < 0) fail("accept", status);
-  uv_tcp_t *connection = malloc(sizeof(*connection));
-  if (connection == NULL) fail("malloc", UV_ENOMEM);
-  status = uv_tcp_init(server->loop, connection);
-  if (status < 0) fail("uv_tcp_init", status);
-  uv_stream_t *stream = (uv_stream_t *)connection;
-  /* TCP_NODELAY, as every candidate of the comparison sets it: an echo must not wait for Nagle. */
-  if (uv_accept(server, stream) < 0 || uv_tcp_nodelay(connection, 1) < 0 ||
-      uv_read_start(stream, on_alloc, on_read) < 0) {
-    close_connection(stream);
-  }
-}
+int main(int argc, char **argv)
+{
+    unsigned short port = parse_port(argc > 1 ? argv[1] : NULL);
+    if (port == 0) {
+        fprintf(stderr, "usage: libuv_echo PORT\n");
+        return 1;
+    }
 
-int main(int argc, char **argv) {
-  char *end = NULL;
-  long port = argc == 2 ? strtol(argv[1], &end, 10) : 0;
-  if (argc != 2 || *end != '\0' || port < 1 || port > ECHO_PORT_MAX) {
-    fprintf(stderr, "usage: libuv_echo PORT\n");
-    return EXIT_FAILURE;
-  }
+    uv_loop_t *loop = uv_default_loop();
+    uv_tcp_t listener;
+    if (uv_tcp_init(loop, &listener)) {
+        return 1;
+    }
+    struct sockaddr_in address;
+    if (uv_ip4_addr("127.0.0.1", port, &address)) {
+        return 1;
+    }
+    if (uv_tcp_bind(&listener, (const struct sockaddr *)&address, 0)) {
+        return 1;
+    }
+    if (uv_listen((uv_stream_t *)&listener, LISTEN_BACKLOG, on_connection)) {
+        return 1;
+    }
 
-  uv_loop_t *loop = uv_default_loop();
-  uv_tcp_t server;
-  struct sockaddr_in address;
-  int status = uv_tcp_init(loop, &server);
-  if (status < 0) fail("uv_tcp_init", status);
-  status = uv_ip4_addr("127.0.0.1", (int)port, &address);
-  if (status < 0) fail("uv_ip4_addr", status);
-  status = uv_tcp_bind(&server, (const struct sockaddr *)&address, 0);
-  if (status < 0) fail("uv_tcp_bind", status);
-  status = uv_listen((uv_stream_t *)&server, ECHO_BACKLOG, on_connection);
-  if (status < 0) fail("uv_listen", status);
+    /* The harness waits for this line before it connects. */
+    printf("libuv_echo: libuv %s listening on 127.0.0.1:%u\n", uv_version_string(), port);
+    fflush(stdout);
 
-  /* The harness waits for this line before it connects. */
-  if (printf("libuv_echo: libuv %s listening on 127.0.0.1:%ld\n", uv_version_string(), port) < 0 ||
-      fflush(stdout) != 0) {
-    return EXIT_FAILURE;
-  }
-  /* uv_run returns nonzero when it stops with handles still active, which nothing here asks for. */
-  return uv_run(loop, UV_RUN_DEFAULT) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return uv_run(loop, UV_RUN_DEFAULT);
 }
