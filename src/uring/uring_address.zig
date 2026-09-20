@@ -75,6 +75,27 @@ pub fn from_kernel(storage: *const Storage, len: linux.socklen_t) ?Address {
     }
 }
 
+/// The four octets of an IPv4 address as the kernel's `in_addr` holds them: network byte order
+/// in both, so they move as they are. A control message carries a bare address with no port
+/// (decision 15), which neither `to_kernel` nor `from_kernel` can express.
+pub fn ipv4_bits(address: *const Address) u32 {
+    assert(address.family == .ipv4);
+    return @bitCast(address.bytes[0..Address.ipv4_bytes].*);
+}
+
+/// The `core.Address` those four octets name, with `port`.
+pub fn ipv4_of(bits: u32, port: u16) Address {
+    const octets: [Address.ipv4_bytes]u8 = @bitCast(bits);
+    return Address.ipv4(octets, port);
+}
+
+test "an IPv4 address round-trips through the bare form a control message carries" {
+    const address = Address.ipv4(.{ 198, 51, 100, 9 }, 443);
+    const back = ipv4_of(ipv4_bits(&address), 0);
+    try std.testing.expectEqualSlices(u8, &address.bytes, &back.bytes);
+    try std.testing.expectEqual(@as(u16, 0), back.port);
+}
+
 comptime {
     // `Storage` has the size of the larger structure and the alignment both need, 4 bytes.
     assert(@sizeOf(Storage) == @sizeOf(linux.sockaddr.in6));

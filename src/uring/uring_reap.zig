@@ -68,7 +68,10 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     assert(slot.state == .submitted);
     const event: Event = .{
         .user_data = slot.user_data,
-        .result = cqe.res,
+        // A datagram's completion counts the prefix in front of it too, so the result the caller
+        // sees is the count less a constant the group fixed (decision 15). The probe measured
+        // that `cqe.res` less the prefix is exactly the payload length.
+        .result = if (slot.code == .receive_from) cqe.res - loop.datagram_prefix else cqe.res,
         .flags = @bitCast(cqe.flags & flags_passed),
     };
     if (!event.flags.more) loop.tables.finish(handle.index, slot);

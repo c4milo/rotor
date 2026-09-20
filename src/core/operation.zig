@@ -7,6 +7,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
+const datagram = @import("datagram.zig");
 
 /// An open file, socket or listener. An integer, so a consumer's deterministic twin of the
 /// surface can hand out indices.
@@ -78,6 +79,8 @@ pub const Operation = struct {
         timer,
         post,
         nop,
+        receive_from,
+        send_to,
     };
 
     pub const Kind = union(Code) {
@@ -93,6 +96,8 @@ pub const Operation = struct {
         timer: Timer,
         post: Post,
         nop: void,
+        receive_from: ReceiveFrom,
+        send_to: SendTo,
     };
 
     /// Result: the accepted socket. With `multishot`, one event flagged `more` per connection
@@ -150,6 +155,25 @@ pub const Operation = struct {
     /// Result: 0 once the message is in the target's mailbox, or `mailbox_full`.
     pub const Post = struct { target: LoopId, message: Message };
 
+    /// One datagram, into a buffer whose front holds what it carried (decision 15). Result: the
+    /// datagram's own bytes, and 0 for a datagram that carries none. A datagram socket does not
+    /// close, so 0 here is not the end of a stream as it is for `receive`.
+    ///
+    /// With `multishot`, one event per datagram, each naming its own buffer of the group, until
+    /// the operation is cancelled or fails. `loop.datagram` is the only supported reader of the
+    /// buffer: the bytes do not start at its front.
+    pub const ReceiveFrom = struct { socket: Descriptor, target: Target, multishot: bool = false };
+
+    /// One datagram out. Result: the bytes sent, which is every byte of `buffer` or none — a
+    /// datagram send is not short. `to` says where it goes, what address to send it from, what
+    /// codepoint to mark it with, and whether to cut it into segments; it belongs to the loop
+    /// until the final event (decision 5, rule 3), as `Connect.address` does.
+    pub const SendTo = struct {
+        socket: Descriptor,
+        buffer: ConstBuffer,
+        to: *const datagram.Outbound,
+    };
+
     /// Bytes the kernel writes. `registered` names the registered buffer that contains `bytes`.
     pub const Buffer = struct { bytes: []u8, registered: ?u16 = null };
 
@@ -172,6 +196,8 @@ pub const Operation = struct {
             .read => |read| read.file,
             .write => |write| write.file,
             .fdatasync => |fdatasync| fdatasync.file,
+            .receive_from => |receive| receive.socket,
+            .send_to => |send| send.socket,
             .timer, .post, .nop => null,
         };
     }
@@ -217,6 +243,8 @@ pub const Operation = struct {
                 assert(post.target < constants.loops_max);
                 assert(post.message.tag <= constants.message_tag_max);
             },
+            .receive_from => |receive| assert_receive_from(receive),
+            .send_to => |send| assert_send_to(send),
         }
     }
 
@@ -240,6 +268,34 @@ pub const Operation = struct {
     /// word of it. A caller that wants a registered buffer wants it on a file.
     fn assert_socket_buffer(registered: ?u16) void {
         assert(registered == null);
+    }
+
+    /// A datagram receive takes the same targets a stream receive does, and the same rule that
+    /// only a group may be multishot. Its buffer holds the prefix in front of the datagram, so a
+    /// buffer that cannot hold one byte past the prefix is a caller's mistake.
+    fn assert_receive_from(receive: ReceiveFrom) void {
+        assert(receive.socket >= 0);
+        switch (receive.target) {
+            .buffer => |buffer| {
+                assert(!receive.multishot);
+                assert_transfer(receive.socket, buffer.bytes.len);
+                assert_socket_buffer(buffer.registered);
+                assert(buffer.bytes.len > datagram.prefix_bytes(.{}));
+            },
+            .group => |group| assert(group < constants.buffer_groups_max),
+        }
+    }
+
+    /// A datagram send names where it goes. A segment size, when it names one, is smaller than
+    /// the buffer: cutting a buffer into one piece is what 0 already means.
+    fn assert_send_to(send: SendTo) void {
+        assert_transfer(send.socket, send.buffer.bytes.len);
+        assert_socket_buffer(send.buffer.registered);
+        assert(send.to.flags.peer or send.to.flags.local);
+        if (send.to.segment_bytes != 0) {
+            assert(send.to.segment_bytes < send.buffer.bytes.len);
+            assert(send.buffer.bytes.len / send.to.segment_bytes <= constants.segments_max);
+        }
     }
 
     /// A registered buffer on a file transfer names one the loop registered.

@@ -13,6 +13,7 @@ const core = @import("core");
 
 pub const constants = @import("constants.zig");
 pub const address = @import("uring_address.zig");
+pub const datagram_module = @import("uring_datagram.zig");
 pub const buffers = @import("uring_buffers.zig");
 pub const cancel_module = @import("uring_cancel.zig");
 pub const descriptors = @import("uring_descriptors.zig");
@@ -53,6 +54,18 @@ pub const Loop = struct {
     /// reads them while `enter` runs, and `tick` reuses the storage after it.
     addresses: []address.Storage,
     addresses_used: u32,
+    /// One per submission entry, for a `receive_from` or a `send_to`: the kernel reads the
+    /// `msghdr` while `io_uring_enter` runs, so it lives exactly as long as `addresses` does
+    /// and is reused the same way (decision 15).
+    messages: []datagram_module.Message,
+    messages_used: u32,
+    /// The reserve every datagram group of this loop uses, set by `provide_datagram_buffers`.
+    /// One loop serves one shape, so the prefix a reap subtracts is a constant it already holds
+    /// rather than a lookup per completion (decision 15).
+    datagram_group: core.datagram.GroupOptions,
+    /// `core.datagram.prefix_bytes(datagram_group)`, held here because the reap subtracts it from
+    /// every datagram completion and must not recompute it per event.
+    datagram_prefix: i32,
     registry: ?*Registry,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
@@ -82,6 +95,7 @@ pub const Loop = struct {
         _ = layout.add(u64, options.operations);
         _ = layout.add(Handle, HandleQueue.capacity_for(options.operations));
         _ = layout.add(address.Storage, options.entries);
+        _ = layout.add(datagram_module.Message, options.entries);
         return layout.bytes;
     }
 
@@ -114,6 +128,7 @@ pub const Loop = struct {
         const starts = layout.take(memory, u64, options.operations);
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
         loop.addresses = layout.take(memory, address.Storage, options.entries);
+        loop.messages = layout.take(memory, datagram_module.Message, options.entries);
         assert(layout.bytes == memory_bytes(options));
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
@@ -121,6 +136,9 @@ pub const Loop = struct {
         });
         loop.cancels.init(handles);
         loop.addresses_used = 0;
+        loop.messages_used = 0;
+        loop.datagram_group = .{};
+        loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
         loop.registry = options.registry;
         loop.groups = @splat(buffers.Group.none);
         loop.buffers_registered = false;

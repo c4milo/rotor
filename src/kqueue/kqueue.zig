@@ -66,6 +66,9 @@ pub const Loop = struct {
     /// True while the registry says this loop sleeps, so `wake_up` ends it once.
     sleeping: bool,
     /// The provided-buffer groups `provide_buffers` named, by group id.
+    /// The reserve every datagram group of this loop uses (decision 15). One loop serves one
+    /// shape, so a receive knows where a datagram starts without a lookup per completion.
+    datagram_group: core.datagram.GroupOptions,
     groups: [core.constants.buffer_groups_max]buffers.Group,
     buffers_registered: bool,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
@@ -131,6 +134,7 @@ pub const Loop = struct {
         loop.registry = options.registry;
         loop.sleeping = false;
         loop.groups = @splat(buffers.Group.none);
+        loop.datagram_group = .{};
         loop.buffers_registered = false;
     }
 

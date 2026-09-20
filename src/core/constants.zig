@@ -109,3 +109,8 @@ test "the hot structure sizes are one cache line and one completion entry" {
     try std.testing.expectEqual(64, slot_bytes);
     try std.testing.expectEqual(16, event_bytes);
 }
+
+/// Datagrams one segmented send may be cut into (decision 15). A QUIC stack sends a burst and
+/// not a stream, and a kernel that refuses a larger count answers EINVAL after the loop has
+/// already claimed a slot, so the limit is rotor's and is checked before the kernel sees it.
+pub const segments_max: u32 = 64;

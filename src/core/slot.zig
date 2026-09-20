@@ -31,7 +31,8 @@ pub const Slot = extern struct {
     /// message's payload. For a repeating `timer`, the deadline it last fired for, which the
     /// next one is measured from (decision 14).
     buffer: u64,
-    /// The file offset of a `read` or a `write`. For a `timer`, its delay in nanoseconds.
+    /// The file offset of a `read` or a `write`. For a `timer`, its delay in nanoseconds. For a
+    /// `send_to`, the address of its `datagram.Outbound`.
     offset: u64,
     /// The operation's deadline in nanoseconds from its submitting tick, or 0. For a `timer`,
     /// which may carry no deadline, the period of a repeating one, or 0 (decision 14).
@@ -148,6 +149,21 @@ pub const Slot = extern struct {
                 // `multishot` is what every path already reads to know an operation repeats.
                 slot.timeout_ns = timer.repeat_ns;
                 slot.flags.multishot = timer.repeat_ns != 0;
+            },
+            .receive_from => |receive| {
+                // A datagram receive is a receive: the same targets, the same flags. Only the
+                // code differs, and the backend reads that.
+                slot.fill_receive(.{
+                    .socket = receive.socket,
+                    .target = receive.target,
+                    .multishot = receive.multishot,
+                });
+            },
+            .send_to => |send| {
+                slot.fill_transfer(send.socket, send.buffer.bytes, send.buffer.registered);
+                // `offset` is free on a socket operation, so the outbound block rides there and
+                // the slot stays 64 bytes (decision 15).
+                slot.offset = @intFromPtr(send.to);
             },
             .nop => slot.descriptor = 0,
             .post => |post| {

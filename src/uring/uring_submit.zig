@@ -11,6 +11,7 @@ const core = @import("core");
 const constants = @import("constants.zig");
 const address_module = @import("uring_address.zig");
 const uring = @import("uring.zig");
+const datagram = @import("uring_datagram.zig");
 
 const Loop = uring.Loop;
 const Slot = core.Slot;
@@ -24,6 +25,11 @@ pub const Extra = struct {
     address_len: u32 = 0,
     /// For `post`: the target loop's ring.
     target_ring: core.Descriptor = -1,
+    /// For `receive_from` and `send_to`: the scratch that holds the `msghdr` the kernel reads
+    /// while `io_uring_enter` runs, and the control block a send attaches (decision 15).
+    message: ?*datagram.Message = null,
+    /// The group's reserve, which fixes where a received datagram's bytes start.
+    group: core.datagram.GroupOptions = .{},
 };
 
 /// Hands queued slots to the kernel, oldest first, until the submission ring is full. A timer
@@ -59,6 +65,7 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
     var extra: Extra = .{};
     switch (slot.code) {
         .connect => extra = connect_extra(loop, slot),
+        .receive_from, .send_to => extra = datagram_extra(loop),
         .post => {
             extra.target_ring = loop.registry_descriptor(slot);
             if (extra.target_ring < 0) {
@@ -81,6 +88,14 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
 /// A `close` takes two entries: the cancel of everything in flight for its descriptor, and the
 /// close itself, hard-linked so the close runs whatever the cancel found (decision 5, rule 6).
 const entries_per_close: u32 = 2;
+
+/// One message scratch per entry, reused each tick as `connect_extra`'s storage is.
+fn datagram_extra(loop: *Loop) Extra {
+    assert(loop.messages_used < loop.messages.len);
+    const message = &loop.messages[loop.messages_used];
+    loop.messages_used += 1;
+    return .{ .message = message, .group = loop.datagram_group };
+}
 
 fn connect_extra(loop: *Loop, slot: *const Slot) Extra {
     assert(loop.addresses_used < loop.addresses.len);
@@ -132,6 +147,12 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             sqe.off = slot.buffer;
         },
         .nop => sqe.opcode = .NOP,
+        .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
+        .send_to => {
+            const out: *const core.datagram.Outbound = @ptrFromInt(slot.offset);
+            // `assert_send_to` bounds what a caller may ask for, so the control block fits.
+            assert(datagram.prepare_send(sqe, extra.message.?, slot, out));
+        },
         .timer => unreachable,
     }
     if (slot.flags.descriptor_registered) {

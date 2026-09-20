@@ -10,6 +10,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const posix = std.posix;
 const core = @import("core");
+const datagram = @import("kqueue_datagram.zig");
 const constants = @import("constants.zig");
 const address_module = @import("kqueue_address.zig");
 const buffers_module = @import("kqueue_buffers.zig");
@@ -70,6 +71,8 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
         .write => attempt_file(slot, .write),
         .fdatasync => attempt_sync(slot),
         .nop => Attempt.done(0),
+        .receive_from => attempt_receive_from(loop, slot),
+        .send_to => attempt_send_to(slot),
         .close, .timer, .post => unreachable,
     };
 }
@@ -169,6 +172,41 @@ fn receive_into(descriptor: core.Descriptor, bytes: []u8) Attempt {
         }
     }
     return Attempt.done(core.event.result_of(.would_block));
+}
+
+/// One datagram in. The buffer holds the head, the address and the control block in front of the
+/// datagram, so the result is the datagram's own bytes and no prefix is subtracted later: the
+/// uring backend gets that layout from the kernel and this one writes it (decision 15).
+fn attempt_receive_from(loop: *Loop, slot: *Slot) Attempt {
+    var buffer_id: ?u16 = null;
+    var bytes: []u8 = undefined;
+    if (slot.flags.buffer_group) {
+        const group = &loop.groups[slot.buffer_index];
+        buffer_id = group.take() orelse {
+            return Attempt.done(core.event.result_of(.buffers_exhausted));
+        };
+        bytes = group.bytes_of(buffer_id.?);
+    } else {
+        bytes = slot.bytes();
+    }
+    const answer = datagram.receive_into(slot.descriptor, bytes, loop.datagram_group);
+    if (answer.would_block) {
+        if (buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
+        return .{ .outcome = .wait_read };
+    }
+    if (answer.result >= 0) {
+        return .{ .outcome = .done, .result = answer.result, .buffer_id = buffer_id };
+    }
+    if (buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
+    return Attempt.done(answer.result);
+}
+
+/// One datagram out. A segmented send is refused here: macOS has no `UDP_SEGMENT`.
+fn attempt_send_to(slot: *const Slot) Attempt {
+    const out: *const core.datagram.Outbound = @ptrFromInt(slot.offset);
+    const answer = datagram.send_from(slot.descriptor, slot.bytes(), out);
+    if (answer.would_block) return .{ .outcome = .wait_write };
+    return Attempt.done(answer.result);
 }
 
 fn attempt_send(slot: *const Slot) Attempt {
