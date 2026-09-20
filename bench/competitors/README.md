@@ -126,6 +126,55 @@ median. A row without a spread cannot be read.
 The question of which shape is faster is open, and answering it needs the same quiet machine
 every other number does.
 
+## The buffer a candidate holds, and the row that measured it instead of the loops
+
+The first full comparison put rotor at less than half of libuv and libxev on the 64 KiB rows,
+28,616 against 60,979 and 61,858, and rotor's row had a spread of 4, so it was not noise. It was
+not the loop either.
+
+`rotor_echo` cuts its pool into 8 KiB buffers, so a 64 KiB message arrived in eight pieces and
+cost eight sends. libuv, libxev and `std_io_echo` each hold one 64 KiB buffer per connection and
+echo a whole message with one write. The comparison was measuring how the candidates were sized.
+
+Sized alike, on the same machine, 16 connections, 64 KiB, four seconds:
+
+| rotor's buffer | operations per second | p50 ns |
+|---|---|---|
+| 8 KiB | 27,488 | 548,863 |
+| 64 KiB | 57,544 | 284,671 |
+
+So `echo_runner` now passes `--buffer-bytes` equal to the payload to any candidate that takes it,
+which is rotor alone: the others have one buffer per connection and nothing to choose. rotor is
+still a little behind on that row with buffers matched, and that is a result and not an artefact.
+
+The general rule this earned: **a comparison must state what each candidate holds per connection,
+and match it where a candidate has the choice.** A pool of small buffers is a real design, and it
+wins where messages are small; it must not be entered against 64 KiB buffers on a 64 KiB workload
+and reported as a loss of the loop.
+
+## An open defect in libxev_echo, and why its rows are not evidence yet
+
+Running the comparison on 2026-09-20 made libxev log, repeatedly:
+
+```text
+error(libxev_kqueue): invalid state in submission queue state=.active
+```
+
+That is libxev's own diagnostic, not the harness's. The likely cause is in this tree and not in
+libxev: `close_from_callback` hands `connection.completion` to `socket.close` from inside a
+callback of that same completion, and libxev still holds it `.active` at that moment. A
+connection holds one completion by design, which is what makes the close have nowhere to go.
+
+Until it is fixed and the log is silent, no libxev row of the echo workload is evidence. The
+likely fix is a second completion per connection, used for the close alone, which costs libxev
+nothing on the message path. Whether the error also loses connections, and so changes the
+numbers, is not known: the runs completed and the client saw no stall, so it may be a complaint
+about a close that the loop then performs anyway.
+
+This is the second candidate written by this project that was wrong in a way a single smoke test
+did not show; the first was `libuv_echo` echoing one message per connection. Both argue the same
+thing: a candidate needs a test that keeps a connection busy, not one that sends a message.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.

@@ -116,6 +116,7 @@ pub fn build(b: *std.Build) void {
     const bench_steps = bench.add(b, target);
     test_step.dependOn(bench_steps.compile);
     test_step.dependOn(bench_steps.harness_tests);
+    test_step.dependOn(bench_steps.echo_smoke);
 
     linux.add(b, optimize);
     race.add(b);

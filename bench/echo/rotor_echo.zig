@@ -43,13 +43,24 @@ const events_max = 1024;
 /// The provided-buffer group the multishot receives draw from.
 const group_id = 0;
 
-/// Buffers in the group: a power of two, and more than one per connection in flight at a time.
-const group_buffers = 8192;
+/// The group's memory, cut into `--buffer-bytes` pieces. Fixed, so a larger buffer means fewer
+/// of them: a provided-buffer pool trades the size of a buffer against how many are free at once.
+const group_bytes = 64 * 1024 * 1024;
 
-/// Bytes per provided buffer. The harness sends 4 KiB and 64 KiB payloads; a buffer this size
-/// takes a 4 KiB message whole and a 64 KiB message in pieces, which an echo does not mind:
-/// every piece is echoed in the order it arrived, so the stream is the same.
-const buffer_bytes = 8192;
+/// The largest and smallest buffer `--buffer-bytes` takes. The largest is the biggest payload
+/// the harness sends, because a buffer that holds a whole message costs one send to echo it.
+const buffer_bytes_max = 64 * 1024;
+/// The smallest is what keeps the count inside `core.constants.buffers_per_group_max`, which is
+/// 32,768: 64 MiB of pool cut into 2 KiB pieces is exactly that many.
+const buffer_bytes_min = 2048;
+
+/// Buffers in the group when every one is `buffer_bytes_min`: the most there can be.
+const group_buffers_max = group_bytes / buffer_bytes_min;
+
+/// Bytes per provided buffer, from `--buffer-bytes`. A message larger than this arrives in
+/// pieces, and each piece is a send, which is what the 64 KiB rows of the comparison measure.
+var buffer_bytes: u32 = 8192;
+var group_buffers: u16 = group_bytes / 8192;
 
 /// The listener's backlog.
 const backlog = 1024;
@@ -87,11 +98,11 @@ var loop_memory: [
 
 const ring_alignment = backend.buffers.ring_alignment;
 
-var group_memory: [group_buffers * buffer_bytes]u8 align(ring_alignment) = undefined;
-var ring_memory: [backend.buffers.ring_bytes(group_buffers)]u8 align(ring_alignment) = undefined;
+var group_memory: [group_bytes]u8 align(ring_alignment) = undefined;
+var ring_memory: [backend.buffers.ring_bytes(group_buffers_max)]u8 align(ring_alignment) = undefined;
 
 pub fn main(init: std.process.Init) !void {
-    const port = try port_of(init);
+    const port = try parse(init);
     var loop: Loop = undefined;
     try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
     defer loop.deinit();
@@ -100,7 +111,9 @@ pub fn main(init: std.process.Init) !void {
     const listener = try sync.listen(&address, .{ .backlog = backlog, .reuse_port = false });
     defer sync.close_now(listener);
 
-    try loop.provide_buffers(group_id, &ring_memory, &group_memory, buffer_bytes);
+    const used = @as(usize, group_buffers) * buffer_bytes;
+    const ring_used = ring_memory[0..backend.buffers.ring_bytes(group_buffers)];
+    try loop.provide_buffers(group_id, @alignCast(ring_used), group_memory[0..used], buffer_bytes);
     open = @splat(false);
 
     _ = loop.submit(&.{.{
@@ -111,10 +124,10 @@ pub fn main(init: std.process.Init) !void {
     // The harness waits for this line before it connects, as it does for the competitors'.
     var out_buffer: [128]u8 = undefined;
     var out = std.Io.File.stdout().writer(init.io, &out_buffer);
-    try out.interface.print("rotor_echo: rotor {s} listening on 127.0.0.1:{d}\n", .{
-        @tagName(builtin.os.tag),
-        port,
-    });
+    try out.interface.print(
+        "rotor_echo: rotor {s}, {d} buffers of {d} bytes, listening on 127.0.0.1:{d}\n",
+        .{ @tagName(builtin.os.tag), group_buffers, buffer_bytes, port },
+    );
     try out.interface.flush();
 
     var events: [events_max]Event = undefined;
@@ -124,10 +137,22 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn port_of(init: std.process.Init) !u16 {
+/// Reads the port and `--buffer-bytes`, which sets how many buffers the group holds.
+fn parse(init: std.process.Init) !u16 {
     const arguments = try init.minimal.args.toSlice(init.arena.allocator());
     if (arguments.len < 2) return error.MissingPort;
-    return std.fmt.parseInt(u16, arguments[1], 10);
+    const port = try std.fmt.parseInt(u16, arguments[1], 10);
+    var index: usize = 2;
+    while (index < arguments.len) : (index += 2) {
+        if (index + 1 >= arguments.len) return error.MissingValue;
+        if (!std.mem.eql(u8, arguments[index], "--buffer-bytes")) return error.UnknownArgument;
+        const wanted = try std.fmt.parseInt(u32, arguments[index + 1], 10);
+        if (wanted < buffer_bytes_min or wanted > buffer_bytes_max) return error.BufferOutOfRange;
+        if (!std.math.isPowerOfTwo(wanted)) return error.BufferNotPowerOfTwo;
+        buffer_bytes = wanted;
+        group_buffers = @intCast(group_bytes / wanted);
+    }
+    return port;
 }
 
 fn handle(loop: *Loop, event: Event) void {
@@ -185,7 +210,8 @@ fn close(loop: *Loop, descriptor: core.Descriptor) void {
 }
 
 comptime {
-    std.debug.assert(std.math.isPowerOfTwo(group_buffers));
-    std.debug.assert(group_buffers <= core.constants.buffers_per_group_max);
+    std.debug.assert(std.math.isPowerOfTwo(group_buffers_max));
+    std.debug.assert(group_buffers_max <= core.constants.buffers_per_group_max);
+    std.debug.assert(group_bytes % buffer_bytes_max == 0);
     std.debug.assert(connections_max < operations);
 }
