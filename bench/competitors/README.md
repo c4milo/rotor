@@ -259,6 +259,36 @@ which costs ephemeral ports the run already budgets for, or several bursts insid
 costs the same ports. The port range is the binding constraint on this workload and the machines
 that can answer it are not the ones this was run on.
 
+## Timer churn, and the one thing libuv cannot be asked for
+
+`rotor_timers` and `libuv_timers` make the same measurement: keep N timers armed, re-arm each as
+it fires, and report fires per second and how late each was against its deadline.
+
+**libuv timers are milliseconds.** `uv_timer_start` takes a whole number of them, so a period
+under 1,000 microseconds cannot be expressed at all and one that is not a whole millisecond is
+rounded down. rotor's timer takes nanoseconds. `libuv_timers` refuses a period it would have to
+round, so a run cannot silently compare a 1,500 microsecond timer against a 1,000 microsecond
+one. That is a difference in what the two can be asked for, before any difference in what they do.
+
+Single runs on the `mac` machine, 1 ms period, two seconds each. **Single runs are not evidence**
+(this file's first section says why), and no `Series` was taken because the runner cannot yet
+drive this workload:
+
+| timers | rotor fires/s | libuv fires/s | rotor p50 late | libuv p50 late | rotor p99 | libuv p99 |
+|---|---|---|---|---|---|---|
+| 256 | 149,234 | 129,902 | 183 µs | 230 µs | 3.4 ms | 6.8 ms |
+| 1,024 | 468,745 | 490,762 | 362 µs | 464 µs | 8.3 ms | 7.1 ms |
+| 4,096 | 1,331,930 | 1,329,443 | 1,034 µs | 1,739 µs | 4.5 ms | 3.0 ms |
+
+Throughput is level: within 15 percent at the smallest load and within 1 percent at the largest.
+The median lateness is rotor's by 20, 22 and 41 percent, in that order, which is the one thing
+consistent across all three. The tail is not rotor's at the two larger loads, and that is the
+kind of mixed result a single run is least able to settle.
+
+What this needs next: the runner drives echo and the storm, and not this, because a timer program
+measures itself and prints a line instead of being driven. Giving the runner that shape is what
+turns these into rows with a spread.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.

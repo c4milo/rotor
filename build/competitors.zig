@@ -123,7 +123,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     ) orelse false;
     const step = b.step(
         "bench-competitors",
-        "Fetch the pinned libuv and libxev; install an echo server and a size probe for each",
+        "Fetch the pinned libuv and libxev; install their echo servers, size probes and timers",
     );
     if (!requested) {
         step.dependOn(add_child_build(b, target));
@@ -140,6 +140,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     // The size probe calls nothing in libuv, so it needs the headers and not the library.
     step.dependOn(programs.add_c("libuv_echo", add_libuv(b, target, libuv)));
     step.dependOn(programs.add_c("libuv_sizes", null));
+    step.dependOn(programs.add_c("libuv_timers", add_libuv(b, target, libuv)));
     step.dependOn(programs.add_zig("libxev_echo"));
     step.dependOn(programs.add_zig("libxev_sizes"));
 }
