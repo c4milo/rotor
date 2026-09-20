@@ -101,6 +101,33 @@ sound, and it is the only one drawn here.
 Neither is a measurement. Both are reasons to take C14, C17 and C19 first when the machine is
 quiet.
 
+## What crossing a core costs, and what waking a thread costs
+
+Read on 2026-09-20 on `orbstack`, with both threads pinned by `sched_setaffinity`. Not in the
+table: a container's numbers describe the container. The ratios are wide enough to act on.
+
+| row | what | ns |
+|---|---|---|
+| C14 | round trip, both ends on one core | 1,458 |
+| C15 | round trip, ends on two cores | 13,334 to 14,813 |
+| C19 | cross-core message, receiver already awake | about 100 |
+| C17 | cross-core message by `MSG_RING`, receiver asleep | about 16,300 |
+
+The first reading of C15, before the probe pinned anything, was 2,209 ns. The probe started two
+threads and let the scheduler place them, and the scheduler put them on one core, so the row
+measured the thing it was written to exclude. Pinning is what made it a measurement.
+
+**The cost is the wake, not the core.** C15 and C17 agree at about 15,000 ns and share one thing:
+each wakes a thread that was asleep. C19 crosses the same boundary with the receiver spinning and
+costs about 100 ns, 150 times less. So a design that moves work between cores pays almost nothing
+for the move and almost everything for the sleep it interrupts.
+
+What that argues, and what no measurement here has tested yet: a loop that stays awake a little
+after its last completion would turn a 15,000 ns handoff into a 100 ns one, for any loop that is
+busy. What it costs is the CPU burnt by a loop that spins and then sleeps anyway. Decision 4
+prices a cross-core message and does not price the sleep, and neither number above is admissible,
+so this is a reason to measure and not yet a reason to build.
+
 ## How the rows are used
 
 A decision record writes its arithmetic over row ids, then over the numbers. For example, the

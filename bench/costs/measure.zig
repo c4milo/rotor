@@ -128,6 +128,10 @@ pub const Placement = enum {
     qos_refused,
     /// No placement was attempted on this OS.
     scheduler_default,
+    /// Linux: the thread was pinned to one core with `sched_setaffinity`, so it stays there.
+    pinned,
+    /// Linux refused the pinning, so the scheduler may move the thread between cores.
+    pin_refused,
 
     pub fn text(placement: Placement) []const u8 {
         return switch (placement) {
@@ -136,6 +140,8 @@ pub const Placement = enum {
             .qos_refused => "thread not pinned, and the user-interactive QoS class was refused",
             .scheduler_default => "thread not pinned: this probe pins nothing on this OS, run it" ++
                 " under taskset",
+            .pinned => "thread pinned to one core with sched_setaffinity",
+            .pin_refused => "thread not pinned: sched_setaffinity was refused",
         };
     }
 };
@@ -151,6 +157,30 @@ pub fn place_current_thread() Placement {
         else => return .scheduler_default,
     }
 }
+
+/// Pins the calling thread to core `cpu`, so a row that says "one core" or "two cores" is about
+/// cores and not about threads the scheduler placed as it liked.
+///
+/// Linux only. macOS on Apple silicon has no hard affinity, so a row that needs pinning cannot
+/// be measured there and says so. A caller that gets anything but `.pinned` must report it: the
+/// two ends may have shared a core, which is the thing the row was separating.
+pub fn pin_current_thread(cpu: usize) Placement {
+    if (builtin.os.tag != .linux) return place_current_thread();
+    const linux = std.os.linux;
+    const bits = @bitSizeOf(usize);
+    var set: linux.cpu_set_t = @splat(0);
+    if (cpu / bits >= set.len) return .pin_refused;
+    set[cpu / bits] |= @as(usize, 1) << @intCast(cpu % bits);
+    linux.sched_setaffinity(0, &set) catch return .pin_refused;
+    return .pinned;
+}
+
+/// The cores a pinned probe uses: 0 for a row that wants one core, and 0 and `second_cpu` for a
+/// row that wants two. They are low numbers because every machine has them; a machine whose
+/// cores 0 and 1 are two threads of one physical core would understate a two-core row, which is
+/// why the report names the machine.
+pub const first_cpu: usize = 0;
+pub const second_cpu: usize = 1;
 
 /// Places the calling thread and spins for `settle_ns`, so the first probe does not start on a
 /// core that is still slow or on the wrong kind of core.

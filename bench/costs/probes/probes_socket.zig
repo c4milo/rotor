@@ -79,19 +79,24 @@ const OneThread = struct {
 };
 
 fn run_one_thread(environment: *Environment) Error!Result {
+    const placement = measure.pin_current_thread(measure.first_cpu);
     const pair = try sys.tcp_pair();
     defer pair.deinit();
     var trip: OneThread = .{ .pair = pair };
     const plan = round_trip_plan;
     const summary = try measure.sample(OneThread, &trip, plan, environment.values[0]);
     if (trip.byte[0] != payload_byte) return error.UnexpectedResult;
+    const note = environment.note(
+        "send, recv, send, recv of 1 byte from the one measuring thread, blocking, TCP_NODELAY;" ++
+            " {s}. One thread is one core at a time whatever the pinning says, but the kernel's" ++
+            " own work runs where the scheduler puts it",
+        .{placement.text()},
+    );
     return .{
         .summary = summary,
         .plan = plan,
         .unit = "round trips",
-        .note = "send, recv, send, recv of 1 byte from the one measuring thread, blocking," ++
-            " TCP_NODELAY; the thread is not pinned and the kernel's own work runs where the" ++
-            " scheduler puts it, so \"one core\" is not enforced",
+        .note = note,
     };
 }
 
@@ -101,9 +106,12 @@ const Echo = struct {
     far: sys.fd_t,
     round_trips: u64,
     failed: std.atomic.Value(bool) = .init(false),
+    /// What `pin_current_thread` answered on the far thread, for the note: a row that says two
+    /// cores must say so when it did not get them.
+    placement: std.atomic.Value(u8) = .init(0),
 
     fn run(echo: *Echo) void {
-        _ = measure.place_current_thread();
+        echo.placement.store(@intFromEnum(measure.pin_current_thread(measure.second_cpu)), .release);
         echo.serve() catch {
             echo.failed.store(true, .release);
             // The measuring thread is blocked in recv: end the stream so it fails too.
@@ -129,6 +137,7 @@ const TwoThreads = struct {
 };
 
 fn run_two_threads(environment: *Environment) Error!Result {
+    const near_placement = measure.pin_current_thread(measure.first_cpu);
     const pair = try sys.tcp_pair();
     defer pair.deinit();
     const plan = round_trip_plan;
@@ -147,13 +156,18 @@ fn run_two_threads(environment: *Environment) Error!Result {
     const summary = try sampled;
     if (echo.failed.load(.acquire)) return error.UnexpectedResult;
     if (trip.byte[0] != payload_byte) return error.UnexpectedResult;
+    const far_placement: measure.Placement = @enumFromInt(echo.placement.load(.acquire));
+    const note = environment.note(
+        "one byte each way between two threads; near thread {s}, far thread {s}. The row means" ++
+            " two cores only when both say pinned: unpinned, the scheduler may have put both" ++
+            " ends on one core, which is what this row is set against C14 to separate",
+        .{ near_placement.text(), far_placement.text() },
+    );
     return .{
         .summary = summary,
         .plan = plan,
         .unit = "round trips",
-        .note = "send then a blocking recv of 1 byte on the measuring thread, the echo on a" ++
-            " second thread, TCP_NODELAY; the two threads could not be pinned to two cores on" ++
-            " this OS, so the scheduler chose where each ran",
+        .note = note,
     };
 }
 
