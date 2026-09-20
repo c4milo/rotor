@@ -37,6 +37,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const multishot = @import("uring_probe_multishot.zig");
 const post = @import("uring_probe_post.zig");
+const datagram = @import("uring_probe_datagram.zig");
 
 pub const linux = std.os.linux;
 pub const IoUring = linux.IoUring;
@@ -276,6 +277,11 @@ fn check_operations(report: *Report) !void {
         }
     }
     try post.check(report, msg_ring_present and flags_present);
+    // Decision 15's checks run last: every one is optional, and a kernel that lacks them all
+    // still runs rotor today.
+    datagram.check(report, &ring) catch |failure| {
+        try report.line("the datagram checks stopped: {t}", .{failure});
+    };
 }
 
 fn check_msg_ring_opcode(report: *Report, ring: *IoUring) !bool {
