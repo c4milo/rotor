@@ -88,6 +88,18 @@ fn add_echo(
     });
     step.dependOn(&b.addInstallArtifact(std_io, .{}).step);
 
+    // The timer churn workload: one program per candidate, each measuring itself, because a
+    // timer has no client to measure it from.
+    const timers = b.createModule(.{
+        .root_source_file = b.path("bench/timers/rotor_timers.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    timers.addImport("core", graph.core);
+    timers.addImport("backend", backend);
+    const timers_program = b.addExecutable(.{ .name = "rotor_timers", .root_module = timers });
+    step.dependOn(&b.addInstallArtifact(timers_program, .{}).step);
+
     const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
     for (programs) |name| {
         const module = b.createModule(.{
