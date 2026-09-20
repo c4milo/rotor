@@ -11,6 +11,8 @@ const constants = @import("constants.zig");
 const uring = @import("uring.zig");
 
 const Loop = uring.Loop;
+const sync_module = uring.sync;
+const buffers_module = uring.buffers;
 const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
@@ -384,4 +386,74 @@ test "a multishot receive names the provided buffer of each event and ends when 
     }
     try testing.expect(ended);
     try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
+}
+
+/// Datagram operations sent, which must exceed the ring's `entries` so that the per-entry
+/// message scratch has to be reused. Three times over is enough to catch a counter that only
+/// rises.
+const datagram_rounds = 3 * 8;
+
+const datagram_group = 0;
+const datagram_buffers = 4;
+const datagram_buffer_bytes = core.datagram.prefix_bytes(.{}) + 64;
+
+test "more datagrams than the ring has entries reuse the message scratch" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(.{ .operations = operations, .entries = 8 });
+    defer fixture.loop.deinit();
+
+    const alignment = buffers_module.ring_alignment;
+    var group_memory: [datagram_buffers * datagram_buffer_bytes]u8 align(alignment) = undefined;
+    var ring_memory: [buffers_module.ring_bytes(datagram_buffers)]u8 align(alignment) = undefined;
+    try fixture.loop.provide_datagram_buffers(
+        datagram_group,
+        &ring_memory,
+        &group_memory,
+        datagram_buffer_bytes,
+        .{},
+    );
+
+    const any_port = core.Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const receiver = try sync_module.open_datagram(.ipv4, &any_port, .{});
+    defer sync_module.close_now(receiver);
+    const sender = try sync_module.open_datagram(.ipv4, null, .{});
+    defer sync_module.close_now(sender);
+    var out: core.datagram.Outbound = .{
+        .peer = try sync_module.local_address(receiver),
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+
+    var handles: [1]core.Handle = undefined;
+    _ = fixture.loop.submit(&.{.{ .user_data = 1, .kind = .{ .receive_from = .{
+        .socket = receiver,
+        .target = .{ .group = datagram_group },
+        .multishot = true,
+    } } }}, &handles);
+
+    // One send per round, each taking one entry and one message scratch. The scratch is one per
+    // entry and is reused from the start each tick, so a counter that only rose would stop the
+    // loop on the ninth round here.
+    var events: [8]Event = undefined;
+    var round: u32 = 0;
+    while (round < datagram_rounds) : (round += 1) {
+        _ = fixture.loop.submit(&.{.{ .user_data = 2, .kind = .{ .send_to = .{
+            .socket = sender,
+            .buffer = .{ .bytes = "scratch" },
+            .to = &out,
+        } } }}, &.{});
+        const count = try fixture.loop.tick(&events, collect_wait_ns);
+        for (events[0..count]) |event| {
+            if (event.user_data == 1) fixture.loop.give_back_buffer(
+                datagram_group,
+                event.flags.buffer_id,
+            );
+        }
+    }
+
+    fixture.loop.cancel_all();
+    try fixture.loop.drain(&events);
 }

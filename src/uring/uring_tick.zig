@@ -33,8 +33,14 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     var produced = tables.drain_finished(events);
     const wait = if (produced == 0) wait_for(loop, wait_ns) else null;
     const entered = try loop.ring.enter(wait);
-    // The kernel has read every address of this flush's connects, unless it took no entry.
-    if (entered == .submitted) loop.addresses_used = 0;
+    // The kernel has read every address of this flush's connects, and every message header of
+    // its datagram operations, unless it took no entry. Both scratches are one per entry and are
+    // reused from the start each tick; a counter that only rose would stop the loop after
+    // `entries` datagrams, which is what `bench/datagram/rotor_datagram.zig` found.
+    if (entered == .submitted) {
+        loop.addresses_used = 0;
+        loop.messages_used = 0;
+    }
     produced += reap_module.reap(loop, events[produced..]);
     if (produced == 0 and wait != null) {
         // The wait may have ended because a deadline came due.
