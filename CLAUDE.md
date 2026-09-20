@@ -223,6 +223,10 @@ suite: `uring` under Linux in Docker, `kqueue` natively on macOS. The halt check
 pass. Registered descriptors and provided buffers are built, and no speed claim is made for either
 yet.
 
-The sampled statistics of decision 9 are built. What is left of the implementation: the Linux cost
-probes of `bench/costs/probes/probes_linux.zig`. Then milestone 3 fills `docs/costs.md`, which has
-no measured cell yet, and runs decision 8's experiment. The `linux` machine is not named.
+The implementation is done: every row of decision 2's scope table is built, and every decision
+record has code for it. The cost probes cover every row of `docs/costs.md` that either machine can
+measure.
+
+Milestone 3 is next: fill `docs/costs.md` from serial runs on a quiet machine, and run decision
+8's experiment. No cell is filled yet, and the `linux` machine is not named, which is what that
+milestone needs first.
