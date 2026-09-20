@@ -96,7 +96,10 @@ pub const Operation = struct {
     /// Result: 0. `address` stays the loop's until the final event.
     pub const Connect = struct { socket: Descriptor, address: *const Address };
 
-    /// Result: bytes received, and 0 when the peer closed its side.
+    /// Result: bytes received, and 0 when the peer closed its side. Two receives in flight on one
+    /// socket may complete in either order: io_uring wakes them in an order of its own. A caller
+    /// that needs the bytes in order keeps one receive in flight per socket, which a multishot
+    /// receive does by itself.
     pub const Receive = struct { socket: Descriptor, target: Target, multishot: bool = false };
 
     /// Where received bytes land: a buffer the caller names, or a buffer the kernel picks from
@@ -104,7 +107,9 @@ pub const Operation = struct {
     /// takes a group.
     pub const Target = union(enum) { buffer: Buffer, group: u16 };
 
-    /// Result: bytes sent, which may be fewer than the buffer holds.
+    /// Result: bytes sent, which may be fewer than the buffer holds. Two sends in flight on one
+    /// socket may reach the peer in either order, and a short one leaves a gap the other fills:
+    /// a caller keeps one send in flight per socket.
     pub const Send = struct { socket: Descriptor, buffer: ConstBuffer };
 
     /// Result: 0.

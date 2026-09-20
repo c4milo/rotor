@@ -88,6 +88,7 @@ pub fn build(b: *std.Build) void {
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         .{ .name = "kqueue", .module = graph.kqueue },
+        .{ .name = "conformance-kqueue", .module = graph.conformance_kqueue },
     };
     for (unit_test_modules) |entry| {
         const unit_tests = b.addTest(.{ .name = entry.name, .root_module = entry.module });

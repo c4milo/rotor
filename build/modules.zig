@@ -20,6 +20,8 @@ pub const Modules = struct {
     conformance_uring: *std.Build.Module,
     /// The macOS backend, over kqueue. Its pure parts are tested on every host.
     kqueue: *std.Build.Module,
+    /// The conformance suite with `kqueue` as the backend under test. It skips off macOS.
+    conformance_kqueue: *std.Build.Module,
 };
 
 pub fn add(
@@ -35,11 +37,15 @@ pub fn add(
     conformance_uring.addImport("backend", uring);
     const kqueue = create(b, "src/kqueue/kqueue.zig", target, optimize);
     kqueue.addImport("core", core);
+    const conformance_kqueue = create(b, "src/conformance/conformance.zig", target, optimize);
+    conformance_kqueue.addImport("core", core);
+    conformance_kqueue.addImport("backend", kqueue);
     return .{
         .core = core,
         .uring = uring,
         .conformance_uring = conformance_uring,
         .kqueue = kqueue,
+        .conformance_kqueue = conformance_kqueue,
     };
 }
 

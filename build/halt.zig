@@ -38,6 +38,13 @@ pub fn add(
     uring_run.addArtifactArg(uring_scenarios);
     step.dependOn(&uring_run.step);
 
+    const kqueue_scenarios = scenarios(b, "kqueue_scenarios", target, optimize);
+    kqueue_scenarios.root_module.addImport("core", graph.core);
+    kqueue_scenarios.root_module.addImport("kqueue", graph.kqueue);
+    const kqueue_run = b.addRunArtifact(check);
+    kqueue_run.addArtifactArg(kqueue_scenarios);
+    step.dependOn(&kqueue_run.step);
+
     const canary = scenarios(b, "canary_scenarios", target, optimize);
     const canary_run = b.addRunArtifact(check);
     canary_run.addArtifactArg(canary);

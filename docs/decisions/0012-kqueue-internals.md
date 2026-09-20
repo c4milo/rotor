@@ -64,6 +64,15 @@ of `fdatasync` true on macOS: a plain `fsync` leaves the bytes in the drive's ca
 with `direct` sets `F_NOCACHE`, the nearest macOS has to O_DIRECT, and `set_file_size`
 preallocates with `F_PREALLOCATE` and then sets the length.
 
+Observed on Darwin 25.6 while writing the calls:
+
+- `F_PREALLOCATE` reserves from the physical end of the file, and APFS keeps blocks past the end
+  of the file after a close. So `set_file_size` reserves only the bytes the file lacks. Asking
+  for the full size each time would leak blocks.
+- `sync_directory` is a plain `fsync`. devfs and autofs refuse `F_FULLFSYNC` on a directory
+  descriptor, and APFS accepts it, so the directory entry is less durable than the file's data.
+  No test on this host can tell a dropped directory `fsync` from a made one.
+
 ## 6. A post is a ring in shared memory plus a wake
 
 Decision 4 settled the shape. The details:
@@ -98,6 +107,12 @@ macOS has no `accept4`. The backend sets `O_NONBLOCK` and `FD_CLOEXEC` on an acc
 with two `fcntl` calls, and `SO_NOSIGPIPE` with a `setsockopt`, because macOS has no
 `MSG_NOSIGNAL` either. That is three system calls per accepted connection that Linux does not
 pay, and the accept-storm numbers on macOS will show it.
+
+Observed on Darwin 25.6: an accepted socket inherits `O_NONBLOCK` and `SO_NOSIGPIPE` from its
+listener, and does not inherit `FD_CLOEXEC`. With a listener from `sync.listen`, two of the three
+calls change nothing. The backend still makes all three, because the caller may hand it a
+listener it opened some other way. Dropping the two calls for a listener the loop can prove it
+prepared is a measured optimisation for later, not a default.
 
 ## Not in this backend
 

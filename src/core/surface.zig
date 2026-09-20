@@ -19,6 +19,13 @@ pub const loop_declarations = [_][]const u8{
     "cancel",
     "tick",
     "in_flight",
+    "cancel_all",
+    "drain",
+    "assert_empty",
+    "register_buffers",
+    "provide_buffers",
+    "give_back_buffer",
+    "provided_buffer",
 };
 
 /// Fails the compile, naming the first declaration `Loop` lacks.
@@ -41,6 +48,13 @@ const Complete = struct {
     pub fn cancel() void {}
     pub fn tick() void {}
     pub fn in_flight() void {}
+    pub fn cancel_all() void {}
+    pub fn drain() void {}
+    pub fn assert_empty() void {}
+    pub fn register_buffers() void {}
+    pub fn provide_buffers() void {}
+    pub fn give_back_buffer() void {}
+    pub fn provided_buffer() void {}
 };
 
 test "a loop with every declaration passes the check" {

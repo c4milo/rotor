@@ -110,10 +110,24 @@ system call per tick" (decision 3, source 4) exactly when the loop is busiest. A
 When the completion ring has overflowed, the kernel refuses the submission with `EBUSY` and
 takes no entry. The tick reaps, which makes room, and the entries go out at the next tick.
 
+## 8. Two operations in flight on one socket have no order
+
+The conformance suite found this one. With two receives in flight on one socket, io_uring woke
+the second before the first, so the first bytes of the stream landed in the second buffer. The
+kernel arms one internal poll per request and makes no promise about which it wakes first. The
+kqueue backend serves the waiters of a descriptor oldest first, so the two backends differed.
+
+rotor promises no order, and `Operation.Receive` and `Operation.Send` say so: a caller keeps one
+receive and one send in flight per socket, which a multishot receive does by itself. For sends
+the rule matters more than it looks: two sends in flight can swap, and a short send leaves a
+gap that the other fills, which corrupts the stream.
+
+The alternative is to keep the order in the loop: hold a descriptor's second operation back
+until the first completes. That needs the table from descriptor to operations that point 5
+refused for its cost on every operation, and it would turn a caller's mistake into a silent
+serialisation. The suite's scenario accepts either order and checks that every byte arrives
+once.
+
 ## Not built yet
 
-- Registered descriptors. `Operation` has no way to name one yet. Decision 3's source 1 claims a
-  gain from them, and the claim stays untested until the harness can measure it.
-- Provided-buffer groups, which a multishot receive needs. The submit and reap paths carry the
-  group and the buffer id already; the registration calls are the next file.
 - The sampled statistics of decision 9.

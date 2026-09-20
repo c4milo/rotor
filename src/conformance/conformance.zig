@@ -71,6 +71,7 @@ pub fn unsupported() bool {
 }
 
 test {
+    _ = @import("conformance_loop.zig");
     _ = @import("conformance_tcp.zig");
     _ = @import("conformance_file.zig");
     _ = @import("conformance_post.zig");
