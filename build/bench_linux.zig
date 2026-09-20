@@ -39,6 +39,7 @@ pub fn add(b: *std.Build) void {
         if (variant.optimize == .ReleaseSafe) {
             step.dependOn(add_post(b, target, graph));
             step.dependOn(add_datagram(b, target, graph));
+            step.dependOn(add_program(b, target, graph, "rotor_reads", "bench/files/rotor_reads.zig"));
         }
     }
 }
@@ -47,6 +48,30 @@ pub fn add(b: *std.Build) void {
 /// The datagram round-trip workload on io_uring. It is `bench/datagram/rotor_datagram.zig`
 /// built for the container, because the path decision 15 added is the io_uring one and a macOS
 /// number says nothing about it (decision 2: macOS is a development platform).
+/// One bench program built for the container, given the backend as its `backend` import.
+fn add_program(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    graph: modules.Modules,
+    name: []const u8,
+    root: []const u8,
+) *std.Build.Step {
+    const program = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(root),
+            .target = target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    program.root_module.addImport("core", graph.core);
+    program.root_module.addImport("backend", graph.uring);
+    const install = b.addInstallArtifact(program, .{
+        .dest_dir = .{ .override = .{ .custom = install_directory } },
+    });
+    return &install.step;
+}
+
 fn add_datagram(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

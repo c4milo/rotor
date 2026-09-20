@@ -115,6 +115,17 @@ fn add_echo(
     });
     step.dependOn(&b.addInstallArtifact(datagram_program, .{}).step);
 
+    // The O_DIRECT read workload, which is the only program that registers a buffer.
+    const reads = b.createModule(.{
+        .root_source_file = b.path("bench/files/rotor_reads.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    reads.addImport("core", graph.core);
+    reads.addImport("backend", backend);
+    const reads_program = b.addExecutable(.{ .name = "rotor_reads", .root_module = reads });
+    step.dependOn(&b.addInstallArtifact(reads_program, .{}).step);
+
     const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
     for (programs) |name| {
         const module = b.createModule(.{
