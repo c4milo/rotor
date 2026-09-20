@@ -1,9 +1,13 @@
 # 15. Datagrams
 
-Status: **proposed** on 2026-09-20, after the owner asked for UDP and named the consumer. A
-proposed record is not a licence to build what it describes. The owner has already answered three
-of its questions, recorded under "What the owner has decided"; the rest are at the end with a
-proposed answer each.
+Status: **accepted** on 2026-09-20, by the owner, who asked for datagrams and named two consumers:
+colibri's and chapulin's QUIC transport. Three of its questions he answered directly, recorded
+under "What the owner has decided"; the rest are at the end with a proposed answer each, and the
+implementation follows the proposed answer until he rules otherwise.
+
+Accepting it is not a licence to skip "What must be measured before it is built". Every layout
+this record states is recalled, and the probes named there decide the design rather than confirm
+it.
 
 ## Why this reverses decision 2
 
@@ -12,8 +16,12 @@ Decision 2 puts UDP in "Not in version one" and gives the reason:
 > **UDP and Unix sockets.** No consumer needs them yet. colibri's QUIC will want UDP, but colibri
 > owns no I/O, so the need arrives with whoever embeds colibri.
 
-That is a trigger, not a refusal, and the owner fired it: colibri's QUIC needs datagrams. This
-record supersedes the UDP half of that row. Unix sockets stay out, and no consumer asks for them.
+That is a trigger, not a refusal, and the owner fired it. Two consumers need datagrams, not one:
+colibri's QUIC transport and chapulin's. The second matters to the record, because a surface with
+two consumers is settled by what both need and not by what one happens to do first.
+
+This record supersedes the UDP half of that row. Unix sockets stay out, and no consumer asks for
+them.
 
 ## What QUIC needs, which is more than "UDP"
 
