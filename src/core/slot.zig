@@ -151,12 +151,12 @@ pub const Slot = extern struct {
                 slot.flags.multishot = timer.repeat_ns != 0;
             },
             .receive_from => |receive| {
-                // A datagram receive is a receive: the same targets, the same flags. Only the
-                // code differs, and the backend reads that.
+                // A datagram receive is a receive from a group, always multishot. Only the code
+                // differs, and the backend reads that.
                 slot.fill_receive(.{
                     .socket = receive.socket,
-                    .target = receive.target,
-                    .multishot = receive.multishot,
+                    .target = .{ .group = receive.group },
+                    .multishot = true,
                 });
             },
             .send_to => |send| {
