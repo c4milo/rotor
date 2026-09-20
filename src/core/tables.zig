@@ -175,16 +175,38 @@ pub const Tables = struct {
             const index = tables.finished.pop(tables.table.slots) orelse break;
             const slot = tables.table.at(index);
             assert(slot.state == .finishing);
-            if (slot.flags.sampled) tables.statistics.finished(index, slot, tables.now_ns);
+            // A repeating timer that was not cancelled has more to come: its event says so and
+            // its slot stays the loop's (decision 14, rule 2).
+            const again = repeats(slot);
+            if (slot.flags.sampled and !again) tables.statistics.finished(index, slot, tables.now_ns);
             events[produced] = .{
                 .user_data = slot.user_data,
                 .result = slot.result,
-                .flags = .{},
+                .flags = .{ .more = again },
             };
-            tables.table.release(index);
+            if (again) rearm(tables, index, slot) else tables.table.release(index);
         }
         assert(produced <= events.len);
         return produced;
+    }
+
+    /// True when this slot is a repeating timer whose caller has not cancelled it, so the event
+    /// being handed over is one of many and not the last (decision 14, rule 2).
+    fn repeats(slot: *const Slot) bool {
+        if (slot.code != .timer or !slot.flags.multishot) return false;
+        return !slot.flags.cancel_requested;
+    }
+
+    /// Schedules a repeating timer's next fire from the deadline it just fired for, never from
+    /// the clock, so a loop that was late does not make the period late (decision 14, rule 3).
+    /// A deadline already past is armed anyway and fires at the next tick: rule 4 hands the
+    /// caller an event per missed period rather than swallowing them.
+    fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
+        assert(slot.code == .timer and slot.flags.multishot);
+        assert(slot.timeout_ns >= 1);
+        slot.buffer +%= slot.timeout_ns;
+        slot.state = .submitted;
+        tables.timers.arm(index, slot.buffer);
     }
 
     /// Marks `slot` for cancellation, once, and ends it when the tables can: a timer lives in
@@ -241,12 +263,15 @@ pub const Tables = struct {
 
     /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a
     /// timer. A slot being resubmitted keeps the deadline it has.
-    pub fn arm(tables: *Tables, index: u32, slot: *const Slot) void {
+    pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
         const after_ns = if (slot.code == .timer) slot.offset else slot.timeout_ns;
         assert(after_ns <= constants.timeout_ns_max);
         if (slot.code != .timer and after_ns == 0) return;
         if (tables.timers.is_armed(index)) return;
-        tables.timers.arm(index, tables.now_ns + after_ns);
+        const due_ns = tables.now_ns + after_ns;
+        // A repeating timer measures every later period from this deadline (decision 14, rule 3).
+        if (slot.code == .timer) slot.buffer = due_ns;
+        tables.timers.arm(index, due_ns);
     }
 
     /// How long a tick may block: not at all while queued work waits for the next flush, and

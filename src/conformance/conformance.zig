@@ -89,4 +89,5 @@ test {
     _ = @import("conformance_registered.zig");
     _ = @import("conformance_statistics.zig");
     _ = @import("conformance_reuse_port.zig");
+    _ = @import("conformance_timers.zig");
 }

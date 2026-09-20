@@ -136,7 +136,13 @@ pub const Operation = struct {
     pub const Fdatasync = struct { file: Descriptor };
 
     /// Result: 0, once `after_ns` nanoseconds have passed since the tick that submitted it.
-    pub const Timer = struct { after_ns: u64 };
+    ///
+    /// With `repeat_ns` above 0 it fires again every `repeat_ns` after that, and every event but
+    /// the last is flagged `more`, as a multishot accept's are (decision 14). Each fire is
+    /// scheduled from the deadline of the one before and never from the clock, so a loop that
+    /// was late does not make the period late. A deadline already past fires at the next tick
+    /// and is not skipped, so a loop held off for ten periods hands over ten events.
+    pub const Timer = struct { after_ns: u64, repeat_ns: u64 = 0 };
 
     // `nop`: result 0. The kernel does nothing, so its cost is the loop's own and the ring's: what
     // the cost probes and the assertion experiment of decision 8 submit.
@@ -190,8 +196,11 @@ pub const Operation = struct {
             .write => |write| assert_transfer(write.file, write.buffer.bytes.len),
             .fdatasync => |fdatasync| assert(fdatasync.file >= 0),
             .timer => |timer| {
+                // A timer is a deadline, so it carries none: `Slot.timeout_ns` holds its period
+                // instead (decision 14).
                 assert(operation.timeout_ns == 0);
                 assert(timer.after_ns <= constants.timeout_ns_max);
+                assert(timer.repeat_ns <= constants.timeout_ns_max);
             },
             .nop => assert(operation.timeout_ns == 0),
             .post => |post| {

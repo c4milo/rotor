@@ -28,11 +28,13 @@ pub const Slot = extern struct {
     /// The caller's value, copied into every event of the operation.
     user_data: u64 align(constants.slot_bytes),
     /// The buffer's address. For `connect`, the address of the `Address`. For `post`, the
-    /// message's payload.
+    /// message's payload. For a repeating `timer`, the deadline it last fired for, which the
+    /// next one is measured from (decision 14).
     buffer: u64,
     /// The file offset of a `read` or a `write`. For a `timer`, its delay in nanoseconds.
     offset: u64,
-    /// The operation's deadline in nanoseconds from its submitting tick, or 0.
+    /// The operation's deadline in nanoseconds from its submitting tick, or 0. For a `timer`,
+    /// which may carry no deadline, the period of a repeating one, or 0 (decision 14).
     timeout_ns: u64,
     /// The buffer's length. For `shutdown`, the `How`. For `post`, the message's tag.
     len: u32,
@@ -142,6 +144,10 @@ pub const Slot = extern struct {
             .timer => |timer| {
                 slot.descriptor = 0;
                 slot.offset = timer.after_ns;
+                // A timer carries no deadline, so the field holds the period instead, and
+                // `multishot` is what every path already reads to know an operation repeats.
+                slot.timeout_ns = timer.repeat_ns;
+                slot.flags.multishot = timer.repeat_ns != 0;
             },
             .nop => slot.descriptor = 0,
             .post => |post| {
