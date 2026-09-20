@@ -99,7 +99,8 @@ var loop_memory: [
 const ring_alignment = backend.buffers.ring_alignment;
 
 var group_memory: [group_bytes]u8 align(ring_alignment) = undefined;
-var ring_memory: [backend.buffers.ring_bytes(group_buffers_max)]u8 align(ring_alignment) = undefined;
+const ring_bytes_max = backend.buffers.ring_bytes(group_buffers_max);
+var ring_memory: [ring_bytes_max]u8 align(ring_alignment) = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);

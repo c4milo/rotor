@@ -2,9 +2,9 @@
 //! in turn, drives it with the one client, and prints a row per candidate with the spread of its
 //! runs beside the median.
 //!
-//! Run:  echo_runner [--rounds N] [--seconds S] [--warmup S] [--connections A,B,C]
-//!                   [--payloads A,B] [--candidates NAME,NAME] [--port-base N]
-//!                   [--directory PATH]
+//! Run:  echo_runner [--workload echo|storm] [--rounds N] [--seconds S] [--warmup S]
+//!                   [--connections A,B,C] [--payloads A,B] [--candidates NAME,NAME]
+//!                   [--port-base N] [--directory PATH]
 //!
 //! The order is the point. For every configuration it runs round 1 of every candidate, then round
 //! 2 of every candidate, and so on, rather than all the rounds of one candidate and then the
@@ -23,6 +23,7 @@
 const std = @import("std");
 const harness = @import("harness");
 const client = @import("client.zig");
+const storm = @import("storm.zig");
 
 const Result = harness.report.Result;
 const Series = harness.series.Series;
@@ -94,6 +95,8 @@ const ready_wait_ns: u64 = 5 * std.time.ns_per_s;
 const directory_default = "zig-out/bin";
 
 const connections_default = [_]u32{ 16, 64 };
+/// The one entry the storm uses, because its message is one byte.
+const payloads_storm = [_]u32{4096};
 const payloads_default = [_]u32{ 4096, 65536 };
 
 /// Configurations and candidates together, which bounds every array below.
@@ -108,6 +111,7 @@ const Options = struct {
     /// alone, so the gate needs no pinned competitor.
     only: []const u8 = "",
     port_base: u16 = port_first_default,
+    workload: Workload = .echo,
     directory: []const u8 = directory_default,
     connections: []const u32 = &connections_default,
     payloads: []const u32 = &payloads_default,
@@ -136,8 +140,11 @@ pub fn main(init: std.process.Init) !void {
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
     var port = options.port_base;
+    // The storm's message is one byte by definition, so it runs each connection count once and
+    // ignores the payload list.
+    const payloads = if (options.workload == .storm) payloads_storm[0..] else options.payloads;
     for (options.connections) |connection_count| {
-        for (options.payloads) |payload_bytes| {
+        for (payloads) |payload_bytes| {
             port = try one_configuration(init, options, .{
                 .connections = connection_count,
                 .payload_bytes = payload_bytes,
@@ -154,6 +161,10 @@ const Configuration = struct { connections: u32, payload_bytes: u32 };
 /// a 1 KiB payload.
 const buffer_bytes_min: u32 = 2048;
 const buffer_bytes_max: u32 = 64 * 1024;
+
+/// The workloads this runner drives. Both use the same servers, so a candidate needs no line
+/// per workload: the storm opens and closes connections where echo keeps them.
+const Workload = enum { echo, storm };
 
 /// The buffer a candidate is given for `payload_bytes`: the payload where it can be, so a whole
 /// message costs one send, and the nearest the server accepts otherwise.
@@ -246,15 +257,24 @@ fn one_run(
     };
     ready.sleep(init.io) catch {};
 
-    const measured = try client.run(.{
-        .port = port,
-        .connections = configuration.connections,
-        .payload_bytes = configuration.payload_bytes,
-        .seconds = options.seconds,
-        .warmup_seconds = options.warmup_seconds,
-        .candidate = candidate.name,
-        .version = candidate.version,
-    });
+    const measured = switch (options.workload) {
+        .echo => try client.run(.{
+            .port = port,
+            .connections = configuration.connections,
+            .payload_bytes = configuration.payload_bytes,
+            .seconds = options.seconds,
+            .warmup_seconds = options.warmup_seconds,
+            .candidate = candidate.name,
+            .version = candidate.version,
+        }),
+        // A storm is one burst, so it takes no span: what it is given is the burst's size.
+        .storm => try storm.run(.{
+            .port = port,
+            .connections = configuration.connections,
+            .candidate = candidate.name,
+            .version = candidate.version,
+        }),
+    };
     return measured;
 }
 
@@ -347,6 +367,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--warmup")) {
         options.warmup_seconds = try std.fmt.parseInt(u64, value, 10);
+    } else if (std.mem.eql(u8, name, "--workload")) {
+        options.workload = std.meta.stringToEnum(Workload, value) orelse
+            return error.UnknownWorkload;
     } else if (std.mem.eql(u8, name, "--port-base")) {
         options.port_base = try std.fmt.parseInt(u16, value, 10);
     } else if (std.mem.eql(u8, name, "--candidates")) {

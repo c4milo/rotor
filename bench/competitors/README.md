@@ -221,6 +221,44 @@ That is a property of how this server uses the group, not of the group; whether 
 lets a server do better, and whether the same gap appears on kqueue, is the first thing to settle
 before any 64 KiB claim is made.
 
+## What the accept storm measured, and what it could not
+
+A run is one burst: `connections` sockets opened and connected at once, each sending a byte and
+reading it back, so the server has to have accepted every one of them. Sustained churn cannot be
+measured on loopback at all, and `bench/echo/storm.zig` records why.
+
+**On macOS, 256 connections, three rounds:**
+
+| candidate | connections per second | spread |
+|---|---|---|
+| rotor | 6,359 | 3 |
+| libuv | 6,405 | 6 |
+| libxev | 6,386 | 2 |
+| `std.Io.Threaded` | 6,429 | 1 |
+
+Four candidates inside 1.1 percent of each other, on rows clean enough to believe. That is not a
+tie between the loops: **it is the client**. The same burst on io_uring reads 121,564 for rotor,
+nineteen times more, and the client is the only thing that changed. rotor's kqueue client makes a
+system call per operation where its io_uring client batches, so on macOS the storm measures the
+client's submission cost and every candidate waits behind it.
+
+So **no macOS accept-storm row is evidence about a candidate**, and the workload needs a client
+that is not the bottleneck there before it can be. That is a harness problem and not a rotor one.
+
+**On io_uring, 256 connections, nine rounds:**
+
+| candidate | connections per second | spread |
+|---|---|---|
+| rotor | 123,170 | 39 |
+| `std.Io.Threaded` | 54,509 | 88 |
+
+rotor's median is about 2.2 times the other's, and it held across runs of three and nine rounds.
+Both rows are marked: a burst takes about 2 ms, so a scheduler hiccup moves a whole round, and
+more rounds did not narrow it. **Nothing is decided.** What would decide it is a longer burst,
+which costs ephemeral ports the run already budgets for, or several bursts inside one run, which
+costs the same ports. The port range is the binding constraint on this workload and the machines
+that can answer it are not the ones this was run on.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.
