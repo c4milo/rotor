@@ -122,7 +122,12 @@ test "a loop held off its tick is handed the deadlines it missed, and does not s
 /// Preempting this thread can only make a punctual loop look late, never make a late loop look
 /// punctual, so a single attempt fails on a busy machine while proving nothing. The first version
 /// took one attempt and failed `zig build test`, which runs the suites in parallel.
-const drift_attempts = 5;
+///
+/// Ten and not five, because the worst load this test meets is the run right after a rebuild,
+/// when the compiler holds every core and the drift signal is three quarters of a period. The
+/// scenario returns on the first attempt under the bound, so the count costs nothing when the
+/// machine is quiet.
+const drift_attempts = 10;
 
 test "a repeating timer's period is measured from its deadline, so a late loop does not drift" {
     if (conformance.unsupported()) return error.SkipZigTest;
