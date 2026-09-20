@@ -5,9 +5,9 @@ colibri's and chapulin's QUIC transport. Three of its questions he answered dire
 under "What the owner has decided"; the rest are at the end with a proposed answer each, and the
 implementation follows the proposed answer until he rules otherwise.
 
-Accepting it is not a licence to skip "What must be measured before it is built". Every layout
-this record states is recalled, and the probes named there decide the design rather than confirm
-it.
+The probe that section demanded has since run, and it **corrected this record**: the payload sits
+at a constant offset taken from the reserve asked for, not from the lengths the kernel writes.
+The layout below is measured. Three of its four measurements are still open and are marked so.
 
 ## Why this reverses decision 2
 
@@ -110,6 +110,30 @@ messages, then the datagram's bytes. That is the layout io_uring's multishot `re
 writes, so on Linux rotor asks for the shape the kernel produces rather than copying out of it.
 The kqueue backend writes the same head itself from its `msghdr`.
 
+**Measured, and not as this record first guessed.** `tools/uring_probe_datagram.zig` ran it on
+`orbstack`, Linux 7.0.14, on 2026-09-20:
+
+```text
+recvmsg_out: namelen 16, controllen 56, payloadlen 20, flags 0x0
+prefix asked 112 (head 16 + name 32 + control 64); prefix written 88
+cqe.res 132; payload sent 20; cqe.res - prefix 20
+```
+
+The kernel lays the payload out after the space the submission **asked for**, and writes the
+bytes it **used** into the head. The two differ whenever the address or the control block is
+shorter than its reserve: a `sockaddr.in` reports `namelen` 16 against a reserve of 32. An offset
+computed from the written lengths lands at 88, which is 24 bytes short of the payload and inside
+the control block. The first version of this record would have computed exactly that.
+
+So the payload sits at a **constant offset**, fixed per buffer group at registration:
+
+```text
+prefix = @sizeOf(io_uring_recvmsg_out) + name_reserve + control_reserve
+```
+
+Two bytes of control per datagram were measured as 56 for IPv4 with `IP_PKTINFO` and
+`IP_RECVTOS`, which is `CMSG_SPACE(12) + CMSG_SPACE(1)` = 32 + 24 on a 64-bit kernel.
+
 One accessor turns the buffer into rotor's types, and it is the only supported reader:
 
 ```zig
@@ -129,9 +153,11 @@ later therefore costs no existing caller a layout change, and no TCP caller gain
 **The datagram's own bytes**, as a TCP receive counts the bytes it received. `try event.outcome()`
 means the same thing for every transfer in the surface.
 
-This costs one subtract in `uring_reap.complete` and one in kqueue's `serve`. That function is
-four statements today and is the path decision 8's experiment measures, so milestone 3 must know
-it moved. The alternative — reporting the bytes the datagram occupies, leaving the reap path
+The probe settled what that costs: `cqe.res` less the prefix **is** the payload length, so the
+reap subtracts one constant the group already fixed. No dependent load into the buffer, no read
+of the head on the hot path. It is one subtract in `uring_reap.complete` and one in kqueue's
+`serve`. That function is four statements today and is the path decision 8's experiment measures,
+so milestone 3 must know it moved. The alternative — reporting the bytes the datagram occupies, leaving the reap path
 untouched — was rejected by the owner: it would hand a caller who writes
 `parse(buffer[0..try event.outcome()])` rotor's head as packet bytes, and rotor cannot assert its
 way out of a mistake in the caller's code.
@@ -214,15 +240,17 @@ that a kind means something.
 
 ## What must be measured before it is built
 
-Every kernel version and every layout claim below is **recalled**, and none has been read from a
-kernel source or measured here. No line of this record's code is written until the probes answer.
-
-1. `tools/uring_probe.zig` gains: the multishot `recvmsg` payload offset and what `cqe.res`
-   counts; whether `UDP_SEGMENT` and `UDP_GRO` work on the target kernel; whether the outbound
-   control buffer must outlive `io_uring_enter`.
-2. A first macOS probe: that the RFC 3542 options are honoured when named by integer.
-3. Two rows of `docs/costs.md`: `recvmsg` with three control messages against `recv`, per
-   datagram; `sendmsg` with one against `send`.
+1. **Done, 2026-09-20.** `tools/uring_probe_datagram.zig` answered the payload offset, what
+   `cqe.res` counts, and that `UDP_SEGMENT`, `UDP_GRO`, `IP_PKTINFO` and `IP_RECVTOS` are all
+   present on `orbstack`. It corrected this record; the layout above is measured, not recalled.
+2. **Open.** Whether the outbound control buffer must outlive `io_uring_enter`. Until it answers,
+   the send path keeps that memory alive to the final event, which is what decision 5's rule 3
+   already promises for every buffer an operation names, so a "no" costs nothing and a "yes" is
+   already handled.
+3. **Open.** A first macOS probe: that the RFC 3542 options are honoured when named by integer.
+   rotor has no macOS probe today.
+4. **Open.** Two rows of `docs/costs.md`: `recvmsg` with three control messages against `recv`,
+   per datagram; `sendmsg` with one against `send`. Milestone 3 fills them.
 
 ## How it is checked
 
