@@ -36,11 +36,38 @@ pub fn add(b: *std.Build) void {
             .dest_dir = .{ .override = .{ .custom = install_directory } },
         });
         step.dependOn(&install.step);
-        if (variant.optimize == .ReleaseSafe) step.dependOn(add_post(b, target, graph));
+        if (variant.optimize == .ReleaseSafe) {
+            step.dependOn(add_post(b, target, graph));
+            step.dependOn(add_datagram(b, target, graph));
+        }
     }
 }
 
 /// One cross-core message on its own (row C17), in the mode rotor ships in.
+/// The datagram round-trip workload on io_uring. It is `bench/datagram/rotor_datagram.zig`
+/// built for the container, because the path decision 15 added is the io_uring one and a macOS
+/// number says nothing about it (decision 2: macOS is a development platform).
+fn add_datagram(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    graph: modules.Modules,
+) *std.Build.Step {
+    const datagram = b.addExecutable(.{
+        .name = "rotor_datagram",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("bench/datagram/rotor_datagram.zig"),
+            .target = target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    datagram.root_module.addImport("core", graph.core);
+    datagram.root_module.addImport("backend", graph.uring);
+    const install = b.addInstallArtifact(datagram, .{
+        .dest_dir = .{ .override = .{ .custom = install_directory } },
+    });
+    return &install.step;
+}
+
 fn add_post(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

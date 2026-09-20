@@ -100,6 +100,21 @@ fn add_echo(
     const timers_program = b.addExecutable(.{ .name = "rotor_timers", .root_module = timers });
     step.dependOn(&b.addInstallArtifact(timers_program, .{}).step);
 
+    // The datagram round-trip workload, which measures itself as the timer one does: its client
+    // and its server are two sockets on one loop, so no second program has to be started.
+    const datagram = b.createModule(.{
+        .root_source_file = b.path("bench/datagram/rotor_datagram.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    datagram.addImport("core", graph.core);
+    datagram.addImport("backend", backend);
+    const datagram_program = b.addExecutable(.{
+        .name = "rotor_datagram",
+        .root_module = datagram,
+    });
+    step.dependOn(&b.addInstallArtifact(datagram_program, .{}).step);
+
     const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
     for (programs) |name| {
         const module = b.createModule(.{
