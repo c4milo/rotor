@@ -142,6 +142,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     step.dependOn(programs.add_c("libuv_sizes", null));
     step.dependOn(programs.add_c("libuv_timers", add_libuv(b, target, libuv)));
     step.dependOn(programs.add_c("libuv_async", add_libuv(b, target, libuv)));
+    step.dependOn(programs.add_c("libuv_reads", add_libuv(b, target, libuv)));
     step.dependOn(programs.add_zig("libxev_echo", false));
     step.dependOn(programs.add_zig("libxev_sizes", false));
     step.dependOn(programs.add_zig("libxev_async", true));

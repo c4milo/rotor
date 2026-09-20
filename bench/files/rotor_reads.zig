@@ -22,14 +22,15 @@
 //! F_NOCACHE instead, and the kqueue backend runs a file read inline on the loop thread. A number
 //! from there says what a laptop does, and no file number from macOS is published as a claim.
 //!
-//! It prints one line, every field one token, as the other workloads do:
-//!
-//!     file-read <candidate> <version> <pattern> <depth> <block_bytes> <registered>
-//!               <reads> <span_ns> <p50> <p99> <p999>
+//! It prints the result line every candidate of every workload prints, which
+//! `bench/harness/report.zig` owns. The workload's name carries the pattern, because a sequential
+//! row and a random row are not the same measurement and must never share a `Series`. The
+//! candidate's name carries whether buffers were registered, for the same reason.
 const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
+const harness = @import("harness");
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -243,26 +244,53 @@ fn record(state: *Run, elapsed_ns: u64) void {
     state.taken += 1;
 }
 
+/// The bytes one result line needs.
+const output_buffer_bytes = 1024;
+
+/// The workload's name for one pattern. Sequential and random are different measurements, so a
+/// row of each carries a different name and `Series.init` refuses to mix them.
+fn workload_of(pattern: Pattern) []const u8 {
+    return switch (pattern) {
+        .seq => "file-read-seq",
+        .random => "file-read-random",
+    };
+}
+
+/// The candidate's name for one buffer choice. Registration is decision 3's first speed source,
+/// so the A and the B of it are two candidates and not two runs of one.
+fn candidate_of(registered: bool) []const u8 {
+    return if (registered) "rotor (registered)" else "rotor";
+}
+
 fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     const samples = latency_ns[0..state.taken];
     std.mem.sort(u64, samples, {}, std.sort.asc(u64));
+    const duration_ns = @max(span_ns, 1);
 
-    var buffer: [512]u8 = undefined;
-    var out = std.Io.File.stdout().writer(init.io, &buffer);
-    try out.interface.print(
-        "file-read rotor this-tree {t} {d} {d} {s} {d} {d} {d} {d} {d}\n",
-        .{
-            state.options.pattern,
-            state.options.depth,
-            state.options.block_bytes,
-            if (state.options.registered) "registered" else "plain",
-            state.reads,
-            span_ns,
-            percentile(samples, 500),
-            percentile(samples, 990),
-            percentile(samples, 999),
+    const result: harness.Result = .{
+        .workload = workload_of(state.options.pattern),
+        .candidate = candidate_of(state.options.registered),
+        .candidate_version = "this tree",
+        .configuration = .{
+            // `connections` carries the queue depth and `payload_bytes` the block size, because
+            // those are what this workload's rows vary.
+            .cores = 0,
+            .connections = state.options.depth,
+            .payload_bytes = state.options.block_bytes,
+            .load = .even,
         },
-    );
+        .duration_ns = duration_ns,
+        .operations = state.reads,
+        .operations_per_second = harness.report.per_second(state.reads, duration_ns),
+        .p50_ns = percentile(samples, 500),
+        .p99_ns = percentile(samples, 990),
+        .p999_ns = percentile(samples, 999),
+        .overflow = 0,
+    };
+
+    var buffer: [output_buffer_bytes]u8 = undefined;
+    var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
+    try result.render_json_line(&out.interface);
     try out.interface.flush();
 }
 

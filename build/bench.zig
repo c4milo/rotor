@@ -91,6 +91,11 @@ const tested = [_]Tested{
         .root = "bench/timers/timers_runner.zig",
         .needs_loop = false,
     },
+    .{
+        .name = "bench-reads-runner-tests",
+        .root = "bench/files/reads_runner.zig",
+        .needs_loop = false,
+    },
 };
 
 /// Runs the `test` blocks inside the bench programs. They are executables, so `zig build test`
@@ -200,8 +205,23 @@ fn add_echo(
     });
     reads.addImport("core", graph.core);
     reads.addImport("backend", backend);
+    reads.addImport("harness", harness_module);
     const reads_program = b.addExecutable(.{ .name = "rotor_reads", .root_module = reads });
     step.dependOn(&b.addInstallArtifact(reads_program, .{}).step);
+
+    // The runner of that workload, which compares four candidates across two programs: rotor
+    // with registered buffers and without, and libuv on its pool and on its ring.
+    const reads_runner = b.createModule(.{
+        .root_source_file = b.path("bench/files/reads_runner.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    reads_runner.addImport("harness", harness_module);
+    const reads_runner_program = b.addExecutable(.{
+        .name = "reads_runner",
+        .root_module = reads_runner,
+    });
+    step.dependOn(&b.addInstallArtifact(reads_runner_program, .{}).step);
 
     // The cross-core workload: decision 4's main claim, one message at a time. Each candidate
     // measures itself and prints a result line, because a message between two threads of one
