@@ -15,6 +15,10 @@ pub const Steps = struct {
     compile: *std.Build.Step,
     /// The unit tests of bench/harness.
     harness_tests: *std.Build.Step,
+    /// The unit tests inside the bench programs themselves. A bench program is an executable, so
+    /// nothing ran its `test` blocks until this step existed: a test in bench/crosscore/
+    /// rotor_post.zig passed `zig build test` while deliberately broken.
+    program_tests: *std.Build.Step,
     /// Milestone 4's gate: the echo workload run end to end against rotor's own server, which
     /// is the one candidate that needs no pinned competitor. It proves the whole path, from
     /// starting a server to a row with its spread, and not only that the programs compile.
@@ -49,7 +53,8 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     const harness_step = b.step("test-bench-harness", "Run the bench/harness tests alone");
     harness_step.dependOn(run_harness_tests);
 
-    const echo = add_echo(b, target, modules.add(b, target, .ReleaseSafe));
+    const graph = modules.add(b, target, .ReleaseSafe);
+    const echo = add_echo(b, target, graph);
     compile_all.dependOn(echo);
 
     competitors.add(b, target);
@@ -57,8 +62,60 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     return .{
         .compile = compile_all,
         .harness_tests = run_harness_tests,
+        .program_tests = add_program_tests(b, target, graph),
         .echo_smoke = add_echo_smoke(b, echo),
     };
+}
+
+/// One bench program whose `test` blocks the gate runs. `root` is the program's source file and
+/// `needs_loop` says whether it drives a rotor loop, which decides the imports it is given.
+const Tested = struct {
+    name: []const u8,
+    root: []const u8,
+    needs_loop: bool,
+};
+
+/// Every bench program that holds tests. A program missing from this list keeps its tests and
+/// never runs them, which is the failure this list exists to stop, so a new one is added here
+/// with its first test.
+const tested = [_]Tested{
+    .{ .name = "bench-costs-tests", .root = "bench/costs/main.zig", .needs_loop = false },
+    .{ .name = "bench-post-tests", .root = "bench/crosscore/rotor_post.zig", .needs_loop = true },
+    .{
+        .name = "bench-crosscore-runner-tests",
+        .root = "bench/crosscore/crosscore_runner.zig",
+        .needs_loop = false,
+    },
+};
+
+/// Runs the `test` blocks inside the bench programs. They are executables, so `zig build test`
+/// compiled them and ran none of their tests; every one of them was decoration until this step.
+fn add_program_tests(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    graph: modules.Modules,
+) *std.Build.Step {
+    const backend = if (target.result.os.tag == .linux) graph.uring else graph.kqueue;
+    const step = b.step("test-bench-programs", "Run the tests inside the bench programs");
+    for (tested) |program| {
+        const module = b.createModule(.{
+            .root_source_file = b.path(program.root),
+            .target = target,
+            .optimize = .Debug,
+        });
+        module.addImport("harness", b.createModule(.{
+            .root_source_file = b.path("bench/harness/harness.zig"),
+            .target = target,
+            .optimize = .Debug,
+        }));
+        if (program.needs_loop) {
+            module.addImport("core", graph.core);
+            module.addImport("backend", backend);
+        }
+        const tests = b.addTest(.{ .name = program.name, .root_module = module });
+        step.dependOn(&b.addRunArtifact(tests).step);
+    }
+    return step;
 }
 
 /// The echo servers and the client of the echo workload. Each is its own executable, as
@@ -126,6 +183,36 @@ fn add_echo(
     reads.addImport("backend", backend);
     const reads_program = b.addExecutable(.{ .name = "rotor_reads", .root_module = reads });
     step.dependOn(&b.addInstallArtifact(reads_program, .{}).step);
+
+    // The cross-core workload: decision 4's main claim, one message at a time. Each candidate
+    // measures itself and prints a result line, because a message between two threads of one
+    // process has no client outside it. It has its own step, because the runner drives the
+    // pinned competitors too and a caller may want only this one.
+    const crosscore = b.step("bench-crosscore", "Build the cross-core message programs");
+    const post = b.createModule(.{
+        .root_source_file = b.path("bench/crosscore/rotor_post.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    post.addImport("core", graph.core);
+    post.addImport("backend", backend);
+    post.addImport("harness", harness_module);
+    const post_program = b.addExecutable(.{ .name = "rotor_post", .root_module = post });
+    crosscore.dependOn(&b.addInstallArtifact(post_program, .{}).step);
+
+    // The runner needs the harness alone: it starts programs and reads the lines they print.
+    const crosscore_runner = b.createModule(.{
+        .root_source_file = b.path("bench/crosscore/crosscore_runner.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    crosscore_runner.addImport("harness", harness_module);
+    const crosscore_program = b.addExecutable(.{
+        .name = "crosscore_runner",
+        .root_module = crosscore_runner,
+    });
+    crosscore.dependOn(&b.addInstallArtifact(crosscore_program, .{}).step);
+    step.dependOn(crosscore);
 
     const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
     // Every echo program gets the harness, because placement lives there now.
