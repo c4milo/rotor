@@ -25,6 +25,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
+const placement = @import("harness").placement;
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -118,6 +119,9 @@ var open: [connections_max]bool = undefined;
 const Shape = enum { group, accumulate };
 var shape: Shape = .group;
 
+/// The core this server pins to, from `--cpu`, or null to let the scheduler place it.
+var cpu: ?usize = null;
+
 /// In `accumulate`, one buffer per connection carved from the same memory the group would use,
 /// so the two shapes hold the same bytes in total and the comparison is not of sizing.
 var accumulated: [connections_max]u32 = undefined;
@@ -147,6 +151,8 @@ var ring_memory: [ring_bytes_max]u8 align(ring_alignment) = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);
+    // Placed before the loop is built: the ring binds to the thread that owns it (decision 4).
+    const placed = placement.place(cpu);
     var loop: Loop = undefined;
     try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
     defer loop.deinit();
@@ -170,8 +176,8 @@ pub fn main(init: std.process.Init) !void {
     var out_buffer: [128]u8 = undefined;
     var out = std.Io.File.stdout().writer(init.io, &out_buffer);
     try out.interface.print(
-        "rotor_echo: rotor {s}, {d} buffers of {d} bytes, listening on 127.0.0.1:{d}\n",
-        .{ @tagName(builtin.os.tag), group_buffers, buffer_bytes, port },
+        "rotor_echo: rotor {s}, {d} buffers of {d} bytes, {t}, {t}, listening on 127.0.0.1:{d}\n",
+        .{ @tagName(builtin.os.tag), group_buffers, buffer_bytes, shape, placed, port },
     );
     try out.interface.flush();
 
@@ -190,19 +196,30 @@ fn parse(init: std.process.Init) !u16 {
     var index: usize = 2;
     while (index < arguments.len) : (index += 2) {
         if (index + 1 >= arguments.len) return error.MissingValue;
-        if (std.mem.eql(u8, arguments[index], "--shape")) {
-            shape = std.meta.stringToEnum(Shape, arguments[index + 1]) orelse
-                return error.UnknownShape;
-            continue;
-        }
-        if (!std.mem.eql(u8, arguments[index], "--buffer-bytes")) return error.UnknownArgument;
-        const wanted = try std.fmt.parseInt(u32, arguments[index + 1], 10);
-        if (wanted < buffer_bytes_min or wanted > buffer_bytes_max) return error.BufferOutOfRange;
-        if (!std.math.isPowerOfTwo(wanted)) return error.BufferNotPowerOfTwo;
-        buffer_bytes = wanted;
-        group_buffers = @intCast(group_bytes / wanted);
+        try apply(arguments[index], arguments[index + 1]);
     }
     return port;
+}
+
+/// One `--name value` pair. Split from `parse` so each stays inside the complexity limit.
+fn apply(name: []const u8, value: []const u8) !void {
+    if (std.mem.eql(u8, name, "--cpu")) {
+        cpu = try std.fmt.parseInt(usize, value, 10);
+    } else if (std.mem.eql(u8, name, "--shape")) {
+        shape = std.meta.stringToEnum(Shape, value) orelse return error.UnknownShape;
+    } else if (std.mem.eql(u8, name, "--buffer-bytes")) {
+        try set_buffer_bytes(try std.fmt.parseInt(u32, value, 10));
+    } else {
+        return error.UnknownArgument;
+    }
+}
+
+/// The group's buffers are cut from fixed memory, so a larger buffer means fewer of them.
+fn set_buffer_bytes(wanted: u32) !void {
+    if (wanted < buffer_bytes_min or wanted > buffer_bytes_max) return error.BufferOutOfRange;
+    if (!std.math.isPowerOfTwo(wanted)) return error.BufferNotPowerOfTwo;
+    buffer_bytes = wanted;
+    group_buffers = @intCast(group_bytes / wanted);
 }
 
 fn handle(loop: *Loop, event: Event) void {

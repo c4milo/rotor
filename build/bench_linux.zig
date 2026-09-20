@@ -40,6 +40,9 @@ pub fn add(b: *std.Build) void {
             step.dependOn(add_post(b, target, graph));
             step.dependOn(add_datagram(b, target, graph));
             step.dependOn(add_program(b, target, graph, "rotor_reads", "bench/files/rotor_reads.zig"));
+            // The echo programs too, so the placement path that only Linux can take is run.
+            step.dependOn(add_echo_program(b, target, graph, "rotor_echo"));
+            step.dependOn(add_echo_program(b, target, graph, "echo_client"));
         }
     }
 }
@@ -66,6 +69,34 @@ fn add_program(
     });
     program.root_module.addImport("core", graph.core);
     program.root_module.addImport("backend", graph.uring);
+    const install = b.addInstallArtifact(program, .{
+        .dest_dir = .{ .override = .{ .custom = install_directory } },
+    });
+    return &install.step;
+}
+
+/// An echo program, which needs the harness beside the backend.
+fn add_echo_program(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    graph: modules.Modules,
+    name: []const u8,
+) *std.Build.Step {
+    const program = b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("bench/echo/{s}.zig", .{name})),
+            .target = target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    program.root_module.addImport("core", graph.core);
+    program.root_module.addImport("backend", graph.uring);
+    program.root_module.addImport("harness", b.createModule(.{
+        .root_source_file = b.path("bench/harness/harness.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    }));
     const install = b.addInstallArtifact(program, .{
         .dest_dir = .{ .override = .{ .custom = install_directory } },
     });

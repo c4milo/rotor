@@ -87,6 +87,13 @@ pub const Options = struct {
     warmup_seconds: u64 = Defaults.warmup_seconds,
     candidate: []const u8 = "rotor",
     version: []const u8 = "this tree",
+    /// The core to pin this client to, or null to let the scheduler place it. A row that says
+    /// how many cores it used is only true when both ends were pinned, which Linux does and
+    /// macOS cannot (`bench/harness/placement.zig`).
+    cpu: ?usize = null,
+    /// The cores the run is meant to be using, which the report carries. The runner sets it from
+    /// where it placed the two ends; it is not discovered here.
+    cores: u32 = 1,
 };
 
 var loop_memory: [
@@ -116,7 +123,14 @@ const Client = struct {
 ///
 /// Everything this touches is static and reused between calls, so a runner may call it once per
 /// candidate per round without allocating.
+/// What the last run's placement was, so `echo_client` can print it beside the row. A row that
+/// claims a core count without a pin is the failure this exists to make visible.
+pub var last_placement: harness.Placement = .scheduler_default;
+
 pub fn run(options: Options) !Result {
+    // Placed before the loop is built: `Loop.init` asks to run on the thread that will own it,
+    // after that thread is pinned, because the ring binds to it (decision 4).
+    last_placement = harness.placement.place(options.cpu);
     if (options.connections > connections_max) return error.TooManyConnections;
     if (options.payload_bytes > payload_bytes_max) return error.PayloadTooLarge;
     for (&payload, 0..) |*byte, index| byte.* = @truncate(index);
@@ -139,7 +153,10 @@ pub fn run(options: Options) !Result {
         .candidate = options.candidate,
         .candidate_version = options.version,
         .configuration = .{
-            .cores = 1,
+            // A row names a core count only when the thread was really pinned. macOS refuses a
+            // pin, so a run there reports 0 rather than claiming a placement nobody made — which
+            // is the whole reason `names_a_core` exists.
+            .cores = if (last_placement.names_a_core()) options.cores else 0,
             .connections = options.connections,
             .payload_bytes = options.payload_bytes,
             .load = .even,

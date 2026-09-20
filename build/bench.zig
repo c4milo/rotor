@@ -127,6 +127,7 @@ fn add_echo(
     step.dependOn(&b.addInstallArtifact(reads_program, .{}).step);
 
     const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
+    // Every echo program gets the harness, because placement lives there now.
     for (programs) |name| {
         const module = b.createModule(.{
             .root_source_file = b.path(b.fmt("bench/echo/{s}.zig", .{name})),

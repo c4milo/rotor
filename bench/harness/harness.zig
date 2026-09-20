@@ -18,10 +18,12 @@ pub const report = @import("report.zig");
 pub const report_comparison = @import("report_comparison.zig");
 pub const text = @import("text.zig");
 pub const random = @import("random.zig");
+pub const placement = @import("placement.zig");
 
 pub const Histogram = histogram.Histogram;
 pub const Machine = machine.Machine;
 pub const Result = report.Result;
+pub const Placement = placement.Placement;
 
 test {
     _ = histogram;
@@ -32,4 +34,5 @@ test {
     _ = series;
     _ = text;
     _ = random;
+    _ = placement;
 }

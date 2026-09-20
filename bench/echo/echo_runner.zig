@@ -22,6 +22,7 @@
 //! measured the machine, not the candidates.
 const std = @import("std");
 const harness = @import("harness");
+const placement = harness.placement;
 const client = @import("client.zig");
 const storm = @import("storm.zig");
 
@@ -38,6 +39,10 @@ const Candidate = struct {
     arguments: []const []const u8 = &.{},
     /// True for a candidate whose backend only exists on Linux: `std.Io.Uring` is the one.
     linux_only: bool = false,
+    /// True when the server takes `--cpu`. Only rotor's does: a candidate the runner cannot place
+    /// leaves its end where the scheduler put it, and the row says `cores` 0 rather than claiming
+    /// a placement no one made.
+    takes_cpu: bool = false,
     /// True when the server takes `--buffer-bytes`, which the runner sets to the payload. rotor
     /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
     /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
@@ -52,6 +57,7 @@ const candidates = [_]Candidate{
         .program = "rotor_echo",
         .version = "this tree",
         .takes_buffer_bytes = true,
+        .takes_cpu = true,
     },
     .{
         .name = "libuv",
@@ -112,6 +118,9 @@ const Options = struct {
     only: []const u8 = "",
     port_base: u16 = port_first_default,
     workload: Workload = .echo,
+    /// Cores the run places its two ends on: 1 for both on one, 2 for one each, 0 to place
+    /// neither. macOS cannot pin at all and reports so in each program's line.
+    cores: u32 = 0,
     directory: []const u8 = directory_default,
     connections: []const u32 = &connections_default,
     payloads: []const u32 = &payloads_default,
@@ -155,6 +164,16 @@ pub fn main(init: std.process.Init) !void {
 }
 
 const Configuration = struct { connections: u32, payload_bytes: u32 };
+
+/// The core the client takes. One core means it shares the server's, which is the loopback round
+/// trip C14 measures; two means the other one, which is C15. Anything else leaves it unplaced.
+fn client_cpu(cores: u32) ?usize {
+    return switch (cores) {
+        1 => placement.first_cpu,
+        2 => placement.second_cpu,
+        else => null,
+    };
+}
 
 /// The smallest and largest buffer `rotor_echo` takes. Named here because the runner asks for
 /// one, and asking for a buffer the server refuses fails the run: the gate did exactly that with
@@ -224,7 +243,7 @@ fn one_run(
 ) !Result {
     var port_text: [8]u8 = undefined;
     const port_written = try std.fmt.bufPrint(&port_text, "{d}", .{port});
-    var argv_buffer: [8][]const u8 = undefined;
+    var argv_buffer: [10][]const u8 = undefined;
     argv_buffer[0] = try program_path(options, candidate, 0);
     argv_buffer[1] = port_written;
     var used: usize = 2;
@@ -238,6 +257,14 @@ fn one_run(
         argv_buffer[used + 1] = try std.fmt.bufPrint(&buffer_text, "{d}", .{
             buffer_bytes_for(configuration.payload_bytes),
         });
+        used += 2;
+    }
+    // The server's core, when the candidate takes one. `cores` of 1 puts both ends on the same
+    // core and 2 puts them on different ones, which is the difference C14 and C15 name.
+    var cpu_text: [8]u8 = undefined;
+    if (candidate.takes_cpu and options.cores != 0) {
+        argv_buffer[used] = "--cpu";
+        argv_buffer[used + 1] = try std.fmt.bufPrint(&cpu_text, "{d}", .{placement.first_cpu});
         used += 2;
     }
     const argv = argv_buffer[0..used];
@@ -266,6 +293,8 @@ fn one_run(
             .warmup_seconds = options.warmup_seconds,
             .candidate = candidate.name,
             .version = candidate.version,
+            .cpu = client_cpu(options.cores),
+            .cores = options.cores,
         }),
         // A storm is one burst, so it takes no span: what it is given is the burst's size.
         .storm => try storm.run(.{
@@ -367,6 +396,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--warmup")) {
         options.warmup_seconds = try std.fmt.parseInt(u64, value, 10);
+    } else if (std.mem.eql(u8, name, "--cores")) {
+        options.cores = try std.fmt.parseInt(u32, value, 10);
+        if (options.cores > 2) return error.CoresOutOfRange;
     } else if (std.mem.eql(u8, name, "--workload")) {
         options.workload = std.meta.stringToEnum(Workload, value) orelse
             return error.UnknownWorkload;
