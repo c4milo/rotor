@@ -59,6 +59,15 @@ pub const message_tag_max: u32 = 0x7fff_f000;
 pub const drain_rounds_max: u32 = 1024;
 pub const drain_wait_ns: u64 = 10 * ns_per_ms;
 
+/// Buckets a sampled latency falls in, one per power of two of nanoseconds (decision 9). The
+/// last holds everything above it, and 2^31 nanoseconds is 2.1 seconds, past which a latency is
+/// a fault and not a measurement.
+pub const latency_buckets: u32 = 32;
+
+/// One operation in 32 is sampled unless the caller says otherwise: the Hints' advice, and what
+/// decision 9 costs its arithmetic with. A mask, so the test is one AND and one compare.
+pub const sample_mask_default: u32 = 31;
+
 /// Descriptors one loop can register (`register_descriptors`). An operation names one by its
 /// index, which a 16-bit field would hold many times over; the limit is what fits the oldest
 /// io_uring table, 1,024 entries (recalled), so one number holds on every kernel from the floor up.

@@ -12,6 +12,7 @@ const slots_count = 4;
 
 var slots: [slots_count]Slot = undefined;
 var entries: [slots_count]TimerHeap.Entry = undefined;
+var starts: [slots_count]u64 = undefined;
 
 fn table() SlotTable {
     var result: SlotTable = undefined;
@@ -128,7 +129,7 @@ const registered_count = 2;
 /// Index 2 of a loop that registered 2 descriptors.
 fn name_a_registered_descriptor_the_loop_lacks() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, 0);
+    tables.init(&slots, &entries, &starts, .{});
     tables.note_descriptors(registered_count);
     const sync = [_]core.Operation{.{
         .user_data = 1,
@@ -141,10 +142,25 @@ fn name_a_registered_descriptor_the_loop_lacks() void {
 
 fn register_descriptors_twice() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, 0);
+    tables.init(&slots, &entries, &starts, .{});
     tables.note_descriptors(registered_count);
     scenario.reached_violation();
     tables.note_descriptors(registered_count);
+}
+
+/// A mask must be a power of two minus one: the decision is one AND, and any other mask would
+/// sample a pattern nobody could state (decision 9, rule 2).
+fn sample_with_a_mask_that_is_not_a_run_of_bits() void {
+    var tables: core.Tables = undefined;
+    scenario.reached_violation();
+    tables.init(&slots, &entries, &starts, .{ .sampling = .{ .sample_mask = 6 } });
+}
+
+fn sample_a_phase_the_mask_can_never_match() void {
+    var tables: core.Tables = undefined;
+    const sampling: core.statistics.Options = .{ .sample_mask = 3, .sample_phase = 4 };
+    scenario.reached_violation();
+    tables.init(&slots, &entries, &starts, .{ .sampling = sampling });
 }
 
 /// The operation has left the pending list, as after a backend's flush, so the count of slots
@@ -152,7 +168,7 @@ fn register_descriptors_twice() void {
 /// the lists as well, and would pass with this assertion gone.
 fn end_a_loop_whose_operation_the_kernel_holds() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, 0);
+    tables.init(&slots, &entries, &starts, .{});
     const timer = [_]core.Operation{
         .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
     };
@@ -203,6 +219,14 @@ const scenarios = [_]scenario.Scenario{
         .run = name_a_registered_descriptor_the_loop_lacks,
     },
     .{ .name = "tables: register descriptors twice", .run = register_descriptors_twice },
+    .{
+        .name = "statistics: sample with a mask that is not a run of bits",
+        .run = sample_with_a_mask_that_is_not_a_run_of_bits,
+    },
+    .{
+        .name = "statistics: sample a phase the mask can never match",
+        .run = sample_a_phase_the_mask_can_never_match,
+    },
     .{
         .name = "tables: end a loop whose operation the kernel holds",
         .run = end_a_loop_whose_operation_the_kernel_holds,

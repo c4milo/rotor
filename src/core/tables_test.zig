@@ -13,6 +13,7 @@ const Handle = core.Handle;
 const Operation = core.Operation;
 const Slot = core.Slot;
 const Tables = tables_module.Tables;
+const core_statistics = @import("statistics.zig");
 const TimerHeap = core.timer_heap.TimerHeap;
 
 const capacity = 4;
@@ -20,11 +21,21 @@ const capacity = 4;
 const Fixture = struct {
     slots: [capacity]Slot,
     entries: [capacity]TimerHeap.Entry,
+    starts: [capacity]u64,
     tables: Tables,
     buffer: [8]u8,
 
     fn init(fixture: *Fixture) void {
-        fixture.tables.init(&fixture.slots, &fixture.entries, 2);
+        fixture.init_sampling(.{ .sample_mask = 0 });
+    }
+
+    /// Every operation is sampled by default here, so a scenario that reads the statistics does
+    /// not have to submit 32 of them.
+    fn init_sampling(fixture: *Fixture, sampling: core_statistics.Options) void {
+        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, .{
+            .id = 2,
+            .sampling = sampling,
+        });
         fixture.buffer = @splat(0);
     }
 
@@ -234,4 +245,152 @@ test "next_cancellable walks the slots a cancel can still reach, and skips the f
     const high = @max(submitted, queued);
     try testing.expectEqualSlices(u32, &.{ low, high }, reached[0..count]);
     try testing.expectEqual(@as(?u32, null), tables.next_cancellable(tables.table.capacity()));
+}
+
+/// How long the loop in `counted` has been running when it takes its first operation.
+const uptime_ns = 3 * constants.ns_per_s;
+
+/// Runs `operations` timers through a loop and returns what it counted. `advance_ns` is how far
+/// the clock moves between the submit and the drain, which is the latency each one records.
+fn counted(
+    fixture: *Fixture,
+    sampling: core_statistics.Options,
+    operations: u32,
+    advance_ns: u64,
+) *const core_statistics.Statistics {
+    fixture.init_sampling(sampling);
+    const tables = &fixture.tables;
+    // A loop that has been up a while: a start stamp that was never written reads as 0, and a
+    // latency measured from 0 is then nothing like the real one.
+    tables.now_ns = uptime_ns;
+    var events: [capacity]Event = undefined;
+    var submitted: u32 = 0;
+    while (submitted < operations) : (submitted += 1) {
+        // The clock only ever moves forward, as a loop's does, so two runs of one workload that
+        // took different times submit their operations at different times.
+        tables.now_ns += advance_ns;
+        _ = tables.submit(&.{Fixture.timer(submitted, 1)}, &.{});
+        const index = tables.pending.pop(tables.table.slots).?;
+        tables.now_ns += advance_ns;
+        tables.finish_local(index, 0);
+        _ = tables.drain_finished(&events);
+    }
+    return &tables.statistics;
+}
+
+test "sampling takes one operation in the mask's count, chosen by the sequence alone" {
+    var fixture: Fixture = undefined;
+    const timer_kind = @intFromEnum(Operation.Code.timer);
+
+    // 64 operations at 1 in 32 are sampled twice: sequence 0 and sequence 32.
+    const every_32 = counted(&fixture, .{ .sample_mask = 31 }, 64, 0);
+    try testing.expectEqual(@as(u64, 2), every_32.sampled[timer_kind]);
+    try testing.expectEqual(@as(u64, 32), every_32.scale());
+
+    // The phase moves which ones, never how many.
+    const phased = counted(&fixture, .{ .sample_mask = 31, .sample_phase = 7 }, 64, 0);
+    try testing.expectEqual(@as(u64, 2), phased.sampled[timer_kind]);
+
+    const every_one = counted(&fixture, .{ .sample_mask = 0 }, 10, 0);
+    try testing.expectEqual(@as(u64, 10), every_one.sampled[timer_kind]);
+    try testing.expectEqual(@as(u64, 1), every_one.scale());
+
+    const every_4 = counted(&fixture, .{ .sample_mask = 3 }, 9, 0);
+    try testing.expectEqual(@as(u64, 3), every_4.sampled[timer_kind]);
+}
+
+test "the same calls give the same statistics, whatever the clock did between them" {
+    var fixture: Fixture = undefined;
+    // Two runs of one workload that differ only in how long the host took: the slow one's clock
+    // reads differently at every submit. Decision 9's rule 2 is that the sampling decision reads
+    // the sequence and never the clock, so the two runs sample the same operations.
+    const sampling: core_statistics.Options = .{ .sample_mask = 3 };
+    const quick = (counted(&fixture, sampling, 16, 0)).sampled;
+    var slow_fixture: Fixture = undefined;
+    const slow_ns = 5 * constants.ns_per_ms;
+    const slow = (counted(&slow_fixture, sampling, 16, slow_ns)).sampled;
+    try testing.expectEqualSlices(u64, &quick, &slow);
+}
+
+test "a sampled operation's latency lands in the bucket of the time the loop held" {
+    var fixture: Fixture = undefined;
+    const timer_kind = @intFromEnum(Operation.Code.timer);
+
+    const immediate = counted(&fixture, .{ .sample_mask = 0 }, 4, 0);
+    try testing.expectEqual(@as(u32, 4), immediate.latency[timer_kind][0]);
+
+    var micro_fixture: Fixture = undefined;
+    const micro = counted(&micro_fixture, .{ .sample_mask = 0 }, 3, constants.ns_per_us);
+    const bucket = core_statistics.bucket_of(constants.ns_per_us);
+    try testing.expectEqual(@as(u32, 3), micro.latency[timer_kind][bucket]);
+    try testing.expectEqual(@as(u32, 0), micro.latency[timer_kind][0]);
+}
+
+test "operations in flight together each keep their own start, whatever slot they took" {
+    var fixture: Fixture = undefined;
+    fixture.init_sampling(.{ .sample_mask = 0 });
+    const tables = &fixture.tables;
+    const timer_kind = @intFromEnum(Operation.Code.timer);
+
+    // Two operations submitted far apart and finished at one moment. Their latencies differ by
+    // the gap, so each has to be measured from its own start and not from the other's.
+    const gap_ns = 1 << 20;
+    tables.now_ns = uptime_ns;
+    _ = tables.submit(&.{Fixture.timer(1, 1)}, &.{});
+    const first = fixture.hand_to_kernel();
+    tables.now_ns = uptime_ns + gap_ns;
+    _ = tables.submit(&.{Fixture.timer(2, 1)}, &.{});
+    const second = fixture.hand_to_kernel();
+    try testing.expect(first != second);
+
+    const short_ns = 1 << 15;
+    tables.now_ns = uptime_ns + gap_ns + short_ns;
+    tables.finish(first, tables.table.at(first));
+    tables.finish(second, tables.table.at(second));
+    const latency = tables.statistics.latency[timer_kind];
+    try testing.expectEqual(@as(u32, 1), latency[core_statistics.bucket_of(gap_ns + short_ns)]);
+    try testing.expectEqual(@as(u32, 1), latency[core_statistics.bucket_of(short_ns)]);
+}
+
+test "a multishot operation is counted once and records no latency" {
+    var fixture: Fixture = undefined;
+    fixture.init_sampling(.{ .sample_mask = 0 });
+    const tables = &fixture.tables;
+    const receive_kind = @intFromEnum(Operation.Code.receive);
+
+    var multishot = fixture.receive(1, 0);
+    multishot.kind.receive.target = .{ .group = 0 };
+    multishot.kind.receive.multishot = true;
+    _ = tables.submit(&.{multishot}, &.{});
+    const index = fixture.hand_to_kernel();
+    try testing.expect(tables.table.at(index).flags.multishot);
+
+    tables.now_ns += constants.ns_per_s;
+    tables.finish(index, tables.table.at(index));
+    try testing.expectEqual(@as(u64, 1), tables.statistics.sampled[receive_kind]);
+    var recorded: u32 = 0;
+    for (tables.statistics.latency[receive_kind]) |count| recorded += count;
+    try testing.expectEqual(@as(u32, 0), recorded);
+}
+
+test "an operation the loop never sampled is counted nowhere, and events are the same either way" {
+    var fixture: Fixture = undefined;
+    // Sample nothing this run: phase 1 of a mask of 1 never matches sequence 0.
+    const none = counted(&fixture, .{ .sample_mask = 1, .sample_phase = 1 }, 1, 0);
+    try testing.expectEqual(@as(u64, 0), none.sampled[@intFromEnum(Operation.Code.timer)]);
+
+    // The caller's events do not depend on whether the loop measured them (rule 1).
+    var sampled_fixture: Fixture = undefined;
+    var events: [2]Event = undefined;
+    const measured: core_statistics.Options = .{ .sample_mask = 0 };
+    const unmeasured: core_statistics.Options = .{ .sample_mask = 1, .sample_phase = 1 };
+    for ([_]core_statistics.Options{ measured, unmeasured }) |sampling| {
+        sampled_fixture.init_sampling(sampling);
+        const tables = &sampled_fixture.tables;
+        _ = tables.submit(&.{ Fixture.timer(11, 1), Fixture.timer(12, 1) }, &.{});
+        while (tables.pending.pop(tables.table.slots)) |index| tables.finish_local(index, 0);
+        try testing.expectEqual(@as(u32, 2), tables.drain_finished(&events));
+        try testing.expectEqual(@as(u64, 11), events[0].user_data);
+        try testing.expectEqual(@as(u64, 12), events[1].user_data);
+    }
 }

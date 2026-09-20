@@ -28,11 +28,22 @@ pub const Harness = struct {
     loop: Loop,
 
     pub fn init(harness: *Harness, id: core.LoopId, registry: ?*backend.Registry) !void {
+        return harness.init_sampling(id, registry, .{});
+    }
+
+    /// A loop that samples as `sampling` says, for the scenarios that read its statistics.
+    pub fn init_sampling(
+        harness: *Harness,
+        id: core.LoopId,
+        registry: ?*backend.Registry,
+        sampling: core.statistics.Options,
+    ) !void {
         try harness.loop.init(&harness.memory, .{
             .operations = operations,
             .entries = entries,
             .id = id,
             .registry = registry,
+            .sampling = sampling,
         });
     }
 
@@ -76,4 +87,5 @@ test {
     _ = @import("conformance_file.zig");
     _ = @import("conformance_post.zig");
     _ = @import("conformance_registered.zig");
+    _ = @import("conformance_statistics.zig");
 }

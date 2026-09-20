@@ -93,16 +93,39 @@ simulator never runs.
 
 **Exact counters, unsampled.** The Hints' point, and the arithmetic above.
 
+## What was built, on 2026-09-19
+
+`core/statistics.zig`, embedded in `core.Tables`, so both backends count the same way. The
+loop counts sampled operations by kind, and the latency of each in one of
+`constants.latency_buckets` buckets, one per power of two of nanoseconds. The start and the end
+are the tick's clock, which the loop read for the timer heap, so a measurement costs no clock
+read (rule 4).
+
+Two things the record did not settle, settled by building it:
+
+- **A multishot operation records no latency.** Its final event comes when it is cancelled or
+  fails, so the span from submit to that event is a lifetime and not a latency. It is counted
+  among the sampled and left out of the buckets.
+- **There is no way to turn statistics off**, because the record gives none and the cost it
+  argues from is the sampled cost. `sample_mask` of 0 samples every operation; a mask and a
+  phase that cannot meet sample none.
+
+`starts`, one 64-bit stamp per slot, is the only memory this added: the caller hands it over with
+the rest of the loop's memory.
+
 ## How it is checked
 
 One simulator gate, the replay gate, runs each seed three times: statistics off, 1 in 32, and
 1 in 1. It requires the three traces to be byte-identical, and the two statistics outputs of
 any one setting, run twice, to be byte-identical.
 
-Mutations, each reported `CAUGHT` or `NOT CAUGHT`:
+Decision 10 removed the simulator and with it the three-trace replay gate. What replaces it for
+rule 2 is a test of the decision itself: `submitted` is called with one sequence and a range of
+clocks whose low bits differ, and the decision it makes must not change. A conformance scenario
+then checks rule 1 on both real backends, by running one workload at two sampling settings and
+requiring the same events.
 
-1. Draw `sample_phase` from the fault generator: the three-trace comparison must catch it.
-2. Make one branch in `sim` read a statistic: a lint rule cannot see this in general, so a
-   test that sets statistics to absurd values before a run and compares traces must catch it.
-3. Read the host clock for a sampled duration in `sim`: the determinism lint rule catches it at
-   build time, and `tools/lint/determinism.zig` already carries a fixture of that shape.
+Mutations, 24 of 24 CAUGHT. Four were NOT CAUGHT when first run, and each named a missing test:
+the start stamp never written (every test clock began at 0), a multishot operation recording a
+latency, the decision made from the clock (every test clock was a multiple of four), and the
+latency measured from another slot's start (only one operation was ever in flight).

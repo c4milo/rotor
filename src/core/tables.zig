@@ -15,6 +15,7 @@ const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 const slot_list_module = @import("slot_list.zig");
 const slot_table_module = @import("slot_table.zig");
+const statistics_module = @import("statistics.zig");
 const timer_heap_module = @import("timer_heap.zig");
 
 const Code = event_module.Code;
@@ -25,6 +26,7 @@ const Operation = operation_module.Operation;
 const Slot = slot_module.Slot;
 const SlotList = slot_list_module.SlotList;
 const SlotTable = slot_table_module.SlotTable;
+const Statistics = statistics_module.Statistics;
 const TimerHeap = timer_heap_module.TimerHeap;
 
 /// One per thread, and its address is that thread's identity.
@@ -50,25 +52,42 @@ pub const Tables = struct {
     now_ns: u64,
     /// Operations accepted since init: what a sampling decision is a function of (decision 9).
     operation_sequence: u64,
+    /// What the loop counts about itself, sampled (decision 9). The loop writes here and never
+    /// reads: no branch anywhere depends on a statistic.
+    statistics: Statistics,
     /// The address of the owning thread's `thread_marker`.
     owner: usize,
     /// Descriptors the loop registered: 0 until `note_descriptors`.
     descriptors_registered: u32,
     id: LoopId,
 
-    /// Must run on the thread that will own the loop.
-    pub fn init(tables: *Tables, slots: []Slot, entries: []TimerHeap.Entry, id: LoopId) void {
-        assert(id < constants.loops_max);
+    pub const Options = struct {
+        id: LoopId = 0,
+        sampling: statistics_module.Options = .{},
+    };
+
+    /// Must run on the thread that will own the loop. `starts` holds one nanosecond stamp per
+    /// slot, for the sampled operations in flight.
+    pub fn init(
+        tables: *Tables,
+        slots: []Slot,
+        entries: []TimerHeap.Entry,
+        starts: []u64,
+        options: Options,
+    ) void {
+        assert(options.id < constants.loops_max);
         assert(entries.len == slots.len);
+        assert(starts.len == slots.len);
         tables.table.init(slots);
         tables.timers.init(entries, slots);
+        tables.statistics.init(options.sampling, starts);
         tables.pending = SlotList.empty;
         tables.finished = SlotList.empty;
         tables.now_ns = 0;
         tables.operation_sequence = 0;
         tables.owner = @intFromPtr(&thread_marker);
         tables.descriptors_registered = 0;
-        tables.id = id;
+        tables.id = options.id;
     }
 
     /// Records that the backend registered `count` descriptors: once per loop, before an
@@ -114,6 +133,8 @@ pub const Tables = struct {
             const index = tables.table.claim() orelse break;
             const slot = tables.table.at(index);
             slot.fill(operation);
+            const sequence = tables.operation_sequence +% taken;
+            tables.statistics.submitted(sequence, index, slot, tables.now_ns);
             // A loop that posts to itself would wait on an event only its own tick can produce.
             assert(slot.code != .post or slot.descriptor != tables.id);
             tables.pending.push(tables.table.slots, index);
@@ -129,6 +150,7 @@ pub const Tables = struct {
     /// slot released, as the event is handed to the caller (decision 5, rule 1).
     pub fn finish(tables: *Tables, index: u32, slot: *Slot) void {
         assert(slot.state == .submitted);
+        if (slot.flags.sampled) tables.statistics.finished(index, slot, tables.now_ns);
         if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
         tables.table.release(index);
     }
@@ -153,6 +175,7 @@ pub const Tables = struct {
             const index = tables.finished.pop(tables.table.slots) orelse break;
             const slot = tables.table.at(index);
             assert(slot.state == .finishing);
+            if (slot.flags.sampled) tables.statistics.finished(index, slot, tables.now_ns);
             events[produced] = .{
                 .user_data = slot.user_data,
                 .result = slot.result,

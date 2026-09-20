@@ -84,7 +84,10 @@ pub const Slot = extern struct {
         buffer_group: bool = false,
         /// `descriptor` is an index into the descriptors the loop registered.
         descriptor_registered: bool = false,
-        reserved: u2 = 0,
+        /// The loop is measuring this operation (decision 9, rule 2). Statistics never steer
+        /// what the loop does: nothing reads this but the statistics themselves.
+        sampled: bool = false,
+        reserved: u1 = 0,
     };
 
     /// Flattens `operation` into a slot the table has just claimed. Leaves `generation` and

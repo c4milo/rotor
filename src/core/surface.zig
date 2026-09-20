@@ -19,6 +19,7 @@ pub const loop_declarations = [_][]const u8{
     "cancel",
     "tick",
     "in_flight",
+    "statistics",
     "cancel_all",
     "drain",
     "assert_empty",
@@ -49,6 +50,7 @@ const Complete = struct {
     pub fn cancel() void {}
     pub fn tick() void {}
     pub fn in_flight() void {}
+    pub fn statistics() void {}
     pub fn cancel_all() void {}
     pub fn drain() void {}
     pub fn assert_empty() void {}

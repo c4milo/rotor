@@ -223,6 +223,6 @@ suite: `uring` under Linux in Docker, `kqueue` natively on macOS. The halt check
 pass. Registered descriptors and provided buffers are built, and no speed claim is made for either
 yet.
 
-What is left of the implementation: the sampled statistics of decision 9, and the Linux cost
+The sampled statistics of decision 9 are built. What is left of the implementation: the Linux cost
 probes of `bench/costs/probes/probes_linux.zig`. Then milestone 3 fills `docs/costs.md`, which has
 no measured cell yet, and runs decision 8's experiment. The `linux` machine is not named.

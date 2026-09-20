@@ -79,6 +79,8 @@ pub const Loop = struct {
         /// What the uring backend sizes its submission ring by. This backend sizes nothing by
         /// it, and takes it so that a caller's options are the same on both.
         entries: u16,
+        /// How often the loop measures an operation (decision 9, rule 2).
+        sampling: core.statistics.Options = .{},
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         registry: ?*Registry = null,
@@ -89,6 +91,7 @@ pub const Loop = struct {
         var layout: Layout = .{};
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
+        _ = layout.add(u64, options.operations);
         _ = layout.add(waiters_module.Entry, Waiters.capacity_for(options.operations));
         return layout.bytes;
     }
@@ -116,10 +119,14 @@ pub const Loop = struct {
         var layout: Layout = .{};
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
+        const starts = layout.take(memory, u64, options.operations);
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, waiters_module.Entry, waiting));
         assert(layout.bytes == memory_bytes(options));
-        loop.tables.init(slots, entries, options.id);
+        loop.tables.init(slots, entries, starts, .{
+            .id = options.id,
+            .sampling = options.sampling,
+        });
         loop.changes_used = 0;
         loop.registry = options.registry;
         loop.sleeping = false;
@@ -180,6 +187,11 @@ pub const Loop = struct {
     pub fn drain(loop: *Loop, scratch: []Event) DrainError!void {
         const rounds_max = core.constants.drain_rounds_max;
         return core.shutdown.drain(loop, scratch, rounds_max, core.constants.drain_wait_ns);
+    }
+
+    /// What the loop has counted about itself, sampled (decision 9). Read by the caller alone.
+    pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
+        return &loop.tables.statistics;
     }
 
     pub const register_buffers = buffers.register;

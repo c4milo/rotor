@@ -65,6 +65,8 @@ pub const Loop = struct {
         /// Submission ring entries, a power of two in [1, constants.entries_max]. One tick
         /// submits at most this many operations; the rest wait for the next.
         entries: u16,
+        /// How often the loop measures an operation (decision 9, rule 2).
+        sampling: core.statistics.Options = .{},
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         /// Where loops find each other's rings. Null for a loop that posts to none and that
@@ -77,6 +79,7 @@ pub const Loop = struct {
         var layout: Layout = .{};
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
+        _ = layout.add(u64, options.operations);
         _ = layout.add(Handle, HandleQueue.capacity_for(options.operations));
         _ = layout.add(address.Storage, options.entries);
         return layout.bytes;
@@ -108,10 +111,14 @@ pub const Loop = struct {
         var layout: Layout = .{};
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
+        const starts = layout.take(memory, u64, options.operations);
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
         loop.addresses = layout.take(memory, address.Storage, options.entries);
         assert(layout.bytes == memory_bytes(options));
-        loop.tables.init(slots, entries, options.id);
+        loop.tables.init(slots, entries, starts, .{
+            .id = options.id,
+            .sampling = options.sampling,
+        });
         loop.cancels.init(handles);
         loop.addresses_used = 0;
         loop.registry = options.registry;
@@ -175,6 +182,11 @@ pub const Loop = struct {
     pub fn drain(loop: *Loop, scratch: []Event) DrainError!void {
         const rounds_max = core.constants.drain_rounds_max;
         return core.shutdown.drain(loop, scratch, rounds_max, core.constants.drain_wait_ns);
+    }
+
+    /// What the loop has counted about itself, sampled (decision 9). Read by the caller alone.
+    pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
+        return &loop.tables.statistics;
     }
 
     pub const register_buffers = buffers.register;
