@@ -117,8 +117,32 @@ test "a loop held off its tick is handed the deadlines it missed, and does not s
     try harness.loop.drain(&events);
 }
 
+/// Attempts the drift measurement gets. A loop that schedules from the clock drifts on every one
+/// of them, so the verdict is the best attempt, not the first: the noise here is one-sided.
+/// Preempting this thread can only make a punctual loop look late, never make a late loop look
+/// punctual, so a single attempt fails on a busy machine while proving nothing. The first version
+/// took one attempt and failed `zig build test`, which runs the suites in parallel.
+const drift_attempts = 5;
+
 test "a repeating timer's period is measured from its deadline, so a late loop does not drift" {
     if (conformance.unsupported()) return error.SkipZigTest;
+    // Two periods without drift; 2.75 with. The bound sits between them, a quarter of a period
+    // from each, which a busy machine has to eat before it can turn one verdict into the other.
+    const drifted_ns = period_ns * 11 / 4;
+    const bound_ns = (2 * period_ns + drifted_ns) / 2;
+
+    var best_ns: u64 = std.math.maxInt(u64);
+    var attempt: u32 = 0;
+    while (attempt < drift_attempts) : (attempt += 1) {
+        best_ns = @min(best_ns, try measure_two_fires());
+        if (best_ns < bound_ns) return;
+    }
+    try testing.expect(best_ns < bound_ns);
+}
+
+/// One attempt: how long two fires of a repeating timer take, measured from the tick that armed
+/// it, with the loop held off before the first fire is taken.
+fn measure_two_fires() !u64 {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
@@ -148,12 +172,7 @@ test "a repeating timer's period is measured from its deadline, so a late loop d
     }
     const elapsed_ns = now_ns() - started_ns;
 
-    // Two periods without drift; 2.75 with. The bound sits between them, a quarter of a period
-    // from each, which a busy machine has to eat before it can turn one verdict into the other.
-    const drifted_ns = period_ns * 11 / 4;
-    const bound_ns = (2 * period_ns + drifted_ns) / 2;
-    try testing.expect(elapsed_ns < bound_ns);
-
     harness.loop.cancel(handles[0]);
     try harness.loop.drain(&events);
+    return elapsed_ns;
 }
