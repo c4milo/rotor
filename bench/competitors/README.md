@@ -327,6 +327,32 @@ What this needs next: the runner drives echo and the storm, and not this, becaus
 measures itself and prints a line instead of being driven. Giving the runner that shape is what
 turns these into rows with a spread.
 
+## The cross-core message, and one way its candidates are not measured alike
+
+`crosscore_runner` compares one cross-core message: rotor's `post`, libuv's `uv_async_send` and
+libxev's `xev.Async`. All three block between messages, because neither competitor offers anything
+else. There is no libuv or libxev call that polls for a notification without sleeping, so rotor is
+compared in its `waiting` mode alone; `bench/crosscore/rotor_post.zig` keeps rotor's two other
+modes and names them in the candidate column, so no table reads as though a competitor had been
+offered the same choice.
+
+**The percentiles are not computed the same way in all three.** rotor and libxev record into
+`bench/harness/histogram.zig`. libuv sorts an array in C, because a C program cannot import that
+file.
+
+- The histogram keeps 7 sub-bucket bits, so one bucket spans about 1/128 of its value, and
+  `percentile` returns `bucket_upper_ns`, the largest value that bucket holds.
+- So rotor's and libxev's percentiles are **overstated by at most 0.78 percent**, and libuv's are
+  exact.
+
+The bias runs against rotor and never for it, which is why this is recorded and not corrected: no
+reader can be misled in rotor's favour by it. It is worth fixing when two candidates land within
+one percent of each other, and no run has. Throughput is unaffected, because every candidate
+counts its own operations and divides by its own span.
+
+No cross-core row is recorded here yet. The first three-way run was made on 2026-09-20 on a `mac`
+carrying a load average above 13, which is not a measurement and is not reproduced in this file.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.
