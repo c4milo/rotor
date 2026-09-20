@@ -149,8 +149,18 @@ fn collect_one(
     return taken;
 }
 
+/// Bytes the report line needs: the sentence, plus one ` [index]=count` per listener. The whole
+/// line is built here and written once, so this is also the size of that one write.
+const report_bytes_max = 256;
+
 /// Prints what the kernel did, because the distribution is the finding and the assertions above
 /// deliberately do not pin it.
+///
+/// It builds the line and makes **one** `print` call. Under `zig build test` the test runner
+/// speaks a protocol over its own pipes, and a run of small writes from inside a test corrupts
+/// it. The first version printed the sentence, then one call per listener, then a newline: the
+/// suite passed when the binary was run directly and `zig build test` died on the next test with
+/// `internal test runner failure: EndOfStream`, which names neither this test nor printing.
 fn report(listeners: *const [listeners_count]Listener) void {
     var lowest: u32 = std.math.maxInt(u32);
     var highest: u32 = 0;
@@ -160,7 +170,10 @@ fn report(listeners: *const [listeners_count]Listener) void {
     }
     var served: u32 = 0;
     for (listeners) |listener| served += @intFromBool(listener.accepted != 0);
-    std.debug.print(
+
+    var buffer: [report_bytes_max]u8 = undefined;
+    var line = std.Io.Writer.fixed(&buffer);
+    line.print(
         "\nSO_REUSEPORT on {s}: {d} connections over {d} listeners; {d} took any," ++
             " fewest {d}, most {d}. Per listener:",
         .{
@@ -171,9 +184,10 @@ fn report(listeners: *const [listeners_count]Listener) void {
             lowest,
             highest,
         },
-    );
+    ) catch return;
     for (listeners, 0..) |listener, index| {
-        std.debug.print(" [{d}]={d}", .{ index, listener.accepted });
+        line.print(" [{d}]={d}", .{ index, listener.accepted }) catch return;
     }
-    std.debug.print("\n", .{});
+    line.writeByte('\n') catch return;
+    std.debug.print("{s}", .{line.buffered()});
 }
