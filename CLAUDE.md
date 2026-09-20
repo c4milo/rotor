@@ -125,9 +125,9 @@ measured against `zig build halt-check`.
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
   nothing; `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;
-  nothing imports `bench`. `core` and `uring` exist today. `conformance` imports `core` and the
+  nothing imports `bench`. `conformance` imports `core` and the
   backend under test, which the build hands it as its `backend` import, so one suite tests every
-  backend (decision 10). `bench/` sits outside `src/` and outside the graph; `build/bench.zig`
+  backend (decision 10). `core`, `uring` and `kqueue` exist today. `bench/` sits outside `src/` and outside the graph; `build/bench.zig`
   wires it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
@@ -168,6 +168,14 @@ measured against `zig build halt-check`.
   failure. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. `zig build test` does not run it: it needs Docker.
+- Race gate: `zig build test-race && bash tools/race_test.sh`. It builds the `kqueue` and
+  `conformance-uring` test executables with ThreadSanitizer for Linux with glibc into
+  `zig-out/race/`, and the script runs them in Docker. Those two are the suites that start a
+  thread: the mailbox rings and the sleep flag (decision 12, point 6), and two loops posting
+  through the registry. A clean run is evidence and not a proof, because a sanitizer reports the
+  interleavings that ran. It has its own target and image because the sanitizer's runtime needs a
+  dynamic glibc, and it cannot be built on macOS at all. `zig build test` does not run it: it
+  needs Docker.
 - Linux benchmarks: `zig build bench-linux` builds the io_uring benchmarks of `bench/uring/` for
   the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
   `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A
@@ -208,6 +216,13 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
 
 The owner accepted the decision records for implementation on 2026-09-19 without ruling on their
 open questions, so the implementation follows the proposed answer to each. Decision 10 dropped
-the simulator. Milestone 1 is landing: `core` and the `uring` backend pass the conformance suite
-under Linux in Docker. Milestone 2, the `kqueue` backend, is next. `docs/costs.md` has no measured
-cell yet, and the `linux` machine is not named.
+the simulator.
+
+Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass the same 23-scenario conformance
+suite: `uring` under Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate
+pass. Registered descriptors and provided buffers are built, and no speed claim is made for either
+yet.
+
+What is left of the implementation: the sampled statistics of decision 9, and the Linux cost
+probes of `bench/costs/probes/probes_linux.zig`. Then milestone 3 fills `docs/costs.md`, which has
+no measured cell yet, and runs decision 8's experiment. The `linux` machine is not named.

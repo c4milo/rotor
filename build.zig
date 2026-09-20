@@ -22,6 +22,7 @@ const bench = @import("build/bench.zig");
 const halt = @import("build/halt.zig");
 const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
+const race = @import("build/race.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
 const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
@@ -117,6 +118,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(bench_steps.harness_tests);
 
     linux.add(b, optimize);
+    race.add(b);
     bench_linux.add(b);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
