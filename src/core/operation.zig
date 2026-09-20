@@ -189,11 +189,20 @@ pub const Operation = struct {
             .accept => |accept| assert(accept.listener >= 0),
             .connect => |connect| assert(connect.socket >= 0),
             .receive => |receive| assert_receive(receive),
-            .send => |send| assert_transfer(send.socket, send.buffer.bytes.len),
+            .send => |send| {
+                assert_transfer(send.socket, send.buffer.bytes.len);
+                assert_socket_buffer(send.buffer.registered);
+            },
             .shutdown => |shutdown| assert(shutdown.socket >= 0),
             .close => |close| assert(close.descriptor >= 0),
-            .read => |read| assert_transfer(read.file, read.buffer.bytes.len),
-            .write => |write| assert_transfer(write.file, write.buffer.bytes.len),
+            .read => |read| {
+                assert_transfer(read.file, read.buffer.bytes.len);
+                assert_file_buffer(read.buffer.registered);
+            },
+            .write => |write| {
+                assert_transfer(write.file, write.buffer.bytes.len);
+                assert_file_buffer(write.buffer.registered);
+            },
             .fdatasync => |fdatasync| assert(fdatasync.file >= 0),
             .timer => |timer| {
                 // A timer is a deadline, so it carries none: `Slot.timeout_ns` holds its period
@@ -217,9 +226,25 @@ pub const Operation = struct {
             .buffer => |buffer| {
                 assert(!receive.multishot);
                 assert_transfer(receive.socket, buffer.bytes.len);
+                assert_socket_buffer(buffer.registered);
             },
             .group => |group| assert(group < constants.buffer_groups_max),
         }
+    }
+
+    /// A registered buffer on a socket transfer is refused, not ignored. A backend sends and
+    /// receives with the plain opcodes, which take no registered buffer: only the zero-copy send
+    /// does, and decision 3 puts that outside version one. Before this assertion the index was
+    /// accepted, recorded in the slot, and then read by nobody, so a caller that registered its
+    /// buffers and named one got an ordinary transfer against an unregistered pointer and no
+    /// word of it. A caller that wants a registered buffer wants it on a file.
+    fn assert_socket_buffer(registered: ?u16) void {
+        assert(registered == null);
+    }
+
+    /// A registered buffer on a file transfer names one the loop registered.
+    fn assert_file_buffer(registered: ?u16) void {
+        if (registered) |index| assert(index < constants.registered_buffers_max);
     }
 
     fn assert_transfer(file_or_socket: Descriptor, len: usize) void {

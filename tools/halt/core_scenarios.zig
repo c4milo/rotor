@@ -148,6 +148,43 @@ fn register_descriptors_twice() void {
     tables.note_descriptors(registered_count);
 }
 
+/// The plain send opcode takes no registered buffer, so naming one is refused rather than
+/// ignored. Before the assertion existed the index was stored in the slot and read by nobody.
+fn name_a_registered_buffer_in_a_send() void {
+    var bytes: [16]u8 = undefined;
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .send = .{
+        .socket = 3,
+        .buffer = .{ .bytes = &bytes, .registered = 0 },
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// The same for a receive into a buffer the caller names. A receive from a group names no
+/// buffer at all, so it cannot reach this.
+fn name_a_registered_buffer_in_a_receive() void {
+    var bytes: [16]u8 = undefined;
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive = .{
+        .socket = 3,
+        .target = .{ .buffer = .{ .bytes = &bytes, .registered = 0 } },
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// A registered buffer on a file transfer is legal, and its index must be one the loop can have
+/// registered.
+fn name_a_registered_buffer_above_the_limit() void {
+    var bytes: [16]u8 = undefined;
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .write = .{
+        .file = 3,
+        .buffer = .{ .bytes = &bytes, .registered = core.constants.registered_buffers_max },
+        .offset = 0,
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
 /// A mask must be a power of two minus one: the decision is one AND, and any other mask would
 /// sample a pattern nobody could state (decision 9, rule 2).
 fn sample_with_a_mask_that_is_not_a_run_of_bits() void {
@@ -213,6 +250,18 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "operation: name a registered descriptor above the limit",
         .run = name_a_registered_descriptor_above_the_limit,
+    },
+    .{
+        .name = "operation: name a registered buffer in a send",
+        .run = name_a_registered_buffer_in_a_send,
+    },
+    .{
+        .name = "operation: name a registered buffer in a receive",
+        .run = name_a_registered_buffer_in_a_receive,
+    },
+    .{
+        .name = "operation: name a registered buffer above the limit",
+        .run = name_a_registered_buffer_above_the_limit,
     },
     .{
         .name = "tables: name a registered descriptor the loop lacks",

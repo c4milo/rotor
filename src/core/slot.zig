@@ -273,9 +273,12 @@ test "fill flattens a multishot receive from a group, a post and a timer" {
 test "fill clears what the slot's last operation left behind" {
     var buffer: [16]u8 = undefined;
     var slot = claimed();
-    slot.fill(&.{ .user_data = 1, .descriptor_registered = true, .kind = .{ .send = .{
-        .socket = 4,
+    // A write and not a send: a registered buffer is legal only on a file transfer, because the
+    // plain socket opcodes take none and `assert_valid` refuses the pair.
+    slot.fill(&.{ .user_data = 1, .descriptor_registered = true, .kind = .{ .write = .{
+        .file = 4,
         .buffer = .{ .bytes = &buffer, .registered = 1 },
+        .offset = 0,
     } } });
     // The descriptor field holds the index, and the flag says so.
     try testing.expect(slot.flags.descriptor_registered and slot.flags.buffer_registered);
