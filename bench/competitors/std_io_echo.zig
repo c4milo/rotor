@@ -7,7 +7,8 @@
 //! it: every line below is the same for either, and `--backend` picks which `Io` the program
 //! runs on. That is the point of the interface, and writing two programs would hide it.
 //!
-//!   - `uring`: `std.Io.Uring`, fibers over io_uring. Linux only.
+//!   - `uring`: `std.Io.Uring`, fibers over io_uring. Linux only, and it does not compile on the
+//!     pinned Zig: see `uring_compiles` below, which is why it is absent from the comparison.
 //!   - `threaded`: `std.Io.Threaded`, a thread pool with a blocking call per operation.
 //!
 //! It is written the way `std.Io` is meant to be written, so that no result of the harness comes
@@ -39,6 +40,24 @@ const connections_max = 512;
 
 const Backend = enum { uring, threaded };
 
+/// False while `std.Io.Uring` does not compile, which on Zig 0.16.0 is always. A program that
+/// does nothing but call `std.Io.Uring.init` fails to build for Linux:
+///
+/// ```text
+/// std/Io/Uring.zig:2732:32: error: expected type '...!Io.Dir', found '...'
+/// note: 'error.ReadOnlyFileSystem' not a member of destination error set
+/// ```
+///
+/// `dirOpen` returns an error its own `Dir.OpenError` does not name. Nothing in this tree
+/// reaches that function; naming the type is enough, because the switch arm below is analysed
+/// whatever `--backend` says at run time. So the arm is behind this flag, and the whole program
+/// builds for Linux with `threaded` alone.
+///
+/// The candidate is therefore absent from the comparison on the pinned Zig, which
+/// `docs/decisions/0003-speed-sources.md` names as a competitor. Set this to true when a Zig
+/// that compiles it is pinned, and the candidate returns with no other change.
+const uring_compiles = false;
+
 /// Memory `std.Io.Uring` and `std.Io.Threaded` take for their fiber stacks and their pool.
 const backing_bytes = 64 * 1024 * 1024;
 
@@ -49,6 +68,7 @@ pub fn main(init: std.process.Init) !void {
     var arena = std.heap.FixedBufferAllocator.init(&backing);
     const gpa = arena.allocator();
 
+    if (options.backend == .uring and !uring_compiles) return error.UringDoesNotCompile;
     switch (options.backend) {
         .threaded => {
             var threaded: std.Io.Threaded = .init(gpa, .{});
@@ -56,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
             try serve(init, threaded.io(), options);
         },
         .uring => {
+            if (!uring_compiles) return error.UringDoesNotCompile;
             if (builtin.os.tag != .linux) return error.UringNeedsLinux;
             var evented: std.Io.Uring = undefined;
             try evented.init(gpa, .{});
