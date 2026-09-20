@@ -97,6 +97,7 @@ fn add_echo(
     });
     timers.addImport("core", graph.core);
     timers.addImport("backend", backend);
+    timers.addImport("harness", harness_module);
     const timers_program = b.addExecutable(.{ .name = "rotor_timers", .root_module = timers });
     step.dependOn(&b.addInstallArtifact(timers_program, .{}).step);
 

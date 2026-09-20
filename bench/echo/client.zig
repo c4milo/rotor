@@ -324,13 +324,4 @@ fn stop(index: u32) bool {
 
 /// The monotonic clock, as the backends' ticks read it. A round trip is thousands of
 /// nanoseconds, so one read at each end of it costs C20 against C14 and does not show.
-fn now_ns() u64 {
-    var value: if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.timespec = undefined;
-    if (builtin.os.tag == .linux) {
-        std.debug.assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
-    } else {
-        std.debug.assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
-    }
-    const seconds: u64 = @intCast(value.sec);
-    return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
-}
+const now_ns = harness.clock.now_ns;

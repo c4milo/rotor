@@ -9,6 +9,7 @@
 //! - `report`: one result of one run and how it prints, with `report_comparison`, the table that
 //!   sets several candidates against rotor and marks the rows rotor loses, and `report_parse`,
 //!   which reads a result back from the line a candidate in its own process printed.
+//! - `clock`: the monotonic clock every benchmark reads, so two spans are comparable.
 //! - `text`: the fixed-buffer string and the Markdown and JSON text rules the renderers share.
 //! - `random`: the seeded generator the tests draw from, a copy of src/core/random.zig.
 pub const histogram = @import("histogram.zig");
@@ -18,6 +19,7 @@ pub const machine_proc = @import("machine_proc.zig");
 pub const report = @import("report.zig");
 pub const report_comparison = @import("report_comparison.zig");
 pub const report_parse = @import("report_parse.zig");
+pub const clock = @import("clock.zig");
 pub const text = @import("text.zig");
 pub const random = @import("random.zig");
 pub const placement = @import("placement.zig");
@@ -35,6 +37,7 @@ test {
     _ = report_comparison;
     _ = report_parse;
     _ = series;
+    _ = clock;
     _ = text;
     _ = random;
     _ = placement;
