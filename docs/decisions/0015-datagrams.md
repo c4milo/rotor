@@ -266,8 +266,9 @@ that a kind means something.
 ## What must be measured before it is built
 
 1. **Done, 2026-09-20.** `tools/uring_probe_datagram.zig` answered the payload offset, what
-   `cqe.res` counts, and that `UDP_SEGMENT`, `UDP_GRO`, `IP_PKTINFO` and `IP_RECVTOS` are all
-   present on `orbstack`. It corrected this record; the layout above is measured, not recalled.
+   `cqe.res` counts, that the single-shot and multishot layouts differ, and that `UDP_SEGMENT`,
+   `UDP_GRO`, `IP_PKTINFO` and `IP_RECVTOS` are all present on `orbstack`. It corrected this
+   record twice; the layout above is measured, not recalled.
 2. **Open.** Whether the outbound control buffer must outlive `io_uring_enter`. Until it answers,
    the send path keeps that memory alive to the final event, which is what decision 5's rule 3
    already promises for every buffer an operation names, so a "no" costs nothing and a "yes" is
@@ -276,6 +277,19 @@ that a kind means something.
    rotor has no macOS probe today.
 4. **Open.** Two rows of `docs/costs.md`: `recvmsg` with three control messages against `recv`,
    per datagram; `sendmsg` with one against `send`. Milestone 3 fills them.
+
+## What is built, and what is not
+
+Built and passing on both kernels as of 2026-09-20: the two operations, the core types, both
+backends, `provide_datagram_buffers`, `open_datagram`, the accessor, six conformance scenarios and
+five halt scenarios.
+
+Not built, and each one is a separate piece of work:
+
+- The macOS probe of point 3 above. The RFC 3542 options are set by their numbers and the
+  conformance suite passes, which is evidence and not the probe this record asked for.
+- `IORING_RECVSEND_BUNDLE` and incremental buffer consumption, both above the 6.1 floor.
+- A datagram workload in `bench/` for milestone 4. No speed claim is made for any of this.
 
 ## How it is checked
 
