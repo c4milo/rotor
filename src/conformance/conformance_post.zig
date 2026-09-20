@@ -60,7 +60,9 @@ const Peer = struct {
 test "a message crosses to a loop on another thread and its answer comes back" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init();
+    const registry_alignment = core.layout.memory_alignment;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
+    registry.init(&registry_memory, 2);
     var harness: Harness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();
@@ -92,4 +94,64 @@ test "a message crosses to a loop on another thread and its answer comes back" {
     try testing.expect(events[0].flags.message);
     try testing.expectEqual(@as(u64, 42), events[0].user_data);
     try testing.expectEqual(@as(i32, tag_pong), events[0].result);
+}
+
+const Sleeper = struct {
+    registry: *backend.Registry,
+    /// How long the one tick that received the message took, or 0 when none arrived.
+    waited_ns: u64 = 0,
+    failure: ?anyerror = null,
+
+    fn run(sleeper: *Sleeper) void {
+        sleeper.sleep() catch |err| {
+            sleeper.failure = err;
+        };
+    }
+
+    /// Owns loop 1 and makes one tick with a wait of a second: what an idle core does.
+    fn sleep(sleeper: *Sleeper) !void {
+        var harness: Harness = undefined;
+        try harness.init(1, sleeper.registry);
+        defer harness.deinit();
+        var events: [1]Event = undefined;
+        const before = backend.testing.monotonic_ns();
+        const count = try harness.loop.tick(&events, core.constants.ns_per_s);
+        if (count == 1 and events[0].flags.message) {
+            sleeper.waited_ns = backend.testing.monotonic_ns() - before;
+        }
+    }
+};
+
+test "a post wakes a loop that sleeps in its tick, long before its wait is over" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const registry_alignment = core.layout.memory_alignment;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
+    registry.init(&registry_memory, 2);
+    var harness: Harness = undefined;
+    try harness.init(0, &registry);
+    defer harness.deinit();
+    var sleeper: Sleeper = .{ .registry = &registry };
+    const thread = try std.Thread.spawn(.{}, Sleeper.run, .{&sleeper});
+
+    // Give the other loop time to start and to fall asleep, then post once it is there.
+    var posted = false;
+    var attempt: u32 = 0;
+    var events: [1]Event = undefined;
+    while (!posted and attempt < post_attempts_max) : (attempt += 1) {
+        try pause(&harness);
+        if (registry.get(1) < 0) continue;
+        try pause(&harness);
+        try harness.submit(&.{.{ .user_data = 1, .kind = .{ .post = .{
+            .target = 1,
+            .message = .{ .payload = 7, .tag = tag_ping },
+        } } }}, &.{});
+        try harness.collect(&events);
+        posted = (try events[0].outcome()) == 0;
+    }
+    thread.join();
+    try testing.expectEqual(@as(?anyerror, null), sleeper.failure);
+    try testing.expect(posted);
+    try testing.expect(sleeper.waited_ns > 0);
+    try testing.expect(sleeper.waited_ns < core.constants.ns_per_s / 2);
 }

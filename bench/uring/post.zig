@@ -34,6 +34,8 @@ const options_first: Loop.Options = .{ .operations = operations, .entries = entr
 const memory_bytes = Loop.memory_bytes(options_first);
 
 var registry: uring.Registry = undefined;
+const registry_bytes = uring.Registry.memory_bytes(2);
+var registry_memory: [registry_bytes]u8 align(core.layout.memory_alignment) = undefined;
 var round_trip_ns: [samples]u64 = undefined;
 
 fn now_ns() u64 {
@@ -107,7 +109,7 @@ const Echo = struct {
 };
 
 fn measure(name: []const u8, wait_ns: u64) !void {
-    registry.init();
+    registry.init(&registry_memory, 2);
     var first: Side = .{};
     var options = options_first;
     options.registry = &registry;

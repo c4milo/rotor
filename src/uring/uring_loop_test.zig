@@ -16,6 +16,7 @@ const Handle = core.Handle;
 const Operation = core.Operation;
 
 const operations = 16;
+const memory_alignment = core.layout.memory_alignment;
 const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = 8 });
 
 /// The most rounds `Fixture.collect` ticks before it gives up: with a 10 ms wait each, a second.
@@ -216,7 +217,8 @@ fn poll_one(fixture: *Fixture) !Event {
 test "a loop that polls and never waits still sees a completion and a posted message" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var registry: uring.Registry = undefined;
-    registry.init();
+    var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
+    registry.init(&registry_memory, 2);
     var sender: Fixture = undefined;
     try sender.init(.{ .operations = operations, .entries = 8, .id = 0, .registry = &registry });
     defer sender.loop.deinit();
@@ -304,7 +306,8 @@ test "a close cancels the receive in flight for its descriptor, then closes" {
 test "a post reaches the other loop with its payload and tag, and a missing loop is an error" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var registry: uring.Registry = undefined;
-    registry.init();
+    var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
+    registry.init(&registry_memory, 2);
     var sender: Fixture = undefined;
     try sender.init(.{ .operations = operations, .entries = 8, .id = 0, .registry = &registry });
     defer sender.loop.deinit();

@@ -12,15 +12,37 @@ pub const descriptor_none: core.Descriptor = -1;
 
 pub const Registry = struct {
     descriptors: [core.constants.loops_max]std.atomic.Value(core.Descriptor),
+    /// How many loops the application said it runs. A `post` to an id at or above it finds no
+    /// loop.
+    loop_count: u16,
 
-    pub fn init(registry: *Registry) void {
+    /// io_uring carries a message itself, so this registry needs no memory of the caller's. The
+    /// call exists so that an application sizes and initialises the registry the same way on
+    /// every backend: the kqueue backend's holds the mailboxes.
+    pub fn memory_bytes(loop_count: u16) usize {
+        assert(loop_count >= 1);
+        assert(loop_count <= core.constants.loops_max);
+        return 0;
+    }
+
+    pub fn init(
+        registry: *Registry,
+        memory: []align(core.layout.memory_alignment) u8,
+        loop_count: u16,
+    ) void {
+        assert(memory.len >= memory_bytes(loop_count));
         for (&registry.descriptors) |*descriptor| descriptor.* = .init(descriptor_none);
+        registry.loop_count = loop_count;
+    }
+
+    pub fn loops(registry: *const Registry) u16 {
+        return registry.loop_count;
     }
 
     /// Publishes the ring of loop `id`. The id must be free: two loops with one id is a
     /// programmer error.
     pub fn set(registry: *Registry, id: core.LoopId, descriptor: core.Descriptor) void {
-        assert(id < core.constants.loops_max);
+        assert(id < registry.loop_count);
         assert(descriptor >= 0);
         const previous = registry.descriptors[id].swap(descriptor, .release);
         assert(previous == descriptor_none);
@@ -32,9 +54,11 @@ pub const Registry = struct {
         assert(previous >= 0);
     }
 
-    /// The ring of loop `id`, or `descriptor_none`.
+    /// The ring of loop `id`, or `descriptor_none`: for a loop that has not started or has
+    /// stopped, and for an id the application never said it runs.
     pub fn get(registry: *const Registry, id: core.LoopId) core.Descriptor {
         assert(id < core.constants.loops_max);
+        if (id >= registry.loop_count) return descriptor_none;
         return registry.descriptors[id].load(.acquire);
     }
 };
@@ -43,7 +67,9 @@ const testing = std.testing;
 
 test "a registry starts empty, publishes a ring and forgets it" {
     var registry: Registry = undefined;
-    registry.init();
+    var memory: [Registry.memory_bytes(4)]u8 align(core.layout.memory_alignment) = undefined;
+    registry.init(&memory, 4);
+    try testing.expectEqual(@as(u16, 4), registry.loops());
     try testing.expectEqual(descriptor_none, registry.get(0));
     try testing.expectEqual(descriptor_none, registry.get(core.constants.loops_max - 1));
     registry.set(3, 17);

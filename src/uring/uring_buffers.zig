@@ -20,6 +20,9 @@ const uring = @import("uring.zig");
 
 const Loop = uring.Loop;
 
+/// The alignment of the memory a group's ring sits in.
+pub const ring_alignment = constants.buffer_ring_alignment;
+
 pub const RegisterError = error{ SystemResources, Unexpected };
 pub const ProvideError = error{ SystemResources, Unexpected };
 

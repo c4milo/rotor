@@ -19,3 +19,20 @@ pub fn remove_file(path: [*:0]const u8) void {
     assert(path[0] != 0);
     _ = std.c.unlink(path);
 }
+
+/// The monotonic clock, for a scenario that measures how long a tick waited.
+pub fn monotonic_ns() u64 {
+    var now: std.c.timespec = undefined;
+    const rc = std.c.clock_gettime(.MONOTONIC, &now);
+    assert(rc == 0);
+    return @as(u64, @intCast(now.sec)) * ns_per_s + @as(u64, @intCast(now.nsec));
+}
+
+const ns_per_s: u64 = 1_000_000_000;
+
+/// True when `descriptor` closes on exec: what the suite checks of an accepted socket.
+pub fn closes_on_exec(descriptor: i32) bool {
+    const flags = std.c.fcntl(descriptor, std.c.F.GETFD, @as(c_int, 0));
+    assert(flags >= 0);
+    return flags & std.c.FD_CLOEXEC != 0;
+}
