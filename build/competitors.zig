@@ -141,8 +141,10 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     step.dependOn(programs.add_c("libuv_echo", add_libuv(b, target, libuv)));
     step.dependOn(programs.add_c("libuv_sizes", null));
     step.dependOn(programs.add_c("libuv_timers", add_libuv(b, target, libuv)));
-    step.dependOn(programs.add_zig("libxev_echo"));
-    step.dependOn(programs.add_zig("libxev_sizes"));
+    step.dependOn(programs.add_c("libuv_async", add_libuv(b, target, libuv)));
+    step.dependOn(programs.add_zig("libxev_echo", false));
+    step.dependOn(programs.add_zig("libxev_sizes", false));
+    step.dependOn(programs.add_zig("libxev_async", true));
 }
 
 /// `zig build bench-competitors -Dcompetitors`, run from the build root for the same target.
@@ -231,7 +233,11 @@ const Programs = struct {
     }
 
     /// bench/competitors/`name`.zig, which imports the pinned libxev as `xev`.
-    fn add_zig(programs: Programs, name: []const u8) *std.Build.Step {
+    /// bench/competitors/`name`.zig, which imports the pinned libxev as `xev`. `wants_harness`
+    /// adds the harness too, for a program that prints a result line: the line's format belongs
+    /// to bench/harness/report.zig, and a candidate that hand-wrote it would be a second copy of
+    /// a format only a round-trip test in that file pins.
+    fn add_zig(programs: Programs, name: []const u8, wants_harness: bool) *std.Build.Step {
         const b = programs.b;
         const module = b.createModule(.{
             .root_source_file = b.path(b.fmt("bench/competitors/{s}.zig", .{name})),
@@ -239,6 +245,11 @@ const Programs = struct {
             .optimize = competitor_optimize,
         });
         module.addImport("xev", programs.libxev.module("xev"));
+        if (wants_harness) module.addImport("harness", b.createModule(.{
+            .root_source_file = b.path("bench/harness/harness.zig"),
+            .target = programs.target,
+            .optimize = competitor_optimize,
+        }));
         const program = b.addExecutable(.{ .name = name, .root_module = module });
         return &b.addInstallArtifact(program, .{}).step;
     }
