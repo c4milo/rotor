@@ -44,6 +44,13 @@ pub const Code = enum(u8) {
     /// A `post` named a loop that has not started or has stopped.
     loop_not_found,
     unexpected,
+    /// EMSGSIZE: the datagram was longer than the path or the socket allows, and none of it was
+    /// sent. A QUIC stack lowers its packet size or its segment count and sends again.
+    /// Appended after `unexpected`, because a published value keeps its meaning.
+    message_too_long,
+    /// The backend's kernel cannot do what the operation asked for. macOS answers it for a
+    /// segmented send, because it has no UDP segmentation (decision 15).
+    unsupported,
 };
 
 /// `Code` as a Zig error set, one error per code.
@@ -65,6 +72,8 @@ pub const Error = error{
     BuffersExhausted,
     MailboxFull,
     LoopNotFound,
+    MessageTooLong,
+    Unsupported,
     Unexpected,
 };
 
@@ -123,10 +132,15 @@ pub fn result_of(code: Code) i32 {
     return result;
 }
 
+/// The highest value `Code` carries. Taken from the enum and not from a name, because the enum
+/// is append only: naming the last code here made `code_of` refuse every code appended after it,
+/// which is what happened when decision 15 added two.
+const code_value_max = @typeInfo(Code).@"enum".fields[@typeInfo(Code).@"enum".fields.len - 1].value;
+
 /// The code a negative `Event.result` carries.
 pub fn code_of(result: i32) Code {
     assert(result < 0);
-    assert(result >= -@as(i32, @intFromEnum(Code.unexpected)));
+    assert(result >= -@as(i32, code_value_max));
     return @enumFromInt(@as(u8, @intCast(-result)));
 }
 
@@ -149,6 +163,8 @@ pub fn error_of(code: Code) Error {
         .buffers_exhausted => error.BuffersExhausted,
         .mailbox_full => error.MailboxFull,
         .loop_not_found => error.LoopNotFound,
+        .message_too_long => error.MessageTooLong,
+        .unsupported => error.Unsupported,
         .unexpected => error.Unexpected,
     };
 }
@@ -204,7 +220,7 @@ test "the codes keep their published values" {
         .descriptor_limit,     .connection_reset, .connection_refused, .connection_aborted,
         .connection_timed_out, .broken_pipe,      .not_connected,      .network_unreachable,
         .input_output,         .no_space_left,    .buffers_exhausted,  .mailbox_full,
-        .loop_not_found,       .unexpected,
+        .loop_not_found,       .unexpected,       .message_too_long,   .unsupported,
     };
     try testing.expectEqual(@typeInfo(Code).@"enum".fields.len, published.len);
     for (published, 1..) |code, value| try testing.expectEqual(value, @intFromEnum(code));
