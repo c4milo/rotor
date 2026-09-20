@@ -132,10 +132,10 @@ pub fn main(init: std.process.Init) !void {
     try loop.provide_buffers(group_id, @alignCast(ring_used), group_memory[0..used], buffer_bytes);
     open = @splat(false);
 
-    _ = loop.submit(&.{.{
+    submit_one(&loop, .{
         .user_data = user_data_of(.accept, listener),
         .kind = .{ .accept = .{ .listener = listener, .multishot = true } },
-    }}, &.{});
+    });
 
     // The harness waits for this line before it connects, as it does for the competitors'.
     var out_buffer: [128]u8 = undefined;
@@ -189,21 +189,42 @@ fn handle_accept(loop: *Loop, event: Event) void {
     // on is refused rather than served, so a run cannot quietly mix the two shapes.
     sync.set_no_delay(descriptor, true) catch return sync.close_now(descriptor);
     open[@intCast(descriptor)] = true;
-    _ = loop.submit(&.{.{
+    arm_receive(loop, descriptor);
+}
+
+/// One multishot receive for this connection, which serves it until it ends or the group empties.
+fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
+    submit_one(loop, .{
         .user_data = user_data_of(.receive, descriptor),
         .kind = .{ .receive = .{
             .socket = descriptor,
             .target = .{ .group = group_id },
             .multishot = true,
         } },
-    }}, &.{});
+    });
+}
+
+/// Submits one operation and halts when the loop refuses it. A refusal means the slot table is
+/// too small for the connections this run was given, and a benchmark that swallowed it would
+/// stall that connection and report the stall as throughput. The four call sites all discarded
+/// this count before.
+fn submit_one(loop: *Loop, operation: Operation) void {
+    const taken = loop.submit(&.{operation}, &.{});
+    std.debug.assert(taken == 1);
 }
 
 /// Bytes arrived: echo them straight back out of the buffer the loop picked, and hold that
 /// buffer until the send says it is done with it.
 fn handle_receive(loop: *Loop, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
-    const received = event.outcome() catch return close(loop, descriptor);
+    const received = event.outcome() catch |failure| {
+        // The group emptied. That ends the multishot receive and is transient back-pressure, not
+        // the connection's fault: another receive is armed rather than a client dropped because
+        // the pool was momentarily empty. Closing here reads as throughput at connection counts
+        // above the buffer count, which is exactly where the harness is asked to go.
+        if (failure == error.BuffersExhausted) return arm_receive(loop, descriptor);
+        return close(loop, descriptor);
+    };
     if (received == 0) return close(loop, descriptor);
     sending[@intCast(descriptor)] = .{
         .buffer_id = event.flags.buffer_id,
@@ -217,13 +238,13 @@ fn handle_receive(loop: *Loop, event: Event) void {
 fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
     const state = &sending[@intCast(descriptor)];
     const buffer = loop.provided_buffer(group_id, state.buffer_id);
-    _ = loop.submit(&.{.{
+    submit_one(loop, .{
         .user_data = user_data_of(.send, descriptor),
         .kind = .{ .send = .{
             .socket = descriptor,
             .buffer = .{ .bytes = buffer[state.sent..state.len] },
         } },
-    }}, &.{});
+    });
 }
 
 /// A send ended. It may have sent less than it was given, and the rest has to follow before the
@@ -251,10 +272,10 @@ fn close(loop: *Loop, descriptor: core.Descriptor) void {
     if (descriptor < 0 or descriptor >= connections_max) return;
     if (!open[@intCast(descriptor)]) return;
     open[@intCast(descriptor)] = false;
-    _ = loop.submit(&.{.{
+    submit_one(loop, .{
         .user_data = user_data_of(.close, descriptor),
         .kind = .{ .close = .{ .descriptor = descriptor } },
-    }}, &.{});
+    });
 }
 
 comptime {
