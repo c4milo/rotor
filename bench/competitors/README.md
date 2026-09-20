@@ -353,6 +353,52 @@ counts its own operations and divides by its own span.
 No cross-core row is recorded here yet. The first three-way run was made on 2026-09-20 on a `mac`
 carrying a load average above 13, which is not a measurement and is not reproduced in this file.
 
+## Why rotor loses the file rows on macOS, and why that says nothing about Linux
+
+Read on 2026-09-20 on a `mac` carrying a load average above 13. **The throughputs are not
+measurements and no row of them belongs in a claim.** What is recorded here is the *shape* across
+queue depth, which every candidate met under the same load, alternating within each round. The
+ratio is the finding; the absolute numbers are not.
+
+Random 4 KiB reads, three rounds each, reads per second:
+
+| depth | rotor | libuv (thread pool) | ratio |
+|---:|---:|---:|---:|
+| 1 | 9,804 | 10,422 | 1.06 |
+| 4 | 11,066 | 40,376 | 3.6 |
+| 32 | 11,432 | 43,575 | 3.8 |
+
+Three things in that table identify the cause.
+
+- **At depth 1 the two are at parity.** rotor's read path is not slower than libuv's. The gap
+  appears only as depth rises.
+- **libuv gains about four times from depth 1 to depth 4, and then stops.** Its default pool is
+  four threads: `static uv_thread_t default_threads[4]`, src/threadpool.c line 39. Its ceiling is
+  its thread count.
+- **rotor gains 17 percent across a 32-fold rise in depth**, and its p50 grows with depth:
+  100,000 ns, then 363,000 ns, then 2,794,000 ns. That is a queue behind one server. libuv's p50
+  at depth 32 is 722,000 ns, about four times lower, which is four servers.
+
+**The cause is queue depth at the device, not parallelism across cores.** A 4 KiB O_DIRECT read is
+a device round trip and not computation. libuv's pool is not computing on four cores; it is the
+only way a blocking `pread` can have more than one request outstanding at once. rotor's kqueue
+backend calls `std.c.pread` on the loop thread (src/kqueue/kqueue_perform.zig), so `--depth 32` is
+depth 1 in fact.
+
+That is `docs/decisions/0002-scope.md`'s recorded choice and not a defect. That record weighed
+handing the read to a thread pool "as libuv does" and refused it, because the loop starts no
+thread, and it wrote down the consequence: macOS is a development platform, and no file-workload
+number from macOS is published as a claim. There is no fourth option either: macOS has `aio_read`
+but not `EVFILT_AIO`, so those completions cannot reach a kqueue loop.
+
+**It predicts the opposite on Linux.** io_uring submits N reads in one system call and the kernel
+holds all N in flight at the device, which is real queue depth with no thread at all. If the Linux
+rows show rotor flat across depth the way these do, that is a defect and this explanation does not
+cover it. Rows C12 and C13 of `docs/costs.md` are depth 1 and depth 32 for this reason.
+
+A consumer that wants parallel file I/O on a Mac runs one loop per thread. rotor enables that and
+does not decide it, as `docs/decisions/0004-threading.md` has it.
+
 ## The size probes
 
 `libuv_sizes` and `libxev_sizes` print the numbers of row 7 for the target they were built for.
