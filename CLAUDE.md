@@ -231,7 +231,7 @@ pass. Registered descriptors and provided buffers are built, and no speed claim 
 yet.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision
-record has code for it. The cost probes cover every row of `docs/costs.md` that either machine can
+record has code for it, except decision 13, which is proposed and waits on the owner. The cost probes cover every row of `docs/costs.md` that either machine can
 measure.
 
 Milestone 3 is next: fill `docs/costs.md` from serial runs on a quiet machine, and run decision

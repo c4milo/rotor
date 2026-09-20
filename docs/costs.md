@@ -141,9 +141,10 @@ budget and then sleeps anyway, which costs a core 50 µs per idle cycle and is e
 decision 4's shared-nothing model was meant to avoid paying for. The shape of an answer is an
 adaptive budget, and what it should key on is not measured.
 
-Decision 4 prices a cross-core message and does not price the sleep. None of these numbers is
-admissible. This is enough to justify a decision record and a measurement on a real machine; it
-is not yet enough to change the loop.
+Decision 4 prices a cross-core message and does not price the sleep.
+`docs/decisions/0013-when-a-loop-sleeps.md` is the record these numbers earned. It is proposed,
+not accepted: none of these numbers is admissible, and the case a spin is wrong for is not
+measured at all.
 
 ## How the rows are used
 
