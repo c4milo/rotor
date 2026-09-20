@@ -66,7 +66,9 @@ var group_buffers: u16 = group_bytes / 8192;
 const backlog = 1024;
 
 /// What a completion's `user_data` says: the kind in the high half, the descriptor in the low.
-const Kind = enum(u32) { accept, receive, send };
+/// A close has a kind of its own: it used to borrow the send's, so its completion ran the send's
+/// handler and gave a provided buffer back a second time, which corrupts the group's free stack.
+const Kind = enum(u32) { accept, receive, send, close };
 
 const kind_shift = 32;
 
@@ -83,8 +85,17 @@ fn descriptor_of(user_data: u64) core.Descriptor {
     return @bitCast(@as(u32, @truncate(user_data)));
 }
 
-/// The buffer a send is echoing, by descriptor: it goes back to the group when the send ends.
-var sending: [connections_max]u16 = undefined;
+/// The send in flight for a descriptor: which provided buffer it is echoing out of, how much of
+/// it has gone, and how much there is. A send may be short, so the rest has to follow it before
+/// the buffer goes back to the group; sending less than arrived would silently drop bytes out of
+/// the middle of the stream.
+const Sending = struct {
+    buffer_id: u16,
+    sent: u32,
+    len: u32,
+};
+
+var sending: [connections_max]Sending = undefined;
 
 /// True while the descriptor is one this server accepted.
 var open: [connections_max]bool = undefined;
@@ -161,6 +172,7 @@ fn handle(loop: *Loop, event: Event) void {
         .accept => handle_accept(loop, event),
         .receive => handle_receive(loop, event),
         .send => handle_send(loop, event),
+        .close => handle_close(event),
     }
 }
 
@@ -185,19 +197,46 @@ fn handle_receive(loop: *Loop, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
     const received = event.outcome() catch return close(loop, descriptor);
     if (received == 0) return close(loop, descriptor);
-    const buffer_id = event.flags.buffer_id;
-    const bytes = loop.provided_buffer(group_id, buffer_id)[0..received];
-    sending[@intCast(descriptor)] = buffer_id;
+    sending[@intCast(descriptor)] = .{
+        .buffer_id = event.flags.buffer_id,
+        .sent = 0,
+        .len = received,
+    };
+    send_rest(loop, descriptor);
+}
+
+/// Submits what is left of this descriptor's echo.
+fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
+    const state = &sending[@intCast(descriptor)];
+    const buffer = loop.provided_buffer(group_id, state.buffer_id);
     _ = loop.submit(&.{.{
         .user_data = user_data_of(.send, descriptor),
-        .kind = .{ .send = .{ .socket = descriptor, .buffer = .{ .bytes = bytes } } },
+        .kind = .{ .send = .{
+            .socket = descriptor,
+            .buffer = .{ .bytes = buffer[state.sent..state.len] },
+        } },
     }}, &.{});
 }
 
+/// A send ended. It may have sent less than it was given, and the rest has to follow before the
+/// buffer is anyone else's: a short send that was ignored would drop those bytes and leave the
+/// caller's stream missing a piece in the middle, which no test that sends small messages sees.
 fn handle_send(loop: *Loop, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
-    loop.give_back_buffer(group_id, sending[@intCast(descriptor)]);
-    _ = event.outcome() catch return close(loop, descriptor);
+    const state = &sending[@intCast(descriptor)];
+    const sent = event.outcome() catch {
+        loop.give_back_buffer(group_id, state.buffer_id);
+        return close(loop, descriptor);
+    };
+    state.sent += sent;
+    if (state.sent < state.len) return send_rest(loop, descriptor);
+    loop.give_back_buffer(group_id, state.buffer_id);
+}
+
+/// The close's own completion. It carries no buffer and there is nothing to give back: the send
+/// that was in flight, if any, gave its buffer back when it failed.
+fn handle_close(event: Event) void {
+    _ = event.outcome() catch {};
 }
 
 fn close(loop: *Loop, descriptor: core.Descriptor) void {
@@ -205,7 +244,7 @@ fn close(loop: *Loop, descriptor: core.Descriptor) void {
     if (!open[@intCast(descriptor)]) return;
     open[@intCast(descriptor)] = false;
     _ = loop.submit(&.{.{
-        .user_data = user_data_of(.send, descriptor),
+        .user_data = user_data_of(.close, descriptor),
         .kind = .{ .close = .{ .descriptor = descriptor } },
     }}, &.{});
 }

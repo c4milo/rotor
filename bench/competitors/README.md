@@ -221,6 +221,30 @@ That is a property of how this server uses the group, not of the group; whether 
 lets a server do better, and whether the same gap appears on kqueue, is the first thing to settle
 before any 64 KiB claim is made.
 
+## Two bugs in rotor_echo, and which rows they touched
+
+Found on 2026-09-20 by reading the file, not by a test, which is the point of writing them down.
+
+- **A short send dropped bytes.** `handle_send` gave the provided buffer back and ignored the
+  count, so a send that moved less than it was given lost the rest out of the middle of the
+  stream. No test saw it: the suite sends small messages that never go short.
+- **A close gave its buffer back a second time.** The close borrowed the send's `user_data` tag,
+  so its completion ran the send's handler, which gave back `sending[descriptor]` — a buffer
+  already returned, or for a connection that never sent, an uninitialised id. The range assert
+  catches an id past the group; it cannot catch the same id twice, so two connections could be
+  handed one buffer and interleave their bytes in it.
+
+**Which rows this touches.** The echo workload closes nothing until a run ends, so its rows are
+unlikely to have been affected and the numbers above did not move. The accept storm closes a
+connection per operation, so **every rotor accept-storm row taken before this fix was taken with
+a corrupted buffer pool**. Re-run after the fix, macOS, 256 connections, three rounds: rotor
+6,491 against libuv 6,571, libxev 6,508 and `std.Io.Threaded` 6,459 — still the four inside 2
+percent, still the client and not the loops.
+
+Both bugs are the caller's to make, which is the argument the API complaint rests on: rotor hands
+a partial transfer to the caller and gives it one `user_data` word to tell its own operations
+apart, and a candidate written carefully got both wrong.
+
 ## What the accept storm measured, and what it could not
 
 A run is one burst: `connections` sockets opened and connected at once, each sending a byte and
