@@ -59,6 +59,11 @@ pub const message_tag_max: u32 = 0x7fff_f000;
 pub const drain_rounds_max: u32 = 1024;
 pub const drain_wait_ns: u64 = 10 * ns_per_ms;
 
+/// Descriptors one loop can register (`register_descriptors`). An operation names one by its
+/// index, which a 16-bit field would hold many times over; the limit is what fits the oldest
+/// io_uring table, 1,024 entries (recalled), so one number holds on every kernel from the floor up.
+pub const registered_descriptors_max: u32 = 1024;
+
 /// Times a backend resubmits one operation after the kernel completes it with EAGAIN or EINTR
 /// having transferred nothing, before the caller hears of it (decision 6, kept from stompy).
 pub const transfer_retries_max: u8 = 16;

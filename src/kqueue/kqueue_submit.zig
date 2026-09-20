@@ -8,6 +8,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
 const constants = @import("constants.zig");
+const descriptors_module = @import("kqueue_descriptors.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const sync = @import("kqueue_sync.zig");
@@ -54,6 +55,7 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot) void {
 /// produces their events: a multishot operation, whose events are many, and a receive from a
 /// group, whose event names a buffer, which the finished list has no room to carry.
 fn start(loop: *Loop, index: u32, slot: *Slot) void {
+    if (slot.flags.descriptor_registered) descriptors_module.resolve(loop, slot);
     if (slot.flags.multishot or slot.flags.buffer_group) {
         return wait(loop, index, slot, perform.filter_of(slot.code));
     }

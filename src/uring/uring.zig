@@ -15,6 +15,7 @@ pub const constants = @import("constants.zig");
 pub const address = @import("uring_address.zig");
 pub const buffers = @import("uring_buffers.zig");
 pub const cancel_module = @import("uring_cancel.zig");
+pub const descriptors = @import("uring_descriptors.zig");
 pub const errno = @import("uring_errno.zig");
 pub const reap_module = @import("uring_reap.zig");
 pub const registry_module = @import("uring_registry.zig");
@@ -177,6 +178,7 @@ pub const Loop = struct {
     }
 
     pub const register_buffers = buffers.register;
+    pub const register_descriptors = descriptors.register;
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
 
@@ -205,6 +207,7 @@ test {
     _ = address;
     _ = buffers;
     _ = cancel_module;
+    _ = descriptors;
     _ = errno;
     _ = reap_module;
     _ = registry_module;

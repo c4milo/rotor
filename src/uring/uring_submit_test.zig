@@ -101,6 +101,35 @@ test "a multishot accept and a multishot receive from a group set their flags" {
     try testing.expectEqual(@as(u64, 0), receive.addr);
 }
 
+test "a registered descriptor's index rides in fd, with the fixed-file flag beside the others" {
+    var bytes: [8]u8 = undefined;
+    const plain = prepared(.{ .user_data = 1, .kind = .{ .fdatasync = .{ .file = 6 } } }, .{});
+    try testing.expectEqual(@as(u8, 0), plain.flags);
+
+    const sync = prepared(.{
+        .user_data = 1,
+        .descriptor_registered = true,
+        .kind = .{ .fdatasync = .{ .file = 6 } },
+    }, .{});
+    try testing.expectEqual(linux.IORING_OP.FSYNC, sync.opcode);
+    try testing.expectEqual(@as(i32, 6), sync.fd);
+    try testing.expectEqual(@as(u8, linux.IOSQE_FIXED_FILE), sync.flags);
+
+    // A receive from a group keeps its own flag: the two are or-ed, not assigned.
+    const receive = prepared(.{ .user_data = 1, .descriptor_registered = true, .kind = .{
+        .receive = .{ .socket = 2, .target = .{ .group = 1 }, .multishot = true },
+    } }, .{});
+    const both: u8 = linux.IOSQE_FIXED_FILE | linux.IOSQE_BUFFER_SELECT;
+    try testing.expectEqual(both, receive.flags);
+    try testing.expectEqual(@as(i32, 2), receive.fd);
+
+    const send = prepared(.{ .user_data = 1, .descriptor_registered = true, .kind = .{
+        .send = .{ .socket = 0, .buffer = .{ .bytes = &bytes } },
+    } }, .{});
+    try testing.expectEqual(@as(u8, linux.IOSQE_FIXED_FILE), send.flags);
+    try testing.expectEqual(@as(i32, 0), send.fd);
+}
+
 test "a shutdown's how is the kernel's own value" {
     try testing.expectEqual(linux.SHUT.RD, @intFromEnum(Operation.How.receive));
     try testing.expectEqual(linux.SHUT.WR, @intFromEnum(Operation.How.send));

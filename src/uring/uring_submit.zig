@@ -134,6 +134,12 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
         .nop => sqe.opcode = .NOP,
         .timer => unreachable,
     }
+    if (slot.flags.descriptor_registered) {
+        // `fd` holds the index, which `Operation.assert_valid` allows for no kind that puts
+        // something else there.
+        assert(slot.code != .post and slot.code != .close);
+        sqe.flags |= linux.IOSQE_FIXED_FILE;
+    }
 }
 
 /// A handle's generation is the high half of its 64 bits, and it is never 0.

@@ -56,6 +56,12 @@ pub const Operation = struct {
     /// When it passes first the loop cancels the operation (decision 5, rule 4). A `timer` and a
     /// `post` carry none.
     timeout_ns: u64 = 0,
+    /// True when the descriptor the kind names is an index into the descriptors the loop
+    /// registered (`register_descriptors`), and not a descriptor of the process: the kernel then
+    /// skips its descriptor lookup and the reference count that goes with it (decision 3,
+    /// source 1). A `close` names a descriptor of the process, always: a registered descriptor
+    /// lives as long as the loop.
+    descriptor_registered: bool = false,
     kind: Kind,
 
     /// The tag of `Kind`, 8 bits, which is what a `Slot` stores.
@@ -148,10 +154,31 @@ pub const Operation = struct {
         return std.meta.activeTag(operation.kind);
     }
 
+    /// The descriptor the kind names, or null for a kind that names none.
+    pub fn descriptor(operation: *const Operation) ?Descriptor {
+        return switch (operation.kind) {
+            .accept => |accept| accept.listener,
+            .connect => |connect| connect.socket,
+            .receive => |receive| receive.socket,
+            .send => |send| send.socket,
+            .shutdown => |shutdown| shutdown.socket,
+            .close => |close| close.descriptor,
+            .read => |read| read.file,
+            .write => |write| write.file,
+            .fdatasync => |fdatasync| fdatasync.file,
+            .timer, .post, .nop => null,
+        };
+    }
+
     /// Halts on an operation the caller built wrong. Runs once per operation in `submit`; every
     /// value it reads is in the operation it was handed (decision 8, class A).
     pub fn assert_valid(operation: *const Operation) void {
         assert(operation.timeout_ns <= constants.timeout_ns_max);
+        if (operation.descriptor_registered) {
+            assert(operation.code() != .close);
+            // Halts on a kind that names no descriptor.
+            assert(operation.descriptor().? < constants.registered_descriptors_max);
+        }
         switch (operation.kind) {
             .accept => |accept| assert(accept.listener >= 0),
             .connect => |connect| assert(connect.socket >= 0),
@@ -186,8 +213,8 @@ pub const Operation = struct {
         }
     }
 
-    fn assert_transfer(descriptor: Descriptor, len: usize) void {
-        assert(descriptor >= 0);
+    fn assert_transfer(file_or_socket: Descriptor, len: usize) void {
+        assert(file_or_socket >= 0);
         assert(len >= 1);
         assert(len <= constants.transfer_bytes_max);
     }
@@ -235,8 +262,40 @@ test "an operation names its code and a well-formed one passes assert_valid" {
         } } },
     };
     const codes = [_]Operation.Code{ .accept, .receive, .read, .timer, .post };
-    for (&operations, codes) |*operation, expected| {
+    const descriptors = [_]?Descriptor{ 3, 4, 5, null, null };
+    for (&operations, codes, descriptors) |*operation, expected, named| {
         try testing.expectEqual(expected, operation.code());
+        try testing.expectEqual(named, operation.descriptor());
         operation.assert_valid();
     }
+}
+
+test "every kind that names a descriptor may name a registered one, but a close" {
+    var bytes: [8]u8 = @splat(0);
+    const address = Address.ipv4(.{ 127, 0, 0, 1 }, 80);
+    const last = constants.registered_descriptors_max - 1;
+    const kinds = [_]Operation.Kind{
+        .{ .accept = .{ .listener = last } },
+        .{ .connect = .{ .socket = 1, .address = &address } },
+        .{ .receive = .{ .socket = 2, .target = .{ .buffer = .{ .bytes = &bytes } } } },
+        .{ .send = .{ .socket = 3, .buffer = .{ .bytes = &bytes } } },
+        .{ .shutdown = .{ .socket = 4, .how = .both } },
+        .{ .read = .{ .file = 5, .buffer = .{ .bytes = &bytes }, .offset = 0 } },
+        .{ .write = .{ .file = 6, .buffer = .{ .bytes = &bytes }, .offset = 0 } },
+        .{ .fdatasync = .{ .file = 0 } },
+    };
+    const named = [_]Descriptor{ last, 1, 2, 3, 4, 5, 6, 0 };
+    for (kinds, named) |kind, index| {
+        const operation: Operation = .{
+            .user_data = 1,
+            .descriptor_registered = true,
+            .kind = kind,
+        };
+        operation.assert_valid();
+        try testing.expectEqual(@as(?Descriptor, index), operation.descriptor());
+    }
+    const close: Operation = .{ .user_data = 1, .kind = .{ .close = .{ .descriptor = 7 } } };
+    try testing.expectEqual(@as(?Descriptor, 7), close.descriptor());
+    const nop: Operation = .{ .user_data = 1, .kind = .nop };
+    try testing.expectEqual(@as(?Descriptor, null), nop.descriptor());
 }

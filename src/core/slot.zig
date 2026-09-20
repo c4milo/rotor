@@ -82,7 +82,9 @@ pub const Slot = extern struct {
         buffer_registered: bool = false,
         /// `buffer_index` names a provided-buffer group.
         buffer_group: bool = false,
-        reserved: u3 = 0,
+        /// `descriptor` is an index into the descriptors the loop registered.
+        descriptor_registered: bool = false,
+        reserved: u2 = 0,
     };
 
     /// Flattens `operation` into a slot the table has just claimed. Leaves `generation` and
@@ -102,6 +104,7 @@ pub const Slot = extern struct {
         slot.len = 0;
         slot.buffer_index = 0;
         slot.fill_kind(operation);
+        slot.flags.descriptor_registered = operation.descriptor_registered;
         assert(slot.code == operation.code());
     }
 
@@ -261,10 +264,13 @@ test "fill flattens a multishot receive from a group, a post and a timer" {
 test "fill clears what the slot's last operation left behind" {
     var buffer: [16]u8 = undefined;
     var slot = claimed();
-    slot.fill(&.{ .user_data = 1, .kind = .{ .send = .{
+    slot.fill(&.{ .user_data = 1, .descriptor_registered = true, .kind = .{ .send = .{
         .socket = 4,
         .buffer = .{ .bytes = &buffer, .registered = 1 },
     } } });
+    // The descriptor field holds the index, and the flag says so.
+    try testing.expect(slot.flags.descriptor_registered and slot.flags.buffer_registered);
+    try testing.expectEqual(@as(i32, 4), slot.descriptor);
     slot.retries = 5;
     slot.flags.cancel_requested = true;
     slot.fill(&.{ .user_data = 2, .kind = .{ .fdatasync = .{ .file = 6 } } });

@@ -128,6 +128,44 @@ refused for its cost on every operation, and it would turn a caller's mistake in
 serialisation. The suite's scenario accepts either order and checks that every byte arrives
 once.
 
+## 9. A registered descriptor is an index and a flag
+
+Decision 2 puts registration in the first API. `register_descriptors` hands the kernel a list of
+open descriptors, once per loop, with `IORING_REGISTER_FILES`. An operation then names one by its
+index in that list, with `Operation.descriptor_registered` set, and `prepare` sets
+`IOSQE_FIXED_FILE` on the entry. The index rides where the descriptor did: in `Slot.descriptor`,
+with one bit of `Slot.Flags` beside it. The slot's size and layout do not change.
+
+The rules the caller sees:
+
+- The list is registered once and does not change. That is what decision 2 promised, and it is
+  what a consumer with a few long-lived files and listeners needs.
+- `core.Tables` records how many descriptors the loop registered, and `submit` halts on an index
+  at or past that count. The mistake is the programmer's, and it halts the same way on both
+  backends, before any kernel sees it.
+- A registered descriptor must stay open while any operation can name it. The kernel keeps a
+  reference of its own to each registered file until the ring closes. The kqueue backend keeps the
+  number alone (decision 12, point 9). So the stricter rule is the one rule.
+- A `close` names a descriptor of the process, never an index. A socket accepted by a registered
+  listener is a descriptor of the process.
+
+Alternatives it beat:
+
+- **A descriptor type that is a union of a number and an index.** It says the same thing in the
+  type, and it changes every operation's fields and every call site for a case most operations
+  never use. The flag mirrors the kernel's own shape.
+- **An index encoded in the descriptor's negative range.** One field and no flag, but a value
+  whose meaning depends on its sign is the kind of cleverness a reader trips on, and `-1`, the
+  usual mark of a failed open, sits next to the range.
+- **Direct descriptors**: accepted sockets that live only in the ring's table and never enter the
+  process's. They remove a descriptor-table write per accepted connection, and they need a table
+  that changes while the loop runs, with a free list and a close by index. Decision 3's claim
+  for source 1 is about files at high queue depth. Direct accept waits for a harness number that
+  says the accept storm needs it.
+
+The claim stays untested until milestone 4: decision 3, source 1 names the workload, random
+O_DIRECT reads at queue depth 32 and above, registered against unregistered.
+
 ## Not built yet
 
 - The sampled statistics of decision 9.

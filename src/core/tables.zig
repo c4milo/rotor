@@ -52,6 +52,8 @@ pub const Tables = struct {
     operation_sequence: u64,
     /// The address of the owning thread's `thread_marker`.
     owner: usize,
+    /// Descriptors the loop registered: 0 until `note_descriptors`.
+    descriptors_registered: u32,
     id: LoopId,
 
     /// Must run on the thread that will own the loop.
@@ -65,7 +67,17 @@ pub const Tables = struct {
         tables.now_ns = 0;
         tables.operation_sequence = 0;
         tables.owner = @intFromPtr(&thread_marker);
+        tables.descriptors_registered = 0;
         tables.id = id;
+    }
+
+    /// Records that the backend registered `count` descriptors: once per loop, before an
+    /// operation names one (decision 2).
+    pub fn note_descriptors(tables: *Tables, count: usize) void {
+        assert(tables.descriptors_registered == 0);
+        assert(count >= 1);
+        assert(count <= constants.registered_descriptors_max);
+        tables.descriptors_registered = @intCast(count);
     }
 
     /// Halts when another thread calls into the loop: a call from the wrong thread is a
@@ -96,6 +108,9 @@ pub const Tables = struct {
         var taken: u32 = 0;
         for (operations) |*operation| {
             operation.assert_valid();
+            if (operation.descriptor_registered) {
+                assert(operation.descriptor().? < tables.descriptors_registered);
+            }
             const index = tables.table.claim() orelse break;
             const slot = tables.table.at(index);
             slot.fill(operation);

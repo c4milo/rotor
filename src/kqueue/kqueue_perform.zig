@@ -58,6 +58,8 @@ pub fn filter_of(code: core.Operation.Code) Filter {
 /// Makes the operation's system call once.
 pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
     assert(slot.state == .queued or slot.state == .submitted);
+    // The flush swapped a registered index for its descriptor before it came here.
+    assert(!slot.flags.descriptor_registered);
     return switch (slot.code) {
         .accept => attempt_accept(slot),
         .connect => attempt_connect(slot),

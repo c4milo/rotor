@@ -114,6 +114,18 @@ calls change nothing. The backend still makes all three, because the caller may 
 listener it opened some other way. Dropping the two calls for a listener the loop can prove it
 prepared is a measured optimisation for later, not a default.
 
+## 9. Registered descriptors are a table in the loop
+
+kqueue has nothing to register a descriptor with. The loop copies the list
+`register_descriptors` was handed into a table of its own, 4 KiB for
+`registered_descriptors_max` entries, inside the `Loop`. The flush swaps the index an operation
+names for the descriptor registered there, and clears the flag, before anything else reads the
+slot. So the table of waiters, the cancel and the close all see a descriptor, as before.
+
+`register_descriptors` refuses a descriptor that is not open with `DescriptorInvalid`, which it
+finds with `fcntl(F_GETFD)`, because io_uring refuses one. Nothing is gained on this backend and
+nothing is claimed: the table exists so that one program runs on both.
+
 ## Not in this backend
 
 - One loop per core by SO_REUSEPORT: decision 4 recalled that macOS does not spread connections

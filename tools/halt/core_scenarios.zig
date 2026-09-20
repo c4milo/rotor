@@ -93,6 +93,60 @@ fn post_a_tag_above_the_limit() void {
     operation.assert_valid();
 }
 
+fn close_a_registered_descriptor() void {
+    const operation: core.Operation = .{
+        .user_data = 1,
+        .descriptor_registered = true,
+        .kind = .{ .close = .{ .descriptor = 0 } },
+    };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+fn name_a_registered_descriptor_in_a_timer() void {
+    const operation: core.Operation = .{
+        .user_data = 1,
+        .descriptor_registered = true,
+        .kind = .{ .timer = .{ .after_ns = 1 } },
+    };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+fn name_a_registered_descriptor_above_the_limit() void {
+    const operation: core.Operation = .{
+        .user_data = 1,
+        .descriptor_registered = true,
+        .kind = .{ .fdatasync = .{ .file = core.constants.registered_descriptors_max } },
+    };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+const registered_count = 2;
+
+/// Index 2 of a loop that registered 2 descriptors.
+fn name_a_registered_descriptor_the_loop_lacks() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, 0);
+    tables.note_descriptors(registered_count);
+    const sync = [_]core.Operation{.{
+        .user_data = 1,
+        .descriptor_registered = true,
+        .kind = .{ .fdatasync = .{ .file = registered_count } },
+    }};
+    scenario.reached_violation();
+    _ = tables.submit(&sync, &.{});
+}
+
+fn register_descriptors_twice() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, 0);
+    tables.note_descriptors(registered_count);
+    scenario.reached_violation();
+    tables.note_descriptors(registered_count);
+}
+
 /// The operation has left the pending list, as after a backend's flush, so the count of slots
 /// in use is the one check that can see it: a scenario whose operation is still queued halts on
 /// the lists as well, and would pass with this assertion gone.
@@ -132,6 +186,23 @@ const scenarios = [_]scenario.Scenario{
         .run = submit_a_timer_with_a_deadline_of_its_own,
     },
     .{ .name = "operation: post a tag above the limit", .run = post_a_tag_above_the_limit },
+    .{
+        .name = "operation: close a registered descriptor",
+        .run = close_a_registered_descriptor,
+    },
+    .{
+        .name = "operation: name a registered descriptor in a timer",
+        .run = name_a_registered_descriptor_in_a_timer,
+    },
+    .{
+        .name = "operation: name a registered descriptor above the limit",
+        .run = name_a_registered_descriptor_above_the_limit,
+    },
+    .{
+        .name = "tables: name a registered descriptor the loop lacks",
+        .run = name_a_registered_descriptor_the_loop_lacks,
+    },
+    .{ .name = "tables: register descriptors twice", .run = register_descriptors_twice },
     .{
         .name = "tables: end a loop whose operation the kernel holds",
         .run = end_a_loop_whose_operation_the_kernel_holds,

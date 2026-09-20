@@ -191,6 +191,23 @@ test "a tick may wait only when nothing is queued, and never past the nearest de
     try testing.expectEqual(@as(?u64, null), tables.wait_bound(second));
 }
 
+test "an operation may name a registered descriptor once the loop has noted how many it has" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    try testing.expectEqual(@as(u32, 0), tables.descriptors_registered);
+    tables.note_descriptors(3);
+    try testing.expectEqual(@as(u32, 3), tables.descriptors_registered);
+
+    var operation = fixture.receive(7, 0);
+    operation.descriptor_registered = true;
+    operation.kind.receive.socket = 2;
+    try testing.expectEqual(@as(u32, 1), tables.submit(&.{operation}, &.{}));
+    const slot = tables.table.at(tables.pending.peek().?);
+    try testing.expect(slot.flags.descriptor_registered);
+    try testing.expectEqual(@as(i32, 2), slot.descriptor);
+}
+
 test "next_cancellable walks the slots a cancel can still reach, and skips the finishing" {
     var fixture: Fixture = undefined;
     fixture.init();

@@ -15,6 +15,7 @@ pub const constants = @import("constants.zig");
 pub const address = @import("kqueue_address.zig");
 pub const buffers = @import("kqueue_buffers.zig");
 pub const cancel_module = @import("kqueue_cancel.zig");
+pub const descriptors_module = @import("kqueue_descriptors.zig");
 pub const errno = @import("kqueue_errno.zig");
 pub const mailbox = @import("kqueue_mailbox.zig");
 pub const perform = @import("kqueue_perform.zig");
@@ -67,6 +68,9 @@ pub const Loop = struct {
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
     buffers_registered: bool,
+    /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
+    /// says how many hold one.
+    descriptors: [core.constants.registered_descriptors_max]core.Descriptor,
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -179,6 +183,7 @@ pub const Loop = struct {
     }
 
     pub const register_buffers = buffers.register;
+    pub const register_descriptors = descriptors_module.register;
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
 
@@ -246,6 +251,7 @@ test {
     _ = address;
     _ = buffers;
     _ = cancel_module;
+    _ = descriptors_module;
     _ = errno;
     _ = mailbox;
     _ = perform;

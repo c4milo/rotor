@@ -23,6 +23,7 @@ pub const loop_declarations = [_][]const u8{
     "drain",
     "assert_empty",
     "register_buffers",
+    "register_descriptors",
     "provide_buffers",
     "give_back_buffer",
     "provided_buffer",
@@ -52,6 +53,7 @@ const Complete = struct {
     pub fn drain() void {}
     pub fn assert_empty() void {}
     pub fn register_buffers() void {}
+    pub fn register_descriptors() void {}
     pub fn provide_buffers() void {}
     pub fn give_back_buffer() void {}
     pub fn provided_buffer() void {}
