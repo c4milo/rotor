@@ -104,6 +104,34 @@ var sending: [connections_max]Sending = undefined;
 /// True while the descriptor is one this server accepted.
 var open: [connections_max]bool = undefined;
 
+/// How the server reads (decision 3, and the question `bench/competitors/README.md` names as the
+/// first thing to settle before any 64 KiB claim).
+///
+///   - `group`: one multishot receive per connection from a provided-buffer group. Every
+///     completion takes a whole buffer, and TCP delivers a large message in several pieces, so
+///     each piece is echoed with a send of its own.
+///   - `accumulate`: a receive into this connection's own buffer, re-armed into what is left
+///     until a whole message has arrived, then one send.
+///
+/// The pair is the experiment. It needs no kernel above decision 2's floor and no record
+/// amended: the surface already offers a receive into a buffer the caller names.
+const Shape = enum { group, accumulate };
+var shape: Shape = .group;
+
+/// In `accumulate`, one buffer per connection carved from the same memory the group would use,
+/// so the two shapes hold the same bytes in total and the comparison is not of sizing.
+var accumulated: [connections_max]u32 = undefined;
+
+/// Connections the accumulate shape can track: the pool divided by a whole message.
+fn accumulate_connections() u32 {
+    return @intCast(group_bytes / buffer_bytes);
+}
+
+fn accumulator_of(descriptor: core.Descriptor) []u8 {
+    const index: usize = @intCast(descriptor);
+    return group_memory[index * buffer_bytes ..][0..buffer_bytes];
+}
+
 var loop_memory: [
     Loop.memory_bytes(.{
         .operations = operations,
@@ -131,6 +159,7 @@ pub fn main(init: std.process.Init) !void {
     const ring_used = ring_memory[0..backend.buffers.ring_bytes(group_buffers)];
     try loop.provide_buffers(group_id, @alignCast(ring_used), group_memory[0..used], buffer_bytes);
     open = @splat(false);
+    accumulated = @splat(0);
 
     submit_one(&loop, .{
         .user_data = user_data_of(.accept, listener),
@@ -161,6 +190,11 @@ fn parse(init: std.process.Init) !u16 {
     var index: usize = 2;
     while (index < arguments.len) : (index += 2) {
         if (index + 1 >= arguments.len) return error.MissingValue;
+        if (std.mem.eql(u8, arguments[index], "--shape")) {
+            shape = std.meta.stringToEnum(Shape, arguments[index + 1]) orelse
+                return error.UnknownShape;
+            continue;
+        }
         if (!std.mem.eql(u8, arguments[index], "--buffer-bytes")) return error.UnknownArgument;
         const wanted = try std.fmt.parseInt(u32, arguments[index + 1], 10);
         if (wanted < buffer_bytes_min or wanted > buffer_bytes_max) return error.BufferOutOfRange;
@@ -184,6 +218,11 @@ fn handle_accept(loop: *Loop, event: Event) void {
     const accepted = event.outcome() catch return;
     const descriptor: core.Descriptor = @intCast(accepted);
     if (descriptor >= connections_max) return sync.close_now(descriptor);
+    // The accumulate shape gives each connection a whole message of the pool, so it tracks
+    // fewer of them than the group shape does.
+    if (shape == .accumulate and descriptor >= accumulate_connections()) {
+        return sync.close_now(descriptor);
+    }
     // Nagle off, because every other candidate of the comparison turns it off and a row that
     // does not match is measuring the socket option and not the loop. A connection this fails
     // on is refused rather than served, so a run cannot quietly mix the two shapes.
@@ -194,12 +233,27 @@ fn handle_accept(loop: *Loop, event: Event) void {
 
 /// One multishot receive for this connection, which serves it until it ends or the group empties.
 fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
+    if (shape == .accumulate) return arm_accumulating_receive(loop, descriptor);
     submit_one(loop, .{
         .user_data = user_data_of(.receive, descriptor),
         .kind = .{ .receive = .{
             .socket = descriptor,
             .target = .{ .group = group_id },
             .multishot = true,
+        } },
+    });
+}
+
+/// One receive into what is left of this connection's buffer. Single-shot: the next one is armed
+/// when this completes, because where it lands depends on how much arrived.
+fn arm_accumulating_receive(loop: *Loop, descriptor: core.Descriptor) void {
+    const have = accumulated[@intCast(descriptor)];
+    std.debug.assert(have < buffer_bytes);
+    submit_one(loop, .{
+        .user_data = user_data_of(.receive, descriptor),
+        .kind = .{ .receive = .{
+            .socket = descriptor,
+            .target = .{ .buffer = .{ .bytes = accumulator_of(descriptor)[have..] } },
         } },
     });
 }
@@ -226,6 +280,7 @@ fn handle_receive(loop: *Loop, event: Event) void {
         return close(loop, descriptor);
     };
     if (received == 0) return close(loop, descriptor);
+    if (shape == .accumulate) return accumulate_received(loop, descriptor, received);
     sending[@intCast(descriptor)] = .{
         .buffer_id = event.flags.buffer_id,
         .sent = 0,
@@ -234,10 +289,25 @@ fn handle_receive(loop: *Loop, event: Event) void {
     send_rest(loop, descriptor);
 }
 
+/// Bytes arrived into this connection's own buffer. A whole message is echoed with one send;
+/// anything short arms another receive into what is left, which is the point of the shape.
+fn accumulate_received(loop: *Loop, descriptor: core.Descriptor, received: u32) void {
+    const have = &accumulated[@intCast(descriptor)];
+    have.* += received;
+    std.debug.assert(have.* <= buffer_bytes);
+    if (have.* < buffer_bytes) return arm_accumulating_receive(loop, descriptor);
+    sending[@intCast(descriptor)] = .{ .buffer_id = 0, .sent = 0, .len = have.* };
+    have.* = 0;
+    send_rest(loop, descriptor);
+}
+
 /// Submits what is left of this descriptor's echo.
 fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
     const state = &sending[@intCast(descriptor)];
-    const buffer = loop.provided_buffer(group_id, state.buffer_id);
+    const buffer = if (shape == .accumulate)
+        accumulator_of(descriptor)
+    else
+        loop.provided_buffer(group_id, state.buffer_id);
     submit_one(loop, .{
         .user_data = user_data_of(.send, descriptor),
         .kind = .{ .send = .{
@@ -254,12 +324,22 @@ fn handle_send(loop: *Loop, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
     const state = &sending[@intCast(descriptor)];
     const sent = event.outcome() catch {
-        loop.give_back_buffer(group_id, state.buffer_id);
+        release(loop, state.buffer_id);
         return close(loop, descriptor);
     };
     state.sent += sent;
     if (state.sent < state.len) return send_rest(loop, descriptor);
-    loop.give_back_buffer(group_id, state.buffer_id);
+    release(loop, state.buffer_id);
+    // The accumulate shape reads again itself: its receive is single-shot, so nothing is armed
+    // for this connection until the echo is out.
+    if (shape == .accumulate) arm_receive(loop, descriptor);
+}
+
+/// Gives a provided buffer back, which the accumulate shape has none of: its buffer is the
+/// connection's own and belongs to no group.
+fn release(loop: *Loop, buffer_id: u16) void {
+    if (shape == .accumulate) return;
+    loop.give_back_buffer(group_id, buffer_id);
 }
 
 /// The close's own completion. It carries no buffer and there is nothing to give back: the send
