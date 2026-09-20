@@ -243,3 +243,39 @@ test "a timer cancels at once with no kernel involved, and a queued operation at
     // The final event is not delivered from inside `cancel`: the slot stays claimed until a tick.
     try testing.expectEqual(@as(u32, 1), loop.in_flight());
 }
+
+test "a deadline that passes while a retried operation is queued does not halt the loop" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const handle = fixture.timed_receive(1);
+    const loop = &fixture.loop;
+    const tables = &loop.tables;
+
+    // EAGAIN puts the slot back on the pending list for the next flush, and its deadline stays
+    // armed, because the deadline belongs to the operation and not to one attempt of it.
+    try testing.expectEqual(@as(?Event, null), fixture.fail(handle, .AGAIN));
+    const slot = tables.table.lookup(handle).?;
+    try testing.expectEqual(core.Slot.State.queued, slot.state);
+    try testing.expect(tables.timers.is_armed(handle.index));
+
+    // The deadline now passes before the flush that would resubmit it. `tick` reaches exactly
+    // here: it reaps, the reap produces no event because the operation was retried, and it then
+    // expires a second time against a clock it has just read again.
+    tables.now_ns += 2 * core.constants.ns_per_ms;
+    const expired = tables.next_expired().?;
+    try testing.expectEqual(handle.index, expired);
+    try testing.expect(slot.flags.timed_out);
+
+    // The backend cancels it as it does any expired operation. The kernel never got this
+    // attempt, so the cancel only marks it and the next flush is what ends it.
+    cancel_module.request(loop, expired, slot);
+    try testing.expect(slot.flags.cancel_requested);
+    try testing.expectEqual(core.Slot.State.queued, slot.state);
+    uring.submit_module.flush(loop);
+    try testing.expectEqual(core.Slot.State.finishing, slot.state);
+
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), tables.drain_finished(&events));
+    try testing.expectError(error.Timeout, events[0].outcome());
+    try testing.expectEqual(@as(u32, 0), loop.in_flight());
+}

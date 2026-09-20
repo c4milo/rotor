@@ -245,13 +245,21 @@ pub const Tables = struct {
     /// Finishes every timer that is due, and returns the next operation whose deadline passed,
     /// marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
     /// more is due. At most the heap's entries can be due, which bounds the loop.
+    ///
+    /// An expired slot may be `queued` and not only `submitted`. A backend that resubmits an
+    /// operation the kernel refused transiently puts it back on the pending list and leaves its
+    /// deadline armed, because the deadline belongs to the operation and not to one attempt of
+    /// it (`uring_reap.zig`, `should_retry`). Its deadline can pass before the flush that would
+    /// resubmit it, and a tick reaches exactly that: it reaps, the retry produces no event, and
+    /// it expires again against a clock it has just read. Requiring `submitted` here halted such
+    /// a loop, with assertions on in production, and no test covered it.
     pub fn next_expired(tables: *Tables) ?u32 {
         const armed = tables.timers.count;
         var popped: u32 = 0;
         while (popped < armed) : (popped += 1) {
             const index = tables.timers.pop_due(tables.now_ns) orelse return null;
             const slot = tables.table.at(index);
-            assert(slot.state == .submitted);
+            assert(slot.state == .queued or slot.state == .submitted);
             if (slot.code != .timer) {
                 slot.flags.timed_out = true;
                 return index;
