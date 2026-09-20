@@ -16,6 +16,10 @@
 //! A connection therefore costs one send entry per message and nothing else. The receive side is
 //! free after the first submission, which is what a multishot receive is for.
 //!
+//! It also sets `TCP_NODELAY` on every accepted connection, which is not a rotor source at all:
+//! it is what the other candidates set, and a comparison whose candidates disagree about Nagle
+//! measures Nagle. The first version of this file left it off while libuv and libxev set it.
+//!
 //! Everything is static. The server holds `connections_max` connections and refuses to track more.
 const std = @import("std");
 const builtin = @import("builtin");
@@ -180,6 +184,10 @@ fn handle_accept(loop: *Loop, event: Event) void {
     const accepted = event.outcome() catch return;
     const descriptor: core.Descriptor = @intCast(accepted);
     if (descriptor >= connections_max) return sync.close_now(descriptor);
+    // Nagle off, because every other candidate of the comparison turns it off and a row that
+    // does not match is measuring the socket option and not the loop. A connection this fails
+    // on is refused rather than served, so a run cannot quietly mix the two shapes.
+    sync.set_no_delay(descriptor, true) catch return sync.close_now(descriptor);
     open[@intCast(descriptor)] = true;
     _ = loop.submit(&.{.{
         .user_data = user_data_of(.receive, descriptor),

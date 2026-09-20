@@ -116,12 +116,31 @@ fn serve(init: std.process.Init, io: Io, options: Options) !void {
         // ever and never accepting connection two. `concurrent` is the call that promises the
         // task runs beside this loop, which is what a server needs. The first version of this
         // file used `async` and the harness reported it stalled, which is what that looks like.
+        // Nagle off, as every other candidate of the comparison sets it. `std.Io.net` offers no
+        // socket option, so this reaches past the interface to the handle underneath. A
+        // connection it fails on is refused, so a run cannot quietly mix the two shapes.
+        set_no_delay(stream) catch {
+            stream.close(io);
+            continue;
+        };
         group.concurrent(io, echo, .{ io, stream }) catch |failure| {
             stream.close(io);
             return failure;
         };
     }
     group.await(io) catch {};
+}
+
+/// TCP_NODELAY on an accepted stream, through `std.posix` because `std.Io.net.Stream` carries no
+/// option call of its own. `Stream.socket.handle` is the descriptor the interface wraps.
+fn set_no_delay(stream: Stream) !void {
+    const enabled: c_int = 1;
+    try std.posix.setsockopt(
+        stream.socket.handle,
+        std.posix.IPPROTO.TCP,
+        std.posix.TCP.NODELAY,
+        std.mem.asBytes(&enabled),
+    );
 }
 
 /// One connection, until the peer stops. Written as if the calls blocked, which is what the
