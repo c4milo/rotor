@@ -2,10 +2,19 @@
 //! threading model pays in. Two loops on two threads pinned to two CPUs send one message back and
 //! forth. A round trip is two posts, so half of it is one message, post to reap.
 //!
-//! It runs twice. `waiting`: each loop blocks in its tick until the message arrives, so the
-//! number includes the kernel waking the receiver, which is what an idle core pays. `spinning`:
-//! each loop ticks without waiting, so the number is the message alone, which is what a busy core
-//! pays.
+//! It runs three times, and the third is the question the first two raise.
+//!
+//!   - `waiting`: each loop blocks in its tick until the message arrives, so the number includes
+//!     the kernel waking the receiver, which is what an idle core pays.
+//!   - `spinning`: each loop ticks without waiting, so the number is the message alone, which is
+//!     what a busy core pays. It costs a core that does nothing else.
+//!   - `spin then wait`: each loop ticks without waiting for `spin_ns`, and blocks only if
+//!     nothing came. A loop whose peer answers inside that window never sleeps and never has to
+//!     be woken; one whose peer is idle sleeps as before, having burnt `spin_ns` first.
+//!
+//! The gap between the first two is what a sleep costs. The third says how much of that a bounded
+//! spin takes back, and it is measured here, in the benchmark, before anything is proposed for
+//! the loop itself.
 //!
 //! A number from a virtual machine describes the virtual machine. It may guide work; it does not
 //! go in docs/costs.md (rule 1 there).
@@ -70,10 +79,13 @@ const Side = struct {
 
     /// Ticks until a message arrives and returns its tag. The post's own completion is an event
     /// too, and is skipped.
-    fn receive(side: *Side, wait_ns: u64) !i32 {
+    fn receive(side: *Side, mode: Mode) !i32 {
         var events: [4]core.Event = undefined;
+        // The spin, when there is one: tick without waiting until the budget is spent.
+        const spin_until_ns = if (mode.spin_ns == 0) 0 else now_ns() + mode.spin_ns;
         while (true) {
-            const count = try side.loop.tick(&events, wait_ns);
+            const spinning = now_ns() < spin_until_ns;
+            const count = try side.loop.tick(&events, if (spinning) 0 else mode.wait_ns);
             for (events[0..count]) |event| {
                 if (event.flags.message) return event.result;
             }
@@ -81,9 +93,22 @@ const Side = struct {
     }
 };
 
+/// How a loop waits for its peer's message.
+const Mode = struct {
+    name: []const u8,
+    /// What a blocking tick is given. 0 never blocks.
+    wait_ns: u64,
+    /// How long a tick polls before it blocks. 0 does not poll.
+    spin_ns: u64 = 0,
+};
+
+/// The spin the third mode is given. Longer than a message takes to come back when the peer is
+/// awake, and far shorter than the sleep it is trying to avoid.
+const spin_budget_ns = 50 * 1000;
+
 const Echo = struct {
     side: Side = .{},
-    wait_ns: u64,
+    mode: Mode,
     failure: ?anyerror = null,
 
     fn run(echo: *Echo) void {
@@ -101,21 +126,22 @@ const Echo = struct {
             .registry = &registry,
         });
         defer echo.side.loop.deinit();
-        while (try echo.side.receive(echo.wait_ns) != tag_stop) echo.side.post(0, tag_pong);
+        while (try echo.side.receive(echo.mode) != tag_stop) echo.side.post(0, tag_pong);
         // Reap the completion of the last pong before the loop ends.
         var events: [4]core.Event = undefined;
-        while (echo.side.loop.in_flight() != 0) _ = try echo.side.loop.tick(&events, echo.wait_ns);
+        const wait_ns = echo.mode.wait_ns;
+        while (echo.side.loop.in_flight() != 0) _ = try echo.side.loop.tick(&events, wait_ns);
     }
 };
 
-fn measure(name: []const u8, wait_ns: u64) !void {
+fn measure(mode: Mode) !void {
     registry.init(&registry_memory, 2);
     var first: Side = .{};
     var options = options_first;
     options.registry = &registry;
     try first.loop.init(&first.memory, options);
     defer first.loop.deinit();
-    var echo: Echo = .{ .wait_ns = wait_ns };
+    var echo: Echo = .{ .mode = mode };
     const thread = try std.Thread.spawn(.{}, Echo.run, .{&echo});
 
     // The other loop publishes its ring when its thread gets there.
@@ -125,7 +151,7 @@ fn measure(name: []const u8, wait_ns: u64) !void {
     for (0..warmup + samples) |round| {
         const before = now_ns();
         first.post(1, tag_ping);
-        const tag = try first.receive(wait_ns);
+        const tag = try first.receive(mode);
         std.debug.assert(tag == tag_pong);
         if (round >= warmup) round_trip_ns[round - warmup] = now_ns() - before;
     }
@@ -137,7 +163,7 @@ fn measure(name: []const u8, wait_ns: u64) !void {
     std.mem.sort(u64, &round_trip_ns, {}, std.sort.asc(u64));
     const median = round_trip_ns[samples / 2];
     const p99 = round_trip_ns[samples * p99_per_mille / per_mille];
-    std.debug.print("| {s} | {d} | {d} | {d} |\n", .{ name, median, p99, median / 2 });
+    std.debug.print("| {s} | {d} | {d} | {d} |\n", .{ mode.name, median, p99, median / 2 });
 }
 
 pub fn main() !void {
@@ -147,6 +173,11 @@ pub fn main() !void {
     std.debug.print("uring post, {s}, {d} round trips per mode\n", .{ mode, samples });
     std.debug.print("| mode | round trip median ns | round trip p99 ns | one message ns |\n", .{});
     std.debug.print("|---|---|---|---|\n", .{});
-    try measure("waiting", core.constants.ns_per_s);
-    try measure("spinning", 0);
+    try measure(.{ .name = "waiting", .wait_ns = core.constants.ns_per_s });
+    try measure(.{ .name = "spinning", .wait_ns = 0 });
+    try measure(.{
+        .name = "spin then wait",
+        .wait_ns = core.constants.ns_per_s,
+        .spin_ns = spin_budget_ns,
+    });
 }

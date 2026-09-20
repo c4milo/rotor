@@ -122,11 +122,28 @@ each wakes a thread that was asleep. C19 crosses the same boundary with the rece
 costs about 100 ns, 150 times less. So a design that moves work between cores pays almost nothing
 for the move and almost everything for the sleep it interrupts.
 
-What that argues, and what no measurement here has tested yet: a loop that stays awake a little
-after its last completion would turn a 15,000 ns handoff into a 100 ns one, for any loop that is
-busy. What it costs is the CPU burnt by a loop that spins and then sleeps anyway. Decision 4
-prices a cross-core message and does not price the sleep, and neither number above is admissible,
-so this is a reason to measure and not yet a reason to build.
+So a loop that stays awake a little after its last completion should turn a 15,000 ns handoff
+into a 700 ns one. `bench/uring/post.zig` measures that, with rotor's own loops, on `orbstack`:
+
+| how the receiving loop waits | one message, ns |
+|---|---|
+| blocks until the message arrives | 11,021 |
+| never blocks, ticks without waiting | 687 |
+| ticks without waiting for 50 µs, then blocks | 729 |
+
+**A bounded spin takes back almost all of it**: 729 ns against 687 for a loop that never sleeps,
+and against 11,021 for one that always does. Fifteen times, for 6 percent more than the loop that
+burns a core outright.
+
+What the benchmark does not measure is the case the spin is wrong for. Here the peer always
+answers inside the window, so the spin always pays. A loop whose work has stopped burns the whole
+budget and then sleeps anyway, which costs a core 50 µs per idle cycle and is exactly what
+decision 4's shared-nothing model was meant to avoid paying for. The shape of an answer is an
+adaptive budget, and what it should key on is not measured.
+
+Decision 4 prices a cross-core message and does not price the sleep. None of these numbers is
+admissible. This is enough to justify a decision record and a measurement on a real machine; it
+is not yet enough to change the loop.
 
 ## How the rows are used
 
