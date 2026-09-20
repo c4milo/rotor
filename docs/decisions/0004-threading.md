@@ -52,6 +52,11 @@ lifetime. For a connection that carries 1,000 echo round trips at C14, the hando
 `C17 / (1,000 × C14)`. With C17 at even 1,000 ns and C14 at 10,000 ns that is 0.01 percent. It
 matters only in the accept storm, which is why the harness runs the storm both ways.
 
+The first reading of C18 by the probe on `mac`, taken on 2026-09-19 while the machine was busy and
+therefore not entered in `docs/costs.md`, was about 25,000 ns: 25 times the figure above. At that
+cost the handoff is 0.25 percent of such a connection, so the conclusion stands, and the storm is
+where the difference will show.
+
 Not in version one: a BPF program attached with `SO_ATTACH_REUSEPORT_CBPF` that picks the socket
 by the CPU the packet arrived on. It is the better Linux answer later.
 

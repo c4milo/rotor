@@ -25,7 +25,7 @@ them, before any loop code is written, with the probes of `bench/costs/`.
 
 | id | role | CPU | cores | memory | OS and kernel | storage | filled |
 |---|---|---|---|---|---|---|---|
-| `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line, 64 KiB L1d, 4 MiB L2 | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
+| `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on. The
