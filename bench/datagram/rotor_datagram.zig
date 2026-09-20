@@ -171,8 +171,7 @@ fn arm_receives(loop: *Loop, server: core.Descriptor, client: core.Descriptor) !
 fn receive_from(user_data: u64, socket: core.Descriptor, group: u16) Operation {
     return .{ .user_data = user_data, .kind = .{ .receive_from = .{
         .socket = socket,
-        .target = .{ .group = group },
-        .multishot = true,
+        .group = group,
     } } };
 }
 

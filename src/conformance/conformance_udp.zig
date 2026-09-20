@@ -53,11 +53,10 @@ const Pair = struct {
     }
 };
 
-fn receive_from(user_data: u64, socket: core.Descriptor, multishot: bool) Operation {
+fn receive_from(user_data: u64, socket: core.Descriptor) Operation {
     return .{ .user_data = user_data, .kind = .{ .receive_from = .{
         .socket = socket,
-        .target = .{ .group = group_id },
-        .multishot = multishot,
+        .group = group_id,
     } } };
 }
 
@@ -99,7 +98,7 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
     defer pair.close();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver, true)}, &handles);
+    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -141,7 +140,7 @@ test "a datagram's bytes are read through the loop and not from the front of its
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver, true)}, &handles);
+    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -175,7 +174,7 @@ test "a multishot receive takes datagram after datagram from one submission" {
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver, true)}, &handles);
+    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
 
     var out: Outbound = .{
         .peer = pair.address,
@@ -220,7 +219,7 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver, true)}, &handles);
+    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
 
     // One byte more than a buffer can hold past its prefix.
     const capacity = core.datagram.payload_capacity(buffer_bytes, group);
@@ -257,7 +256,7 @@ test "a cancelled datagram receive ends with one final event and leaves nothing 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(7, pair.receiver, true)}, &handles);
+    try harness.submit(&.{receive_from(7, pair.receiver)}, &handles);
     var events: [4]Event = undefined;
     _ = try harness.loop.tick(&events, 0);
 

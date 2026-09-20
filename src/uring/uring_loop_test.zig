@@ -430,8 +430,7 @@ test "more datagrams than the ring has entries reuse the message scratch" {
     var handles: [1]core.Handle = undefined;
     _ = fixture.loop.submit(&.{.{ .user_data = 1, .kind = .{ .receive_from = .{
         .socket = receiver,
-        .target = .{ .group = datagram_group },
-        .multishot = true,
+        .group = datagram_group,
     } } }}, &handles);
 
     // One send per round, each taking one entry and one message scratch. The scratch is one per

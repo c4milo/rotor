@@ -94,8 +94,7 @@ const Fixture = struct {
     fn receive_from(fixture: *Fixture, user_data: u64) Handle {
         return fixture.start(.{ .user_data = user_data, .kind = .{ .receive_from = .{
             .socket = 5,
-            .target = .{ .group = 0 },
-            .multishot = true,
+            .group = 0,
         } } });
     }
 };

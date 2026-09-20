@@ -159,10 +159,17 @@ pub const Operation = struct {
     /// datagram's own bytes, and 0 for a datagram that carries none. A datagram socket does not
     /// close, so 0 here is not the end of a stream as it is for `receive`.
     ///
-    /// With `multishot`, one event per datagram, each naming its own buffer of the group, until
-    /// the operation is cancelled or fails. `loop.datagram` is the only supported reader of the
-    /// buffer: the bytes do not start at its front.
-    pub const ReceiveFrom = struct { socket: Descriptor, target: Target, multishot: bool = false };
+    /// One event per datagram, each naming its own buffer of the group, until the operation is
+    /// cancelled or fails. `loop.datagram` is the only supported reader of the buffer: the bytes
+    /// do not start at its front.
+    ///
+    /// It names a group and no other target, and it is always multishot, so neither is a field.
+    /// io_uring writes rotor's layout only for a multishot receive from a group: a single-shot
+    /// one puts the datagram at the front of the buffer and answers the address through the
+    /// submission instead (`tools/uring_probe_datagram.zig`, 2026-09-20). One accessor cannot
+    /// read two layouts, and an illegal state the type cannot express beats one an assertion
+    /// refuses.
+    pub const ReceiveFrom = struct { socket: Descriptor, group: u16 };
 
     /// One datagram out. Result: the bytes sent, which is every byte of `buffer` or none — a
     /// datagram send is not short. `to` says where it goes, what address to send it from, what
@@ -275,18 +282,7 @@ pub const Operation = struct {
     /// buffer that cannot hold one byte past the prefix is a caller's mistake.
     fn assert_receive_from(receive: ReceiveFrom) void {
         assert(receive.socket >= 0);
-        // A datagram receive takes a group and is multishot, always. io_uring writes two
-        // different layouts: a multishot receive puts a head, the address and the control block
-        // in front of the datagram, and a single-shot one puts the datagram at the front of the
-        // buffer and answers the address through the submission instead
-        // (`tools/uring_probe_datagram.zig`, 2026-09-20). One accessor cannot read both, and a
-        // surface that sometimes has a prefix is worse than one that always does. A QUIC stack
-        // wants multishot regardless.
-        assert(receive.multishot);
-        switch (receive.target) {
-            .buffer => unreachable,
-            .group => |group| assert(group < constants.buffer_groups_max),
-        }
+        assert(receive.group < constants.buffer_groups_max);
     }
 
     /// A datagram send names where it goes. A segment size, when it names one, is smaller than

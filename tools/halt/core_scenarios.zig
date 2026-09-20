@@ -185,25 +185,14 @@ fn name_a_registered_buffer_above_the_limit() void {
     operation.assert_valid();
 }
 
-/// io_uring writes rotor's layout only for a multishot receive, so the surface takes no other
-/// shape (decision 15, measured by `tools/uring_probe_datagram.zig`).
-fn receive_a_datagram_without_multishot() void {
+/// A datagram lands in a group, and the group is one the loop can have. The shapes this used to
+/// refuse — a single-shot receive, and one into a buffer the caller names — cannot be written
+/// any more: `ReceiveFrom` names a group and nothing else, so the compiler refuses them and no
+/// scenario is needed (decision 15).
+fn receive_a_datagram_from_a_group_above_the_limit() void {
     const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive_from = .{
         .socket = 3,
-        .target = .{ .group = 0 },
-    } } };
-    scenario.reached_violation();
-    operation.assert_valid();
-}
-
-/// The same rule from the other side: a datagram lands in a group's buffer, never in one the
-/// caller names, because only a group fixes the reserve in front of it.
-fn receive_a_datagram_into_a_named_buffer() void {
-    var bytes: [1024]u8 = undefined;
-    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive_from = .{
-        .socket = 3,
-        .target = .{ .buffer = .{ .bytes = &bytes } },
-        .multishot = true,
+        .group = core.constants.buffer_groups_max,
     } } };
     scenario.reached_violation();
     operation.assert_valid();
@@ -346,12 +335,8 @@ const scenarios = [_]scenario.Scenario{
         .run = name_a_registered_buffer_above_the_limit,
     },
     .{
-        .name = "operation: receive a datagram without multishot",
-        .run = receive_a_datagram_without_multishot,
-    },
-    .{
-        .name = "operation: receive a datagram into a named buffer",
-        .run = receive_a_datagram_into_a_named_buffer,
+        .name = "operation: receive a datagram from a group above the limit",
+        .run = receive_a_datagram_from_a_group_above_the_limit,
     },
     .{ .name = "operation: send a datagram to nowhere", .run = send_a_datagram_to_nowhere },
     .{
