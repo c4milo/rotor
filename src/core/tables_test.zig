@@ -190,3 +190,31 @@ test "a tick may wait only when nothing is queued, and never past the nearest de
     tables.finish_local(index, 0);
     try testing.expectEqual(@as(?u64, null), tables.wait_bound(second));
 }
+
+test "next_cancellable walks the slots a cancel can still reach, and skips the finishing" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    try testing.expectEqual(@as(?u32, null), tables.next_cancellable(0));
+    const batch = [_]Operation{ Fixture.timer(1, 5), Fixture.timer(2, 5), Fixture.timer(3, 5) };
+    var handles: [batch.len]Handle = undefined;
+    try testing.expectEqual(@as(u32, batch.len), tables.submit(&batch, &handles));
+    // The first is handed to the kernel, the second finishes, the third stays queued.
+    const submitted = fixture.hand_to_kernel();
+    const finishing = tables.pending.pop(tables.table.slots).?;
+    tables.finish_local(finishing, 0);
+    const queued = tables.pending.peek().?;
+
+    var reached: [capacity]u32 = undefined;
+    var count: u32 = 0;
+    var from: u32 = 0;
+    while (tables.next_cancellable(from)) |index| : (from = index + 1) {
+        reached[count] = index;
+        count += 1;
+    }
+    try testing.expectEqual(@as(u32, 2), count);
+    const low = @min(submitted, queued);
+    const high = @max(submitted, queued);
+    try testing.expectEqualSlices(u32, &.{ low, high }, reached[0..count]);
+    try testing.expectEqual(@as(?u32, null), tables.next_cancellable(tables.table.capacity()));
+}

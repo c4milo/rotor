@@ -1,14 +1,15 @@
 //! The `core` module: what every backend shares (decision 1). The types the caller sees
 //! (`Operation`, `Event`, `Handle`), the record of an in-flight operation (`Slot`) with its table
 //! and its lists, the timer heap, the layout of a loop's memory, the list of declarations every
-//! backend carries, the seeded generator the property tests draw from, and the named limits. It
-//! imports nothing but std and reads no clock.
+//! backend carries, the drain of a loop that is shutting down, the seeded generator the property
+//! tests draw from, and the named limits. It imports nothing but std and reads no clock.
 pub const constants = @import("constants.zig");
 pub const event = @import("event.zig");
 pub const handle = @import("handle.zig");
 pub const layout = @import("layout.zig");
 pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
+pub const shutdown = @import("shutdown.zig");
 pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
@@ -35,6 +36,7 @@ test {
     _ = layout;
     _ = operation;
     _ = random;
+    _ = shutdown;
     _ = slot;
     _ = slot_list;
     _ = slot_table;

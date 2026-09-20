@@ -53,6 +53,12 @@ pub const loops_max: u16 = 256;
 /// and later, with no kernel flag to depend on.
 pub const message_tag_max: u32 = 0x7fff_f000;
 
+/// The most ticks one `drain` makes before it gives up, each waiting `drain_wait_ns` at most. A
+/// cancelled operation ends within a tick or two, so a loop that is still not empty after this
+/// many holds an operation the kernel will not give back.
+pub const drain_rounds_max: u32 = 1024;
+pub const drain_wait_ns: u64 = 10 * ns_per_ms;
+
 /// Times a backend resubmits one operation after the kernel completes it with EAGAIN or EINTR
 /// having transferred nothing, before the caller hears of it (decision 6, kept from stompy).
 pub const transfer_retries_max: u8 = 16;

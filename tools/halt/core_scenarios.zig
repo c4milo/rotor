@@ -93,6 +93,24 @@ fn post_a_tag_above_the_limit() void {
     operation.assert_valid();
 }
 
+/// The operation has left the pending list, as after a backend's flush, so the count of slots
+/// in use is the one check that can see it: a scenario whose operation is still queued halts on
+/// the lists as well, and would pass with this assertion gone.
+fn end_a_loop_whose_operation_the_kernel_holds() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, 0);
+    const timer = [_]core.Operation{
+        .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
+    };
+    _ = tables.submit(&timer, &.{});
+    const index = tables.pending.pop(tables.table.slots).?;
+    const slot = tables.table.at(index);
+    slot.state = .submitted;
+    tables.arm(index, slot);
+    scenario.reached_violation();
+    tables.assert_empty();
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "slot_table: release a free slot", .run = release_a_free_slot },
     .{
@@ -114,6 +132,10 @@ const scenarios = [_]scenario.Scenario{
         .run = submit_a_timer_with_a_deadline_of_its_own,
     },
     .{ .name = "operation: post a tag above the limit", .run = post_a_tag_above_the_limit },
+    .{
+        .name = "tables: end a loop whose operation the kernel holds",
+        .run = end_a_loop_whose_operation_the_kernel_holds,
+    },
 };
 
 pub fn main(init: std.process.Init) !void {

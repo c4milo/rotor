@@ -77,6 +77,8 @@ pub const Tables = struct {
     /// Halts when an operation has not had its final event (decision 5, rule 7).
     pub fn assert_empty(tables: *const Tables) void {
         assert(tables.in_flight() == 0);
+        // A slot on a list is a slot in use, so no caller's mistake reaches this line alone: it
+        // holds the lists to the table.
         assert(tables.pending.count == 0 and tables.finished.count == 0);
     }
 
@@ -160,6 +162,17 @@ pub const Tables = struct {
         tables.timers.disarm(index);
         tables.finish_local(index, event_module.result_of(cancel_code(slot)));
         return .none;
+    }
+
+    /// The next slot at or after `from` that a cancel can still reach, or null: what a backend's
+    /// `cancel_all` walks the table with.
+    pub fn next_cancellable(tables: *Tables, from: u32) ?u32 {
+        var index = from;
+        while (index < tables.table.capacity()) : (index += 1) {
+            const state = tables.table.at(index).state;
+            if (state == .queued or state == .submitted) return index;
+        }
+        return null;
     }
 
     /// The slot `handle` names when a cancel can still reach it, or null: the handle went stale,

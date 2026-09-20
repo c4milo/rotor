@@ -30,6 +30,7 @@ pub const supported = @import("builtin").os.tag == .linux;
 
 pub const InitError = ring_module.InitError;
 pub const TickError = tick_module.TickError;
+pub const DrainError = TickError || error{StillInFlight};
 
 const Event = core.Event;
 const Handle = core.Handle;
@@ -155,6 +156,24 @@ pub const Loop = struct {
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         return tick_module.tick(loop, events, wait_ns);
+    }
+
+    /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
+    /// with its own final event, which `drain` or the caller's ticks hand over.
+    pub fn cancel_all(loop: *Loop) void {
+        loop.tables.assert_owner();
+        var from: u32 = 0;
+        while (loop.tables.next_cancellable(from)) |index| : (from = index + 1) {
+            cancel_module.request(loop, index, loop.tables.table.at(index));
+        }
+    }
+
+    /// Ticks until no operation is in flight, discarding the events into `scratch`: what a
+    /// caller that is shutting down, and has no use for them, calls after `cancel_all`. Fails
+    /// when the loop is still not empty after `core.constants.drain_rounds_max` ticks.
+    pub fn drain(loop: *Loop, scratch: []Event) DrainError!void {
+        const rounds_max = core.constants.drain_rounds_max;
+        return core.shutdown.drain(loop, scratch, rounds_max, core.constants.drain_wait_ns);
     }
 
     pub const register_buffers = buffers.register;
