@@ -179,7 +179,9 @@ measured against `zig build halt-check`.
 - Linux benchmarks: `zig build bench-linux` builds the io_uring benchmarks of `bench/uring/` for
   the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
   `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A
-  number from Docker's virtual machine may guide work and never goes in `docs/costs.md`.
+  number measured in the `orbstack` virtual machine fills that column of `docs/costs.md` and no
+  other; the owner named it a machine on 2026-09-20, and that file says what the column may and
+  may not carry.
 - Halt check: `zig build halt-check` — every scenario of `tools/halt/` must reach its violating
   statement and die by a signal, and the canary's scenarios must not.
 - Format: `zig build fmt`.
@@ -236,9 +238,13 @@ record has code for it, except decision 13, which is proposed and waits on the o
 measure.
 
 Milestone 3 is next: fill `docs/costs.md` from serial runs on a quiet machine, and run decision
-8's experiment. No cell is filled yet. `docs/costs.md` now names `orbstack`, real Linux on the
-`mac` machine's own cores, which is where every A/B comparison can run; the `linux` column still
-needs a target machine of the family stompy builds for, and that machine is not named.
+8's experiment. No cell is filled yet. The owner made `orbstack` a named machine on 2026-09-20,
+so its column is filled from probes run on it; the `linux` column is the deployment target, needs
+a machine of the family stompy builds for, and that machine is not named.
+
+**The `mac` machine is busy.** An attempt on 2026-09-20 met a load average of 30 from another
+project's CBMC run, and was not recorded: `orbstack` runs on this machine's cores, so its numbers
+are only as quiet as this machine is.
 
 A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
 of 46 and was thrown away.

@@ -26,7 +26,7 @@ them, before any loop code is written, with the probes of `bench/costs/`.
 | id | role | CPU | cores | memory | OS and kernel | storage | filled |
 |---|---|---|---|---|---|---|---|
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
-| `orbstack` | development, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine | 10, as the guest sees them | 16 GiB to the guest | Linux 7.0.14-orbstack, aarch64 | a virtio disk backed by a file on the `mac` machine's APFS | no |
+| `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine | 10, as the guest sees them | 16 GiB to the guest | Linux 7.0.14-orbstack, aarch64 | a virtio disk backed by a file on the `mac` machine's APFS | no |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
@@ -43,11 +43,25 @@ anything on. Two limits, and only the second is about virtualisation:
   image on APFS, so an O_DIRECT read passes through the host's filesystem on its way to the
   drive. That is not the row.
 
-What `orbstack` is good for, and what milestone 3 will use it for: any comparison of two builds
-or two code paths on one machine, decision 8's assertion experiment among them. A ratio measured
+What `orbstack` is good for, and what milestone 3 uses it for: any comparison of two builds or
+two code paths on one machine, decision 8's assertion experiment among them. A ratio measured
 here holds whatever the absolute numbers are elsewhere.
 
-The `linux` machine is not chosen.
+### The owner promoted it on 2026-09-20
+
+`orbstack` is a **named machine**, and its column is filled from probes run on it, under rule 1
+like any other. The project's earlier blanket statement — that a number from a virtual machine
+never enters this file — is amended to what it was actually protecting against:
+
+- A number measured on `orbstack` fills the **`orbstack`** column and nothing else. It never
+  fills `linux`, because that column is the deployment target and an `io_uring_enter` on an M1
+  Pro does not predict one on a Zen 4.
+- **C12 and C13 stay empty here, for ever**, for the virtio reason above. An empty cell with a
+  stated reason is worth more than a number measured through the wrong storage stack.
+- A design argument may cite an `orbstack` cell, and must say which machine it came from. A claim
+  that rotor is faster than another candidate is still made on the machine the claim names.
+
+The `linux` machine is still not chosen, and the column stays empty until one is.
 
 ## The table
 
