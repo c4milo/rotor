@@ -26,13 +26,14 @@ them, before any loop code is written, with the probes of `bench/costs/`.
 | id | role | CPU | cores | memory | OS and kernel | storage | filled |
 |---|---|---|---|---|---|---|---|
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
-| `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine | 10, as the guest sees them | 16 GiB to the guest | Linux 7.0.14-orbstack, aarch64 | a virtio disk backed by a file on the `mac` machine's APFS | no |
+| `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine; the guest reports CPU implementer `0x61`, Apple's | 10, as the guest reports them | 15.66 GiB (`MemTotal` 16,425,400 kB), plus a 16 GiB `zram0` swap | Linux 7.0.14-orbstack-00380-ga7e0a2dc9535, aarch64 | virtio: `vda` 415 MiB, `vdb` 460 GiB, `vdc` 1 GiB, each backed by a file on the `mac` machine's APFS | 2026-09-20 |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
 
-The `orbstack` row is real Linux on the `mac` machine's own cores: the guest reports `aarch64`
-with CPU implementer `0x61`, Apple's, and nothing is emulated. Its syscall and CPU rows are
+The `orbstack` row was read from the guest itself on 2026-09-20 — `uname -a`, `/proc/cpuinfo`,
+`/proc/meminfo` and `/proc/partitions` — and not from OrbStack's documentation. It is real Linux
+on the `mac` machine's own cores, and nothing is emulated. Its syscall and CPU rows are
 therefore measurements and not estimates, and it is the only Linux this project has measured
 anything on. Two limits, and only the second is about virtualisation:
 
@@ -61,7 +62,23 @@ never enters this file — is amended to what it was actually protecting against
 - A design argument may cite an `orbstack` cell, and must say which machine it came from. A claim
   that rotor is faster than another candidate is still made on the machine the claim names.
 
-The `linux` machine is still not chosen, and the column stays empty until one is.
+### Why `orbstack` cannot become the `linux` row
+
+It was asked, and the guest answered it: **`orbstack` is `aarch64`**, on Apple silicon (CPU
+implementer `0x61`). The `linux` row is the deployment target, and stompy builds for `znver4` and
+`znver5` — x86-64 Zen. That is a different instruction set on different silicon, not a slower
+version of the same one. A syscall cost, a cache miss and a branch mispredict all differ, and
+those are what this table is for.
+
+Two other things the guest reports are worth knowing before any number is read from it:
+
+- **A 16 GiB `zram0` swap**, which is compressed swap held in RAM. A run that reaches memory
+  pressure here behaves unlike one on a machine that swaps to a disk, or one that does not swap.
+- **The disks are virtio files on APFS**, which is C12 and C13's exclusion above, and is also why
+  nothing here measures a file workload.
+
+The `linux` machine is still not chosen, and the column stays empty until one is. Nothing in this
+file may be filled from a machine of another architecture, however convenient it is to reach.
 
 ## The table
 
