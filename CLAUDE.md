@@ -228,7 +228,7 @@ The owner accepted the decision records for implementation on 2026-09-19 without
 open questions, so the implementation follows the proposed answer to each. Decision 10 dropped
 the simulator.
 
-Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass the same 23-scenario conformance
+Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass the same 35-scenario conformance
 suite: `uring` under Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate
 pass. Registered descriptors and provided buffers are built, and no speed claim is made for either
 yet.
