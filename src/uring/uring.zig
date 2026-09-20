@@ -212,6 +212,35 @@ pub const Loop = struct {
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
 
+    /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
+    /// chosen here, once, so a reap subtracts a constant the loop already holds and a fourth
+    /// control message later costs no caller a layout change. `provide_buffers` is untouched, so
+    /// no stream caller gains a precondition.
+    ///
+    /// One loop serves one datagram shape: a second group with a different reserve would make
+    /// the prefix a per-completion lookup, which is what the constant exists to avoid.
+    pub fn provide_datagram_buffers(
+        loop: *Loop,
+        group_id: u16,
+        ring_memory: []align(buffers.ring_alignment) u8,
+        memory: []u8,
+        buffer_bytes: u32,
+        group: core.datagram.GroupOptions,
+    ) buffers.ProvideError!void {
+        assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        loop.datagram_group = group;
+        loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
+        return buffers.provide(loop, group_id, ring_memory, memory, buffer_bytes);
+    }
+
+    /// The datagram an event names, out of the buffer it named. The only supported reader of
+    /// that buffer: a datagram's bytes do not start at its front.
+    pub fn datagram(loop: *const Loop, buffer: []u8, event: core.Event) core.Delivery {
+        assert(!event.flags.message);
+        const bytes: u32 = @intCast(event.result);
+        return datagram_module.delivery(buffer, bytes, loop.datagram_group);
+    }
+
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
     pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
         assert(group_id < core.constants.buffer_groups_max);

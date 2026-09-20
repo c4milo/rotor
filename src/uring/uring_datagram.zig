@@ -239,6 +239,57 @@ fn is_codepoint(level: i32, name: i32) bool {
     return ipv4 or ipv6;
 }
 
+/// The three option numbers one family uses, so the two families share one body.
+const Names = struct { pktinfo: u32, codepoint: u32, mtu_discover: u32 };
+
+/// Sets what a datagram socket needs, by family. A refusal costs the caller that answer and
+/// nothing else, which is why none is checked: the conformance suite reports what a host
+/// honoured rather than assuming it.
+pub fn apply_options(
+    socket: core.Descriptor,
+    family: Address.Family,
+    options: @import("uring_sync_socket.zig").DatagramOptions,
+) void {
+    switch (family) {
+        .ipv4 => apply(socket, linux.IPPROTO.IP, .{
+            .pktinfo = linux.IP.PKTINFO,
+            .codepoint = linux.IP.RECVTOS,
+            .mtu_discover = linux.IP.MTU_DISCOVER,
+        }, options),
+        .ipv6 => apply(socket, linux.IPPROTO.IPV6, .{
+            .pktinfo = linux.IPV6.RECVPKTINFO,
+            .codepoint = linux.IPV6.RECVTCLASS,
+            .mtu_discover = linux.IPV6.MTU_DISCOVER,
+        }, options),
+    }
+}
+
+/// IP_PMTUDISC_DO, which every kernel rotor runs on numbers 2: set the bit and refuse an
+/// oversized datagram rather than fragmenting it.
+const pmtudisc_do: c_int = 2;
+
+fn apply(
+    socket: core.Descriptor,
+    level: u32,
+    names: Names,
+    options: @import("uring_sync_socket.zig").DatagramOptions,
+) void {
+    const set = @import("uring_sync_socket.zig").set_option;
+    if (options.control) {
+        set(socket, @intCast(level), names.pktinfo, true) catch {};
+        set(socket, @intCast(level), names.codepoint, true) catch {};
+    }
+    if (!options.dont_fragment) return;
+    const value = pmtudisc_do;
+    _ = linux.setsockopt(
+        socket,
+        @intCast(level),
+        names.mtu_discover,
+        std.mem.asBytes(&value),
+        @sizeOf(c_int),
+    );
+}
+
 const testing = std.testing;
 
 test "the control space of a message is its header and its payload, each padded to a pointer" {

@@ -14,6 +14,7 @@ const core = @import("core");
 pub const constants = @import("constants.zig");
 pub const address = @import("kqueue_address.zig");
 pub const buffers = @import("kqueue_buffers.zig");
+const datagram_module = @import("kqueue_datagram.zig");
 pub const cancel_module = @import("kqueue_cancel.zig");
 pub const descriptors_module = @import("kqueue_descriptors.zig");
 pub const errno = @import("kqueue_errno.zig");
@@ -202,6 +203,30 @@ pub const Loop = struct {
     pub const register_descriptors = descriptors_module.register;
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
+
+    /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
+    /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a
+    /// precondition. One loop serves one datagram shape.
+    pub fn provide_datagram_buffers(
+        loop: *Loop,
+        group_id: u16,
+        ring_memory: []align(buffers.ring_alignment) u8,
+        memory: []u8,
+        buffer_bytes: u32,
+        group: core.datagram.GroupOptions,
+    ) buffers.ProvideError!void {
+        assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        loop.datagram_group = group;
+        return buffers.provide(loop, group_id, ring_memory, memory, buffer_bytes);
+    }
+
+    /// The datagram an event names, out of the buffer it named. The only supported reader of
+    /// that buffer: a datagram's bytes do not start at its front.
+    pub fn datagram(loop: *const Loop, buffer: []u8, event: core.Event) core.Delivery {
+        assert(!event.flags.message);
+        const bytes: u32 = @intCast(event.result);
+        return datagram_module.delivery(buffer, bytes, loop.datagram_group);
+    }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
     pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {

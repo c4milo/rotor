@@ -258,6 +258,45 @@ fn is_codepoint(level: i32, name: i32) bool {
     return ipv4 or ipv6;
 }
 
+/// The three option numbers one family uses, so the two families share one body.
+const Names = struct { pktinfo: u32, codepoint: u32, dont_fragment: u32 };
+
+/// Sets what a datagram socket needs, by family. macOS carries every one a QUIC stack asks for.
+/// A refusal costs the caller that answer and nothing else, which is why none is checked: the
+/// conformance suite reports what a host honoured rather than assuming it.
+pub fn apply_options(
+    socket: core.Descriptor,
+    family: Address.Family,
+    options: @import("kqueue_sync_socket.zig").DatagramOptions,
+) void {
+    switch (family) {
+        .ipv4 => apply(socket, posix.IPPROTO.IP, .{
+            .pktinfo = ip_pktinfo,
+            .codepoint = ip_recvtos,
+            .dont_fragment = ip_dontfrag,
+        }, options),
+        .ipv6 => apply(socket, posix.IPPROTO.IPV6, .{
+            .pktinfo = ipv6_pktinfo,
+            .codepoint = ipv6_recvtclass,
+            .dont_fragment = ipv6_dontfrag,
+        }, options),
+    }
+}
+
+fn apply(
+    socket: core.Descriptor,
+    level: u32,
+    names: Names,
+    options: @import("kqueue_sync_socket.zig").DatagramOptions,
+) void {
+    const set = @import("kqueue_sync_socket.zig").set_option;
+    if (options.control) {
+        set(socket, @intCast(level), names.pktinfo, true) catch {};
+        set(socket, @intCast(level), names.codepoint, true) catch {};
+    }
+    if (options.dont_fragment) set(socket, @intCast(level), names.dont_fragment, true) catch {};
+}
+
 const testing = std.testing;
 
 test "a segmented send is refused, because macOS has no UDP segmentation" {

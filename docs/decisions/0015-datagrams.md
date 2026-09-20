@@ -52,8 +52,10 @@ pub const Code = enum(u8) {
 };
 
 /// Result: the bytes of one datagram, and 0 for a datagram that carries none. A datagram socket
-/// does not close, so 0 is not an end of stream as it is for `receive`. With `multishot`, one
-/// event per datagram, each naming its own buffer of the group, until it is cancelled or fails.
+/// does not close, so 0 is not an end of stream as it is for `receive`. One event per datagram,
+/// each naming its own buffer of the group, until it is cancelled or fails.
+///
+/// It takes a group and is multishot, always: see "Two layouts, and only one of them is rotor's".
 pub const ReceiveFrom = struct { socket: Descriptor, target: Target, multishot: bool = false };
 
 /// Result: the bytes sent, which is every byte of `buffer` or none: a datagram send is not short.
@@ -133,6 +135,29 @@ prefix = @sizeOf(io_uring_recvmsg_out) + name_reserve + control_reserve
 
 Two bytes of control per datagram were measured as 56 for IPv4 with `IP_PKTINFO` and
 `IP_RECVTOS`, which is `CMSG_SPACE(12) + CMSG_SPACE(1)` = 32 + 24 on a 64-bit kernel.
+
+### Two layouts, and only one of them is rotor's
+
+**Measured on 2026-09-20, after the conformance suite refused to pass.** A *single-shot* `recvmsg`
+with a provided buffer writes the datagram at the **front** of the buffer and answers the address
+through the submission's own `msghdr`. A *multishot* one writes the head, the address and the
+control block in front of the datagram. The probe shows it plainly: the head a single-shot receive
+leaves is the datagram's own text read as integers.
+
+```text
+single-shot: recvmsg_out namelen 1869901682, controllen 1633951858, flags 0x70206d61
+             cqe.res 20; payload sent 20
+multishot:   recvmsg_out namelen 16, controllen 56, payloadlen 20
+             cqe.res 132; cqe.res - prefix 20
+```
+
+So `receive_from` **takes a group and is multishot**, and `assert_valid` halts on anything else.
+One accessor cannot read two layouts, and a surface whose buffer sometimes carries a prefix is
+worse than one whose buffer always does. A QUIC stack wants multishot regardless. The kqueue
+backend writes the multishot layout whatever shape it is given, so the two agree.
+
+This was found by the conformance suite failing on io_uring after passing on kqueue, which is
+what decision 10's one-suite rule is for.
 
 One accessor turns the buffer into rotor's types, and it is the only supported reader:
 

@@ -50,8 +50,8 @@ pub const Attempt = struct {
 /// The filter an operation of this kind waits on when it cannot complete at once.
 pub fn filter_of(code: core.Operation.Code) Filter {
     return switch (code) {
-        .accept, .receive => .read,
-        .connect, .send => .write,
+        .accept, .receive, .receive_from => .read,
+        .connect, .send, .send_to => .write,
         else => unreachable,
     };
 }

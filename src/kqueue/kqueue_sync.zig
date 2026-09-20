@@ -26,6 +26,8 @@ pub const local_address = socket_calls.local_address;
 pub const set_no_delay = socket_calls.set_no_delay;
 pub const prepare_accepted = socket_calls.prepare_accepted;
 pub const close_now = socket_calls.close_now;
+pub const DatagramOptions = socket_calls.DatagramOptions;
+pub const open_datagram = socket_calls.open_datagram;
 
 pub const OpenError = file_calls.OpenError;
 pub const FileSizeError = file_calls.FileSizeError;
@@ -38,7 +40,7 @@ pub const sync_directory = file_calls.sync_directory;
 
 /// The public declarations of `uring_sync.zig`, and `prepare_accepted`. The module graph keeps
 /// `uring` out of this module's reach, so the tests below write its surface out.
-const declarations = 19;
+const declarations = 21;
 
 const expect = std.testing.expect;
 
@@ -53,6 +55,8 @@ test "the surface is the one uring_sync.zig presents, with prepare_accepted besi
     try expect(@TypeOf(set_no_delay) == fn (Descriptor, bool) OptionError!void);
     try expect(@TypeOf(prepare_accepted) == fn (Descriptor) OptionError!void);
     try expect(@TypeOf(close_now) == fn (Descriptor) void);
+    const open_datagram_type = fn (Address.Family, ?*const Address, DatagramOptions) ListenError!Descriptor;
+    try expect(@TypeOf(open_datagram) == open_datagram_type);
     try expect(@TypeOf(open_file) == fn (Path, OpenOptions) OpenError!Descriptor);
     try expect(@TypeOf(file_size) == fn (Descriptor) FileSizeError!u64);
     try expect(@TypeOf(set_file_size) == fn (Descriptor, u64) FileSizeError!void);

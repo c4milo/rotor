@@ -133,7 +133,7 @@ pub fn close_now(descriptor: Descriptor) void {
     assert(errno != .BADF);
 }
 
-fn set_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) OptionError!void {
+pub fn set_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) OptionError!void {
     assert(descriptor >= 0);
     const value: c_int = @intFromBool(enabled);
     const rc = c.setsockopt(descriptor, level, name, &value, @sizeOf(c_int));
@@ -177,6 +177,49 @@ fn socket_call_error(errno: E) error{ NotSocket, Unexpected } {
     return if (errno == .NOTSOCK) error.NotSocket else error.Unexpected;
 }
 
+/// Options a datagram socket is opened with (decision 15). The same shape `uring_sync_socket`
+/// offers, because the conformance suite calls `backend.sync` on whichever backend it was given.
+pub const DatagramOptions = struct {
+    control: bool = true,
+    dont_fragment: bool = true,
+};
+
+/// A UDP socket of `family`, closed on exec, bound to `address` when one is given.
+pub fn open_datagram(
+    family: Address.Family,
+    bind_to: ?*const Address,
+    options: DatagramOptions,
+) ListenError!Descriptor {
+    const domain: c_uint = switch (family) {
+        .ipv4 => c.AF.INET,
+        .ipv6 => c.AF.INET6,
+    };
+    // No SOCK_CLOEXEC and no SOCK_NONBLOCK: macOS has neither, so `prepare_accepted` sets both
+    // afterwards, exactly as `open_socket` does for a stream socket (decision 12, point 8).
+    const rc = c.socket(domain, c.SOCK.DGRAM, c.IPPROTO.UDP);
+    const errno = posix.errno(rc);
+    if (errno != .SUCCESS) return socket_error(errno);
+    assert(rc >= 0);
+    errdefer close_now(rc);
+    // The loop waits on readiness here, so a blocking socket would stall every other connection
+    // inside one `recvmsg`.
+    prepare_accepted(rc) catch return error.Unexpected;
+    @import("kqueue_datagram.zig").apply_options(rc, family, options);
+    if (bind_to) |address| {
+        assert(address.family == family);
+        var storage: kqueue_address.Storage = undefined;
+        const len = kqueue_address.to_kernel(address, &storage);
+        const bound = c.bind(rc, @ptrCast(@alignCast(&storage)), len);
+        const bind_errno = posix.errno(bound);
+        if (bind_errno != .SUCCESS) return listen_error(bind_errno);
+    }
+    return rc;
+}
+
+/// The options of a datagram socket. macOS carries every one a QUIC stack needs; the IPv6 names
+/// sit behind `__APPLE_USE_RFC_3542` in the SDK, which gates the header and not the kernel, so
+/// they are named by their numbers in `kqueue_datagram.zig`. A refusal costs the caller that
+/// answer and nothing else.
 const testing = std.testing;
 
 test "every errno of a socket call maps to its named error, any other to Unexpected" {

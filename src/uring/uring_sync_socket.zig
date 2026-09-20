@@ -120,7 +120,7 @@ pub fn descriptor_of(rc: usize) Descriptor {
     return @intCast(rc);
 }
 
-fn set_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) OptionError!void {
+pub fn set_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) OptionError!void {
     assert(descriptor >= 0);
     const value: c_int = @intFromBool(enabled);
     const rc = linux.setsockopt(descriptor, level, name, std.mem.asBytes(&value), @sizeOf(c_int));
@@ -155,6 +155,47 @@ fn socket_call_error(errno: linux.E) error{ NotSocket, Unexpected } {
     return if (errno == .NOTSOCK) error.NotSocket else error.Unexpected;
 }
 
+/// Options a datagram socket is opened with (decision 15).
+pub const DatagramOptions = struct {
+    /// Report the address each datagram was sent to, so a server on a wildcard address can
+    /// answer from it, and report the codepoint each carried.
+    control: bool = true,
+    /// Do not fragment: path MTU discovery needs it, and without it an oversized datagram is cut
+    /// up instead of reported.
+    dont_fragment: bool = true,
+};
+
+/// A UDP socket of `family`, closed on exec, bound to `address` when one is given. A port of 0
+/// takes one the kernel chooses, which `local_address` reports. Closes the socket again on any
+/// failure after it was opened.
+pub fn open_datagram(
+    family: Address.Family,
+    bind_to: ?*const Address,
+    options: DatagramOptions,
+) ListenError!Descriptor {
+    const domain: u32 = switch (family) {
+        .ipv4 => linux.AF.INET,
+        .ipv6 => linux.AF.INET6,
+    };
+    const rc = linux.socket(domain, linux.SOCK.DGRAM | linux.SOCK.CLOEXEC, linux.IPPROTO.UDP);
+    const errno = linux.errno(rc);
+    if (errno != .SUCCESS) return socket_error(errno);
+    const socket = descriptor_of(rc);
+    errdefer close_now(socket);
+    @import("uring_datagram.zig").apply_options(socket, family, options);
+    if (bind_to) |address| {
+        assert(address.family == family);
+        var storage: uring_address.Storage = undefined;
+        const len = uring_address.to_kernel(address, &storage);
+        const bind_errno = linux.errno(linux.bind(socket, @ptrCast(&storage), len));
+        if (bind_errno != .SUCCESS) return listen_error(bind_errno);
+    }
+    return socket;
+}
+
+/// The options of a datagram socket. A kernel that refuses one is not a failure to open the
+/// socket: the caller loses that answer and nothing else, and the conformance suite says which
+/// ones a host actually honoured rather than assuming.
 const testing = std.testing;
 const E = linux.E;
 

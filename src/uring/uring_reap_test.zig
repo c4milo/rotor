@@ -89,11 +89,13 @@ const Fixture = struct {
         return fixture.complete(handle.to_bits(), -@as(i32, @intFromEnum(errno)), 0);
     }
 
-    /// A datagram receive into a buffer the caller names, big enough to hold a prefix.
+    /// A datagram receive, which takes a group and is multishot: io_uring writes rotor's layout
+    /// only for a multishot receive (`tools/uring_probe_datagram.zig`, 2026-09-20).
     fn receive_from(fixture: *Fixture, user_data: u64) Handle {
         return fixture.start(.{ .user_data = user_data, .kind = .{ .receive_from = .{
             .socket = 5,
-            .target = .{ .buffer = .{ .bytes = &fixture.datagram_buffer } },
+            .target = .{ .group = 0 },
+            .multishot = true,
         } } });
     }
 };
@@ -295,6 +297,9 @@ test "a deadline that passes while a retried operation is queued does not halt t
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }
 
+/// `IORING_CQE_F_MORE`, which a multishot completion carries.
+const more_flag: u32 = 1 << 1;
+
 test "a datagram completion reports the datagram's bytes and not the prefix in front of them" {
     var fixture: Fixture = undefined;
     fixture.init();
@@ -303,11 +308,11 @@ test "a datagram completion reports the datagram's bytes and not the prefix in f
     // 2026-09-20: a 20-byte datagram in a group reserving 112 gave `cqe.res` 132.
     const prefix: i32 = @intCast(core.datagram.prefix_bytes(.{}));
     const payload_bytes: i32 = 20;
-    const event = fixture.complete(handle.to_bits(), prefix + payload_bytes, 0).?;
+    // Flagged `more`, as every event of a multishot operation but the last is.
+    const event = fixture.complete(handle.to_bits(), prefix + payload_bytes, more_flag).?;
     // The caller sees the datagram, never the prefix (decision 15).
     try testing.expectEqual(@as(u32, @intCast(payload_bytes)), try event.outcome());
-    try testing.expect(event.is_final());
-    try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
+    try testing.expect(event.flags.more);
 }
 
 test "a stream receive's completion keeps every byte the kernel counted" {

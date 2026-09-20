@@ -49,9 +49,15 @@ const control_bytes = 64;
 /// that the control block that follows starts 8-aligned.
 const name_bytes = 32;
 
+const single_shot: Feature = .{ .name = "single-shot recvmsg layout", .need = .optional };
+
 pub fn check(report: *Report, ring: *IoUring) !void {
     try check_options(report);
-    try check_receive(report, ring);
+    try check_receive(report, ring, true, buffer_group);
+    // The same path without multishot. Decision 15 assumed the two agree; this says whether the
+    // head, the name and the control block are written for a single-shot receive too, or only
+    // the payload is, which would make one accessor read two layouts.
+    try check_receive(report, ring, false, buffer_group + 1);
 }
 
 /// The socket options, which need no ring: a kernel either takes them or answers ENOPROTOOPT.
@@ -86,7 +92,7 @@ fn option_verdict(
 
 /// Arms one multishot `recvmsg` from a provided buffer ring, sends one datagram to it, and
 /// reports what the kernel wrote and what it counted.
-fn check_receive(report: *Report, ring: *IoUring) !void {
+fn check_receive(report: *Report, ring: *IoUring, multishot: bool, group: u16) !void {
     const receiver = try open_datagram();
     defer _ = linux.close(receiver);
     const enabled: c_int = 1;
@@ -103,7 +109,7 @@ fn check_receive(report: *Report, ring: *IoUring) !void {
 
     var buffers: [buffer_ring_entries * buffer_bytes]u8 align(4096) = undefined;
     var ring_memory: [buffer_ring_entries * @sizeOf(linux.io_uring_buf)]u8 align(4096) = undefined;
-    const buffer_ring = register_ring(ring, &ring_memory) catch |failure| {
+    const buffer_ring = register_ring(ring, &ring_memory, group) catch |failure| {
         try report.verdict(multishot_recvmsg, .missing, ", the buffer ring was refused", .{});
         return failure;
     };
@@ -121,9 +127,9 @@ fn check_receive(report: *Report, ring: *IoUring) !void {
     sqe.fd = receiver;
     sqe.addr = @intFromPtr(&header);
     sqe.len = 1;
-    sqe.ioprio = linux.IORING_RECV_MULTISHOT;
+    if (multishot) sqe.ioprio = linux.IORING_RECV_MULTISHOT;
     sqe.flags |= linux.IOSQE_BUFFER_SELECT;
-    sqe.buf_index = buffer_group;
+    sqe.buf_index = group;
     sqe.user_data = user_data_receive;
     _ = try ring.submit();
 
@@ -133,20 +139,22 @@ fn check_receive(report: *Report, ring: *IoUring) !void {
         const errno: linux.E = @enumFromInt(@as(u32, @intCast(-cqe.res)));
         return report.refused(multishot_recvmsg, "the completion", errno);
     }
-    try report_result(report, cqe, &buffers);
+    try report_result(report, cqe, &buffers, multishot);
 }
 
 /// What the kernel wrote, and what it counted. This is the whole point of the probe.
-fn report_result(report: *Report, cqe: linux.io_uring_cqe, buffers: []u8) !void {
+fn report_result(report: *Report, cqe: linux.io_uring_cqe, buffers: []u8, multishot: bool) !void {
     const more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
     const selected = cqe.flags & linux.IORING_CQE_F_BUFFER != 0;
     if (!selected) {
-        return report.verdict(multishot_recvmsg, .missing, ", no buffer was selected", .{});
+        const feature = if (multishot) multishot_recvmsg else single_shot;
+        return report.verdict(feature, .missing, ", no buffer was selected", .{});
     }
     const id = cqe.flags >> linux.IORING_CQE_BUFFER_SHIFT;
     const buffer = buffers[id * buffer_bytes ..][0..buffer_bytes];
     const head: *const linux.io_uring_recvmsg_out = @ptrCast(@alignCast(buffer.ptr));
-    try report.verdict(multishot_recvmsg, .present, ", more={}, buffer id {d}", .{ more, id });
+    const feature = if (multishot) multishot_recvmsg else single_shot;
+    try report.verdict(feature, .present, ", multishot={}, more={}, id {d}", .{ multishot, more, id });
 
     const head_bytes = @sizeOf(linux.io_uring_recvmsg_out);
     try report.line(
@@ -183,7 +191,7 @@ fn report_result(report: *Report, cqe: linux.io_uring_cqe, buffers: []u8) !void 
     const got = buffer[prefix..][0..@min(head.payloadlen, payload.len)];
     const matched = std.mem.eql(u8, got, payload[0..got.len]) and by_subtraction;
     try report.verdict(
-        recvmsg_layout,
+        if (multishot) recvmsg_layout else single_shot,
         if (matched) .present else .missing,
         ", payload starts at {d} and the bytes {s}",
         .{ prefix, if (std.mem.eql(u8, got, payload[0..got.len])) "match" else "DO NOT MATCH" },
@@ -220,11 +228,11 @@ fn set_option(socket: i32, level: u32, name: u32, value: c_int) linux.E {
     return linux.errno(rc);
 }
 
-fn register_ring(ring: *IoUring, memory: []align(4096) u8) ![*]linux.io_uring_buf {
+fn register_ring(ring: *IoUring, memory: []align(4096) u8, group: u16) ![*]linux.io_uring_buf {
     var registration = std.mem.zeroes(linux.io_uring_buf_reg);
     registration.ring_addr = @intFromPtr(memory.ptr);
     registration.ring_entries = buffer_ring_entries;
-    registration.bgid = buffer_group;
+    registration.bgid = group;
     const rc = linux.io_uring_register(
         ring.fd,
         .REGISTER_PBUF_RING,

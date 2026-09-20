@@ -275,13 +275,16 @@ pub const Operation = struct {
     /// buffer that cannot hold one byte past the prefix is a caller's mistake.
     fn assert_receive_from(receive: ReceiveFrom) void {
         assert(receive.socket >= 0);
+        // A datagram receive takes a group and is multishot, always. io_uring writes two
+        // different layouts: a multishot receive puts a head, the address and the control block
+        // in front of the datagram, and a single-shot one puts the datagram at the front of the
+        // buffer and answers the address through the submission instead
+        // (`tools/uring_probe_datagram.zig`, 2026-09-20). One accessor cannot read both, and a
+        // surface that sometimes has a prefix is worse than one that always does. A QUIC stack
+        // wants multishot regardless.
+        assert(receive.multishot);
         switch (receive.target) {
-            .buffer => |buffer| {
-                assert(!receive.multishot);
-                assert_transfer(receive.socket, buffer.bytes.len);
-                assert_socket_buffer(buffer.registered);
-                assert(buffer.bytes.len > datagram.prefix_bytes(.{}));
-            },
+            .buffer => unreachable,
             .group => |group| assert(group < constants.buffer_groups_max),
         }
     }

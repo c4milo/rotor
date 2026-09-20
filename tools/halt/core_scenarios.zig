@@ -185,6 +185,88 @@ fn name_a_registered_buffer_above_the_limit() void {
     operation.assert_valid();
 }
 
+/// io_uring writes rotor's layout only for a multishot receive, so the surface takes no other
+/// shape (decision 15, measured by `tools/uring_probe_datagram.zig`).
+fn receive_a_datagram_without_multishot() void {
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive_from = .{
+        .socket = 3,
+        .target = .{ .group = 0 },
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// The same rule from the other side: a datagram lands in a group's buffer, never in one the
+/// caller names, because only a group fixes the reserve in front of it.
+fn receive_a_datagram_into_a_named_buffer() void {
+    var bytes: [1024]u8 = undefined;
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive_from = .{
+        .socket = 3,
+        .target = .{ .buffer = .{ .bytes = &bytes } },
+        .multishot = true,
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// A datagram send says where it goes: a peer, an address to send from, or both.
+fn send_a_datagram_to_nowhere() void {
+    var bytes: [16]u8 = undefined;
+    const out: core.datagram.Outbound = .{
+        .peer = core.Address.ipv4(.{ 127, 0, 0, 1 }, 1),
+        .local = core.Address.ipv4(.{ 0, 0, 0, 0 }, 0),
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{},
+    };
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .send_to = .{
+        .socket = 3,
+        .buffer = .{ .bytes = &bytes },
+        .to = &out,
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// Cutting a buffer into one piece is what a segment size of 0 already means.
+fn send_a_datagram_in_one_segment() void {
+    var bytes: [16]u8 = undefined;
+    const out: core.datagram.Outbound = .{
+        .peer = core.Address.ipv4(.{ 127, 0, 0, 1 }, 1),
+        .local = core.Address.ipv4(.{ 0, 0, 0, 0 }, 0),
+        .segment_bytes = bytes.len,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .send_to = .{
+        .socket = 3,
+        .buffer = .{ .bytes = &bytes },
+        .to = &out,
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
+/// More segments than `constants.segments_max`, which the kernel would refuse after the loop had
+/// already claimed a slot.
+fn send_a_datagram_in_too_many_segments() void {
+    var bytes: [2 * core.constants.segments_max]u8 = undefined;
+    const out: core.datagram.Outbound = .{
+        .peer = core.Address.ipv4(.{ 127, 0, 0, 1 }, 1),
+        .local = core.Address.ipv4(.{ 0, 0, 0, 0 }, 0),
+        .segment_bytes = 1,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    const operation: core.Operation = .{ .user_data = 1, .kind = .{ .send_to = .{
+        .socket = 3,
+        .buffer = .{ .bytes = &bytes },
+        .to = &out,
+    } } };
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
 /// A mask must be a power of two minus one: the decision is one AND, and any other mask would
 /// sample a pattern nobody could state (decision 9, rule 2).
 fn sample_with_a_mask_that_is_not_a_run_of_bits() void {
@@ -262,6 +344,23 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "operation: name a registered buffer above the limit",
         .run = name_a_registered_buffer_above_the_limit,
+    },
+    .{
+        .name = "operation: receive a datagram without multishot",
+        .run = receive_a_datagram_without_multishot,
+    },
+    .{
+        .name = "operation: receive a datagram into a named buffer",
+        .run = receive_a_datagram_into_a_named_buffer,
+    },
+    .{ .name = "operation: send a datagram to nowhere", .run = send_a_datagram_to_nowhere },
+    .{
+        .name = "operation: send a datagram in one segment",
+        .run = send_a_datagram_in_one_segment,
+    },
+    .{
+        .name = "operation: send a datagram in too many segments",
+        .run = send_a_datagram_in_too_many_segments,
     },
     .{
         .name = "tables: name a registered descriptor the loop lacks",
