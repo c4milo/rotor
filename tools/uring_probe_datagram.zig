@@ -51,6 +51,69 @@ const name_bytes = 32;
 
 const single_shot: Feature = .{ .name = "single-shot recvmsg layout", .need = .optional };
 
+/// The two features above decision 2's Linux 6.1 floor that this tree has a use for. Neither is
+/// built: building one means raising the floor or carrying a conditional path, which decision 2
+/// forbids doing silently, and both are the owner's call. Probing says whether raising the floor
+/// would buy anything on the kernel in front of us, which is what that call needs.
+const pbuf_ring_inc: Feature = .{ .name = "IOU_PBUF_RING_INC", .need = .optional };
+const recvsend_bundle: Feature = .{ .name = "IORING_RECVSEND_BUNDLE", .need = .optional };
+
+/// `IORING_RECVSEND_BUNDLE`, bit 4 of an SQE's `ioprio` for a send or a receive. It carries
+/// several buffers in one operation, which is the TCP answer to what GSO does for datagrams.
+const recvsend_bundle_flag: u16 = 1 << 4;
+
+/// Asks the kernel for each, by doing the thing rather than by reading a version.
+fn check_above_the_floor(report: *Report, ring: *IoUring) !void {
+    var memory: [buffer_ring_entries * @sizeOf(linux.io_uring_buf)]u8 align(4096) = undefined;
+    var registration = std.mem.zeroes(linux.io_uring_buf_reg);
+    registration.ring_addr = @intFromPtr(&memory);
+    registration.ring_entries = buffer_ring_entries;
+    registration.bgid = buffer_group + 2;
+    // `inc`: the group hands a receive only the bytes it used instead of a whole buffer, which
+    // is what a burst of small datagrams empties a group without (decision 15, question 5).
+    // `uring_buffers.provide` registers with it false today.
+    registration.flags = .{ .inc = true };
+    const rc = linux.io_uring_register(ring.fd, .REGISTER_PBUF_RING, @ptrCast(&registration), 1);
+    const errno = linux.errno(rc);
+    if (errno != .SUCCESS) {
+        try report.refused(pbuf_ring_inc, "io_uring_register", errno);
+    } else {
+        try report.verdict(pbuf_ring_inc, .present, ", the group took the incremental flag", .{});
+    }
+
+    // A send with the bundle bit and nothing else: a kernel without it answers EINVAL, and one
+    // with it answers the send. Either way the operation is complete when the reap sees it.
+    const pair = try socket_pair();
+    defer for (pair) |fd| {
+        _ = linux.close(fd);
+    };
+    const sqe = try ring.get_sqe();
+    sqe.* = std.mem.zeroes(linux.io_uring_sqe);
+    sqe.opcode = .SEND;
+    sqe.fd = pair[0];
+    sqe.addr = @intFromPtr(payload.ptr);
+    sqe.len = payload.len;
+    sqe.ioprio = recvsend_bundle_flag;
+    sqe.user_data = user_data_bundle;
+    _ = try ring.submit();
+    const cqe = try ring.copy_cqe();
+    if (cqe.res < 0) {
+        const bundle_errno: linux.E = @enumFromInt(@as(u32, @intCast(-cqe.res)));
+        return report.refused(recvsend_bundle, "the completion", bundle_errno);
+    }
+    try report.verdict(recvsend_bundle, .present, ", a bundled send returned {d}", .{cqe.res});
+}
+
+const user_data_bundle = 0xb00d;
+
+/// A connected pair, so the send above has somewhere to go.
+fn socket_pair() ![2]i32 {
+    var pair: [2]i32 = undefined;
+    const rc = linux.socketpair(linux.AF.UNIX, linux.SOCK.STREAM, 0, &pair);
+    _ = try probe.check("socketpair", rc);
+    return pair;
+}
+
 pub fn check(report: *Report, ring: *IoUring) !void {
     try check_options(report);
     try check_receive(report, ring, true, buffer_group);
@@ -58,6 +121,7 @@ pub fn check(report: *Report, ring: *IoUring) !void {
     // head, the name and the control block are written for a single-shot receive too, or only
     // the payload is, which would make one accessor read two layouts.
     try check_receive(report, ring, false, buffer_group + 1);
+    try check_above_the_floor(report, ring);
 }
 
 /// The socket options, which need no ring: a kernel either takes them or answers ENOPROTOOPT.
