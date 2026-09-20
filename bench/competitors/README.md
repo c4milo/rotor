@@ -152,28 +152,34 @@ and match it where a candidate has the choice.** A pool of small buffers is a re
 wins where messages are small; it must not be entered against 64 KiB buffers on a 64 KiB workload
 and reported as a loss of the loop.
 
-## An open defect in libxev_echo, and why its rows are not evidence yet
+## A defect in libxev_echo, mostly fixed, and what is left of it
 
-Running the comparison on 2026-09-20 made libxev log, repeatedly:
+Running the comparison on 2026-09-20 made libxev log, on every closed connection:
 
 ```text
 error(libxev_kqueue): invalid state in submission queue state=.active
 ```
 
-That is libxev's own diagnostic, not the harness's. The likely cause is in this tree and not in
-libxev: `close_from_callback` hands `connection.completion` to `socket.close` from inside a
-callback of that same completion, and libxev still holds it `.active` at that moment. A
-connection holds one completion by design, which is what makes the close have nowhere to go.
+That is libxev's own diagnostic, not the harness's, and the cause was in this tree. A connection
+held one completion, and the close was asked for from inside a callback of that same completion.
+libxev acts on a callback's return value only after it returns, so the completion was still
+`.active` when the close arrived. A second completion per connection, used for the close alone,
+fixes it: it costs one completion per connection and nothing on the message path.
 
-Until it is fixed and the log is silent, no libxev row of the echo workload is evidence. The
-likely fix is a second completion per connection, used for the close alone, which costs libxev
-nothing on the message path. Whether the error also loses connections, and so changes the
-numbers, is not known: the runs completed and the client saw no stall, so it may be a complaint
-about a close that the loop then performs anyway.
+**What is left.** With that fix the 4 KiB rows are silent: three rounds of 16 connections, and
+three more through the runner, logged nothing. The 64 KiB rows still log it about once per three
+rounds. The untested guess is the short-write path, where `on_write` submits the rest of a write
+on the connection's own completion from inside that completion's callback; but a read submitted
+the same way after a whole write never logs, which argues against it. The cause is not known.
 
-This is the second candidate written by this project that was wrong in a way a single smoke test
-did not show; the first was `libuv_echo` echoing one message per connection. Both argue the same
-thing: a candidate needs a test that keeps a connection busy, not one that sends a message.
+So the 4 KiB libxev rows are evidence and the 64 KiB ones carry this caveat. What the error costs
+is also unknown: every run completed and the client saw no stall, so it may be a complaint about
+a close the loop then performs anyway.
+
+This is the third candidate written by this project that was wrong in a way one smoke test did
+not show. The others: `libuv_echo` echoed one message per connection, and `std_io_echo` served
+one connection ever. All three argue the same thing: a candidate needs a test that keeps several
+connections busy, not one that sends a message.
 
 ## The size probes
 

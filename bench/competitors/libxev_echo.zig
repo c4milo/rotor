@@ -32,8 +32,16 @@ const Server = struct {
 const Connection = struct {
     server: *Server,
     socket: xev.TCP,
-    /// The one operation in flight: a read, the write that echoes it, or the close.
+    /// The one message operation in flight: a read, or the write that echoes it.
     completion: xev.Completion = .{},
+    /// The close has a completion of its own. A close is asked for from inside a callback of
+    /// `completion`, and libxev only acts on that callback's return value after it returns, so
+    /// the completion is still `.active` at that moment: handing it to `close` there made libxev
+    /// log "invalid state in submission queue state=.active" on every closed connection.
+    ///
+    /// It costs one more completion per connection and nothing on the message path, which is
+    /// what the comparison measures.
+    close_completion: xev.Completion = .{},
     buffer: [read_bytes_max]u8 = undefined,
 };
 
@@ -139,14 +147,19 @@ fn on_write(
 
 /// Closes from `on_accept`, which rearms its own completion whatever happens to the connection.
 fn close(connection: *Connection, loop: *xev.Loop) xev.CallbackAction {
-    connection.socket.close(loop, &connection.completion, Connection, connection, on_close);
+    submit_close(connection, loop);
     return .rearm;
 }
 
-/// Closes from a callback of the connection's own completion, which the close now reuses.
+/// Closes from a callback of the connection's own `completion`, which this disarms.
 fn close_and_disarm(connection: *Connection, loop: *xev.Loop) xev.CallbackAction {
-    connection.socket.close(loop, &connection.completion, Connection, connection, on_close);
+    submit_close(connection, loop);
     return .disarm;
+}
+
+fn submit_close(connection: *Connection, loop: *xev.Loop) void {
+    const completion = &connection.close_completion;
+    connection.socket.close(loop, completion, Connection, connection, on_close);
 }
 
 fn on_close(
