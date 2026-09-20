@@ -38,6 +38,7 @@ const builtin = @import("builtin");
 const multishot = @import("uring_probe_multishot.zig");
 const post = @import("uring_probe_post.zig");
 const datagram = @import("uring_probe_datagram.zig");
+const uring = @import("uring");
 
 pub const linux = std.os.linux;
 pub const IoUring = linux.IoUring;
@@ -83,6 +84,14 @@ const feat_ext_arg: Feature = .{ .name = "IORING_FEAT_EXT_ARG" };
 pub const op_msg_ring: Feature = .{ .name = "IORING_OP_MSG_RING" };
 const single_issuer: Feature = .{ .name = "IORING_SETUP_SINGLE_ISSUER" };
 pub const defer_taskrun: Feature = .{ .name = "IORING_SETUP_DEFER_TASKRUN" };
+
+/// Everything `Loop.init` sets up with, taken from the backend rather than copied, so the probe
+/// cannot fall behind it. A kernel with `SINGLE_ISSUER` and `DEFER_TASKRUN` but without
+/// `TASKRUN_FLAG` or `SUBMIT_ALL` passed the two checks above and then failed every `init`.
+const loop_setup: Feature = .{ .name = "every IORING_SETUP flag the loop needs" };
+
+/// `IORING_REGISTER_IOWQ_MAX_WORKERS`, which `Loop.init` requires and does not fall back from.
+const iowq_max_workers: Feature = .{ .name = "IORING_REGISTER_IOWQ_MAX_WORKERS" };
 
 pub const State = enum {
     present,
@@ -276,12 +285,47 @@ fn check_operations(report: *Report) !void {
             },
         }
     }
+    try check_loop_setup(report);
     try post.check(report, msg_ring_present and flags_present);
     // Decision 15's checks run last: every one is optional, and a kernel that lacks them all
     // still runs rotor today.
     datagram.check(report, &ring) catch |failure| {
         try report.line("the datagram checks stopped: {t}", .{failure});
     };
+}
+
+/// The two checks above are the record's table. These two are what the backend actually demands,
+/// read from it, and a kernel that passes the table and fails these runs nothing.
+fn check_loop_setup(report: *Report) !void {
+    switch (try_setup(uring.ring_module.setup_flags)) {
+        .refused => |errno| return report.refused(loop_setup, "io_uring_setup", errno),
+        .features => |features| {
+            const missing = uring.ring_module.features_required & ~features;
+            if (missing != 0) {
+                return report.verdict(loop_setup, .missing, ", features 0x{x} absent", .{missing});
+            }
+            try report.verdict(loop_setup, .present, ", flags 0x{x}", .{uring.ring_module.setup_flags});
+        },
+    }
+    try check_iowq_max_workers(report);
+}
+
+/// `Loop.init` caps the kernel's worker pool and fails when the kernel refuses the cap, so a
+/// kernel that refuses it runs nothing whatever else it has.
+fn check_iowq_max_workers(report: *Report) !void {
+    var ring = IoUring.init(ring_entries, uring.ring_module.setup_flags) catch |failure| {
+        return report.verdict(iowq_max_workers, .not_tried, ", the ring was refused: {t}", .{
+            failure,
+        });
+    };
+    defer ring.deinit();
+    var counts = [_]u32{ uring.constants.kernel_workers_max, uring.constants.kernel_workers_max };
+    const rc = linux.io_uring_register(ring.fd, .REGISTER_IOWQ_MAX_WORKERS, &counts, counts.len);
+    const errno = linux.errno(rc);
+    if (errno != .SUCCESS) return report.refused(iowq_max_workers, "io_uring_register", errno);
+    try report.verdict(iowq_max_workers, .present, ", capped at {d} per kind", .{
+        uring.constants.kernel_workers_max,
+    });
 }
 
 fn check_msg_ring_opcode(report: *Report, ring: *IoUring) !bool {

@@ -24,7 +24,11 @@ pub const EnterError = error{ SystemResources, Unexpected };
 /// `TASKRUN_FLAG` makes the kernel raise `IORING_SQ_TASKRUN` in the ring's flags while deferred
 /// completion work waits. Without it a loop that polls, with nothing to submit and no wait,
 /// cannot tell that completions are waiting behind an enter, and would never make one.
-const setup_flags: u32 = linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN |
+/// Public so `tools/uring_probe.zig` checks exactly what `init` demands. The probe's job is to
+/// name the first thing a kernel lacks, and it cannot do that from a copy of this list: a kernel
+/// with two of these four passed the probe and then failed every `init` with an `Unsupported`
+/// that named nothing.
+pub const setup_flags: u32 = linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SETUP_DEFER_TASKRUN |
     linux.IORING_SETUP_TASKRUN_FLAG | linux.IORING_SETUP_SUBMIT_ALL;
 
 /// The ring flags that say an enter would produce completions: deferred completion work is
@@ -34,10 +38,10 @@ const flags_need_enter: u32 = linux.IORING_SQ_TASKRUN | linux.IORING_SQ_CQ_OVERF
 /// `NODROP`: a full completion ring keeps completions and refuses submissions, and never drops
 /// one. `EXT_ARG`: a wait takes its timeout as an argument, so no timeout entry stays armed
 /// after the call (decision 6, kept from stompy).
-const features_required: u32 = linux.IORING_FEAT_NODROP | linux.IORING_FEAT_EXT_ARG;
+pub const features_required: u32 = linux.IORING_FEAT_NODROP | linux.IORING_FEAT_EXT_ARG;
 
 /// Every opcode version one submits. `init` probes each.
-const opcodes_required = [_]linux.IORING_OP{
+pub const opcodes_required = [_]linux.IORING_OP{
     .ACCEPT, .CONNECT,    .RECV,        .SEND,  .SHUTDOWN,     .CLOSE,    .READ,
     .WRITE,  .READ_FIXED, .WRITE_FIXED, .FSYNC, .ASYNC_CANCEL, .MSG_RING, .NOP,
 };

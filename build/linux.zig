@@ -70,14 +70,15 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     std.debug.assert(manifest.len > 0);
 
     // The probe is a tool, and a tool never ships, so it compiles in Debug as the other tools do.
-    const probe = b.addExecutable(.{
-        .name = probe_name,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(probe_source),
-            .target = target,
-            .optimize = .Debug,
-        }),
+    const probe_module = b.createModule(.{
+        .root_source_file = b.path(probe_source),
+        .target = target,
+        .optimize = .Debug,
     });
+    // The probe imports the backend so it checks what `Loop.init` demands and not a copy of it.
+    // A tool may import the library; the rule is that the library never imports a tool.
+    probe_module.addImport("uring", graph.uring);
+    const probe = b.addExecutable(.{ .name = probe_name, .root_module = probe_module });
     stamp.step.dependOn(&install(b, probe).step);
 
     const manifest_file = b.addWriteFiles().add(manifest_name, manifest);
