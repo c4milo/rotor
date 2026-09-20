@@ -330,3 +330,18 @@ test "a socket closes on exec and takes TCP_NODELAY; a file and a unix socket ar
     defer close_now(unix_socket);
     try testing.expectError(error.AddressFamilyUnsupported, local_address(unix_socket));
 }
+
+test "a datagram socket closes on exec and a bound one has taken a port" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    // Linux takes SOCK_CLOEXEC in `socket(2)` itself, where macOS needs a separate `fcntl(2)`.
+    // The two backends reach the same state by different calls, so both pin it.
+    const any_port = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const bound = try open_datagram(.ipv4, &any_port, .{});
+    defer close_now(bound);
+    _ = try open_flags(bound);
+    try testing.expect((try local_address(bound)).port != 0);
+    const unbound = try open_datagram(.ipv4, null, .{});
+    defer close_now(unbound);
+    _ = try open_flags(unbound);
+    try testing.expectEqual(@as(u16, 0), (try local_address(unbound)).port);
+}

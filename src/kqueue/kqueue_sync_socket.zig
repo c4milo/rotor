@@ -479,3 +479,17 @@ test "a send to a closed peer answers EPIPE and raises no SIGPIPE, from either e
     try testing.expectEqual(E.PIPE, try send_until_refused(accepted));
     try testing.expectEqual(@as(u32, 0), sigpipes.load(.monotonic));
 }
+
+test "a datagram socket closes on exec, does not block, and raises no SIGPIPE" {
+    if (builtin.os.tag == .linux) return error.SkipZigTest;
+    // macOS has no SOCK_CLOEXEC and no SOCK_NONBLOCK, so a separate `fcntl(2)` sets both.
+    const any_port = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const bound = try open_datagram(.ipv4, &any_port, .{});
+    defer close_now(bound);
+    try expect_settings(bound, true);
+    const unbound = try open_datagram(.ipv4, null, .{});
+    defer close_now(unbound);
+    try expect_settings(unbound, true);
+    try testing.expect((try local_address(bound)).port != 0);
+    try testing.expectEqual(@as(u16, 0), (try local_address(unbound)).port);
+}
