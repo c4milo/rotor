@@ -4,6 +4,7 @@
 //! backend carries, the drain of a loop that is shutting down, the seeded generator the property
 //! tests draw from, and the named limits. It imports nothing but std and reads no clock.
 pub const constants = @import("constants.zig");
+pub const datagram = @import("datagram.zig");
 pub const event = @import("event.zig");
 pub const handle = @import("handle.zig");
 pub const layout = @import("layout.zig");
@@ -21,6 +22,7 @@ pub const timer_heap = @import("timer_heap.zig");
 pub const Address = operation.Address;
 pub const Code = event.Code;
 pub const Descriptor = operation.Descriptor;
+pub const Delivery = datagram.Delivery;
 pub const Error = event.Error;
 pub const Event = event.Event;
 pub const Handle = handle.Handle;
@@ -32,6 +34,7 @@ pub const Tables = tables.Tables;
 
 test {
     _ = constants;
+    _ = datagram;
     _ = event;
     _ = handle;
     _ = layout;
