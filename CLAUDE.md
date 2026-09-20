@@ -228,5 +228,9 @@ record has code for it. The cost probes cover every row of `docs/costs.md` that 
 measure.
 
 Milestone 3 is next: fill `docs/costs.md` from serial runs on a quiet machine, and run decision
-8's experiment. No cell is filled yet, and the `linux` machine is not named, which is what that
-milestone needs first.
+8's experiment. No cell is filled yet. `docs/costs.md` now names `orbstack`, real Linux on the
+`mac` machine's own cores, which is where every A/B comparison can run; the `linux` column still
+needs a target machine of the family stompy builds for, and that machine is not named.
+
+A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
+of 46 and was thrown away.

@@ -26,38 +26,54 @@ them, before any loop code is written, with the probes of `bench/costs/`.
 | id | role | CPU | cores | memory | OS and kernel | storage | filled |
 |---|---|---|---|---|---|---|---|
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
+| `orbstack` | development, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine | 10, as the guest sees them | 16 GiB to the guest | Linux 7.0.14-orbstack, aarch64 | a virtio disk backed by a file on the `mac` machine's APFS | no |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
-The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on. The
-`linux` machine is not chosen. stompy builds for `znver4` and `znver5`, so a server of that family
-is the expected target. A Docker container on `mac` runs Linux inside a virtual machine, so its
-numbers describe the virtual machine and never go in the `linux` column.
+The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
+
+The `orbstack` row is real Linux on the `mac` machine's own cores: the guest reports `aarch64`
+with CPU implementer `0x61`, Apple's, and nothing is emulated. Its syscall and CPU rows are
+therefore measurements and not estimates, and it is the only Linux this project has measured
+anything on. Two limits, and only the second is about virtualisation:
+
+- **It is not the `linux` row, because that row is the deployment target.** stompy builds for
+  `znver4` and `znver5`, so the target is x86-64 Zen. An `io_uring_enter` on an M1 Pro does not
+  predict one on a Zen 4, so a number here can guide work and can never fill that column.
+- **C12 and C13 cannot be measured here.** The guest sees virtio block devices backed by a disk
+  image on APFS, so an O_DIRECT read passes through the host's filesystem on its way to the
+  drive. That is not the row.
+
+What `orbstack` is good for, and what milestone 3 will use it for: any comparison of two builds
+or two code paths on one machine, decision 8's assertion experiment among them. A ratio measured
+here holds whatever the absolute numbers are elsewhere.
+
+The `linux` machine is not chosen.
 
 ## The table
 
-| id | operation | prior (ns) | prior source | `mac` measured (ns) | `linux` measured (ns) |
-|---|---|---|---|---|---|
-| C1 | L1 cache reference | 0.5 | Abseil | | |
-| C2 | L2 cache reference | 3 | Abseil | | |
-| C3 | main memory reference, a last-level cache miss | 50 | Abseil | | |
-| C4 | branch mispredict | 5 | Abseil | | |
-| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | | |
-| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | | |
-| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | |
-| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | |
-| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | |
-| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | | not applicable |
-| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | | not applicable |
-| C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | |
-| C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | |
-| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | | |
-| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | | |
-| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | |
-| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | |
-| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | | not applicable |
-| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | | |
-| C20 | monotonic clock read | 20 | recalled | | |
-| C21 | thread-local variable read and compare | 1 | recalled | | |
+| id | operation | prior (ns) | prior source | `mac` measured (ns) | `orbstack` measured (ns) | `linux` measured (ns) |
+|---|---|---|---|---|---|---|
+| C1 | L1 cache reference | 0.5 | Abseil | | | |
+| C2 | L2 cache reference | 3 | Abseil | | | |
+| C3 | main memory reference, a last-level cache miss | 50 | Abseil | | | |
+| C4 | branch mispredict | 5 | Abseil | | | |
+| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | | | |
+| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | | | |
+| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | | |
+| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | | |
+| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | | |
+| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | | not applicable | not applicable |
+| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | | not applicable | not applicable |
+| C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | not applicable | |
+| C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | not applicable | |
+| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | | | |
+| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | | | |
+| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | |
+| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | | |
+| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | | not applicable | not applicable |
+| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | | | |
+| C20 | monotonic clock read | 20 | recalled | | | |
+| C21 | thread-local variable read and compare | 1 | recalled | | | |
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.
@@ -65,6 +81,25 @@ Rows C17 to C19 exist because the threading model is the main claim
 macOS has no O_DIRECT. `F_NOCACHE` is the nearest setting, and kqueue does not report readiness for
 regular files, so rows C12 and C13 have no `mac` cell
 (`docs/decisions/0002-scope.md` states what the kqueue backend does with files).
+
+## Two priors a loaded run already casts doubt on
+
+Read on 2026-09-20 on `orbstack` while the `mac` machine carried a load average of 46, which is
+why neither is in the table and neither supports a claim. A reading taken on a machine that busy
+is an upper bound: load makes an operation slower, never faster. So one direction of inference is
+sound, and it is the only one drawn here.
+
+- **C14's prior is too pessimistic.** The loopback round trip read about 1,500 ns against a prior
+  of 10,000 to 30,000. A loaded machine cannot make a round trip 7 times faster than it is, so
+  the prior is wrong by roughly that much, and every argument that divides by C14 understates
+  what it is dividing. The prior is recalled and cites no source.
+- **C17 is at most about 16,000 ns, and the wake is nearly all of it.** The same run read C19,
+  the same message to a receiver that is already awake, at about 100 ns. Whatever the quiet
+  numbers turn out to be, the gap between a sleeping receiver and a waking one is the cost that
+  matters, and `docs/decisions/0004-threading.md` does not price it.
+
+Neither is a measurement. Both are reasons to take C14, C17 and C19 first when the machine is
+quiet.
 
 ## How the rows are used
 
