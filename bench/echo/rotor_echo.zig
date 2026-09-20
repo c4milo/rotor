@@ -136,7 +136,14 @@ fn accumulator_of(descriptor: core.Descriptor) []u8 {
     return group_memory[index * buffer_bytes ..][0..buffer_bytes];
 }
 
-var loop_memory: [
+/// Loops this server may run, one per thread and one per core: decision 4's `listener_per_core`.
+/// Each has its own listener on the shared port, its own ring and its own slice of the pool, and
+/// shares nothing with the others but the per-connection arrays, which a descriptor makes
+/// private: a descriptor belongs to exactly one loop, because that loop accepted it.
+const loops_max = 16;
+var loops: u32 = 1;
+
+var loop_memory: [loops_max][
     Loop.memory_bytes(.{
         .operations = operations,
         .entries = entries,
@@ -147,45 +154,94 @@ const ring_alignment = backend.buffers.ring_alignment;
 
 var group_memory: [group_bytes]u8 align(ring_alignment) = undefined;
 const ring_bytes_max = backend.buffers.ring_bytes(group_buffers_max);
-var ring_memory: [ring_bytes_max]u8 align(ring_alignment) = undefined;
+var ring_memory: [loops_max][ring_bytes_max]u8 align(ring_alignment) = undefined;
+
+/// The pool one loop gets: the whole of it divided between them.
+fn pool_of(index: u32) []u8 {
+    const each = group_bytes / loops;
+    return group_memory[index * each ..][0..each];
+}
+
+/// Buffers one loop's group holds, from its share of the pool.
+fn buffers_of() u16 {
+    return @intCast((group_bytes / loops) / buffer_bytes);
+}
 
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);
-    // Placed before the loop is built: the ring binds to the thread that owns it (decision 4).
-    const placed = placement.place(cpu);
-    var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
-    defer loop.deinit();
-
-    const address = core.Address.ipv4(.{ 127, 0, 0, 1 }, port);
-    const listener = try sync.listen(&address, .{ .backlog = backlog, .reuse_port = false });
-    defer sync.close_now(listener);
-
-    const used = @as(usize, group_buffers) * buffer_bytes;
-    const ring_used = ring_memory[0..backend.buffers.ring_bytes(group_buffers)];
-    try loop.provide_buffers(group_id, @alignCast(ring_used), group_memory[0..used], buffer_bytes);
     open = @splat(false);
     accumulated = @splat(0);
+    group_buffers = buffers_of();
+
+    // One listener per loop, all bound before any of them serves, so a client that connects on
+    // the ready line cannot reach a port only half the loops are listening on.
+    var listeners: [loops_max]core.Descriptor = undefined;
+    const address = core.Address.ipv4(.{ 127, 0, 0, 1 }, port);
+    var index: u32 = 0;
+    while (index < loops) : (index += 1) {
+        const share = loops > 1;
+        listeners[index] = try sync.listen(&address, .{
+            .backlog = backlog,
+            .reuse_port = share,
+        });
+    }
+    defer for (listeners[0..loops]) |listener| sync.close_now(listener);
+
+    var threads: [loops_max]std.Thread = undefined;
+    var started: u32 = 1;
+    while (started < loops) : (started += 1) {
+        threads[started] = try std.Thread.spawn(.{}, serve, .{ started, listeners[started] });
+    }
+    defer for (threads[1..loops]) |thread| thread.join();
+
+    // The first loop is this thread's: rotor starts no thread of its own, and a caller that
+    // wants N runs N (decision 4).
+    const placed = placement.place(core_of(0));
+    try announce(init, port, placed);
+    serve(0, listeners[0]);
+}
+
+/// The core loop `index` takes: consecutive from `--cpu`, so N loops land on N cores.
+fn core_of(index: u32) ?usize {
+    return if (cpu) |first| first + index else null;
+}
+
+/// One loop, on this thread, until the process ends. Every failure here is a configuration
+/// fault rather than a result, so it halts instead of reporting a number that hides it.
+fn serve(index: u32, listener: core.Descriptor) void {
+    if (index != 0) _ = placement.place(core_of(index));
+    var loop: Loop = undefined;
+    loop.init(&loop_memory[index], .{ .operations = operations, .entries = entries }) catch
+        @panic("the loop refused its memory");
+    defer loop.deinit();
+
+    const used = @as(usize, group_buffers) * buffer_bytes;
+    const ring_used = ring_memory[index][0..backend.buffers.ring_bytes(group_buffers)];
+    loop.provide_buffers(group_id, @alignCast(ring_used), pool_of(index)[0..used], buffer_bytes) catch
+        @panic("the buffer group was refused");
 
     submit_one(&loop, .{
         .user_data = user_data_of(.accept, listener),
         .kind = .{ .accept = .{ .listener = listener, .multishot = true } },
     });
 
-    // The harness waits for this line before it connects, as it does for the competitors'.
-    var out_buffer: [128]u8 = undefined;
-    var out = std.Io.File.stdout().writer(init.io, &out_buffer);
-    try out.interface.print(
-        "rotor_echo: rotor {s}, {d} buffers of {d} bytes, {t}, {t}, listening on 127.0.0.1:{d}\n",
-        .{ @tagName(builtin.os.tag), group_buffers, buffer_bytes, shape, placed, port },
-    );
-    try out.interface.flush();
-
     var events: [events_max]Event = undefined;
     while (true) {
-        const count = try loop.tick(&events, core.constants.ns_per_s);
+        const count = loop.tick(&events, core.constants.ns_per_s) catch @panic("the tick failed");
         for (events[0..count]) |event| handle(&loop, event);
     }
+}
+
+/// The line the harness waits for before it connects, as it does for the competitors'.
+fn announce(init: std.process.Init, port: u16, placed: placement.Placement) !void {
+    var out_buffer: [160]u8 = undefined;
+    var out = std.Io.File.stdout().writer(init.io, &out_buffer);
+    try out.interface.print(
+        "rotor_echo: rotor {s}, {d} loops, {d} buffers of {d} bytes each, {t}, {t}, " ++
+            "listening on 127.0.0.1:{d}\n",
+        .{ @tagName(builtin.os.tag), loops, group_buffers, buffer_bytes, shape, placed, port },
+    );
+    try out.interface.flush();
 }
 
 /// Reads the port and `--buffer-bytes`, which sets how many buffers the group holds.
@@ -207,6 +263,9 @@ fn apply(name: []const u8, value: []const u8) !void {
         cpu = try std.fmt.parseInt(usize, value, 10);
     } else if (std.mem.eql(u8, name, "--shape")) {
         shape = std.meta.stringToEnum(Shape, value) orelse return error.UnknownShape;
+    } else if (std.mem.eql(u8, name, "--loops")) {
+        loops = try std.fmt.parseInt(u32, value, 10);
+        if (loops == 0 or loops > loops_max) return error.LoopsOutOfRange;
     } else if (std.mem.eql(u8, name, "--buffer-bytes")) {
         try set_buffer_bytes(try std.fmt.parseInt(u32, value, 10));
     } else {
@@ -219,7 +278,6 @@ fn set_buffer_bytes(wanted: u32) !void {
     if (wanted < buffer_bytes_min or wanted > buffer_bytes_max) return error.BufferOutOfRange;
     if (!std.math.isPowerOfTwo(wanted)) return error.BufferNotPowerOfTwo;
     buffer_bytes = wanted;
-    group_buffers = @intCast(group_bytes / wanted);
 }
 
 fn handle(loop: *Loop, event: Event) void {

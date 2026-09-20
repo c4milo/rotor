@@ -118,8 +118,10 @@ const Options = struct {
     only: []const u8 = "",
     port_base: u16 = port_first_default,
     workload: Workload = .echo,
-    /// Cores the run places its two ends on: 1 for both on one, 2 for one each, 0 to place
-    /// neither. macOS cannot pin at all and reports so in each program's line.
+    /// Cores the server runs a loop on, one loop each. 1 is a single loop sharing the client's
+    /// core, which is C14; above that the loops take their own and the client takes the next,
+    /// which is C15 and decision 4's `listener_per_core`. 0 places nothing. macOS cannot pin at
+    /// all and reports so in each program's line.
     cores: u32 = 0,
     directory: []const u8 = directory_default,
     connections: []const u32 = &connections_default,
@@ -163,16 +165,20 @@ pub fn main(init: std.process.Init) !void {
     try writer.flush();
 }
 
+/// Loops a run may ask the server for, which is `rotor_echo`'s own limit.
+const cores_max = 16;
+
 const Configuration = struct { connections: u32, payload_bytes: u32 };
 
 /// The core the client takes. One core means it shares the server's, which is the loopback round
 /// trip C14 measures; two means the other one, which is C15. Anything else leaves it unplaced.
 fn client_cpu(cores: u32) ?usize {
-    return switch (cores) {
-        1 => placement.first_cpu,
-        2 => placement.second_cpu,
-        else => null,
-    };
+    // The server's loops take cores 0 through `cores - 1`, so the client takes the next one and
+    // the two ends never share. One core is the exception: there the client shares deliberately,
+    // which is the loopback round trip C14 names against C15.
+    if (cores == 0) return null;
+    if (cores == 1) return placement.first_cpu;
+    return placement.first_cpu + cores;
 }
 
 /// The smallest and largest buffer `rotor_echo` takes. Named here because the runner asks for
@@ -259,13 +265,17 @@ fn one_run(
         });
         used += 2;
     }
-    // The server's core, when the candidate takes one. `cores` of 1 puts both ends on the same
-    // core and 2 puts them on different ones, which is the difference C14 and C15 name.
+    // The server's cores. A candidate that runs one loop per core takes `--loops`, and its
+    // loops take the cores from `--cpu` upward; the client then takes one above them. rotor
+    // starts no thread of its own, so the count is the consumer's to pass (decision 4).
     var cpu_text: [8]u8 = undefined;
+    var loops_text: [8]u8 = undefined;
     if (candidate.takes_cpu and options.cores != 0) {
         argv_buffer[used] = "--cpu";
         argv_buffer[used + 1] = try std.fmt.bufPrint(&cpu_text, "{d}", .{placement.first_cpu});
-        used += 2;
+        argv_buffer[used + 2] = "--loops";
+        argv_buffer[used + 3] = try std.fmt.bufPrint(&loops_text, "{d}", .{options.cores});
+        used += 4;
     }
     const argv = argv_buffer[0..used];
 
@@ -398,7 +408,7 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.warmup_seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--cores")) {
         options.cores = try std.fmt.parseInt(u32, value, 10);
-        if (options.cores > 2) return error.CoresOutOfRange;
+        if (options.cores > cores_max) return error.CoresOutOfRange;
     } else if (std.mem.eql(u8, name, "--workload")) {
         options.workload = std.meta.stringToEnum(Workload, value) orelse
             return error.UnknownWorkload;

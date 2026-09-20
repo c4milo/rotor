@@ -45,6 +45,34 @@ core can end up with most of the work.
 SO_REUSEPORT lets several sockets bind one port and does not spread incoming connections across
 them. FreeBSD added `SO_REUSEPORT_LB` for that; macOS has no equivalent.
 
+### A worked `listener_per_core`, and what rotor does not decide
+
+`bench/echo/rotor_echo.zig --loops N` is the first one in this tree, added 2026-09-20. A consumer
+reading this record had the shape named and nothing to copy.
+
+**rotor starts none of it.** The server spawns the threads, pins them, binds a listener each and
+hands each loop its own memory. The library offers the parts and enforces the invariants:
+
+- `sync.listen` takes `reuse_port` as an option and chooses nothing.
+- `Tables.assert_owner` halts a loop touched from a thread that is not its own.
+- `Loop.init`'s comment says it must run on the owning thread, after that thread is pinned.
+- `post` and the registry are the only way a loop reaches another.
+
+A `Thread.spawn` under `src/` would be the library making the application's call, and would break
+the fourth non-negotiable. There is none: every spawn in the tree is in `bench/` or in the
+conformance suite.
+
+The conformance suite measures what each kernel then does with the shape, and the two disagree
+exactly as this record says (`conformance_reuse_port.zig`, 2026-09-20):
+
+| kernel | 32 connections over 4 listeners |
+|---|---|
+| Linux 7.0.14 | 8, 4, 10, 10 — spread |
+| macOS 26.6 | 0, 0, 0, 32 — all to the last bound |
+
+So a `listener_per_core` server on macOS is skewed by construction, not by load. A harness row
+that says `even` there would be claiming something the kernel does not do.
+
 **Measured on 2026-09-20**, and no longer recalled.
 `src/conformance/conformance_reuse_port.zig` opens four listeners on one port, connects 32
 sockets one at a time, and counts what each listener accepted. It is a count and not a time, so a
