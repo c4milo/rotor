@@ -36,8 +36,14 @@ pub const ip_tos = 1;
 /// `netinet6/in6.h:438` and `:439`, both unconditional in the SDK.
 pub const ipv6_recvtclass = 35;
 pub const ipv6_tclass = 36;
-/// `netinet6/in6.h:478` and `:494`, behind `__APPLE_USE_RFC_3542`, which gates the header only.
+/// `netinet6/in6.h:478` and `:494`, behind `__APPLE_USE_RFC_3542`, which gates the header only:
+/// `tools/macos_probe.zig` confirmed the kernel takes both by number on 2026-09-20.
+///
+/// **46 is the control message's type, not a socket option.** Setting it with `setsockopt`
+/// answers EINVAL; the option that turns the report on is `ipv6_recvpktinfo`. The first version
+/// of this file set 46 and silently got no packet info on IPv6 at all, which the probe found.
 pub const ipv6_pktinfo = 46;
+pub const ipv6_recvpktinfo = 61;
 pub const ipv6_dontfrag = 62;
 
 /// The control bytes one datagram may carry. Darwin's `cmsghdr` is smaller than Linux's, so this
@@ -276,7 +282,7 @@ pub fn apply_options(
             .dont_fragment = ip_dontfrag,
         }, options),
         .ipv6 => apply(socket, posix.IPPROTO.IPV6, .{
-            .pktinfo = ipv6_pktinfo,
+            .pktinfo = ipv6_recvpktinfo,
             .codepoint = ipv6_recvtclass,
             .dont_fragment = ipv6_dontfrag,
         }, options),
@@ -344,4 +350,40 @@ test "EMSGSIZE has its own code, because a QUIC stack acts on it" {
     try testing.expectEqual(core.Code.message_too_long, code_of(.MSGSIZE));
     try testing.expectEqual(core.Code.not_connected, code_of(.DESTADDRREQ));
     try testing.expectEqual(core.Code.unexpected, code_of(.BADF));
+}
+
+/// Opens a datagram socket of `family`, or skips when the host has no stack for it.
+fn probe_socket(family: u32) !core.Descriptor {
+    const rc = c.socket(family, c.SOCK.DGRAM, c.IPPROTO.UDP);
+    if (rc < 0) return error.SkipZigTest;
+    return rc;
+}
+
+fn option_of(socket: core.Descriptor, level: u32, name: u32) !c_int {
+    var value: c_int = -1;
+    var len: posix.socklen_t = @sizeOf(c_int);
+    const rc = c.getsockopt(socket, @intCast(level), name, &value, &len);
+    try testing.expectEqual(posix.E.SUCCESS, posix.errno(rc));
+    return value;
+}
+
+test "the options a datagram socket is opened with are the ones the kernel took" {
+    if (@import("builtin").os.tag == .linux) return error.SkipZigTest;
+    const options: @import("kqueue_sync_socket.zig").DatagramOptions = .{};
+
+    const four = try probe_socket(c.AF.INET);
+    defer _ = c.close(four);
+    apply_options(four, .ipv4, options);
+    try testing.expectEqual(@as(c_int, 1), try option_of(four, posix.IPPROTO.IP, ip_pktinfo));
+    try testing.expectEqual(@as(c_int, 1), try option_of(four, posix.IPPROTO.IP, ip_recvtos));
+
+    // IPv6 is the one that drifted: 46 is a control message's type and 61 is the option that
+    // turns the report on, so setting 46 answers EINVAL and reports nothing. `apply_options`
+    // swallows a refusal by design, so only reading the option back can catch the wrong number.
+    const six = try probe_socket(c.AF.INET6);
+    defer _ = c.close(six);
+    apply_options(six, .ipv6, options);
+    const level = posix.IPPROTO.IPV6;
+    try testing.expectEqual(@as(c_int, 1), try option_of(six, level, ipv6_recvpktinfo));
+    try testing.expectEqual(@as(c_int, 1), try option_of(six, level, ipv6_recvtclass));
 }

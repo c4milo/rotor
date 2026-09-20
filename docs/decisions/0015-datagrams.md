@@ -214,9 +214,22 @@ macOS carries everything a QUIC stack needs to work, read from the SDK on 2026-0
 | do not fragment | `IP_DONTFRAG` 28, `IPV6_DONTFRAG` 62 | |
 
 The IPv6 names sit behind `__APPLE_USE_RFC_3542`, which Zig does not define. That gates the C
-header and not the kernel, and rotor passes the level and name as integers already, as it does for
-`TCP_NODELAY`. A macOS probe confirms the kernel honours them before anything depends on it.
-rotor has no macOS probe today, and this record adds the first.
+header and not the kernel, and rotor passes the level and name as integers already.
+`tools/macos_probe.zig` — the first macOS probe this tree has ever had — confirmed it on
+2026-09-20, and found two things reading the header could not:
+
+- **46 is a control message's type, not a socket option.** `IPV6_PKTINFO` is what the report
+  arrives as; `IPV6_RECVPKTINFO`, 61, is what turns the report on. The backend set 46 with
+  `setsockopt`, got EINVAL, ignored it, and reported no packet info on IPv6 at all. No test could
+  have caught it: the suite's scenarios are IPv4, and the failure was silent by construction.
+- **The type-of-service byte does not survive macOS loopback.** A datagram sent with TOS 0x2A
+  arrives with TOS 0. Not the codepoint alone: the whole byte. So **a QUIC stack on macOS runs
+  without ECN**, and rotor reports `not_ect` there however the sender marked it. Whether a real
+  interface differs is unmeasured, because this tree measures loopback.
+
+The second is a finding and not a fault, and it belongs beside decision 2's conclusion that macOS
+is a development platform: a congestion controller developed on a Mac is not the one that runs in
+production, and nothing in the suite may assert an ECN codepoint on that host.
 
 **What macOS does not have is segmentation.** `netinet/udp.h` defines exactly one option,
 `UDP_NOCKSUM`. There is no GSO and no GRO. So:
