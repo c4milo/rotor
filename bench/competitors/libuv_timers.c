@@ -5,9 +5,11 @@
  * `timers` timers are armed at once for `period_us`, and each is armed again as it fires, so the
  * count in flight never changes and the loop's timer structure is worked continuously.
  *
- * It prints the line every candidate of this workload prints:
- *
- *     timer-churn <candidate> <version> <timers> <fires> <span_ns> <p50> <p99> <p999>
+ * It prints the result line every candidate of every workload prints, which
+ * bench/harness/report.zig owns. In this workload the percentiles carry LATENESS and not latency:
+ * how far past its deadline each timer fired. The field order there is the format and the parser
+ * refuses anything else, so a change to `render_json_line` has to be made here too; the runner
+ * reports a parse failure by name, which is what catches it.
  *
  * **libuv timers are milliseconds.** `uv_timer_start` takes its timeout as a whole number of
  * milliseconds, so a period this program cannot express is one under 1,000 microseconds, and a
@@ -166,14 +168,19 @@ int main(int argc, char **argv)
     uint64_t span_ns = now_ns() - started_ns;
 
     qsort(lateness_ns, samples_taken, sizeof(lateness_ns[0]), compare_u64);
-    printf("timer-churn libuv %s %llu %llu %llu %llu %llu %llu\n",
-           uv_version_string(),
-           (unsigned long long)wanted_timers,
-           (unsigned long long)fired,
-           (unsigned long long)span_ns,
-           (unsigned long long)percentile(500),
-           (unsigned long long)percentile(990),
-           (unsigned long long)percentile(999));
+    if (span_ns < 1) span_ns = 1;
+    unsigned long long per_second = (unsigned long long)fired * NS_PER_S / span_ns;
+
+    printf("{\"workload\":\"timer-churn\",\"candidate\":\"libuv\",\"version\":\"%s\"",
+           uv_version_string());
+    printf(",\"cores\":0,\"connections\":%llu,\"payload_bytes\":0,\"load\":\"even\"",
+           (unsigned long long)wanted_timers);
+    printf(",\"duration_ns\":%llu,\"operations\":%llu",
+           (unsigned long long)span_ns, (unsigned long long)fired);
+    printf(",\"operations_per_second\":%llu", per_second);
+    printf(",\"p50_ns\":%llu", (unsigned long long)percentile(500));
+    printf(",\"p99_ns\":%llu", (unsigned long long)percentile(990));
+    printf(",\"p999_ns\":%llu,\"overflow\":0}\n", (unsigned long long)percentile(999));
     fflush(stdout);
     return 0;
 }

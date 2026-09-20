@@ -18,8 +18,10 @@
 //! measurement would catch it as a negative the clamp below turns into zero, which the report
 //! names.
 //!
-//! It prints one line the runner reads, in the format every candidate of this workload prints, so
-//! that one definition of the measurement serves all of them.
+//! It prints one line the runner reads: the result line `bench/harness/report.zig` owns, which
+//! every candidate of every workload prints, so that one definition of the measurement serves all
+//! of them. In this workload the percentiles carry **lateness** and not latency, and the
+//! workload's name in the row is what says so.
 const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core");
@@ -128,28 +130,44 @@ fn record(churn: *Churn, index: u32, at_ns: u64) void {
     churn.taken += 1;
 }
 
-/// The line every candidate of this workload prints, which the runner reads. Every field is one
-/// token with no spaces in it, so a reader splits on spaces and nothing else: the first version
-/// of this line quoted "this tree" and broke every parser that tried.
-///
-///     timer-churn <candidate> <version> <timers> <fires> <span_ns> <p50> <p99> <p999>
+/// The bytes one result line needs. A line is a few hundred; this is room to spare.
+const output_buffer_bytes = 1024;
+
+/// The result line, built field by field rather than by `Result.init`, because that takes a
+/// histogram and this workload keeps its samples exactly. Every candidate of this workload sorts
+/// an array, so all of them are exact and none is quantised. The cross-core workload could not do
+/// that, and `bench/competitors/README.md` records what it cost there.
 fn report(init: std.process.Init, options: Options, churn: *Churn, span_ns: u64) !void {
     const samples = lateness_ns[0..churn.taken];
     std.mem.sort(u64, samples, {}, std.sort.asc(u64));
+    const duration_ns = @max(span_ns, 1);
 
-    var buffer: [512]u8 = undefined;
-    var out = std.Io.File.stdout().writer(init.io, &buffer);
-    try out.interface.print(
-        "timer-churn rotor this-tree {d} {d} {d} {d} {d} {d}\n",
-        .{
-            options.timers,
-            churn.fired,
-            span_ns,
-            percentile(samples, 500),
-            percentile(samples, 990),
-            percentile(samples, 999),
+    const result: harness.Result = .{
+        .workload = "timer-churn",
+        .candidate = "rotor",
+        .candidate_version = "this tree",
+        .configuration = .{
+            // This workload places no thread and opens no connection. `connections` carries the
+            // timers armed at once, which is the count its rows vary, and the workload's name in
+            // the row is what says which count it is.
+            .cores = 0,
+            .connections = options.timers,
+            .payload_bytes = 0,
+            .load = .even,
         },
-    );
+        .duration_ns = duration_ns,
+        .operations = churn.fired,
+        .operations_per_second = harness.report.per_second(churn.fired, duration_ns),
+        .p50_ns = percentile(samples, 500),
+        .p99_ns = percentile(samples, 990),
+        .p999_ns = percentile(samples, 999),
+        // Nothing is clamped: a sample is kept as it was measured.
+        .overflow = 0,
+    };
+
+    var buffer: [output_buffer_bytes]u8 = undefined;
+    var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
+    try result.render_json_line(&out.interface);
     try out.interface.flush();
 }
 
