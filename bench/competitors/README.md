@@ -202,6 +202,15 @@ else changes.
 
 ## rotor loses the 64 KiB row on io_uring, on clean rows
 
+> **These rows are withdrawn, 2026-09-20.** They were taken before `rotor_echo` set
+> `TCP_NODELAY`, and `libuv_echo` and `libxev_echo` always have. So they compare a Nagle-on
+> candidate against Nagle-off ones, which is the socket option and not the loop. Milestone 4's
+> own rule is that a comparison matches what each candidate holds per connection. Two defects
+> since fixed also touched them: a refused submission stalled a connection silently, and a
+> receive ending in `buffers_exhausted` closed the client. Every TCP row here has to be measured
+> again. They are kept below, struck through in words rather than deleted, because the reasoning
+> underneath them is still the reasoning to test.
+
 Five alternating rounds in the `orbstack` container, 16 connections, three seconds, buffers
 matched to the payload:
 
@@ -210,9 +219,9 @@ matched to the payload:
 | 4 KiB | 210,932 (spread 6) | 153,468 (spread 4) |
 | 64 KiB | 36,316 (spread 5) | 71,815 (spread 5) |
 
-Every spread is under the threshold, so neither row is noise. rotor is a third faster on the
-small payload and half as fast on the large one. A virtual machine's numbers guide work and do
-not go in `docs/costs.md`, but a ratio this size on clean rows is a fact about the candidates.
+Every spread was under the threshold, so neither row was noise **of the thing it measured**. It
+measured the wrong thing: see the withdrawal above. What survives is the question, not the
+answer.
 
 The untested explanation: a multishot receive from a provided-buffer group takes one buffer per
 completion, and TCP delivers 64 KiB in several pieces, so `rotor_echo` echoes each piece with a
@@ -220,6 +229,11 @@ send of its own. A candidate that read into one buffer until it had the message 
 That is a property of how this server uses the group, not of the group; whether rotor's surface
 lets a server do better, and whether the same gap appears on kqueue, is the first thing to settle
 before any 64 KiB claim is made.
+
+That experiment is still the right one and it needs no kernel above the 6.1 floor: rotor's
+surface already offers a receive into a caller-named buffer, so a second `rotor_echo` shape that
+accumulates a whole message and sends once separates this explanation from the Nagle one in two
+runs.
 
 ## Two bugs in rotor_echo, and which rows they touched
 
