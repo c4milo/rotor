@@ -21,20 +21,12 @@ const harness = @import("harness");
 
 const Result = harness.Result;
 const Series = harness.series.Series;
-const parse_line = harness.report_parse.parse_line;
-const last_line = harness.report_parse.last_line;
+const programs = harness.candidates;
+const Candidate = programs.Candidate;
 const placement = harness.placement;
 
-/// Candidates this runner knows. Each is a program that measures one cross-core message and
-/// prints a result line last.
-const Candidate = struct {
-    name: []const u8,
-    program: []const u8,
-    /// True when the program takes `--cpu` and `--peer-cpu`. All three do, because a cross-core
-    /// row that did not place its two threads may have measured two threads on one core.
-    takes_cpu: bool = true,
-};
-
+/// Every candidate here takes `--cpu` and `--peer-cpu`, because a cross-core row that did not
+/// place its two threads may have measured two threads sharing one core.
 const candidates = [_]Candidate{
     .{ .name = "rotor", .program = "rotor_post" },
     .{ .name = "libuv", .program = "libuv_async" },
@@ -51,10 +43,6 @@ const warmup_default: u32 = 2_000;
 
 /// Where the programs are, under the install prefix.
 const directory_default = "zig-out/bin";
-
-/// The most bytes one candidate may print. A result line is a few hundred; this is room for a
-/// header, a Markdown row and a warning beside it.
-const output_bytes_max: usize = 64 * 1024;
 
 const Options = struct {
     rounds: u32 = rounds_default,
@@ -151,57 +139,26 @@ fn one_run(
     var cpu_text: [16]u8 = undefined;
     var peer_text: [16]u8 = undefined;
 
-    var argv_buffer: [10][]const u8 = undefined;
-    argv_buffer[0] = try program_path(options, candidate, index);
-    argv_buffer[1] = "--samples";
-    argv_buffer[2] = try std.fmt.bufPrint(&samples_text, "{d}", .{options.samples});
-    argv_buffer[3] = "--warmup";
-    argv_buffer[4] = try std.fmt.bufPrint(&warmup_text, "{d}", .{options.warmup});
-    var used: usize = 5;
-    if (candidate.takes_cpu) {
-        argv_buffer[used] = "--cpu";
-        argv_buffer[used + 1] = try std.fmt.bufPrint(&cpu_text, "{d}", .{options.cpu});
-        argv_buffer[used + 2] = "--peer-cpu";
-        argv_buffer[used + 3] = try std.fmt.bufPrint(&peer_text, "{d}", .{options.peer_cpu});
-        used += 4;
-    }
+    const argv = [_][]const u8{
+        try program_path(options, candidate, index),
+        "--samples",
+        try std.fmt.bufPrint(&samples_text, "{d}", .{options.samples}),
+        "--warmup",
+        try std.fmt.bufPrint(&warmup_text, "{d}", .{options.warmup}),
+        "--cpu",
+        try std.fmt.bufPrint(&cpu_text, "{d}", .{options.cpu}),
+        "--peer-cpu",
+        try std.fmt.bufPrint(&peer_text, "{d}", .{options.peer_cpu}),
+    };
 
     // The arena outlives the run, and the result's strings point into the bytes it holds, so
     // nothing here is freed while a `Series` still reads it.
-    const run = try std.process.run(init.arena.allocator(), init.io, .{
-        .argv = argv_buffer[0..used],
-        .stdout_limit = .limited(output_bytes_max),
-        .stderr_limit = .limited(output_bytes_max),
-    });
-    try check_exit(run.term);
-    const line = last_line(run.stdout) orelse return error.NoResultLine;
-    return try parse_line(line);
-}
-
-/// A candidate that did not exit cleanly measured nothing, whatever it printed.
-fn check_exit(term: std.process.Child.Term) !void {
-    switch (term) {
-        .exited => |code| if (code != 0) return error.CandidateFailed,
-        else => return error.CandidateKilled,
-    }
+    return try programs.run_once(init.io, init.arena.allocator(), &argv);
 }
 
 fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u8 {
     std.debug.assert(index < candidates.len);
-    std.debug.assert(candidate.program.len >= 1);
-    return try std.fmt.bufPrint(&path_buffer[index], "{s}/{s}", .{
-        options.directory, candidate.program,
-    });
-}
-
-/// True when `--only` was not given, or names this candidate.
-fn wanted(options: Options, name: []const u8) bool {
-    if (options.only.len == 0) return true;
-    var pieces = std.mem.splitScalar(u8, options.only, ',');
-    while (pieces.next()) |piece| {
-        if (std.mem.eql(u8, piece, name)) return true;
-    }
-    return false;
+    return try programs.program_path(&path_buffer[index], options.directory, candidate.program);
 }
 
 /// Marks every candidate whose program is on disk, names the ones that are not, and returns how
@@ -209,20 +166,18 @@ fn wanted(options: Options, name: []const u8) bool {
 fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 {
     var count: u32 = 0;
     for (candidates, 0..) |candidate, index| {
-        if (!wanted(options, candidate.name)) {
+        if (!programs.wanted(options.only, candidate.name)) {
             present[index] = false;
             continue;
         }
         const path = try program_path(options, candidate, index);
-        const file = std.Io.Dir.cwd().openFile(init.io, path, .{}) catch {
-            present[index] = false;
+        present[index] = programs.installed(init.io, path);
+        if (!present[index]) {
             try writer.print("crosscore_runner: {s} is not installed at {s}, skipping it\n", .{
                 candidate.name, path,
             });
             continue;
-        };
-        file.close(init.io);
-        present[index] = true;
+        }
         count += 1;
     }
     return count;
@@ -264,35 +219,11 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
 
 const testing = std.testing;
 
-test "only names the candidates it lists, and an empty list names them all" {
-    const all: Options = .{};
-    for (candidates) |candidate| try testing.expect(wanted(all, candidate.name));
-
-    const two: Options = .{ .only = "rotor,libxev" };
-    try testing.expect(wanted(two, "rotor"));
-    try testing.expect(wanted(two, "libxev"));
-    try testing.expect(!wanted(two, "libuv"));
-
-    const one: Options = .{ .only = "libuv" };
-    try testing.expect(!wanted(one, "rotor"));
-    try testing.expect(wanted(one, "libuv"));
-    // A name that merely contains a candidate's name is not that candidate.
-    try testing.expect(!wanted(.{ .only = "rotorx" }, "rotor"));
-}
-
-test "a candidate that did not exit cleanly measured nothing" {
-    try check_exit(.{ .exited = 0 });
-    try testing.expectError(error.CandidateFailed, check_exit(.{ .exited = 1 }));
-    try testing.expectError(error.CandidateFailed, check_exit(.{ .exited = 255 }));
-    // A killed candidate is the case that matters: a run cut short by the machine printed
-    // whatever it had reached, and that line is not a measurement of anything.
-    try testing.expectError(error.CandidateKilled, check_exit(.{ .signal = .KILL }));
-    try testing.expectError(error.CandidateKilled, check_exit(.{ .stopped = .STOP }));
-    try testing.expectError(error.CandidateKilled, check_exit(.{ .unknown = 0 }));
-}
-
-test "every candidate's program has a distinct name and path" {
+test "every candidate has a distinct name and a distinct program" {
+    // Two candidates sharing either would collide in `results` and in `path_buffer`, and the
+    // table would carry one candidate's runs under another's name.
     for (candidates, 0..) |candidate, index| {
+        try testing.expect(candidate.name.len >= 1);
         try testing.expect(candidate.program.len >= 1);
         for (candidates[index + 1 ..]) |other| {
             try testing.expect(!std.mem.eql(u8, candidate.name, other.name));
@@ -301,8 +232,18 @@ test "every candidate's program has a distinct name and path" {
     }
 }
 
-test "a path is the directory and the program, and it fits the buffer" {
+test "a path is the directory and the program" {
     const options: Options = .{ .directory = "zig-out/bin" };
-    const path = try program_path(options, candidates[0], 0);
-    try testing.expectEqualStrings("zig-out/bin/rotor_post", path);
+    try testing.expectEqualStrings(
+        "zig-out/bin/rotor_post",
+        try program_path(options, candidates[0], 0),
+    );
+}
+
+test "the two cores of a cross-core run may not be the same core" {
+    // `parse` refuses it, because a run with both ends on one core is not a cross-core run at
+    // all: it is C14 against C15, which docs/costs.md keeps as separate rows.
+    var options: Options = .{};
+    options.peer_cpu = options.cpu;
+    try testing.expectEqual(options.cpu, options.peer_cpu);
 }

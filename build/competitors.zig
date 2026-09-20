@@ -145,6 +145,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     step.dependOn(programs.add_zig("libxev_echo", false));
     step.dependOn(programs.add_zig("libxev_sizes", false));
     step.dependOn(programs.add_zig("libxev_async", true));
+    step.dependOn(programs.add_zig("libxev_timers", true));
 }
 
 /// `zig build bench-competitors -Dcompetitors`, run from the build root for the same target.

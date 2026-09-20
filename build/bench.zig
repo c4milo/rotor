@@ -86,6 +86,11 @@ const tested = [_]Tested{
         .root = "bench/crosscore/crosscore_runner.zig",
         .needs_loop = false,
     },
+    .{
+        .name = "bench-timers-runner-tests",
+        .root = "bench/timers/timers_runner.zig",
+        .needs_loop = false,
+    },
 };
 
 /// Runs the `test` blocks inside the bench programs. They are executables, so `zig build test`
@@ -157,6 +162,20 @@ fn add_echo(
     timers.addImport("harness", harness_module);
     const timers_program = b.addExecutable(.{ .name = "rotor_timers", .root_module = timers });
     step.dependOn(&b.addInstallArtifact(timers_program, .{}).step);
+
+    // The runner of that workload. It needs the harness alone: it starts programs and reads the
+    // result lines they print.
+    const timers_runner = b.createModule(.{
+        .root_source_file = b.path("bench/timers/timers_runner.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    timers_runner.addImport("harness", harness_module);
+    const timers_runner_program = b.addExecutable(.{
+        .name = "timers_runner",
+        .root_module = timers_runner,
+    });
+    step.dependOn(&b.addInstallArtifact(timers_runner_program, .{}).step);
 
     // The datagram round-trip workload, which measures itself as the timer one does: its client
     // and its server are two sockets on one loop, so no second program has to be started.
