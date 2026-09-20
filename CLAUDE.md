@@ -205,7 +205,10 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   macOS.
 - Milestone 3: measurement. The cost probes of `bench/costs/` fill `docs/costs.md` for both
   machines, and decision 8's experiment is run and reported.
-- Milestone 4: the harness and the comparison. Echo at N connections with 4 KiB and 64 KiB
+- Milestone 4: the harness and the comparison. A candidate is run several times, alternating with
+  the others so drift hits them equally, and a row carries the spread beside the median: one run
+  of one candidate is not evidence, and `bench/competitors/README.md` records the experiment that
+  showed it. Echo at N connections with 4 KiB and 64 KiB
   payloads, sequential and random O_DIRECT reads, timer churn, accept storm; each on 1 core and
   N cores, even and skewed; one cross-core message on its own. Throughput and p50, p99, p999.
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version

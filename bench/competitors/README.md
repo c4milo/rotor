@@ -94,21 +94,37 @@ Open for the harness:
   thread pool, and the io_uring ring that `UV_LOOP_USE_IO_URING_SQPOLL` plus `UV_USE_IO_URING=1`
   turn on.
 
-## An open question about libuv_echo, to settle before any comparison is published
+## What libuv_echo's two buffer shapes measured, and what that says about the harness
 
-`libuv_echo` gives each connection one buffer and calls `uv_read_stop` while the echo write is
-using it, then `uv_read_start` again when the write ends. That avoids an allocation per message,
-which libuv's own `test/echo-server.c` does not: it calls `malloc` in `alloc_cb` and frees after
-the write.
+`libuv_echo --buffers one` gives a connection one buffer and calls `uv_read_stop` while the echo
+write borrows it, then `uv_read_start` when the write ends. `--buffers two` gives it two buffers
+and two write requests and never stops reading, for twice the memory. Neither allocates per
+message, which libuv's own `test/echo-server.c` does.
 
-What is not settled is whether the stop and start are free. libuv batches its watcher changes, so
-a stop and a start inside one loop iteration may cancel out and cost nothing, or may cost an
-`epoll_ctl` per message. If they cost, this file handicaps libuv and every row it appears in is
-wrong in rotor's favour.
+The question was whether the stop and start cost a watcher change per message and so handicap
+libuv. Three alternating rounds on the `mac` machine on 2026-09-20, 16 connections, 4 KiB, four
+seconds each, operations per second:
 
-The alternative shape is two buffers per connection, read into one while writing the other, which
-never stops reading and never allocates. Measure both before publishing a comparison, and keep
-the faster one. Until that is done, no libuv row of the echo workload is evidence.
+| round | `one` | `two` |
+|---|---|---|
+| 1 | 89,392 | 82,826 |
+| 2 | 85,514 | 78,236 |
+| 3 | 83,573 | 93,952 |
+
+**The rounds disagree**: `one` wins the first two and loses the third. The spread inside one
+shape, 78,236 to 93,952 for `two`, is wider than any gap between the shapes. The same machine
+gave libuv 63,360 in a run an hour earlier. So this does not settle which shape is faster, and it
+settles something more useful about the instrument.
+
+**The echo workload's run-to-run noise on a busy machine is larger than the differences it is
+meant to resolve.** A single run of a candidate is not evidence, whatever it says. Before any
+comparison is published the harness must, on a quiet machine, repeat each candidate several
+times, alternate them so drift hits every candidate equally, and report the spread beside the
+median. A row without a spread cannot be read.
+
+`one` stays the default: it is never clearly behind and it holds half the memory per connection.
+The question of which shape is faster is open, and answering it needs the same quiet machine
+every other number does.
 
 ## The size probes
 
