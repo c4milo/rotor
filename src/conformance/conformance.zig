@@ -19,7 +19,7 @@ pub const entries = 16;
 const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = entries });
 
 /// The most rounds `Harness.collect` ticks before it gives up: with a 10 ms wait each, 2 s.
-const collect_rounds_max = 200;
+pub const collect_rounds_max = 200;
 const collect_wait_ns = 10 * core.constants.ns_per_ms;
 
 /// One loop over static memory, and the waiting every scenario needs.
@@ -88,4 +88,5 @@ test {
     _ = @import("conformance_post.zig");
     _ = @import("conformance_registered.zig");
     _ = @import("conformance_statistics.zig");
+    _ = @import("conformance_reuse_port.zig");
 }

@@ -43,9 +43,27 @@ core can end up with most of the work.
 
 `single_acceptor` is the only choice on macOS, which the brief did not account for. On macOS,
 SO_REUSEPORT lets several sockets bind one port and does not spread incoming connections across
-them. FreeBSD added `SO_REUSEPORT_LB` for that; macOS has no equivalent. This is recalled and
-milestone 3 verifies it with a test that counts accepts per socket. So the API must cover both
-ways on day one, and the kqueue backend forces the second way to exist.
+them. FreeBSD added `SO_REUSEPORT_LB` for that; macOS has no equivalent.
+
+**Measured on 2026-09-20**, and no longer recalled.
+`src/conformance/conformance_reuse_port.zig` opens four listeners on one port, connects 32
+sockets one at a time, and counts what each listener accepted. It is a count and not a time, so a
+busy machine cannot corrupt it, and it runs in the conformance suite on whichever kernel the
+build gives it.
+
+| kernel | listeners that took any | fewest | most |
+|---|---|---|---|
+| macOS 26.6.2 (kqueue) | 1 of 4 | 0 | 32 |
+| Linux 7.0.14 (io_uring) | 4 of 4 | 6 | 9 |
+
+macOS gave every one of the 32 connections to the listener bound last. Linux spread them 8, 9, 9,
+6 about a mean of 8. So the recalled claim holds on both sides: the API must cover both ways on
+day one, and the kqueue backend forces `single_acceptor` to exist.
+
+What the count does not say is how Linux spreads: even over 32 connections of one client is what
+a 4-tuple hash gives, and it says nothing about whether the listener chosen is the one whose core
+will serve it. That is the question `docs/decisions/0013-when-a-loop-sleeps.md` weighs against
+the cost of a wake.
 
 Cost of `single_acceptor`: one message per connection, C17 or C18, against a connection's
 lifetime. For a connection that carries 1,000 echo round trips at C14, the handoff is
