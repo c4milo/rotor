@@ -414,6 +414,46 @@ counts its own operations and divides by its own span.
 No cross-core row is recorded here yet. The first three-way run was made on 2026-09-20 on a `mac`
 carrying a load average above 13, which is not a measurement and is not reproduced in this file.
 
+## Every file row before 2026-09-22 read unwritten extents
+
+Found on 2026-09-22, while adding the write direction. **The file the read workload measured was
+allocated and never written**, so on Linux the reads would never have reached the device.
+
+`rotor_reads` called `set_file_size`, which is `fallocate` then `ftruncate`: both allocate blocks and
+write none. `libuv_reads` did fill the file, writing `0x5a` over every block, but it returned early
+whenever the file was already `--file-bytes` long:
+
+```c
+off_t size = lseek(descriptor, 0, SEEK_END);
+if (size < 0 || (uint64_t)size >= options->file_bytes) return descriptor;
+```
+
+`rotor-registered` is the first candidate the runner starts, so rotor created the file at full size,
+libuv then saw the right size and skipped its fill, and **both read unwritten extents for the rest of
+the sweep**. On ext4 and XFS an O_DIRECT read of an unwritten extent is answered by the filesystem
+with zeros and never reaches the drive, so those rows would have measured an extent flag.
+
+Demonstrated rather than argued:
+
+```bash
+truncate -s 16M /tmp/scratch     # what fallocate plus ftruncate leaves
+xxd -s 16773120 -l 16 /tmp/scratch   # 0000 0000 ... : a hole
+```
+
+**What it does and does not invalidate.** The macOS rows in the next section are not void: a p50 of
+100,000 ns for a 4 KiB read is far too slow to be a filesystem zero-fill, so APFS was evidently doing
+real work. The `linux` column is unmeasured, and it is the column this would have destroyed — an NVMe
+read that never reaches the NVMe.
+
+A write run was wrong in a second way: a write to an unwritten extent is an allocating write, slower
+than an overwrite, so the first pass of a write run measured allocation.
+
+**The fix.** Both programs now write `0x5a` over every block, and both decide whether to by reading
+the file's last block and comparing it against that byte. The last block is the one an interrupted
+fill leaves unwritten, so sampling it is enough, and it costs one read rather than a 256 MiB write on
+each of the hundred-odd program starts a sweep makes. `--file-bytes` must now be a whole number of
+blocks, which O_DIRECT needed anyway.
+
 ## Why rotor loses the file rows on macOS, and why that says nothing about Linux
 
 Read on 2026-09-20 on a `mac` carrying a load average above 13. **The throughputs are not

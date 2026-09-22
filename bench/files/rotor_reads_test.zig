@@ -3,31 +3,36 @@
 //! Its own `test` block imports this file, so `zig build test-bench-programs` runs them.
 const std = @import("std");
 const core = @import("core");
+const backend = @import("backend");
 const reads = @import("rotor_reads.zig");
+const file_module = @import("rotor_reads_file.zig");
 
 const Options = reads.Options;
-const write_suffix = reads.write_suffix;
+const write_suffix = file_module.write_suffix;
 const testing = std.testing;
 
 test "a write run writes its own file, and a read run the one it was given" {
     // A write overwrites whole blocks. If it used the path it was handed, pointing this program at
     // anything valuable would destroy 256 MiB of it.
     var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const read_options: Options = .{ .path = "/tmp/scratch", .transfer = .read };
-    try testing.expectEqualStrings("/tmp/scratch", try reads.path_of(read_options, &buffer));
+    const read_setup: file_module.Setup =
+        .{ .path = "/tmp/scratch", .transfer = .read, .file_bytes = 1 << 20 };
+    try testing.expectEqualStrings("/tmp/scratch", try file_module.path_of(read_setup, &buffer));
 
-    const write_options: Options = .{ .path = "/tmp/scratch", .transfer = .write };
-    const written = try reads.path_of(write_options, &buffer);
+    const write_setup: file_module.Setup =
+        .{ .path = "/tmp/scratch", .transfer = .write, .file_bytes = 1 << 20 };
+    const written = try file_module.path_of(write_setup, &buffer);
     try testing.expectEqualStrings("/tmp/scratch" ++ write_suffix, written);
-    try testing.expect(!std.mem.eql(u8, written, write_options.path));
+    try testing.expect(!std.mem.eql(u8, written, write_setup.path));
     // Zero-terminated, because `open_file` takes a C string.
     try testing.expectEqual(@as(u8, 0), written.ptr[written.len]);
 }
 
 test "a path with no room for the suffix is an error, not a truncated path" {
     var small: [8]u8 = undefined;
-    const options: Options = .{ .path = "/tmp/scratch", .transfer = .write };
-    try testing.expectError(error.NoSpaceLeft, reads.path_of(options, &small));
+    const setup: file_module.Setup =
+        .{ .path = "/tmp/scratch", .transfer = .write, .file_bytes = 1 << 20 };
+    try testing.expectError(error.NoSpaceLeft, file_module.path_of(setup, &small));
 }
 
 test "each direction and pattern names its own workload, and no two share a name" {
@@ -139,4 +144,72 @@ test "a registered buffer index reaches the operation in both directions" {
         .offset = 0,
     });
     try testing.expectEqual(@as(?u16, 5), write.kind.write.buffer.registered);
+}
+
+test "a file that is the right size but unwritten is not treated as filled" {
+    // The defect this catches, found on 2026-09-22: `set_file_size` calls fallocate and ftruncate,
+    // which allocate blocks and write none, and the old check accepted any file of the right size.
+    // Both programs then read unwritten extents, which ext4 and XFS answer with zeros and no device
+    // I/O at all, so the read rows would have measured an extent flag.
+    var block: [4096]u8 align(4096) = @splat(0);
+    const setup: file_module.Setup =
+        .{ .path = "unused", .transfer = .read, .file_bytes = 4096 };
+
+    // A closed descriptor cannot be read, so the sample fails and the file counts as unfilled. The
+    // safe direction: an unreadable file is filled, never assumed good.
+    try testing.expect(!try file_module.already_filled(-1, setup, &block));
+}
+
+test "a real file's last block decides whether it is filled" {
+    // The byte check itself, on a file that exists. Without this, `already_filled` could return true
+    // for a hole and the fill would never run: the defect of 2026-09-22 all over again.
+    var name: [96]u8 = undefined;
+    const path = try std.fmt.bufPrintZ(&name, "{s}/rotor_fill_{d}", .{
+        backend.testing.directory, backend.testing.process_id(),
+    });
+    // Not O_DIRECT: this test is about the byte check, not about alignment, and a temporary file on
+    // /tmp may sit on a filesystem that refuses O_DIRECT.
+    const file = try backend.sync.open_file(path, .{ .create = true, .direct = false });
+    defer {
+        backend.sync.close_now(file);
+        backend.testing.remove_file(path);
+    }
+
+    const block_bytes = 4096;
+    try backend.sync.set_file_size(file, 2 * block_bytes);
+    const setup: file_module.Setup =
+        .{ .path = "unused", .transfer = .read, .file_bytes = 2 * block_bytes };
+
+    var block: [block_bytes]u8 align(block_bytes) = undefined;
+    // A file of the right size whose blocks were never written: zeros, so not filled.
+    try testing.expect(!try file_module.already_filled(file, setup, &block));
+
+    // Fill it and ask again.
+    try file_module.fill_if_needed(file, setup, &block);
+    try testing.expect(try file_module.already_filled(file, setup, &block));
+
+    // The first block too, not only the sampled last one.
+    var read_back: [block_bytes]u8 = undefined;
+    const count = std.c.pread(file, &read_back, read_back.len, 0);
+    try testing.expectEqual(@as(isize, block_bytes), count);
+    for (read_back) |byte| try testing.expectEqual(file_module.fill_byte, byte);
+}
+
+test "the fill byte is the one libuv writes" {
+    // bench/alternatives/libuv_reads.c defines FILL_BYTE as 0x5a. If the two disagree, whichever
+    // program runs second refills the whole file on every invocation of a sweep, and each row pays
+    // for a 256 MiB write it did not need.
+    try testing.expectEqual(@as(u8, 0x5a), file_module.fill_byte);
+}
+
+test "a file that is not a whole number of blocks is refused" {
+    // The fill writes whole blocks and samples the last one, and O_DIRECT refuses an offset that is
+    // not a multiple of the block size.
+    var bad: Options = .{ .path = "/tmp/scratch" };
+    bad.file_bytes = (256 << 20) + 1;
+    try testing.expectError(error.FileNotWholeBlocks, reads.check(bad));
+
+    var sound: Options = .{ .path = "/tmp/scratch" };
+    sound.file_bytes = 256 << 20;
+    try reads.check(sound);
 }

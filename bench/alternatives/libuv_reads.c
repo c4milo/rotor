@@ -78,6 +78,10 @@ enum transfer { TRANSFER_READ, TRANSFER_WRITE };
 /* What a write run appends to the path it was given, so it writes its own file and never overwrites
  * one the caller named. rotor_reads uses the same suffix and the same rule. */
 #define WRITE_SUFFIX ".rotor_write"
+
+/* The byte every block of the file holds before a run. rotor_reads writes the same one, so both
+ * programs read and overwrite the same content whichever of them created the file. */
+#define FILL_BYTE 0x5a
 enum backend { BACKEND_THREADPOOL, BACKEND_URING };
 
 struct options {
@@ -199,8 +203,21 @@ static void report(uint64_t span_ns, bool on_uring) {
     fflush(stdout);
 }
 
-/* Opens the file, creating and filling it when it is missing or short, and sets the nearest thing
- * the host has to O_DIRECT. */
+/* True when the file's last block already holds FILL_BYTE, so the fill can be skipped. The last
+ * block is the one an interrupted fill leaves unwritten, so sampling it is enough. */
+static bool already_filled(int descriptor, const struct options *options, void *block) {
+    off_t last = (off_t)(options->file_bytes - options->block_bytes);
+    ssize_t count = pread(descriptor, block, options->block_bytes, last);
+    if (count != (ssize_t)options->block_bytes) return false;
+    const unsigned char *bytes = (const unsigned char *)block;
+    for (uint32_t index = 0; index < options->block_bytes; index++) {
+        if (bytes[index] != FILL_BYTE) return false;
+    }
+    return true;
+}
+
+/* Opens the file, creating and filling it when it is missing, short or unwritten, and sets the
+ * nearest thing the host has to O_DIRECT. */
 static int open_and_fill(const struct options *options) {
     int flags = O_RDWR | O_CREAT;
 #ifdef O_DIRECT
@@ -233,14 +250,35 @@ static int open_and_fill(const struct options *options) {
 #endif
 
     off_t size = lseek(descriptor, 0, SEEK_END);
-    if (size < 0 || (uint64_t)size >= options->file_bytes) return descriptor;
 
     void *block = NULL;
     if (posix_memalign(&block, options->block_bytes, options->block_bytes) != 0) {
         close(descriptor);
         return -1;
     }
-    memset(block, 0x5a, options->block_bytes);
+
+    /* THE RIGHT SIZE IS NOT ENOUGH. A file that is already file_bytes long may still be unwritten:
+     * fallocate and ftruncate allocate blocks and write none, and `truncate -s 256M` does the same.
+     * An O_DIRECT read of an unwritten extent on ext4 or XFS is answered by the filesystem with
+     * zeros and never reaches the device, so a read row would measure an extent flag. rotor_reads
+     * samples the same block for the same reason; before 2026-09-22 this early return skipped the
+     * fill whenever rotor had already created the file at full size, and both programs then read
+     * holes. */
+    if (size >= 0 && (uint64_t)size >= options->file_bytes &&
+        already_filled(descriptor, options, block)) {
+        free(block);
+        return descriptor;
+    }
+
+    if (size < 0 || (uint64_t)size < options->file_bytes) {
+        if (ftruncate(descriptor, (off_t)options->file_bytes) != 0) {
+            free(block);
+            close(descriptor);
+            return -1;
+        }
+    }
+
+    memset(block, FILL_BYTE, options->block_bytes);
     for (uint64_t offset = 0; offset < options->file_bytes; offset += options->block_bytes) {
         if (pwrite(descriptor, block, options->block_bytes, (off_t)offset) < 0) {
             free(block);

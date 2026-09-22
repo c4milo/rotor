@@ -42,12 +42,17 @@ const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
+const file_module = @import("rotor_reads_file.zig");
 const pool_module = @import("reads_pool.zig");
 
 const Loop = backend.Loop;
 const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
+const Transfer = file_module.Transfer;
+
+/// Re-exported so `rotor_reads_test.zig` and a reader find them where the program is.
+pub const write_suffix = file_module.write_suffix;
 
 /// Reads in flight at once, at most: one slot and one buffer each.
 const depth_max = 128;
@@ -63,6 +68,14 @@ const block_bytes_max = 1 << 20;
 /// The alignment every O_DIRECT buffer needs. A page is at least the logical block of every
 /// device rotor runs on, and aligning to it costs nothing here.
 const buffer_alignment = 4096;
+
+/// The byte every block of the file holds before a run. `bench/alternatives/libuv_reads.c` writes
+/// the same one, so both programs read and overwrite the same content.
+const fill_byte: u8 = 0x5a;
+
+/// Blocks one file may hold, which bounds the fill loop. 256 MiB of 4 KiB blocks is 65,536, and the
+/// largest file `--file-bytes` is given in a sweep is well inside this.
+const blocks_max: u64 = 1 << 22;
 
 /// Latency samples kept, the first this many, as the other workloads keep them.
 const samples_max = 1 << 17;
@@ -100,14 +113,6 @@ var started_ns: [depth_max]u64 = undefined;
 var latency_ns: [samples_max]u64 = undefined;
 
 pub const Pattern = enum { seq, random };
-
-/// Which direction the run measures. Two workloads, not two runs of one: a read row and a write row
-/// must never share a `Series`, which `workload_of` enforces by naming them apart.
-pub const Transfer = enum { read, write };
-
-/// What a write run appends to the path it was given, so it writes its own file and can never
-/// overwrite one the caller named.
-pub const write_suffix = ".rotor_write";
 
 pub const Options = struct {
     path: [:0]const u8,
@@ -172,7 +177,11 @@ pub fn main(init: std.process.Init) !void {
     // operation it holds (decision 18).
     defer if (options.policy == .offload) pool.stop();
 
-    const file = try open_and_fill(options);
+    const file = try file_module.open_and_fill(.{
+        .path = options.path,
+        .transfer = options.transfer,
+        .file_bytes = options.file_bytes,
+    }, buffer_memory[0..options.block_bytes]);
     defer sync.close_now(file);
 
     if (options.registered) try register(&loop, options);
@@ -212,32 +221,6 @@ fn buffer_of(options: Options, index: u32) []u8 {
 
 /// Opens the file with O_DIRECT, creating and preallocating it when it is not there. A file the
 /// filesystem cannot carry O_DIRECT for is refused here and not discovered inside the first read.
-/// The path a run uses: the one it was given for a read, and that path plus `write_suffix` for a
-/// write. A write overwrites whole blocks, so it writes a file of its own and never the caller's.
-pub fn path_of(options: Options, buffer: []u8) ![:0]const u8 {
-    if (options.transfer == .read) return options.path;
-    return std.fmt.bufPrintZ(buffer, "{s}" ++ write_suffix, .{options.path});
-}
-
-fn open_and_fill(options: Options) !core.Descriptor {
-    var buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try path_of(options, &buffer);
-    const direct: sync.OpenOptions = .{ .create = false, .direct = true };
-    if (sync.open_file(path, direct)) |file| {
-        const have = try sync.file_size(file);
-        if (have >= options.file_bytes) return file;
-        try sync.set_file_size(file, options.file_bytes);
-        return file;
-    } else |failure| switch (failure) {
-        error.FileNotFound => {},
-        else => return failure,
-    }
-    const created = try sync.open_file(path, .{ .create = true, .direct = true });
-    errdefer sync.close_now(created);
-    try sync.set_file_size(created, options.file_bytes);
-    return created;
-}
-
 fn run(state: *Run) !u64 {
     const started = now_ns();
     state.deadline_ns = started + state.options.seconds * core.constants.ns_per_s;
@@ -458,6 +441,9 @@ pub fn check(options: Options) !void {
     if (options.block_bytes % buffer_alignment != 0) return error.BlockNotAligned;
     if (options.depth * options.block_bytes > buffer_memory.len) return error.BuffersTooLarge;
     if (options.file_bytes < options.depth * options.block_bytes) return error.FileTooSmall;
+    // The fill writes whole blocks and samples the last one, and O_DIRECT refuses an offset that is
+    // not a multiple of the block size. A file that is not a whole number of blocks has neither.
+    if (options.file_bytes % options.block_bytes != 0) return error.FileNotWholeBlocks;
     if (options.seconds == 0) return error.EmptyConfiguration;
     // `register_buffers` takes at most this many, and one per read in flight is what it is given.
     if (options.registered and options.depth > core.constants.registered_buffers_max) {
