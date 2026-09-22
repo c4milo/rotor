@@ -85,6 +85,9 @@ pub fn build(b: *std.Build) void {
     }));
 
     const unit_test_modules = [_]struct { name: []const u8, module: *std.Build.Module }{
+        // The public module compiles on every host, and compiling it is the check that its
+        // promises still hold.
+        .{ .name = "rotor", .module = graph.rotor },
         .{ .name = "core", .module = graph.core },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },

@@ -8,6 +8,14 @@ Amended on 2026-09-19 by decision 10: rotor carries no simulated backend, so the
 module table and the phrase "the three backends" no longer hold. The backends are `uring` and
 `kqueue`, and a consumer that needs a deterministic twin of the surface brings its own.
 
+Amended on 2026-09-22 by the owner: rotor exports one module, `rotor`, and that module chooses
+this host's backend itself. The sentence below saying a backend is chosen by the consumer's build
+no longer holds for a consumer outside this tree, because the backends are no longer modules it
+can name: exporting them would export how a backend performs an operation, which is nobody else's
+business. Inside this tree the build still hands a backend to the conformance suite, which is what
+that sentence was written for. A consumer that needs a twin still brings its own, as decision 10
+says, and imports it in place of `rotor` rather than around it.
+
 ## Context
 
 Zig 0.16 defines `std.Io`, an interface of function pointers. rotor can implement that table

@@ -2,6 +2,13 @@
 //! `@import` only what this file gives it, so the dependency direction is enforced by the build
 //! and not by review (CLAUDE.md, Layout).
 //!
+//! One module is registered with `addModule` and the rest are created with `createModule`: only
+//! `rotor`, the public API of `src/rotor.zig`, can be named by a dependent package. It picks this
+//! host's backend and re-exports the loop, the types and the socket and buffer helpers. The
+//! backends themselves stay private, because how one performs an operation is nobody else's
+//! business, and a consumer that needs a backend of its own carries the surface rather than
+//! reaching into these (decision 10).
+//!
 //! `core` imports nothing. `uring` imports `core`. `conformance` imports `core` and one backend,
 //! which this file hands it as its `backend` import, so one suite tests every backend
 //! (decision 10). `kqueue` imports `core`. docs/decisions/0001-interface.md names the module that
@@ -12,6 +19,8 @@ const std = @import("std");
 /// Each module's root is the file named after its directory (`src/core/core.zig`), which lists
 /// the module's API as `pub const` declarations and runs every file's tests.
 pub const Modules = struct {
+    /// The public API: what a dependent package imports, and the only module it can name.
+    rotor: *std.Build.Module,
     /// The types the caller sees, the slot table, the timer heap and the named limits.
     core: *std.Build.Module,
     /// The Linux backend, over io_uring. Its pure parts are tested on every host.
@@ -40,7 +49,13 @@ pub fn add(
     const conformance_kqueue = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_kqueue.addImport("core", core);
     conformance_kqueue.addImport("backend", kqueue);
+    // The public module sees both backends and chooses one by host. Nothing else imports both.
+    const rotor = public(b, "rotor", "src/rotor.zig", target, optimize);
+    rotor.addImport("core", core);
+    rotor.addImport("uring", uring);
+    rotor.addImport("kqueue", kqueue);
     return .{
+        .rotor = rotor,
         .core = core,
         .uring = uring,
         .conformance_uring = conformance_uring,
@@ -49,6 +64,7 @@ pub fn add(
     };
 }
 
+/// A module of this tree alone.
 fn create(
     b: *std.Build,
     root_source_file: []const u8,
@@ -56,6 +72,23 @@ fn create(
     optimize: std.builtin.OptimizeMode,
 ) *std.Build.Module {
     return b.createModule(.{
+        .root_source_file = b.path(root_source_file),
+        .target = target,
+        .optimize = optimize,
+    });
+}
+
+/// The module a dependent package can name. The target and the optimize mode are the ones this
+/// build resolved, which for a dependency are the consumer's: it passes them to `b.dependency`
+/// and `standardTargetOptions` reads them back here.
+fn public(
+    b: *std.Build,
+    name: []const u8,
+    root_source_file: []const u8,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    return b.addModule(name, .{
         .root_source_file = b.path(root_source_file),
         .target = target,
         .optimize = optimize,
