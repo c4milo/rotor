@@ -16,7 +16,14 @@ const kqueue = @import("kqueue.zig");
 const Loop = kqueue.Loop;
 
 pub const RegisterError = error{ SystemResources, Unexpected };
-pub const ProvideError = error{ SystemResources, Unexpected };
+/// `Unsupported`: the kernel refused the buffer ring itself. io_uring answers EINVAL for that, and
+/// for a misaligned ring and a count that is not a power of two; both of those are now assertions,
+/// so what is left is a kernel that cannot do provided buffer rings at all. Before this the three
+/// arrived as one `Unexpected`, and a consumer spent a day on the alignment one (2026-09-22).
+///
+/// The kqueue backend never enters the kernel here and so never answers `Unsupported`. The set is
+/// the same on both because a caller writes one handler for both (decision 1).
+pub const ProvideError = error{ Unsupported, SystemResources, Unexpected };
 
 /// The alignment of the memory a group's bookkeeping sits in.
 /// The alignment of a group's memory: what io_uring's buffer ring needs, kept on both backends so
@@ -105,6 +112,16 @@ pub fn provide(
     loop.tables.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
     assert(loop.groups[group_id].buffer_bytes == 0);
+    // What this backend needs, and not `group_alignment`. The free list is read as `[*]u16`, so u16
+    // alignment is the real requirement here; `group_alignment` is io_uring's, asked for on both so
+    // that one declaration in a caller's code serves both (`constants.zig`).
+    //
+    // Asserting the larger figure here would refuse memory this backend can use. macOS does not
+    // always give a static the alignment it declares: a `[N]u8 align(64 KiB)` came back 16 KiB
+    // aligned on 2026-09-22, and `conformance_udp.zig` declares exactly that. `uring_buffers.zig`
+    // asserts the full figure because its kernel enforces it, which is where a caller who relied on
+    // the declaration finds out.
+    assert(std.mem.isAligned(@intFromPtr(memory.ptr), @alignOf(u16)));
     assert(count >= 1);
     assert(count <= core.constants.buffers_per_group_max);
     assert(memory.len >= group_bytes(count, buffer_bytes));

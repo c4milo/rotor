@@ -26,7 +26,14 @@ const Loop = uring.Loop;
 pub const group_alignment = constants.buffer_ring_alignment;
 
 pub const RegisterError = error{ SystemResources, Unexpected };
-pub const ProvideError = error{ SystemResources, Unexpected };
+/// `Unsupported`: the kernel refused the buffer ring itself. io_uring answers EINVAL for that, and
+/// for a misaligned ring and a count that is not a power of two; both of those are now assertions,
+/// so what is left is a kernel that cannot do provided buffer rings at all. Before this the three
+/// arrived as one `Unexpected`, and a consumer spent a day on the alignment one (2026-09-22).
+///
+/// The kqueue backend never enters the kernel here and so never answers `Unsupported`. The set is
+/// the same on both because a caller writes one handler for both (decision 1).
+pub const ProvideError = error{ Unsupported, SystemResources, Unexpected };
 
 /// One provided-buffer group. `ring` is null until `provide` names the group.
 pub const Group = struct {
@@ -94,6 +101,14 @@ pub fn provide(
     loop.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
     assert(loop.groups[group_id].ring == null);
+    // The parameter's type says `align(group_alignment)`, which the compiler checks at the call
+    // site and cannot check for memory whose alignment a caller asserted rather than declared: an
+    // `@alignCast` in a build without safety checks passes anything. rotor's assertions stay on in
+    // production (CLAUDE.md non-negotiable 1), so this catches what the caller's build did not.
+    // Without it a misaligned group cost a consumer a day: io_uring answers EINVAL, which was
+    // mapped to `Unexpected`, and the kqueue backend never enters the kernel at all and would read
+    // its ring through a misaligned pointer (2026-09-22).
+    assert(std.mem.isAligned(@intFromPtr(memory.ptr), group_alignment));
     assert(count >= 1);
     assert(count <= core.constants.buffers_per_group_max);
     assert(memory.len >= group_bytes(count, buffer_bytes));
@@ -110,6 +125,9 @@ pub fn provide(
     switch (linux.errno(rc)) {
         .SUCCESS => {},
         .NOMEM => return error.SystemResources,
+        // Every EINVAL this call can answer for a reason rotor caused is an assertion above, so one
+        // that arrives here is the kernel declining provided buffer rings.
+        .INVAL => return error.Unsupported,
         else => return error.Unexpected,
     }
 

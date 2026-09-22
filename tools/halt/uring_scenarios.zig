@@ -136,6 +136,48 @@ fn post_a_tag_above_the_limit() void {
     _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
 }
 
+/// Memory for one small group, with two alignments of slack: the scenario aligns a pointer forward
+/// inside this array and then spoils it, so it needs room for both steps.
+const group_scenario_buffers = 2;
+const group_scenario_buffer_bytes = 64;
+const group_scenario_alignment = uring.buffers.group_alignment;
+const group_scenario_bytes =
+    uring.buffers.group_bytes(group_scenario_buffers, group_scenario_buffer_bytes);
+const group_scenario_slack = group_scenario_bytes + 2 * group_scenario_alignment;
+var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = undefined;
+
+/// A group whose memory is one byte past `group_alignment`, which io_uring's buffer ring requires.
+/// The kernel answers EINVAL for it, and that arrived as one nameless `Unexpected` until 2026-09-22,
+/// which cost a consumer a day; the assertion names it before the loop enters the kernel at all.
+///
+/// The offset is one `io_uring_buf`, not one byte, and that is the whole point: the ring is read
+/// through a `*io_uring_buf`, so a one-byte offset trips that cast's own check and would prove
+/// nothing about this assertion. A caller's memory that is 8-byte aligned and not 64 KiB aligned
+/// passes every cast and only the kernel objects, which is the shape the consumer hit.
+///
+/// The address is aligned forward first and spoiled after, rather than taken from the array as
+/// declared: macOS does not always give a static the alignment it asks for, and this check runs on
+/// every host. The slice is built with safety checks off, because an `@alignCast` in a checked build
+/// refuses the cast at the call site while a caller built without checks does not; rotor's
+/// assertions stay on either way (CLAUDE.md non-negotiable 1).
+fn provide_a_group_that_is_not_aligned() void {
+    loop.init_tables(&memory, options);
+    const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
+    const misaligned = blk: {
+        @setRuntimeSafety(false);
+        const start: [*]align(group_scenario_alignment) u8 =
+            @ptrFromInt(base + @sizeOf(std.os.linux.io_uring_buf));
+        break :blk start[0..group_scenario_bytes];
+    };
+    scenario.reached_violation();
+    loop.provide_buffers(
+        0,
+        misaligned,
+        group_scenario_buffers,
+        group_scenario_buffer_bytes,
+    ) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
@@ -156,6 +198,10 @@ const scenarios = [_]scenario.Scenario{
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
+    .{
+        .name = "buffers: provide a group that is not aligned",
+        .run = provide_a_group_that_is_not_aligned,
+    },
 };
 
 pub fn main(init: std.process.Init) !void {

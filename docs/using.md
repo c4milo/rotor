@@ -183,6 +183,23 @@ Three ways to hand the loop memory for bytes:
   receive with `buffers_exhausted`: give buffers back and submit it again. At most
   `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
 
+  **Check the alignment you got, do not assume it.** io_uring requires the 64 KiB of
+  `buffers.group_alignment` and rotor asserts it, so a misaligned group halts with a named assertion
+  rather than arriving as an errno. Declaring `align(buffers.group_alignment)` on a static is enough
+  on Linux, and on macOS such a static came back 16 KiB aligned on 2026-09-22, so a caller that must
+  build on both aligns forward inside a larger block:
+
+  ```zig
+  var backing: [bytes + buffers.group_alignment]u8 align(buffers.group_alignment) = undefined;
+  const start = std.mem.alignForward(usize, @intFromPtr(&backing), buffers.group_alignment);
+  const memory: []align(buffers.group_alignment) u8 =
+      @as([*]align(buffers.group_alignment) u8, @ptrFromInt(start))[0..bytes];
+  ```
+
+  The kqueue backend needs only the alignment of its own free list, so under-aligned memory works
+  there and fails on Linux. That asymmetry is why the assertion on the io_uring side is worth having:
+  it is where a caller who trusted the declaration finds out.
+
 Registered descriptors work the same way: `register_descriptors(&loop, descriptors)` once, at
 most `registered_descriptors_max` (1,024), and an operation with `descriptor_registered = true`
 names an index instead of a descriptor. A `close` always names a descriptor of the process.
