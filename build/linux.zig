@@ -56,6 +56,14 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         // The public module picks `uring` on this target, and its tests drive a loop through it.
         .{ .name = "rotor", .module = graph.rotor },
+        // The harness is outside the module graph, and nothing built it for Linux until
+        // 2026-09-22: two of its files did not compile there and no gate said so, because every
+        // caller of them was a program this gate does not build. Its tests run here now.
+        .{ .name = "bench-harness", .module = b.createModule(.{
+            .root_source_file = b.path("bench/harness/harness.zig"),
+            .target = target,
+            .optimize = optimize,
+        }) },
     };
 
     const stamp = b.addSystemCommand(&.{"touch"});

@@ -30,7 +30,7 @@ const block_devices_max = 8;
 
 /// Fills `into` with each NVMe device's write-cache setting. A host with none leaves it empty, and
 /// the record then says `unknown` rather than implying the drive is one thing or the other.
-fn read_write_caches(io: std.Io, into: *Text) void {
+pub fn read_write_caches(io: std.Io, into: *Text) void {
     var listing = std.Io.Dir.cwd().openDir(io, block_directory, .{ .iterate = true }) catch return;
     defer listing.close(io);
 

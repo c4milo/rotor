@@ -50,7 +50,7 @@ const ns_per_tick: u64 = std.time.ns_per_s / ticks_per_second;
 
 /// The bytes /proc/stat is read into. Its first line is what is needed, and it is under 200 bytes.
 const proc_bytes_max = 4096;
-const proc_path = "/proc/stat";
+const proc_path: [*:0]const u8 = "/proc/stat";
 
 /// Busy time over wall time, in hundredths of one core. 0 when no wall time passed.
 pub fn other_hundredths(busy_delta_ns: u64, wall_delta_ns: u64) u32 {
@@ -167,11 +167,25 @@ fn busy_ticks_of(info: HostCpuLoadInfo) u64 {
 fn linux_busy_ns() ?u64 {
     if (comptime builtin.os.tag != .linux) return null;
     var buffer: [proc_bytes_max]u8 = undefined;
-    const file = std.fs.openFileAbsolute(proc_path, .{}) catch return null;
-    defer file.close();
-    const read = file.read(&buffer) catch return null;
-    const ticks = parse_busy_ticks(buffer[0..read]) orelse return null;
+    const contents = read_proc(proc_path, &buffer) orelse return null;
+    const ticks = parse_busy_ticks(contents) orelse return null;
     return ticks * ns_per_tick;
+}
+
+/// The head of a `/proc` file, through the system calls directly: Zig 0.16's `std.fs` opens a file
+/// through an `Io`, and this file is read from a place that has none. Null when it cannot be read,
+/// so a host that answers nothing leaves the row without a reading rather than with a wrong one.
+fn read_proc(path: [*:0]const u8, buffer: []u8) ?[]const u8 {
+    if (comptime builtin.os.tag != .linux) return null;
+    const linux = std.os.linux;
+    const flags: linux.O = .{ .ACCMODE = .RDONLY, .CLOEXEC = true };
+    const opened = linux.openat(linux.AT.FDCWD, path, flags, 0);
+    if (linux.errno(opened) != .SUCCESS) return null;
+    const descriptor: i32 = @intCast(opened);
+    defer _ = linux.close(descriptor);
+    const count = linux.read(descriptor, buffer.ptr, buffer.len);
+    if (linux.errno(count) != .SUCCESS) return null;
+    return buffer[0..count];
 }
 
 /// The fields of the first line of /proc/stat after `cpu`, in USER_HZ ticks summed over every
