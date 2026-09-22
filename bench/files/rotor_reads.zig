@@ -3,6 +3,7 @@
 //!
 //! Run:  rotor_reads PATH [--pattern seq|random] [--depth N] [--block-bytes B]
 //!                        [--registered yes|no] [--seconds S] [--file-bytes N]
+//!                        [--file-policy blocking|offload]
 //!
 //! It keeps `depth` reads in flight against one file and re-issues each as it completes, so the
 //! device queue never drains and the measurement is of the path rather than of the program
@@ -31,6 +32,7 @@ const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
+const pool_module = @import("reads_pool.zig");
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -58,12 +60,31 @@ const samples_max = 1 << 17;
 /// Reads a run may issue, so every loop here is bounded.
 const reads_max = 1 << 26;
 
-var loop_memory: [
-    Loop.memory_bytes(.{ .operations = operations, .entries = entries })
-]u8 align(core.layout.memory_alignment) = undefined;
+/// The loop's memory, sized for the larger of the two policies. Under `offload` the loop holds one
+/// `Work` per slot, so a block sized for `blocking` would be too small and `init` would refuse it.
+const loop_bytes = Loop.memory_bytes(.{
+    .operations = operations,
+    .entries = entries,
+    .file_policy = if (backend.files_block) .offload else .blocking,
+    .offload = if (backend.files_block) .{
+        .context = null,
+        .submit = pool_module.Pool.submit,
+        .workers = pool_module.workers,
+    } else null,
+});
+
+var loop_memory: [loop_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 /// One buffer per read in flight, each aligned and sized for the largest block offered.
 var buffer_memory: [depth_max * block_bytes_max]u8 align(buffer_alignment) = undefined;
+
+/// The offload's rings. The caller owns this memory because the caller's threads write it. It is
+/// one byte on a backend that offloads nothing, so the io_uring build carries none of it.
+const ring_bytes = if (backend.files_block)
+    backend.offload_module.memory_bytes(pool_module.workers)
+else
+    1;
+var ring_memory: [ring_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 var started_ns: [depth_max]u64 = undefined;
 var latency_ns: [samples_max]u64 = undefined;
@@ -78,7 +99,14 @@ const Options = struct {
     registered: bool = true,
     seconds: u64 = 3,
     file_bytes: u64 = 256 << 20,
+    /// What the loop does with a read it cannot perform without blocking (decision 18). On
+    /// io_uring it changes nothing; on kqueue it is the difference this workload's newest row
+    /// measures. `refuse` is not offered: a run that refused every read would measure nothing.
+    policy: Policy = .blocking,
 };
+
+/// The policies this workload runs, which are decision 18's two that perform the read.
+const Policy = enum { blocking, offload };
 
 const Run = struct {
     loop: *Loop,
@@ -97,16 +125,33 @@ const Run = struct {
 pub fn main(init: std.process.Init) !void {
     const options = try parse(init);
 
+    // The pool the `offload` policy uses. Started before the loop, so a thread is already waiting
+    // when the first flush hands an operation out.
+    var pool: pool_module.Pool = undefined;
+    if (options.policy == .offload) try pool.start(init.io);
+
     var loop: Loop = undefined;
-    // The inline policy, which is what this workload has always measured on kqueue: the loop
-    // performs the read itself and stalls for its duration (decision 18). The default refuses, so
-    // a workload that wants the stall now names it.
+    // `blocking` is what this workload measured on kqueue before decision 18: the loop performs
+    // the read itself and stalls for its duration. The default policy refuses, so a run that wants
+    // the stall asks for it. On io_uring both policies behave the same: the kernel needs no thread.
     try loop.init(&loop_memory, .{
         .operations = operations,
         .entries = entries,
-        .file_policy = .blocking,
+        .file_policy = switch (options.policy) {
+            .blocking => .blocking,
+            .offload => .offload,
+        },
+        .offload = if (options.policy == .offload) .{
+            .context = &pool,
+            .submit = pool_module.Pool.submit,
+            .workers = pool_module.workers,
+        } else null,
+        .offload_memory = &ring_memory,
     });
     defer loop.deinit();
+    // Runs after the loop's own defer, so the loop is drained first: only the worker can end an
+    // operation it holds (decision 18).
+    defer if (options.policy == .offload) pool.stop();
 
     const file = try open_and_fill(options);
     defer sync.close_now(file);
@@ -265,8 +310,11 @@ fn workload_of(pattern: Pattern) []const u8 {
 
 /// The candidate's name for one buffer choice. Registration is decision 3's first speed source,
 /// so the A and the B of it are two candidates and not two runs of one.
-fn candidate_of(registered: bool) []const u8 {
-    return if (registered) "rotor (registered)" else "rotor";
+fn candidate_of(registered: bool, policy: Policy) []const u8 {
+    return switch (policy) {
+        .blocking => if (registered) "rotor (registered)" else "rotor",
+        .offload => if (registered) "rotor (registered, offload)" else "rotor (offload)",
+    };
 }
 
 fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
@@ -276,7 +324,7 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
 
     const result: harness.Result = .{
         .workload = workload_of(state.options.pattern),
-        .candidate = candidate_of(state.options.registered),
+        .candidate = candidate_of(state.options.registered, state.options.policy),
         .candidate_version = "this tree",
         .configuration = .{
             // `connections` carries the queue depth and `payload_bytes` the block size, because
@@ -335,6 +383,11 @@ fn parse(init: std.process.Init) !Options {
 }
 
 fn check(options: Options) !void {
+    // A depth above the pool's queue would make `Pool.submit` block the loop thread, which is the
+    // stall the offload removes. Refused here rather than found part way through a run.
+    if (options.policy == .offload and options.depth > pool_module.queue_max) {
+        return error.DepthAboveOffloadQueue;
+    }
     if (options.depth == 0 or options.depth > depth_max) return error.DepthOutOfRange;
     if (options.block_bytes < buffer_alignment) return error.BlockTooSmall;
     if (options.block_bytes > block_bytes_max) return error.BlockTooLarge;
@@ -361,6 +414,8 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--file-bytes")) {
         options.file_bytes = try std.fmt.parseInt(u64, value, 10);
+    } else if (std.mem.eql(u8, name, "--file-policy")) {
+        options.policy = std.meta.stringToEnum(Policy, value) orelse return error.UnknownPolicy;
     } else {
         return error.UnknownArgument;
     }

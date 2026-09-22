@@ -3,19 +3,18 @@
 //! kqueue backend acts on them: io_uring performs these operations without a thread, so it takes
 //! the policy and ignores it.
 //!
-//! **rotor names no thread and no pool here.** It names a context, one function it calls to hand
-//! work out, and one function a worker calls to run it. Whether the caller's side is a pool, one
-//! thread, or a queue it drains itself is the caller's, which is non-negotiable 4: a loop starts
-//! no thread, and a caller may hand it threads the loop never started.
+//! rotor names no thread type and no pool. It names a context, one function it calls to hand work
+//! out, and one function a worker calls to run it. The caller decides whether its side is a pool,
+//! a single thread, or a queue it drains itself. Non-negotiable 4 holds: a loop starts no thread,
+//! and a caller may hand it threads the loop never started.
 //!
-//! **The worker touches its `Work` and its own mailbox, and nothing else of the loop.** Every
-//! parameter the system call needs is copied into the `Work` before it is handed out, so a worker
-//! never reads the slot table. That keeps shared-nothing true across the hand-off: the loop thread
-//! remains the only thread that touches a `Slot`.
+//! A worker reads its `Work` and writes its own mailbox. It reads no slot table, because every
+//! parameter the system call needs is copied into the `Work` before it is handed out. So the loop
+//! thread stays the only thread that touches a `Slot`.
 //!
-//! The caller's buffer is the exception, and it is not one: decision 5, rule 3 already says a
-//! buffer belongs to the loop until the operation's final event, and an offloaded transfer is
-//! inside that window.
+//! The worker also writes the caller's buffer. Decision 5, rule 3 already covers that: a buffer
+//! belongs to the loop until the operation's final event, and an offloaded transfer is inside that
+//! window.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
@@ -55,7 +54,7 @@ pub const Work = struct {
     offset: u64,
 
     /// The operations an offload is ever handed. `fdatasync` is here because it blocks as long as
-    /// the device takes, which is the whole reason this exists.
+    /// the device takes, and that is why it is here.
     pub const Code = enum { read, write, fdatasync };
 };
 
@@ -66,9 +65,9 @@ pub const Offload = struct {
     /// rotor calls this on the loop thread to hand one operation out. The caller arranges for some
     /// thread of its own to call `work.run(work, worker)`, once, with that thread's index.
     ///
-    /// It returns nothing: a caller that cannot take the work right now queues it, because the
-    /// operation has a slot already and decision 5 owes it exactly one final event. A caller that
-    /// wants to refuse work chooses the `refuse` policy instead.
+    /// It returns nothing. A caller that cannot take the work now must queue it: the operation
+    /// already has a slot, and decision 5 owes it exactly one final event. A caller that wants to
+    /// refuse file operations chooses the `refuse` policy instead.
     submit: *const fn (context: ?*anyopaque, work: *Work) void,
     /// How many threads will call `run`, which is how many mailboxes the loop holds. A worker
     /// index is below this number, and two threads never share one.
@@ -83,7 +82,7 @@ pub const Offload = struct {
 const testing = std.testing;
 
 test "a policy is one of three, and refuse is the one a caller gets without asking" {
-    // The default is the record's own choice, so a caller that says nothing is told and not slowed.
+    // Decision 18 chose this default so a caller who sets nothing is told, rather than slowed.
     const policy: FilePolicy = .refuse;
     try testing.expectEqual(FilePolicy.refuse, policy);
     try testing.expectEqual(@as(usize, 3), @typeInfo(FilePolicy).@"enum".fields.len);
@@ -106,8 +105,8 @@ test "an offload is valid with workers the loop can hold, and not otherwise" {
 }
 
 test "the offloadable operations are the three that block, and no others" {
-    // A socket operation is never offloaded: kqueue reports its readiness, so it never blocks the
-    // loop. Adding one here would hand the loop's own work to a thread for nothing.
+    // Socket operations are never offloaded. kqueue reports their readiness, so they do not block
+    // the loop, and handing one to a thread would cost a hop and save nothing.
     try testing.expectEqual(@as(usize, 3), @typeInfo(Work.Code).@"enum".fields.len);
     try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
     try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));

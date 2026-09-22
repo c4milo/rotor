@@ -97,8 +97,14 @@ measured against `zig build halt-check`.
   `uring_reap.zig`. Four or more files sharing a prefix move into a subdirectory named for it.
 - Operational errors — a refused operation, a short buffer, a limit reached — return error
   values. Assertions are for programmer error only.
-- Write all prose in active voice with plain words: short sentences with one idea each, terms
-  defined before use, lists for list-like content, no metaphors. Name what literally happens.
+- Write all prose in **simple English**, in active voice, with plain words: short sentences with
+  one idea each, terms defined before use, lists for list-like content, no metaphors. Name what
+  literally happens.
+- **No mannered prose.** Say the thing plainly and stop. No flourishes, no sentence inversions for
+  effect, no dramatic fragments, no "not X, but Y", no personifying code, no calling a thing "the
+  point" or "the whole reason". A comment explains what the code does and why; it is not written to
+  be admired. This rule covers source comments, doc comments, `docs/`, README files and commit
+  messages alike.
   One name per thing, and it is the name in the code.
 - Every Markdown file is GitHub-flavored Markdown and must render on GitHub as written: real
   list markers only (no bare `3b.` lines), pipes inside a table cell escaped as `\|`, fenced

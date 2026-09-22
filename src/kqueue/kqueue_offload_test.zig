@@ -61,7 +61,7 @@ const Pool = struct {
         std.debug.assert(previous == null);
     }
 
-    /// One worker's whole life: take the work it was given and run it.
+    /// The worker thread: take the work it was given and run it.
     fn serve(pool: *Pool, worker: u16) void {
         const work = pool.handed[worker].swap(null, .acquire).?;
         work.run(work, worker);
@@ -163,8 +163,8 @@ test "an awake loop is never woken, so a worker makes no system call on its beha
     loop_fixture.init();
     try testing.expect(!loop_fixture.loop.offload_asleep.load(.seq_cst));
     // `init_tables` opens no kqueue, so the descriptor is set to one `Queue.wake` refuses. A worker
-    // that woke a loop which never said it would sleep halts on that assertion, which is what makes
-    // the skipped wake observable rather than merely harmless.
+    // that woke a loop which never said it would sleep halts on that assertion, so the skipped wake
+    // is observable and not merely harmless.
     loop_fixture.loop.queue.descriptor = -1;
 
     try loop_fixture.hand_out(1);

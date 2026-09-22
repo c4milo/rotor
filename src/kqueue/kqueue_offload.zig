@@ -3,28 +3,26 @@
 //! it takes the policy and does nothing with it.
 //!
 //! Three operations block on this backend: `read`, `write` and `fdatasync`. A tick holding a batch
-//! of them performs each in turn and serves no socket until the last returns, which is what
-//! decision 18 measured at 2.8 ms for 32 reads. Under the `offload` policy the loop hands each one
-//! out instead, and the tick goes on.
+//! of them performs each in turn and serves no socket until the last returns. Decision 18 measured
+//! 2.8 ms for 32 reads. Under the `offload` policy the loop hands each one out and the tick goes on.
 //!
-//! **What crosses the thread boundary, and what does not.** The loop fills a `core.offload.Work`
-//! with everything the system call needs and hands it out. A worker calls `Work.run`, which makes
-//! the call on the worker's thread and pushes one `core.Message` — the slot index and the result —
-//! into the ring that belongs to that worker. The loop pops the ring on its own thread and calls
-//! `finish_local`, so the slot is written by the loop thread and by nothing else. Non-negotiable 4
-//! holds across the hand-off: no lock, and the loop starts no thread.
+//! What crosses the thread boundary: the loop fills a `core.offload.Work` with everything the
+//! system call needs and hands it out. A worker calls `Work.run`, which makes the call on the
+//! worker's thread and pushes one `core.Message` — the slot index and the result — into that
+//! worker's ring. The loop pops the ring on its own thread and calls `finish_local`. So only the
+//! loop thread writes a slot, and non-negotiable 4 holds: no lock, and the loop starts no thread.
 //!
-//! **One ring per worker, so each ring has one producer.** `kqueue_mailbox.zig`'s `Mailbox` is
-//! single-producer and single-consumer, and its memory-ordering argument depends on that. Giving
-//! the workers one ring each keeps it true, and costs no multi-producer structure: libxev shares
-//! one Vyukov MPSC queue between its pool threads instead, and its own source carries a TODO
-//! saying the atomics are unaudited. `core.constants.offload_workers_max` bounds the rings.
+//! Each worker has its own ring, so each ring has one producer. `kqueue_mailbox.zig`'s `Mailbox` is
+//! single-producer and single-consumer, and its memory-ordering argument depends on that. One ring
+//! per worker keeps that true and needs no multi-producer structure. libxev shares one Vyukov MPSC
+//! queue between its pool threads instead, and its source carries a TODO saying the atomics are
+//! unaudited. `core.constants.offload_workers_max` bounds the rings.
 //!
-//! **A worker wakes a sleeping loop, and the race is decision 12's point 6 again.** The loop sets
-//! `offload_asleep` before it blocks, then looks at every ring once more: a worker that pushed
-//! before it saw the flag did not wake the loop, so the loop must not sleep on that message. Both
-//! sides use `seq_cst`, so of the two — the worker seeing the flag set, and the loop seeing the ring
-//! non-empty — at least one holds.
+//! Waking a sleeping loop repeats the race decision 12's point 6 settles. The loop sets
+//! `offload_asleep` before it blocks, then reads every ring again: a worker that pushed before it
+//! could see the flag did not wake the loop, so the loop must not sleep on that message. Both sides
+//! use `seq_cst`, so at least one of two things holds — the worker sees the flag set, or the loop
+//! sees the ring non-empty.
 const std = @import("std");
 const assert = std.debug.assert;
 const posix = std.posix;
@@ -96,10 +94,10 @@ pub fn code_of(code: core.Operation.Code) ?Work.Code {
     };
 }
 
-/// True when `slot` is an operation the caller's offload has. Under the `offload` policy a file
-/// operation reaches `submitted` only by being handed out, so the policy and the code decide it.
+/// True when the caller's offload holds `slot`. Under the `offload` policy a file operation reaches
+/// `submitted` only by being handed out, so the policy and the operation's code decide this.
 ///
-/// It is what stops the cancel path treating such a slot as one waiting on a kqueue filter: a file
+/// The cancel path uses it to avoid treating such a slot as one waiting on a kqueue filter. A file
 /// registers no filter, so `perform.filter_of` has no answer for one.
 pub fn on_a_worker(loop: *const Loop, slot: *const Slot) bool {
     if (loop.file_policy != .offload) return false;
@@ -133,11 +131,11 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
 }
 
 /// Runs on one of the caller's worker threads, once per handed-out operation. It makes the system
-/// call, pushes the result to that worker's ring, and wakes the loop when the loop said it would
+/// call, pushes the result to that worker's ring, and wakes the loop if the loop said it would
 /// sleep.
 ///
 /// It touches the work, the caller's buffer, one ring and one atomic flag. It reads no slot and no
-/// table, which is what lets it run beside a tick.
+/// table, so it can run while the loop ticks.
 fn run(work: *Work, worker: u16) void {
     const loop: *Loop = @ptrCast(@alignCast(work.owner));
     assert(worker < loop.completions.len);
@@ -168,8 +166,8 @@ fn result_of_tag(tag: u32) i32 {
     return @bitCast(tag);
 }
 
-/// The system call, on the worker's thread. The same calls `kqueue_perform.zig` makes inline, so a
-/// policy changes which thread runs them and nothing about what they mean.
+/// The system call, on the worker's thread. These are the same calls `kqueue_perform.zig` makes
+/// inline, so the policy changes which thread runs them and nothing else.
 fn perform(work: *const Work) i32 {
     return switch (work.code) {
         .read, .write => transfer(work),
@@ -196,7 +194,7 @@ fn transfer(work: *const Work) i32 {
     return core.event.result_of(.would_block);
 }
 
-/// `F_FULLFSYNC` is what makes the promise of `fdatasync` true on macOS, as the inline path has it.
+/// `F_FULLFSYNC` gives `fdatasync` its meaning on macOS, as the inline path does.
 fn sync(descriptor: core.Descriptor) i32 {
     if (std.c.fcntl(descriptor, std.c.F.FULLFSYNC, @as(c_int, 0)) == 0) return 0;
     if (std.c.fsync(descriptor) == 0) return 0;
@@ -204,7 +202,7 @@ fn sync(descriptor: core.Descriptor) i32 {
 }
 
 /// Moves every result the workers pushed into the loop's finished list, on the loop thread. The
-/// next `drain_finished` hands their events over, which is decision 5, rule 2: never the call that
+/// next `drain_finished` hands their events over, as decision 5, rule 2 requires: not the call that
 /// produced the result.
 ///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.

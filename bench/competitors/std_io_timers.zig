@@ -7,13 +7,12 @@
 //! `period_us`, arm each again as it fires, and report fires per second and how far past its
 //! deadline each fire was. The percentiles are **lateness** and not latency.
 //!
-//! **The shape is the finding.** `std.Io` offers no timer: it offers `sleep`, and a task that
-//! sleeps. So N timers is N tasks, each sleeping and sleeping again, which is the only way to
-//! write this workload against the interface. Under `std.Io.Threaded` a sleeping task holds the
-//! worker thread it runs on, because `sleep` there is `clock_nanosleep` on that thread. So
-//! **N timers is N threads**, each with a default thread stack, against one 64-byte slot per
-//! timer in rotor. That is the cost this row exists to show, and it is a cost of the shape and
-//! not of a defect: nothing else the interface offers arms a timer.
+//! The shape is what this row measures. `std.Io` has no timer. It has `sleep`, and a task that
+//! sleeps, so N timers is N tasks, each sleeping and sleeping again. Under `std.Io.Threaded` a
+//! sleeping task holds the worker thread it runs on, because `sleep` there is `clock_nanosleep` on
+//! that thread. So N timers is N threads, each with a default thread stack, against one 64-byte
+//! slot per timer in rotor. Nothing else the interface offers arms a timer, so this is the cost of
+//! the shape and not a defect.
 //!
 //! The tasks are started with `Group.concurrent` and not `Group.async`, for the reason
 //! `bench/competitors/std_io_echo.zig` gives at its own call: `async` is allowed to run a task on
@@ -81,9 +80,8 @@ var lateness_ns: [samples_max]u64 = undefined;
 /// slot a fire is handed is the count of fires before it. Fires past `samples_max` keep counting
 /// and store nothing, so the count is exact and the sample is bounded.
 ///
-/// It is atomic because every fire happens on a thread of its own. `Group.await` is what makes
-/// the stores visible to the thread that sorts them: a task's completion releases and the await
-/// acquires.
+/// It is atomic because every fire happens on its own thread. `Group.await` makes the stores
+/// visible to the thread that sorts them: a task's completion releases and the await acquires.
 var fired: std.atomic.Value(u64) = .init(0);
 
 const Backend = enum { uring, threaded };

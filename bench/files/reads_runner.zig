@@ -7,9 +7,13 @@
 //! client outside the program that issued it.
 //!
 //! **A candidate here is a program and its arguments, not a program.** The other two runners have
-//! one program per candidate. This workload compares four things across two programs: rotor with
+//! one program per candidate. This workload compares five things across two programs: rotor with
 //! registered buffers and without, which is decision 3's first speed source measured as an A
-//! against a B, and libuv on its thread pool and on its io_uring ring.
+//! against a B, rotor with its reads offloaded to a thread pool (decision 18), and libuv on its
+//! thread pool and on its io_uring ring.
+//!
+//! rotor's offload candidate runs on macOS only. io_uring reads a file without a thread, so the
+//! policy changes nothing there and the row would repeat `rotor-registered` under another name.
 //!
 //! **libuv's io_uring path needs two things, and this runner supplies one of them.**
 //! `bench/competitors/libuv_reads.c` calls `uv_loop_configure(UV_LOOP_USE_IO_URING_SQPOLL)` under
@@ -36,6 +40,9 @@ const Candidate = struct {
     arguments: []const []const u8,
     /// True for a candidate that only exists on Linux. libuv's io_uring path is the one.
     linux_only: bool = false,
+    /// True for a candidate that only exists on macOS. rotor's offload is the one: io_uring reads a
+    /// file without a thread, so there is nothing to offload there (decision 18).
+    kqueue_only: bool = false,
 };
 
 const candidates = [_]Candidate{
@@ -48,6 +55,12 @@ const candidates = [_]Candidate{
         .name = "rotor-plain",
         .program = "rotor_reads",
         .arguments = &.{ "--registered", "no" },
+    },
+    .{
+        .name = "rotor-offload",
+        .program = "rotor_reads",
+        .arguments = &.{ "--registered", "yes", "--file-policy", "offload" },
+        .kqueue_only = true,
     },
     .{
         .name = "libuv-threadpool",
@@ -237,6 +250,12 @@ fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 
             });
             continue;
         }
+        if (candidate.kqueue_only and builtin.os.tag == .linux) {
+            try writer.print("reads_runner: {s} runs on macOS alone, skipping it\n", .{
+                candidate.name,
+            });
+            continue;
+        }
         const path = try program_path(options, candidate, index);
         present[index] = programs.installed(init.io, path);
         if (!present[index]) {
@@ -360,9 +379,26 @@ test "one run's arguments fit the buffer, with the longest candidate's own" {
     try testing.expect(12 + longest <= argv_max);
 }
 
-test "only libuv's io_uring candidate is Linux-only" {
+test "only libuv's io_uring candidate is Linux-only, and only rotor's offload is macOS-only" {
     for (candidates) |candidate| {
         const is_uring = std.mem.eql(u8, candidate.name, "libuv-uring");
         try testing.expectEqual(is_uring, candidate.linux_only);
+        const is_offload = std.mem.eql(u8, candidate.name, "rotor-offload");
+        try testing.expectEqual(is_offload, candidate.kqueue_only);
+        // No candidate is both: no host could run it.
+        try testing.expect(!(candidate.linux_only and candidate.kqueue_only));
     }
+}
+
+test "the offload candidate registers its buffers, so the row differs only in the policy" {
+    // The two candidates must differ in one setting, or the row measures two changes at once.
+    // Both register their buffers; only the policy differs.
+    const registered = candidates[0];
+    const offload = candidates[2];
+    try testing.expectEqualStrings("rotor-registered", registered.name);
+    try testing.expectEqualStrings("rotor-offload", offload.name);
+    try testing.expectEqualStrings(registered.program, offload.program);
+    try testing.expectEqualStrings("yes", offload.arguments[1]);
+    try testing.expectEqualStrings("--file-policy", offload.arguments[2]);
+    try testing.expectEqualStrings("offload", offload.arguments[3]);
 }
