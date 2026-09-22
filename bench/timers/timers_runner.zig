@@ -46,6 +46,11 @@ const Candidate = struct {
     arguments: []const []const u8 = &.{},
     /// True for a candidate that only exists on Linux. `std.Io.Uring` is the one.
     linux_only: bool = false,
+    /// Why this candidate cannot run at all, or null when it can. `std.Io.Uring` carries one: it
+    /// does not compile on the pinned Zig, which `uring_compiles` in its own program and
+    /// `bench/alternatives/README.md` also record, and all three change together. Without this the
+    /// runner started a program that exits at once, once per round per configuration.
+    blocked: ?[]const u8 = null,
 };
 
 const candidates = [_]Candidate{
@@ -73,6 +78,7 @@ const candidates = [_]Candidate{
     },
     .{
         .name = "std.Io.Uring",
+        .blocked = "it does not compile on the pinned Zig",
         .program = "std_io_timers",
         .arguments = &.{ "--backend", "uring" },
         .linux_only = true,
@@ -253,6 +259,7 @@ fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u
 /// row for it on any other host would name a candidate that never ran. The host is a parameter so
 /// a test reaches both answers on either machine.
 fn runnable(candidate: Candidate, os_tag: std.Target.Os.Tag) bool {
+    if (candidate.blocked != null) return false;
     return !candidate.linux_only or os_tag == .linux;
 }
 
@@ -262,9 +269,8 @@ fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 
         present[index] = false;
         if (!programs.wanted(options.only, candidate.name)) continue;
         if (!runnable(candidate, builtin.os.tag)) {
-            try writer.print("timers_runner: {s} runs on Linux alone, skipping it\n", .{
-                candidate.name,
-            });
+            const reason = candidate.blocked orelse "it runs on Linux alone";
+            try writer.print("timers_runner: {s} is not run: {s}\n", .{ candidate.name, reason });
             continue;
         }
         const path = try program_path(options, candidate, index);
@@ -426,13 +432,16 @@ test "the two std.Io candidates share one program and differ only in the backend
     try testing.expectEqualStrings("uring", uring.arguments[1]);
 }
 
-test "only std.Io.Uring is Linux-only, and off Linux it is not runnable" {
+test "only std.Io.Uring is Linux-only and blocked, and neither host runs it" {
     for (candidates) |candidate| {
         const is_uring = std.mem.eql(u8, candidate.name, "std.Io.Uring");
         try testing.expectEqual(is_uring, candidate.linux_only);
-        // Both answers, on whichever host this test runs on.
+        // It is the only one that names a reason it cannot run at all.
+        try testing.expectEqual(is_uring, candidate.blocked != null);
+        // Both answers, on whichever host this test runs on. A blocked candidate is refused on
+        // Linux too: a program that exits at once is still a program the runner would start.
         try testing.expectEqual(!is_uring, runnable(candidate, .macos));
-        try testing.expect(runnable(candidate, .linux));
+        try testing.expectEqual(!is_uring, runnable(candidate, .linux));
     }
 }
 

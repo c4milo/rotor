@@ -44,6 +44,11 @@ const Candidate = struct {
     arguments: []const []const u8 = &.{},
     /// True for a candidate whose backend only exists on Linux: `std.Io.Uring` is the one.
     linux_only: bool = false,
+    /// Why this candidate cannot run at all, or null when it can. `std.Io.Uring` carries one: it
+    /// does not compile on the pinned Zig, which `uring_compiles` in its own program and
+    /// `bench/alternatives/README.md` also record, and all three change together. Without this the
+    /// runner started a program that exits at once, once per round per configuration.
+    blocked: ?[]const u8 = null,
     /// True when the server takes `--buffer-bytes`, which the runner sets to the payload. rotor
     /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
     /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
@@ -74,6 +79,7 @@ const candidates = [_]Candidate{
     },
     .{
         .name = "std.Io.Uring",
+        .blocked = "it does not compile on the pinned Zig",
         .program = "std_io_echo",
         .version = "0.16.0",
         .arguments = &.{ "--backend", "uring" },
@@ -331,6 +337,11 @@ fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 
             try writer.print("echo_runner: {s} runs on Linux alone, skipping it\n", .{
                 candidate.name,
             });
+            continue;
+        }
+        if (candidate.blocked) |reason| {
+            present_candidates[index] = false;
+            try writer.print("echo_runner: {s} is not run: {s}\n", .{ candidate.name, reason });
             continue;
         }
         const path = try program_path(options, candidate, index);

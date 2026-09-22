@@ -223,8 +223,11 @@ run-time flag says. So `std_io_echo` keeps the arm behind `uring_compiles`, whic
 the program builds for Linux with `threaded` alone.
 
 `docs/decisions/0003-speed-sources.md` names `std.Io.Uring` as an alternative, and it cannot be
-one on this compiler. Set `uring_compiles` to true when a Zig that builds it is pinned; nothing
-else changes.
+one on this compiler. Three places say so and change together when a Zig that builds it is pinned:
+`uring_compiles` in `std_io_echo.zig` and in `std_io_timers.zig`, and the `blocked` field of the
+candidate in `echo_runner.zig` and `timers_runner.zig`. The runners carry it because a program that
+exits at once is still a program started once per round per configuration, and on 2026-09-22 those
+attempts exhausted the descriptors of a run on Linux, through a leak in `client.zig` they exposed.
 
 ## rotor loses the 64 KiB row on io_uring, on clean rows
 
