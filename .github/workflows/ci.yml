@@ -184,8 +184,13 @@ jobs:
           zig build bench-echo
           zig build bench-crosscore
           zig build bench-alternatives
-      - name: Echo
-        run: ./zig-out/bin/echo_runner
+      # Held to `bench/baseline/echo.txt`, so a comparison checks itself: a candidate that gained on
+      # rotor past the margin fails this step and names the row. The baseline records ratios between
+      # candidates of one run, never throughputs, because this pool hands out a different processor
+      # each time (`bench/harness/baseline.zig`). This job is dispatched by hand, so the gate runs
+      # when a comparison runs; putting it on every push is a question of CI minutes, not of trust.
+      - name: Echo, against the baseline
+        run: ./zig-out/bin/echo_runner --baseline bench/baseline/echo.txt
       - name: Accept storm
         run: ./zig-out/bin/echo_runner --workload storm --port-base 31000
       - name: Timer churn, each library in its cheapest mode
