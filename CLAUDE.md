@@ -57,7 +57,7 @@ Zig and to this tree.
   that produced it, and the machine. A change whose gain the harness cannot show does not land
   as a `perf` commit.
 - **A speed claim the harness cannot reproduce does not go in a commit message or a document.**
-  Report the runs where rotor loses, the skewed ones included.
+  Report the runs where rotor loses, and the noisy ones.
 - **Bulk first.** Batch submission and batch completion are the default shape. The
   one-operation call is a helper built on top.
 - **Compact memory.** Order fields to cut padding, keep what one tick touches together, prefer
@@ -261,10 +261,11 @@ decision 8's experiment. No cell is filled yet. The owner made `orbstack` a name
 2026-09-20, so its column is filled from probes run on it; the `linux` column is the deployment
 target, needs a machine of the family stompy builds for, and that machine is not named.
 
-The echo comparison measures **1 core only**, on the owner's ruling of 2026-09-21: no competitor
-spreads TCP load across cores on kqueue, and libuv declines the capability there on purpose
-(`bench/competitors/README.md`). Decision 4's "1 core and N cores, even and skewed" is the owner's to
-amend, so the N-core machinery in `bench/echo/` and `report.zig`'s `Load.skewed` stay until it is.
+The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
+2026-09-21 and decision 19 records it, amending decision 4. The reason: no competitor spreads TCP
+load across cores on kqueue, and libuv declines the capability there on purpose
+(`bench/competitors/README.md`). `echo_runner` takes no `--cores`, `report.zig`'s `Load` has one
+value, and `rotor_echo` keeps `--cpu` and `--loops` for a person running it by hand.
 
 **The `mac` machine is busy.** An attempt on 2026-09-20 met a load average of 30 from another
 project's CBMC run, and was not recorded: `orbstack` runs on this machine's cores, so its numbers

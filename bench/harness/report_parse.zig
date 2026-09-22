@@ -221,7 +221,7 @@ const sample: Result = .{
         .cores = 2,
         .connections = 64,
         .payload_bytes = 65536,
-        .load = .skewed,
+        .load = .even,
     },
     .duration_ns = 1_000_000_007,
     .operations = 4_000_000,
@@ -288,7 +288,7 @@ test "a field out of the writer's order is refused rather than read" {
 test "a load the enum does not have is refused, and both that it has are read" {
     var buffer: [line_bytes_max]u8 = undefined;
     var result = sample;
-    for ([_]Load{ .even, .skewed }) |load| {
+    for ([_]Load{.even}) |load| {
         result.configuration.load = load;
         const line = try render(&result, &buffer);
         try testing.expectEqual(load, (try parse_line(line)).configuration.load);

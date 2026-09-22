@@ -195,7 +195,7 @@ test "a comparison marks every row rotor loses, in the first column, and counts 
     var writer: Writer = .fixed(&buffer);
     try render_comparison(&writer, &results);
     try testing.expectEqualStrings("Workload `echo`: 4 cores, 1024 connections, " ++
-        "4096 payload bytes, skewed load.\n\n" ++
+        "4096 payload bytes, even load.\n\n" ++
         "| verdict | candidate | version | operations per second | thousandths of rotor " ++
         "| p50 ns | p99 ns | p999 ns | overflow |\n" ++
         "|---|---|---|---:|---:|---:|---:|---:|---:|\n" ++

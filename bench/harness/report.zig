@@ -23,9 +23,14 @@ pub const ratio_thousandths = comparison.ratio_thousandths;
 /// Nanoseconds in one second.
 const ns_per_s: u64 = 1_000_000_000;
 
-/// How a run spread its load over its cores: evenly, or deliberately skewed onto one of them
-/// (decision 4, "When one core is hot").
-pub const Load = enum { even, skewed };
+/// How a run spread its load over its cores. One value, because every run spreads it evenly:
+/// decision 19 withdrew the skewed rows, since no competitor spreads TCP load across cores on
+/// kqueue and `SO_REUSEPORT` cannot aim a skew at a chosen loop on either kernel.
+///
+/// The field stays so a published row keeps its column and its key order. A line naming any other
+/// load is refused by `report_parse.zig`, which is the point: a row may not claim a load the
+/// harness cannot produce.
+pub const Load = enum { even };
 
 pub const Configuration = struct {
     cores: u32,
@@ -179,7 +184,7 @@ pub const fixtures = struct {
         .cores = echo_cores,
         .connections = echo_connections,
         .payload_bytes = echo_payload_bytes,
-        .load = .skewed,
+        .load = .even,
     };
 
     /// p50, p99 and p999, in nanoseconds.
@@ -246,11 +251,24 @@ test "per_second rounds down, scales a short span up and saturates" {
     try testing.expectEqual(@as(u64, std.math.maxInt(u64)), per_second(std.math.maxInt(u64), 1));
 }
 
+test "a row can name one load, and only the one the harness produces" {
+    // Decision 19 withdrew the skewed rows. This holds the enum to that: adding a value back is a
+    // change to what a row may claim, and it should fail here before it reaches a table.
+    const values = @typeInfo(Load).@"enum".fields;
+    try testing.expectEqual(@as(usize, 1), values.len);
+    try testing.expectEqualStrings("even", values[0].name);
+}
+
 test "two configurations are equal only when every field is" {
     const echo = fixtures.echo;
     var other = echo;
     try testing.expect(echo.equals(other));
-    other.load = .even;
+    // `load` is not varied here: it has one value since decision 19, so no two configurations can
+    // differ in it. Every field that can differ is varied below.
+    other.cores += 1;
+    try testing.expect(!echo.equals(other));
+    other = echo;
+    other.connections += 1;
     try testing.expect(!echo.equals(other));
     other = echo;
     other.payload_bytes += 1;
@@ -272,7 +290,7 @@ test "the Markdown header and a row, as exact text" {
         "| payload bytes | load | duration ns | operations | operations per second " ++
         "| p50 ns | p99 ns | p999 ns | overflow |\n" ++
         "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|\n" ++
-        "| echo | rotor | 0.1.0 | 4 | 1024 | 4096 | skewed | 10000000000 | 2000000 | 200000 " ++
+        "| echo | rotor | 0.1.0 | 4 | 1024 | 4096 | even | 10000000000 | 2000000 | 200000 " ++
         "| 10000 | 20000 | 30000 | 0 |\n", writer.buffered());
 }
 

@@ -518,9 +518,9 @@ behaviour `src/conformance/conformance_reuse_port.zig` measured as 0, 0, 0, 32 â
 to the last listener bound â€” which is the outcome libuv refuses to expose.
 
 **What this settled.** The owner ruled on 2026-09-21 that the echo comparison measures 1 core only,
-and that decision 4's "How it is checked" clause is theirs to amend. Until that amendment lands,
-no N-core or skewed row is built. Rows C17, C18 and C19 are unaffected: `bench/crosscore/` measures
-the cross-core message on its own, as decision 4 says.
+with no skewed rows, and `docs/decisions/0019-the-comparison-measures-one-core.md` records it and
+amends decision 4. Rows C17, C18 and C19 are unaffected: `bench/crosscore/` measures the cross-core
+message on its own, as decision 4 says.
 
 ## What this means for rotor's claims
 

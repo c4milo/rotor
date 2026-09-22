@@ -5,6 +5,9 @@ did not rule on the open questions below, so the implementation follows the prop
 each until a ruling changes it. This record argues with the owner's position in two places: file
 ownership and SO_REUSEPORT on macOS.
 
+Amended on 2026-09-21 by decision 19: the harness measures one core. The requests below for rows on
+N cores, and for skewed rows, are withdrawn. That record says why, and what is measured instead.
+
 Amended on 2026-09-19 by decision 10: the replay argument for shared-nothing now concerns a
 consumer's own simulator, which can reproduce one queue's order and cannot reproduce a race
 between threads. The simulator test under "How it is checked" is replaced by a test that posts
@@ -156,6 +159,11 @@ The harness measures every workload skewed as well as even, and reports the skew
 they are bad. They will be: a shared queue with stealing beats shared-nothing under skew, and
 the numbers should say by how much.
 
+**Withdrawn on 2026-09-21 by decision 19.** No competitor spreads TCP load across cores on kqueue,
+so there is nothing to compare a skewed row against, and `SO_REUSEPORT` cannot aim the skew at a
+chosen loop on either kernel. This claim is argued and not measured, and no document may present it
+as measured.
+
 ### Memory per core
 
 rotor allocates nothing. `init` takes the loop's memory as a slice and carves its tables from
@@ -196,7 +204,8 @@ make one core the limit for one file's read rate.
   connection it owns. That work belongs on threads the application starts, with results posted
   back.
 
-The skewed harness runs exist to show the second case in numbers.
+The skewed harness runs exist to show the second case in numbers. **Withdrawn on 2026-09-21 by
+decision 19:** there are no skewed runs, so the second case is argued and not measured.
 
 ### What another thread may do
 
@@ -240,8 +249,9 @@ submits.
 
 ## How it is checked
 
-- The harness runs every workload on 1 core and on N cores, even and skewed, and measures C17,
-  C18 and C19 on their own.
+- The harness runs every workload on 1 core and measures C17, C18 and C19 on their own. **Amended on
+  2026-09-21 by decision 19:** the N-core and skewed rows are withdrawn; C17 to C19 are unaffected,
+  because `bench/crosscore/` measures them without an echo row.
 - The harness asserts that the process's own threads equal the loop count, and it counts the
   kernel's io_uring worker threads per workload: zero on socket workloads, reported on file
   workloads.

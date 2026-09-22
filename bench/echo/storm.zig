@@ -129,16 +129,24 @@ pub fn run(options: Options) !Result {
         .workload = "accept storm",
         .candidate = options.candidate,
         .candidate_version = options.version,
-        .configuration = .{
-            .cores = 1,
-            .connections = options.connections,
-            // One byte, which is the probe and not a payload the workload is about.
-            .payload_bytes = 1,
-            .load = .even,
-        },
+        .configuration = configuration_of(options.connections),
         .duration_ns = measured_ns,
         .operations = storm.completed,
     }, &latencies);
+}
+
+/// What a storm row says about itself. It is a function so a test can read it: the `cores` field
+/// claimed 1 while the storm pinned nothing, and no test noticed (decision 19's rule about a row
+/// claiming what the harness did not do, applied to cores as well as load).
+fn configuration_of(count: u32) harness.report.Configuration {
+    return .{
+        // The storm pins no thread, so it claims no core.
+        .cores = 0,
+        .connections = count,
+        // One byte: the probe, not a payload this workload is about.
+        .payload_bytes = 1,
+        .load = .even,
+    };
 }
 
 fn close_all() void {
@@ -243,4 +251,15 @@ fn now_ns() u64 {
     }
     const seconds: u64 = @intCast(value.sec);
     return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
+}
+
+const testing = std.testing;
+
+test "a storm row claims no core, because the storm pins none" {
+    const configuration = configuration_of(64);
+    try testing.expectEqual(@as(u32, 0), configuration.cores);
+    try testing.expectEqual(@as(u32, 64), configuration.connections);
+    // One byte, and it is the probe rather than a payload the row is about.
+    try testing.expectEqual(@as(u32, 1), configuration.payload_bytes);
+    try testing.expectEqual(harness.report.Load.even, configuration.load);
 }

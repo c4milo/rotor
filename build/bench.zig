@@ -102,6 +102,7 @@ const tested = [_]Tested{
         .needs_loop = false,
     },
     .{ .name = "bench-reads-pool-tests", .root = "bench/files/reads_pool.zig", .needs_loop = true },
+    .{ .name = "bench-storm-tests", .root = "bench/echo/storm.zig", .needs_loop = true },
 };
 
 /// Runs the `test` blocks inside the bench programs. They are executables, so `zig build test`

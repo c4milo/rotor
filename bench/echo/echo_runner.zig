@@ -17,12 +17,16 @@
 //! `libxev_echo` come from `zig build bench-competitors`, which fetches and builds two libraries
 //! and is not part of `zig build test`.
 //!
+//! **Every candidate runs one loop, unpinned.** Decision 19 withdrew the core sweep and the skewed
+//! rows: no competitor spreads TCP load across cores on kqueue, so an N-core row would set rotor's
+//! loops against a competitor's one and measure the thread count. `rotor_echo` still takes `--cpu`
+//! and `--loops` for a person running it by hand; this runner passes neither.
+//!
 //! Every row carries the count of its runs and their spread, and `harness.series` marks a row
 //! whose runs disagree too much to decide anything. A comparison whose rows are all marked has
 //! measured the machine, not the candidates.
 const std = @import("std");
 const harness = @import("harness");
-const placement = harness.placement;
 const client = @import("client.zig");
 const storm = @import("storm.zig");
 
@@ -39,10 +43,6 @@ const Candidate = struct {
     arguments: []const []const u8 = &.{},
     /// True for a candidate whose backend only exists on Linux: `std.Io.Uring` is the one.
     linux_only: bool = false,
-    /// True when the server takes `--cpu`. Only rotor's does: a candidate the runner cannot place
-    /// leaves its end where the scheduler put it, and the row says `cores` 0 rather than claiming
-    /// a placement no one made.
-    takes_cpu: bool = false,
     /// True when the server takes `--buffer-bytes`, which the runner sets to the payload. rotor
     /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
     /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
@@ -57,7 +57,6 @@ const candidates = [_]Candidate{
         .program = "rotor_echo",
         .version = "this tree",
         .takes_buffer_bytes = true,
-        .takes_cpu = true,
     },
     .{
         .name = "libuv",
@@ -118,11 +117,6 @@ const Options = struct {
     only: []const u8 = "",
     port_base: u16 = port_first_default,
     workload: Workload = .echo,
-    /// Cores the server runs a loop on, one loop each. 1 is a single loop sharing the client's
-    /// core, which is C14; above that the loops take their own and the client takes the next,
-    /// which is C15 and decision 4's `listener_per_core`. 0 places nothing. macOS cannot pin at
-    /// all and reports so in each program's line.
-    cores: u32 = 0,
     directory: []const u8 = directory_default,
     connections: []const u32 = &connections_default,
     payloads: []const u32 = &payloads_default,
@@ -165,21 +159,7 @@ pub fn main(init: std.process.Init) !void {
     try writer.flush();
 }
 
-/// Loops a run may ask the server for, which is `rotor_echo`'s own limit.
-const cores_max = 16;
-
 const Configuration = struct { connections: u32, payload_bytes: u32 };
-
-/// The core the client takes. One core means it shares the server's, which is the loopback round
-/// trip C14 measures; two means the other one, which is C15. Anything else leaves it unplaced.
-fn client_cpu(cores: u32) ?usize {
-    // The server's loops take cores 0 through `cores - 1`, so the client takes the next one and
-    // the two ends never share. One core is the exception: there the client shares deliberately,
-    // which is the loopback round trip C14 names against C15.
-    if (cores == 0) return null;
-    if (cores == 1) return placement.first_cpu;
-    return placement.first_cpu + cores;
-}
 
 /// The smallest and largest buffer `rotor_echo` takes. Named here because the runner asks for
 /// one, and asking for a buffer the server refuses fails the run: the gate did exactly that with
@@ -265,18 +245,10 @@ fn one_run(
         });
         used += 2;
     }
-    // The server's cores. A candidate that runs one loop per core takes `--loops`, and its
-    // loops take the cores from `--cpu` upward; the client then takes one above them. rotor
-    // starts no thread of its own, so the count is the consumer's to pass (decision 4).
-    var cpu_text: [8]u8 = undefined;
-    var loops_text: [8]u8 = undefined;
-    if (candidate.takes_cpu and options.cores != 0) {
-        argv_buffer[used] = "--cpu";
-        argv_buffer[used + 1] = try std.fmt.bufPrint(&cpu_text, "{d}", .{placement.first_cpu});
-        argv_buffer[used + 2] = "--loops";
-        argv_buffer[used + 3] = try std.fmt.bufPrint(&loops_text, "{d}", .{options.cores});
-        used += 4;
-    }
+    // No `--cpu` and no `--loops`. Every candidate runs one loop, unpinned, because decision 19
+    // withdrew the core sweep: no competitor spreads TCP load across cores on kqueue, so an N-core
+    // row would compare rotor's loops against a competitor's one. `rotor_echo` still takes both
+    // options for a person running it by hand.
     const argv = argv_buffer[0..used];
 
     var child = try std.process.spawn(init.io, .{ .argv = argv, .stdout = .ignore });
@@ -303,8 +275,6 @@ fn one_run(
             .warmup_seconds = options.warmup_seconds,
             .candidate = candidate.name,
             .version = candidate.version,
-            .cpu = client_cpu(options.cores),
-            .cores = options.cores,
         }),
         // A storm is one burst, so it takes no span: what it is given is the burst's size.
         .storm => try storm.run(.{
@@ -406,9 +376,6 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--warmup")) {
         options.warmup_seconds = try std.fmt.parseInt(u64, value, 10);
-    } else if (std.mem.eql(u8, name, "--cores")) {
-        options.cores = try std.fmt.parseInt(u32, value, 10);
-        if (options.cores > cores_max) return error.CoresOutOfRange;
     } else if (std.mem.eql(u8, name, "--workload")) {
         options.workload = std.meta.stringToEnum(Workload, value) orelse
             return error.UnknownWorkload;
