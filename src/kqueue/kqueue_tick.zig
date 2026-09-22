@@ -112,7 +112,6 @@ test "a poll returns at once, and five hundred of them stay far under the kernel
     // polls are about 6 ms parked and under half a millisecond with the trigger. The bound sits
     // between, with room on both sides, so a build without `arm_poll` fails here.
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    const polls = 500;
     const bound_ns = 3 * core.constants.ns_per_ms;
     const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 0 };
     var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
@@ -120,10 +119,26 @@ test "a poll returns at once, and five hundred of them stay far under the kernel
     try loop.init(&memory, options);
     defer loop.deinit();
     var events: [4]Event = undefined;
-    const before = @import("kqueue_testing.zig").monotonic_ns();
-    for (0..polls) |_| try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
-    const elapsed_ns = @import("kqueue_testing.zig").monotonic_ns() - before;
-    try testing.expect(elapsed_ns < bound_ns);
+    // The best of several bursts, as the cost gates of `conformance_cost.zig` do it: other work on
+    // the machine makes a burst slower and never faster. One burst alone failed this test while a
+    // dependency compiled beside it (2026-09-22), and the 6 ms park it guards against cannot hide
+    // in a minimum: without the trigger every burst is over the bound.
+    var best_ns: u64 = std.math.maxInt(u64);
+    for (0..poll_attempts) |_| best_ns = @min(best_ns, try poll_burst_ns(&loop, &events));
+    try testing.expect(best_ns < bound_ns);
     // The trigger left nothing behind: the changelist is empty for the next tick.
     try testing.expectEqual(@as(u32, 0), loop.changes_used);
+}
+
+/// Bursts the test times, the best one deciding. Ten of them cost about five milliseconds with the
+/// trigger and sixty without, so a build that lost `arm_poll` still fails quickly.
+const poll_attempts = 10;
+
+/// Polls this loop `poll_polls` times and answers what the burst took. Every poll must report no
+/// event: a poll that found one would be timing something else.
+fn poll_burst_ns(loop: *Loop, events: []Event) !u64 {
+    const poll_polls = 500;
+    const before = @import("kqueue_testing.zig").monotonic_ns();
+    for (0..poll_polls) |_| try testing.expectEqual(@as(u32, 0), try loop.tick(events, 0));
+    return @import("kqueue_testing.zig").monotonic_ns() - before;
 }
