@@ -109,6 +109,7 @@ const Measurements = struct {
     p50_ns: u64,
     p99_ns: u64,
     p999_ns: u64,
+    p9999_ns: u64,
     overflow: u64,
 };
 
@@ -140,6 +141,7 @@ pub fn parse_line(line: []const u8) ParseError!Result {
         .p50_ns = measured.p50_ns,
         .p99_ns = measured.p99_ns,
         .p999_ns = measured.p999_ns,
+        .p9999_ns = measured.p9999_ns,
         .overflow = measured.overflow,
     };
 }
@@ -178,6 +180,8 @@ fn parse_measurements(scanner: *Scanner) ParseError!Measurements {
     const p99_ns = try scanner.number();
     try scanner.expect(",\"p999_ns\":");
     const p999_ns = try scanner.number();
+    try scanner.expect(",\"p9999_ns\":");
+    const p9999_ns = try scanner.number();
     try scanner.expect(",\"overflow\":");
     const overflow = try scanner.number();
     assert(scanner.index <= scanner.line.len);
@@ -188,6 +192,7 @@ fn parse_measurements(scanner: *Scanner) ParseError!Measurements {
         .p50_ns = p50_ns,
         .p99_ns = p99_ns,
         .p999_ns = p999_ns,
+        .p9999_ns = p9999_ns,
         .overflow = overflow,
     };
 }
@@ -229,6 +234,7 @@ const sample: Result = .{
     .p50_ns = 101,
     .p99_ns = 16_300,
     .p999_ns = 90_000,
+    .p9999_ns = 250_000,
     .overflow = 3,
 };
 
@@ -281,7 +287,7 @@ test "a field out of the writer's order is refused rather than read" {
     const swapped = "{\"workload\":\"w\",\"version\":\"v\",\"candidate\":\"c\"," ++
         "\"cores\":1,\"connections\":1,\"payload_bytes\":1,\"load\":\"even\"," ++
         "\"duration_ns\":1,\"operations\":1,\"operations_per_second\":1," ++
-        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"overflow\":0}";
+        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"p9999_ns\":1,\"overflow\":0}";
     try testing.expectError(error.Malformed, parse_line(swapped));
 }
 
@@ -297,7 +303,7 @@ test "a load the enum does not have is refused, and both that it has are read" {
     const unknown = "{\"workload\":\"w\",\"candidate\":\"c\",\"version\":\"v\"," ++
         "\"cores\":1,\"connections\":1,\"payload_bytes\":1,\"load\":\"lopsided\"," ++
         "\"duration_ns\":1,\"operations\":1,\"operations_per_second\":1," ++
-        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"overflow\":0}";
+        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"p9999_ns\":1,\"overflow\":0}";
     try testing.expectError(error.UnknownLoad, parse_line(unknown));
 }
 
@@ -313,13 +319,13 @@ test "a number past its field's range is refused rather than truncated" {
     const wide = "{\"workload\":\"w\",\"candidate\":\"c\",\"version\":\"v\"," ++
         "\"cores\":4294967296,\"connections\":1,\"payload_bytes\":1,\"load\":\"even\"," ++
         "\"duration_ns\":1,\"operations\":1,\"operations_per_second\":1," ++
-        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"overflow\":0}";
+        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"p9999_ns\":1,\"overflow\":0}";
     try testing.expectError(error.NumberTooLarge, parse_line(wide));
 
     const huge = "{\"workload\":\"w\",\"candidate\":\"c\",\"version\":\"v\"," ++
         "\"cores\":1,\"connections\":1,\"payload_bytes\":1,\"load\":\"even\"," ++
         "\"duration_ns\":18446744073709551616,\"operations\":1," ++
-        "\"operations_per_second\":1,\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"overflow\":0}";
+        "\"operations_per_second\":1,\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"p9999_ns\":1,\"overflow\":0}";
     try testing.expectError(error.NumberTooLarge, parse_line(huge));
 }
 
@@ -327,7 +333,7 @@ test "a field with no digits where a number belongs is refused" {
     const empty = "{\"workload\":\"w\",\"candidate\":\"c\",\"version\":\"v\"," ++
         "\"cores\":,\"connections\":1,\"payload_bytes\":1,\"load\":\"even\"," ++
         "\"duration_ns\":1,\"operations\":1,\"operations_per_second\":1," ++
-        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"overflow\":0}";
+        "\"p50_ns\":1,\"p99_ns\":1,\"p999_ns\":1,\"p9999_ns\":1,\"overflow\":0}";
     try testing.expectError(error.Malformed, parse_line(empty));
 }
 

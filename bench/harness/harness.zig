@@ -41,6 +41,7 @@ pub const Placement = placement.Placement;
 
 test {
     _ = histogram;
+    _ = @import("histogram_test.zig");
     _ = machine;
     _ = machine_block;
     _ = machine_proc;

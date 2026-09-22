@@ -37,6 +37,9 @@ const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
+/// One definition of a percentile for every candidate of a workload, so two of them
+/// cannot disagree about what p99 means. This file carried a copy until 2026-09-22.
+const percentile = harness.percentile;
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -220,9 +223,10 @@ fn report(init: std.process.Init, options: Options, churn: *Churn, span_ns: u64)
         .duration_ns = duration_ns,
         .operations = churn.fired,
         .operations_per_second = harness.report.per_second(churn.fired, duration_ns),
-        .p50_ns = percentile(samples, 500),
-        .p99_ns = percentile(samples, 990),
-        .p999_ns = percentile(samples, 999),
+        .p50_ns = percentile.nearest_rank(samples, percentile.p50),
+        .p99_ns = percentile.nearest_rank(samples, percentile.p99),
+        .p999_ns = percentile.nearest_rank(samples, percentile.p999),
+        .p9999_ns = percentile.nearest_rank(samples, percentile.p9999),
         // Nothing is clamped: a sample is kept as it was measured.
         .overflow = 0,
     };
@@ -231,16 +235,6 @@ fn report(init: std.process.Init, options: Options, churn: *Churn, span_ns: u64)
     var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     try result.render_json_line(&out.interface);
     try out.interface.flush();
-}
-
-const per_mille = 1000;
-
-/// The nearest-rank percentile of sorted `samples`, in parts per thousand.
-fn percentile(samples: []const u64, parts_per_thousand: u64) u64 {
-    if (samples.len == 0) return 0;
-    const rank = (samples.len * parts_per_thousand + per_mille - 1) / per_mille;
-    const index = @min(@max(rank, 1) - 1, samples.len - 1);
-    return samples[index];
 }
 
 const now_ns = harness.clock.now_ns;

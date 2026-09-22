@@ -391,6 +391,7 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
         .p50_ns = percentile.nearest_rank(samples, percentile.p50),
         .p99_ns = percentile.nearest_rank(samples, percentile.p99),
         .p999_ns = percentile.nearest_rank(samples, percentile.p999),
+        .p9999_ns = percentile.nearest_rank(samples, percentile.p9999),
         .overflow = 0,
     };
 

@@ -93,7 +93,7 @@ pub const Series = struct {
         return median_of(values[0..series.runs.len]);
     }
 
-    /// The middle run's p50, p99 and p999, each taken across the runs on its own.
+    /// The middle run's p50, p99, p999 and p9999, each taken across the runs on its own.
     pub fn median_p50_ns(series: Series) u64 {
         return series.median_latency(latency_p50);
     }
@@ -104,6 +104,10 @@ pub const Series = struct {
 
     pub fn median_p999_ns(series: Series) u64 {
         return series.median_latency(latency_p999);
+    }
+
+    pub fn median_p9999_ns(series: Series) u64 {
+        return series.median_latency(latency_p9999);
     }
 
     /// The fastest run's throughput, and the slowest run's.
@@ -151,7 +155,7 @@ pub const Series = struct {
         try text.markdown_cell(writer, first.candidate);
         try writer.writeAll(" | ");
         try text.markdown_cell(writer, first.candidate_version);
-        try writer.print(" | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | ", .{
+        try writer.print(" | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | {d} | {d} | ", .{
             first.configuration.cores,
             first.configuration.connections,
             first.configuration.payload_bytes,
@@ -160,6 +164,8 @@ pub const Series = struct {
             series.median_per_second(),
             series.median_p50_ns(),
             series.median_p99_ns(),
+            series.median_p999_ns(),
+            series.median_p9999_ns(),
             series.spread_percent(),
         });
         try series.render_other_work(writer);
@@ -188,6 +194,7 @@ pub const Series = struct {
 const latency_p50 = "p50_ns";
 const latency_p99 = "p99_ns";
 const latency_p999 = "p999_ns";
+const latency_p9999 = "p9999_ns";
 
 /// What a row says when its runs disagree too much to decide anything. Capitals, as
 /// report_comparison's loss mark is, so a reader who skims cannot miss it.
@@ -203,9 +210,10 @@ const other_work_unknown = "unknown";
 
 pub const markdown_header =
     "| workload | candidate | version | cores | connections | payload bytes | load " ++
-    "| runs | median per second | median p50 ns | median p99 ns | spread percent " ++
+    "| runs | median per second | median p50 ns | median p99 ns | median p999 ns " ++
+    "| median p9999 ns | spread percent " ++
     "| other work peak /100 | other work mean /100 | verdict |\n" ++
-    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|\n";
+    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n";
 
 /// Sorts `values` in place and returns the middle one. An even count takes the lower of the two
 /// middle values, so the answer is always a run that happened.
@@ -234,6 +242,7 @@ fn measured(operations_per_second: u64, p50_ns: u64) Result {
         .p50_ns = p50_ns,
         .p99_ns = p50_ns * 2,
         .p999_ns = p50_ns * 4,
+        .p9999_ns = p50_ns * 5,
         .overflow = 0,
     };
 }
@@ -269,6 +278,7 @@ test "the median is a run that happened, and an outlier does not move it" {
     try testing.expectEqual(@as(u64, 11), series.median_p50_ns());
     try testing.expectEqual(@as(u64, 22), series.median_p99_ns());
     try testing.expectEqual(@as(u64, 44), series.median_p999_ns());
+    try testing.expectEqual(@as(u64, 55), series.median_p9999_ns());
     try testing.expectEqual(@as(u64, 900), series.fastest_per_second());
     try testing.expectEqual(@as(u64, 100), series.slowest_per_second());
 

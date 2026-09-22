@@ -26,6 +26,9 @@
 const std = @import("std");
 const xev = @import("xev");
 const harness = @import("harness");
+/// One definition of a percentile for every candidate of a workload, so two of them
+/// cannot disagree about what p99 means. This file carried a copy until 2026-09-22.
+const percentile = harness.percentile;
 
 const Result = harness.Result;
 const now_ns = harness.clock.now_ns;
@@ -43,7 +46,6 @@ const samples_max = 1 << 17;
 const ns_per_us: u64 = 1000;
 const ns_per_ms: u64 = 1_000_000;
 const us_per_ms: u64 = 1000;
-const per_mille: u64 = 1000;
 
 const Options = struct {
     timers: u32 = 1024,
@@ -91,13 +93,6 @@ fn on_timer(
     return .disarm;
 }
 
-fn percentile(sorted: []const u64, parts_per_thousand: u64) u64 {
-    if (sorted.len == 0) return 0;
-    const rank = (sorted.len * parts_per_thousand + per_mille - 1) / per_mille;
-    const index = @min(@max(rank, 1) - 1, sorted.len - 1);
-    return sorted[index];
-}
-
 fn report(init: std.process.Init, options: Options, span_ns: u64) !void {
     const samples = lateness_ns[0..taken];
     std.mem.sort(u64, samples, {}, std.sort.asc(u64));
@@ -116,9 +111,10 @@ fn report(init: std.process.Init, options: Options, span_ns: u64) !void {
         .duration_ns = duration_ns,
         .operations = fired,
         .operations_per_second = harness.report.per_second(fired, duration_ns),
-        .p50_ns = percentile(samples, 500),
-        .p99_ns = percentile(samples, 990),
-        .p999_ns = percentile(samples, 999),
+        .p50_ns = percentile.nearest_rank(samples, percentile.p50),
+        .p99_ns = percentile.nearest_rank(samples, percentile.p99),
+        .p999_ns = percentile.nearest_rank(samples, percentile.p999),
+        .p9999_ns = percentile.nearest_rank(samples, percentile.p9999),
         .overflow = 0,
     };
 

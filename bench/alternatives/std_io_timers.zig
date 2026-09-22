@@ -40,6 +40,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const harness = @import("harness");
+/// One definition of a percentile for every candidate of a workload, so two of them
+/// cannot disagree about what p99 means. This file carried a copy until 2026-09-22.
+const percentile = harness.percentile;
 
 const Io = std.Io;
 const Result = harness.Result;
@@ -59,7 +62,6 @@ const timers_max = 16384;
 const samples_max = 1 << 17;
 
 const ns_per_us: u64 = 1000;
-const per_mille: u64 = 1000;
 
 /// False while `std.Io.Uring` does not compile, which on Zig 0.16.0 is always: `dirOpen` returns
 /// an error its own `Dir.OpenError` does not name, and naming the type is enough to reach it.
@@ -202,9 +204,10 @@ fn report(init: std.process.Init, options: Options, span_ns: u64) !void {
         .duration_ns = duration_ns,
         .operations = count,
         .operations_per_second = harness.report.per_second(count, duration_ns),
-        .p50_ns = percentile(samples, 500),
-        .p99_ns = percentile(samples, 990),
-        .p999_ns = percentile(samples, 999),
+        .p50_ns = percentile.nearest_rank(samples, percentile.p50),
+        .p99_ns = percentile.nearest_rank(samples, percentile.p99),
+        .p999_ns = percentile.nearest_rank(samples, percentile.p999),
+        .p9999_ns = percentile.nearest_rank(samples, percentile.p9999),
         // Nothing is clamped: a sample is kept as it was measured.
         .overflow = 0,
     };
@@ -213,14 +216,6 @@ fn report(init: std.process.Init, options: Options, span_ns: u64) !void {
     var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     try result.render_json_line(&out.interface);
     try out.interface.flush();
-}
-
-/// The nearest-rank percentile of sorted `samples`, in parts per thousand.
-fn percentile(samples: []const u64, parts_per_thousand: u64) u64 {
-    if (samples.len == 0) return 0;
-    const rank = (samples.len * parts_per_thousand + per_mille - 1) / per_mille;
-    const index = @min(@max(rank, 1) - 1, samples.len - 1);
-    return samples[index];
 }
 
 fn parse(init: std.process.Init) !Options {
@@ -306,22 +301,6 @@ test "a backend is named exactly, and an unknown one is refused" {
     try testing.expectError(error.UnknownArgument, parse_backend(""));
     try testing.expectError(error.UnknownArgument, parse_backend("thread"));
     try testing.expectError(error.UnknownArgument, parse_backend("threadedx"));
-}
-
-test "the percentile is the nearest rank, and an empty sample is zero" {
-    try testing.expectEqual(@as(u64, 0), percentile(&.{}, 500));
-
-    const one = [_]u64{7};
-    try testing.expectEqual(@as(u64, 7), percentile(&one, 500));
-    try testing.expectEqual(@as(u64, 7), percentile(&one, 999));
-
-    // Ten sorted samples: the 500th per mille is rank 5, which is index 4.
-    const ten = [_]u64{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
-    try testing.expectEqual(@as(u64, 4), percentile(&ten, 500));
-    try testing.expectEqual(@as(u64, 9), percentile(&ten, 990));
-    try testing.expectEqual(@as(u64, 9), percentile(&ten, 999));
-    // The smallest rank is 1, never 0, so the lowest percentile still names a sample.
-    try testing.expectEqual(@as(u64, 0), percentile(&ten, 1));
 }
 
 test "one counter hands out every slot once, and stops storing past the sample limit" {

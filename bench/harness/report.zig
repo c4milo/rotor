@@ -70,6 +70,10 @@ pub const Result = struct {
     p50_ns: u64,
     p99_ns: u64,
     p999_ns: u64,
+    /// The tail a regression baseline watches. It needs 10,000 operations in the run to have a rank
+    /// of its own, so `echo_runner` scales a run's length to its payload; a run with fewer reports
+    /// the largest latency it saw and the baseline says how many values stood behind it.
+    p9999_ns: u64,
     /// Latencies above the histogram's range. When this is not 0 the tail was clamped, and the
     /// row says so.
     overflow: u64,
@@ -90,6 +94,7 @@ pub const Result = struct {
             .p50_ns = latencies.percentile(histogram_module.p50),
             .p99_ns = latencies.percentile(histogram_module.p99),
             .p999_ns = latencies.percentile(histogram_module.p999),
+            .p9999_ns = latencies.percentile(histogram_module.p9999),
             .overflow = latencies.overflow,
         };
     }
@@ -107,8 +112,8 @@ pub const Result = struct {
         try writer.print("{d} | {d} | {d} | ", .{
             result.duration_ns, result.operations, result.operations_per_second,
         });
-        try writer.print("{d} | {d} | {d} | {d} |\n", .{
-            result.p50_ns, result.p99_ns, result.p999_ns, result.overflow,
+        try writer.print("{d} | {d} | {d} | {d} | {d} |\n", .{
+            result.p50_ns, result.p99_ns, result.p999_ns, result.p9999_ns, result.overflow,
         });
     }
 
@@ -131,9 +136,10 @@ pub const Result = struct {
         try writer.print(",\"operations_per_second\":{d},\"p50_ns\":{d},\"p99_ns\":{d}", .{
             result.operations_per_second, result.p50_ns, result.p99_ns,
         });
-        try writer.print(",\"p999_ns\":{d},\"overflow\":{d}}}\n", .{
-            result.p999_ns, result.overflow,
+        try writer.print(",\"p999_ns\":{d},\"p9999_ns\":{d}", .{
+            result.p999_ns, result.p9999_ns,
         });
+        try writer.print(",\"overflow\":{d}}}\n", .{result.overflow});
     }
 };
 
@@ -141,8 +147,8 @@ pub const Result = struct {
 pub const markdown_header =
     "| workload | candidate | version | cores | connections | payload bytes | load " ++
     "| duration ns | operations | operations per second " ++
-    "| p50 ns | p99 ns | p999 ns | overflow |\n" ++
-    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|\n";
+    "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
+    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 
 /// The two header lines of a table of results.
 pub fn render_markdown_header(writer: *Writer) Writer.Error!void {
@@ -179,6 +185,7 @@ pub const fixtures = struct {
     const rotor_p50_ns = 10_000;
     const rotor_p99_ns = 20_000;
     const rotor_p999_ns = 30_000;
+    const rotor_p9999_ns = 40_000;
 
     pub const echo: Configuration = .{
         .cores = echo_cores,
@@ -188,7 +195,7 @@ pub const fixtures = struct {
     };
 
     /// p50, p99 and p999, in nanoseconds.
-    pub const Latencies = struct { u64, u64, u64 };
+    pub const Latencies = struct { u64, u64, u64, u64 };
 
     /// A result of the `echo` configuration: a candidate, its throughput and its latencies.
     pub fn echo_result(
@@ -197,7 +204,7 @@ pub const fixtures = struct {
         rate: u64,
         latencies: Latencies,
     ) Result {
-        const p50_ns, const p99_ns, const p999_ns = latencies;
+        const p50_ns, const p99_ns, const p999_ns, const p9999_ns = latencies;
         return .{
             .workload = "echo",
             .candidate = candidate,
@@ -209,11 +216,17 @@ pub const fixtures = struct {
             .p50_ns = p50_ns,
             .p99_ns = p99_ns,
             .p999_ns = p999_ns,
+            .p9999_ns = p9999_ns,
             .overflow = 0,
         };
     }
 
-    const rotor_latencies: Latencies = .{ rotor_p50_ns, rotor_p99_ns, rotor_p999_ns };
+    const rotor_latencies: Latencies = .{
+        rotor_p50_ns,
+        rotor_p99_ns,
+        rotor_p999_ns,
+        rotor_p9999_ns,
+    };
     pub const rotor_result = echo_result("rotor", "0.1.0", rotor_rate, rotor_latencies);
 };
 
@@ -288,10 +301,10 @@ test "the Markdown header and a row, as exact text" {
     try rotor_result.render_markdown_row(&writer);
     try testing.expectEqualStrings("| workload | candidate | version | cores | connections " ++
         "| payload bytes | load | duration ns | operations | operations per second " ++
-        "| p50 ns | p99 ns | p999 ns | overflow |\n" ++
-        "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|\n" ++
+        "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
+        "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n" ++
         "| echo | rotor | 0.1.0 | 4 | 1024 | 4096 | even | 10000000000 | 2000000 | 200000 " ++
-        "| 10000 | 20000 | 30000 | 0 |\n", writer.buffered());
+        "| 10000 | 20000 | 30000 | 40000 | 0 |\n", writer.buffered());
 }
 
 test "a JSON line, as exact text, with its names escaped" {
@@ -305,7 +318,7 @@ test "a JSON line, as exact text, with its names escaped" {
         "\"version\":\"0.1.0\",\"cores\":4,\"connections\":1024,\"payload_bytes\":4096," ++
         "\"load\":\"even\",\"duration_ns\":10000000000,\"operations\":2000000," ++
         "\"operations_per_second\":200000,\"p50_ns\":10000,\"p99_ns\":20000," ++
-        "\"p999_ns\":30000,\"overflow\":7}\n", writer.buffered());
+        "\"p999_ns\":30000,\"p9999_ns\":40000,\"overflow\":7}\n", writer.buffered());
 
     var escaped: Writer = .fixed(&buffer);
     result.workload = "echo \"4 KiB\"";

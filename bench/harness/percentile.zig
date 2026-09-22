@@ -10,22 +10,24 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
-/// Parts the rank is expressed in: 500 is the median, 990 the 99th, 999 the 999th.
-pub const per_mille: u64 = 1000;
+/// Parts the rank is expressed in. Ten thousand and not a thousand, because p9999 has no whole
+/// number of parts per mille: the tail a regression baseline watches would be unsayable.
+pub const per_ten_thousand: u64 = 10_000;
 
-pub const p50: u64 = 500;
-pub const p99: u64 = 990;
-pub const p999: u64 = 999;
+pub const p50: u64 = 5_000;
+pub const p99: u64 = 9_900;
+pub const p999: u64 = 9_990;
+pub const p9999: u64 = 9_999;
 
-/// The value at `parts_per_thousand` of `sorted`, by the nearest-rank rule. `sorted` must be sorted
-/// ascending; an empty sample answers 0.
+/// The value at `parts` of `sorted`, by the nearest-rank rule. `sorted` must be sorted ascending;
+/// an empty sample answers 0.
 ///
 /// The rank rounds up, so p99 of 100 samples is the 99th and not the 98th, and the index is clamped
 /// into the sample so no percentile can read past its end.
-pub fn nearest_rank(sorted: []const u64, parts_per_thousand: u64) u64 {
-    assert(parts_per_thousand <= per_mille);
+pub fn nearest_rank(sorted: []const u64, parts: u64) u64 {
+    assert(parts <= per_ten_thousand);
     if (sorted.len == 0) return 0;
-    const rank = (sorted.len * parts_per_thousand + per_mille - 1) / per_mille;
+    const rank = (sorted.len * parts + per_ten_thousand - 1) / per_ten_thousand;
     const index = @min(@max(rank, 1) - 1, sorted.len - 1);
     assert(index < sorted.len);
     return sorted[index];
@@ -44,7 +46,7 @@ test "an empty sample has no percentile, and one sample is every percentile" {
 }
 
 test "the rank rounds up, so a percentile never reads below the value it names" {
-    // Ten samples: the 990th per mille is rank 9.9, which rounds to 10 and reads index 9. Rounding
+    // Ten samples: p99 is rank 9.9, which rounds to 10 and reads index 9. Rounding
     // down would report the 9th value as the 99th percentile, which understates every tail.
     const ten = [_]u64{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
     try testing.expectEqual(@as(u64, 4), nearest_rank(&ten, p50));
@@ -64,7 +66,23 @@ test "the lowest rank is a sample and not an index below the sample" {
     const ten = [_]u64{ 10, 11, 12, 13, 14, 15, 16, 17, 18, 19 };
     try testing.expectEqual(@as(u64, 10), nearest_rank(&ten, 0));
     try testing.expectEqual(@as(u64, 10), nearest_rank(&ten, 1));
-    try testing.expectEqual(@as(u64, 19), nearest_rank(&ten, per_mille));
+    try testing.expectEqual(@as(u64, 19), nearest_rank(&ten, per_ten_thousand));
+}
+
+test "p9999 has a rank of its own once the sample is large enough" {
+    // Ten thousand samples: p999 is rank 9,990 and p9999 is rank 9,999, nine values apart. Below
+    // ten thousand samples the two collapse, which is why a run's length is scaled to its payload.
+    var many: [10_000]u64 = undefined;
+    for (&many, 0..) |*value, index| value.* = index;
+    try testing.expectEqual(@as(u64, 9_989), nearest_rank(&many, p999));
+    try testing.expectEqual(@as(u64, 9_998), nearest_rank(&many, p9999));
+
+    // A hundred samples put both ranks past the end, so both clamp to the largest value and p9999
+    // says nothing p999 does not. That is the floor a run has to clear for the tail to mean
+    // anything, and it is why `echo_runner` scales a run's length to its payload.
+    const hundred = many[0..100];
+    try testing.expectEqual(@as(u64, 99), nearest_rank(hundred, p999));
+    try testing.expectEqual(@as(u64, 99), nearest_rank(hundred, p9999));
 }
 
 test "a repeated value is answered, not averaged" {
