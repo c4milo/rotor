@@ -113,6 +113,11 @@ const tested = [_]Tested{
     // is named here. The guard below requires a program with a `main`; naming one without is how
     // a file like this is covered.
     .{ .name = "bench-echo-client-tests", .root = "bench/echo/client.zig", .needs_loop = true },
+    .{
+        .name = "bench-echo-runner-tests",
+        .root = "bench/echo/echo_runner.zig",
+        .needs_loop = true,
+    },
 };
 
 /// The most bytes of one bench program `require_every_test_runs` reads. The longest is under

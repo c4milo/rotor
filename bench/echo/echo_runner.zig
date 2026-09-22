@@ -49,6 +49,12 @@ const Candidate = struct {
     /// `bench/alternatives/README.md` also record, and all three change together. Without this the
     /// runner started a program that exits at once, once per round per configuration.
     blocked: ?[]const u8 = null,
+    /// Why this candidate does not run the accept storm, or null when it does. The accumulate
+    /// shape carries one: it echoes when it holds a whole message, and the storm's message is one
+    /// probe byte against a 4 KiB buffer, so the server never replies and the run stalls. Six runs
+    /// died that way on 2026-09-22 before this field existed. The storm measures what an accept
+    /// costs, which both rotor shapes pay the same way, so the row carried nothing either.
+    storm_blocked: ?[]const u8 = null,
     /// True when the server takes `--buffer-bytes`, which the runner sets to the payload. rotor
     /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
     /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
@@ -76,6 +82,7 @@ const candidates = [_]Candidate{
         .version = "this tree",
         .arguments = &.{ "--shape", "accumulate" },
         .takes_buffer_bytes = true,
+        .storm_blocked = "it echoes a whole message, and the storm's message is one byte",
     },
     .{
         .name = "libuv",
@@ -336,6 +343,15 @@ fn wanted(options: Options, name: []const u8) bool {
     return false;
 }
 
+/// Why this candidate does not run `workload`, or null when it runs it. Both reasons print the
+/// same line, because a reader of the table needs the same thing from either: the row is absent
+/// and this is why.
+fn unavailable(candidate: Candidate, workload: Workload) ?[]const u8 {
+    if (candidate.blocked) |reason| return reason;
+    if (workload == .storm) return candidate.storm_blocked;
+    return null;
+}
+
 /// Marks every candidate whose program is on disk, names the ones that are not, and returns how
 /// many are there.
 fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 {
@@ -352,7 +368,7 @@ fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 
             });
             continue;
         }
-        if (candidate.blocked) |reason| {
+        if (unavailable(candidate, options.workload)) |reason| {
             present_candidates[index] = false;
             try writer.print("echo_runner: {s} is not run: {s}\n", .{ candidate.name, reason });
             continue;
@@ -424,4 +440,34 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     } else {
         return error.UnknownArgument;
     }
+}
+
+// Tests. `build/bench.zig` names this file in `tested`, so these run under `zig build test`.
+
+const testing = std.testing;
+
+fn candidate_named(name: []const u8) ?Candidate {
+    for (candidates) |candidate| {
+        if (std.mem.eql(u8, candidate.name, name)) return candidate;
+    }
+    return null;
+}
+
+test "the accumulate shape runs echo and not the storm, and the default shape runs both" {
+    const accumulate = candidate_named("rotor (accumulate)") orelse return error.NoCandidate;
+    try testing.expect(unavailable(accumulate, .echo) == null);
+    // Without this the storm stalls: the shape waits for a whole message and gets one byte.
+    try testing.expect(unavailable(accumulate, .storm) != null);
+
+    // The storm still has a rotor row, so removing the one above loses no workload.
+    const default_shape = candidate_named("rotor") orelse return error.NoCandidate;
+    try testing.expect(unavailable(default_shape, .echo) == null);
+    try testing.expect(unavailable(default_shape, .storm) == null);
+}
+
+test "a candidate blocked outright is blocked in every workload" {
+    const blocked = candidate_named("std.Io.Uring") orelse return error.NoCandidate;
+    try testing.expect(blocked.blocked != null);
+    try testing.expect(unavailable(blocked, .echo) != null);
+    try testing.expect(unavailable(blocked, .storm) != null);
 }
