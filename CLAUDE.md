@@ -38,9 +38,10 @@ The architecture depends on every rule in this section.
    are tested with fabricated completions. The surface names no kernel type, so a consumer that
    needs deterministic replay substitutes its own twin.
 4. **Shared-nothing.** A loop belongs to one thread. It holds no lock, starts no thread, and
-   never moves work between cores on its own. The one call another thread may make is `post`
-   (decision 4). A caller may hand a loop threads the loop itself never starts: decision 18
-   allows a caller-supplied pool for the operations a backend cannot do without blocking.
+   never moves work between cores on its own. The one call another thread may make is `post`,
+   through its own loop or, for a thread that has no loop, through a `Remote` (decision 4). A
+   caller may hand a loop threads the loop itself never starts: decision 18 allows a
+   caller-supplied pool for the operations a backend cannot do without blocking.
 5. **Every operation ends with exactly one final event**, and its buffer belongs to the loop
    until then (decision 5).
 6. **Invariants are code.** A violated invariant halts, and a property test that finds one
@@ -254,8 +255,8 @@ row of `docs/costs.md` that either machine can measure.
 Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it
 ahead of measurement. On kqueue a loop's `file_policy` is `refuse` by default, so **a file operation
 there now needs a policy named at init**: a caller that wants the old inline behaviour asks for
-`blocking`. `Remote` is still not built; the offload needed less, and decisions 4, 17 and 18 all
-record that.
+`blocking`. `Remote` was built on 2026-09-22: `post` for a thread that has no loop, one per
+backend, exported from `src/rotor.zig`. Decision 4 records what it settled.
 
 Measurement is next, and deferred: fill `docs/costs.md` from serial runs on a quiet machine, and run
 decision 8's experiment. No cell is filled yet. The owner made `orbstack` a named machine on

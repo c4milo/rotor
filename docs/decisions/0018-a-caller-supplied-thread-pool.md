@@ -96,8 +96,9 @@ the worker calls when it is done". The second of those *is* the sender this need
 narrower than `Remote` in three ways: it carries one operation's result rather than any message, it
 is reached through a function pointer rather than a registered handle, and it counts against nothing
 in `loops_max`. So what was built on 2026-09-21 is what this record already described, and
-`Remote` — a handle any thread may post anything through — is still owed to
-`0017-the-layer-that-owns-the-loop.md`'s DNS worker, which is the consumer that should shape it.
+`Remote` — a handle any thread may post anything through — was owed to
+`0017-the-layer-that-owns-the-loop.md`'s DNS worker, and was built on 2026-09-22
+(`0004-threading.md`, "What another thread may do").
 
 The kqueue backend had most of the machinery: `kqueue_mailbox.zig`'s `Mailbox`, with `push`,
 `pop_into` and the `EVFILT_USER` wake, used for one loop posting to another. What was added:

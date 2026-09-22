@@ -214,16 +214,47 @@ loop uses a `Remote`, a handle registered at init that counts against `loops_max
 is the producer end of a ring pair, and on io_uring it is a small ring created for that thread,
 used only to submit `MSG_RING`.
 
-**`Remote` is described here and exists in no file under `src/`**, found on 2026-09-20 and
-recorded by `0017-the-layer-that-owns-the-loop.md`. A thread that owns no loop still cannot `post`:
-`submit` calls `assert_owner`, which halts rather than returning an error.
+**`Remote` was built on 2026-09-22**, after `0017-the-layer-that-owns-the-loop.md` found it
+described here and absent from `src/`. It is `src/kqueue/kqueue_remote.zig` and
+`src/uring/uring_remote.zig`, with what they share in `src/core/remote.zig`, and `src/rotor.zig`
+exports it. What it settled that this paragraph did not say:
+
+- A `Remote` claims a registry slot with a sentinel, `descriptor_remote`, distinct from the empty
+  slot. Claiming one twice halts, and a `post` aimed at a remote's slot is answered
+  `loop_not_found` by the check every backend already made on a negative descriptor.
+- `Remote.post` returns `core.remote.PostError` where a loop's `post` produces an event, because a
+  remote has nowhere to deliver an event. The errors a loop's post can also report keep the names
+  `event.error_of` gives them: `MailboxFull`, `LoopNotFound`, `SystemResources`, `Unexpected`. On
+  io_uring the errno goes through the same map a loop's post uses, `uring_errno.zig`. kqueue
+  answers only the first two.
+- On io_uring `post` submits one `MSG_RING` and reads the kernel's answer before it returns. On
+  Linux 6.1, and on 6.10 and later, the answer is posted inside the `io_uring_enter` that submits,
+  so the post is one system call. On 6.3 to 6.9 a `MSG_RING` to a `DEFER_TASKRUN` target runs as
+  task work of the target's thread and the answer waits for that thread to run (recalled from
+  `io_uring/msg_ring.c`, not read). So the enter waits `remote_wait_ns` at most, and a post whose
+  answer has not come is `Unanswered`: the message may still land, and until the answer arrives the
+  remote refuses every post. That is the fifth error, and the one a loop can never report.
+- The ring holds `constants.remote_entries` entries, one: a post never submits while an earlier
+  entry is unanswered, so one entry and a completion ring of two are enough.
+- A `Remote` belongs to one thread. `init` records the thread's identity, the address of the
+  thread-local marker `core/tables.zig` keeps for a loop, and `post` and `deinit` halt on any
+  other thread.
+- A registry claim on kqueue is `.acq_rel`, not `.release`: the claimant of a released id becomes
+  the producer of that id's rings, and the claim is the one edge that carries the previous holder's
+  last stores to it (`kqueue_mailbox.zig`, the ordering argument). The application decides when an
+  id may be claimed again, and a message left in a ring by a previous holder is delivered to the
+  next loop that claims the receiving id.
+- Whether `MailboxFull` can happen at all is the backend's, and `post_bounded`, exported from
+  `src/rotor.zig`, says: yes on kqueue, whose mailbox holds `mailbox_messages`; on io_uring only
+  when the kernel is out of memory, because `IORING_FEAT_NODROP` keeps an overflowing completion
+  in a kernel list.
 
 **The offload built on 2026-09-21 is not `Remote` and does not replace it.**
 `0018-a-caller-supplied-thread-pool.md` lets a worker thread hand back the result of one file
 operation, through a function pointer and a ring of its own, and nothing else: it carries no message
 a caller chose, it is reached through no registered handle, and it counts against nothing in
-`loops_max`. So a thread that owns no loop can end an operation the loop gave it, and still cannot
-post. `Remote` remains owed, and `0017`'s DNS worker is the consumer that should shape it.
+`loops_max`. A thread that owns no loop ends an operation the loop gave it through the offload,
+and posts a message of its own through a `Remote`.
 
 Everything else is the owner's alone. What the loop does when another thread calls it:
 

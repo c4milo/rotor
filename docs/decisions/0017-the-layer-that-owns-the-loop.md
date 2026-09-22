@@ -201,6 +201,10 @@ it describes (CLAUDE.md).
    ring, which is that record's own open question 1 and not a handle any thread may post through. So
    the reason `Remote` was first wanted has gone, and this record's DNS worker is now its only named
    consumer. It should shape it.
+
+   **Built on 2026-09-22**, on the owner's instruction, ahead of that consumer. `0004-threading.md`
+   records what was settled. The DNS library is being written in its own repository and will take a
+   loop rather than own sockets, so the first caller of `Remote` is still to come.
    `0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes
    on a thread that owns no loop. That also settles the resolver route in question 4: a
    `getaddrinfo` worker uses the same door.
