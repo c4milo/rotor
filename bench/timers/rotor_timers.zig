@@ -1,11 +1,21 @@
 //! rotor_timers: the timer churn workload on rotor, which measures the one part of a loop that
 //! touches no socket and no file.
 //!
-//! Run:  rotor_timers [--timers N] [--period-us U] [--seconds S]
+//! Run:  rotor_timers [--timers N] [--period-us U] [--seconds S] [--mode oneshot|repeating]
 //!
-//! `timers` timers are armed at once, each for `period_us`. When one fires it is armed again, so
-//! the count in flight never changes and the loop's heap is worked continuously: every fire is a
-//! pop and every re-arm a push. That is the churn the workload is named for.
+//! `timers` timers are armed at once, each for `period_us`, and the count in flight never changes,
+//! so the loop's heap is worked continuously: every fire is a pop and every re-arm a push. That is
+//! the churn the workload is named for. Who re-arms is the mode:
+//!
+//!   - `oneshot`: the caller arms each timer again when it fires, which is what libuv and libxev
+//!     are driven to do in `bench/alternatives/`. Every fire costs an event out and a submit in.
+//!   - `repeating`: `Operation.Timer.repeat_ns` (decision 14), so the timer stays armed and the
+//!     loop re-arms it. The caller submits once per timer for the whole run, and a fire is an
+//!     event flagged `more`. Each fire is scheduled from the deadline of the one before, so a late
+//!     loop does not make the period late.
+//!
+//! Both are rotor's, and the row names which. `bench/alternatives/README.md` says what each
+//! alternative can be asked for, because the comparison is of what a library offers.
 //!
 //! Two numbers come out, and the second is the one that matters:
 //!
@@ -52,11 +62,23 @@ var loop_memory: [
 var due_ns: [timers_max]u64 = undefined;
 var lateness_ns: [samples_max]u64 = undefined;
 
+/// Who re-arms a timer after it fires.
+const Mode = enum { oneshot, repeating };
+
 const Options = struct {
     timers: u32 = 1024,
     period_us: u64 = 1000,
     seconds: u64 = 3,
+    mode: Mode = .oneshot,
 };
+
+/// The name a row of this mode carries. Both are rotor, and a reader must see which was measured.
+fn candidate_name(mode: Mode) []const u8 {
+    return switch (mode) {
+        .oneshot => "rotor",
+        .repeating => "rotor (repeating)",
+    };
+}
 
 const Churn = struct {
     loop: *Loop,
@@ -65,6 +87,9 @@ const Churn = struct {
     fired: u64 = 0,
     taken: u32 = 0,
     deadline_ns: u64 = 0,
+
+    pub const rearm = ChurnLoops.rearm;
+    pub const repeat = ChurnLoops.repeat;
 };
 
 pub fn main(init: std.process.Init) !void {
@@ -93,32 +118,69 @@ fn run(churn: *Churn) !u64 {
     while (index < churn.options.timers) : (index += 1) arm(churn, index);
 
     var events: [events_max]Event = undefined;
-    var in_flight = churn.options.timers;
-    while (in_flight != 0) {
-        const count = try churn.loop.tick(&events, core.constants.ns_per_ms);
-        const at_ns = now_ns();
-        for (events[0..count]) |event| {
-            _ = try event.outcome();
-            const index_fired: u32 = @intCast(event.user_data);
-            record(churn, index_fired, at_ns);
-            if (at_ns >= churn.deadline_ns) {
-                in_flight -= 1;
-            } else {
-                arm(churn, index_fired);
-            }
-        }
-    }
+    if (churn.options.mode == .repeating) try churn.repeat(&events) else try churn.rearm(&events);
     return now_ns() - started_ns;
 }
 
 fn arm(churn: *Churn, index: u32) void {
     due_ns[index] = now_ns() + churn.period_ns;
+    const repeat_ns = if (churn.options.mode == .repeating) churn.period_ns else 0;
     const taken = churn.loop.submit(&.{.{
         .user_data = index,
-        .kind = .{ .timer = .{ .after_ns = churn.period_ns } },
+        .kind = .{ .timer = .{ .after_ns = churn.period_ns, .repeat_ns = repeat_ns } },
     }}, &.{});
     std.debug.assert(taken == 1);
 }
+
+/// The two modes' loops, on `Churn` so each is one function of its own.
+const ChurnLoops = struct {
+    /// `oneshot`: every fire is armed again by this thread, and a timer leaves when the deadline
+    /// has passed, so the run ends with nothing in flight.
+    pub fn rearm(churn: *Churn, events: []Event) !void {
+        var in_flight = churn.options.timers;
+        while (in_flight != 0) {
+            const count = try churn.loop.tick(events, core.constants.ns_per_ms);
+            for (events[0..count]) |event| {
+                _ = try event.outcome();
+                // The clock is read per fire and not once per batch: libuv's and libxev's
+                // callbacks each read it as they run, and a batch timestamped once would make
+                // this workload's lateness column mean two different things.
+                const at_ns = now_ns();
+                const index_fired: u32 = @intCast(event.user_data);
+                record(churn, index_fired, at_ns);
+                if (at_ns >= churn.deadline_ns) {
+                    in_flight -= 1;
+                } else {
+                    arm(churn, index_fired);
+                }
+            }
+        }
+    }
+
+    /// `repeating`: the loop re-arms, so this thread only reads. Each fire's next deadline is the
+    /// last one plus the period, which is what the loop schedules from (decision 14), and the run
+    /// ends by cancelling every timer.
+    pub fn repeat(churn: *Churn, events: []Event) !void {
+        while (now_ns() < churn.deadline_ns) {
+            const count = try churn.loop.tick(events, core.constants.ns_per_ms);
+            for (events[0..count]) |event| {
+                _ = try event.outcome();
+                // A repeating timer's fire says more is coming and keeps its slot (decision 14).
+                // An event without it would mean this run armed one-shot timers and is measuring
+                // the other mode under this mode's name.
+                std.debug.assert(event.flags.more);
+                // Per fire, as the other candidates' callbacks read it: see `rearm`.
+                const at_ns = now_ns();
+                const index_fired: u32 = @intCast(event.user_data);
+                record(churn, index_fired, at_ns);
+                due_ns[index_fired] += churn.period_ns;
+            }
+        }
+        churn.loop.cancel_all();
+        // The final event of every cancelled timer, which is not a fire and is not recorded.
+        try churn.loop.drain(events);
+    }
+};
 
 /// One fire: how late it was, against when it was due.
 fn record(churn: *Churn, index: u32, at_ns: u64) void {
@@ -144,7 +206,7 @@ fn report(init: std.process.Init, options: Options, churn: *Churn, span_ns: u64)
 
     const result: harness.Result = .{
         .workload = "timer-churn",
-        .candidate = "rotor",
+        .candidate = candidate_name(options.mode),
         .candidate_version = "this tree",
         .configuration = .{
             // This workload places no thread and opens no connection. `connections` carries the
@@ -197,10 +259,33 @@ fn parse(init: std.process.Init) !Options {
             options.period_us = try std.fmt.parseInt(u64, value, 10);
         } else if (std.mem.eql(u8, name, "--seconds")) {
             options.seconds = try std.fmt.parseInt(u64, value, 10);
+        } else if (std.mem.eql(u8, name, "--mode")) {
+            options.mode = mode_of(value) orelse return error.UnknownMode;
         } else {
             return error.UnknownArgument;
         }
     }
     if (options.timers == 0 or options.period_us == 0) return error.EmptyConfiguration;
     return options;
+}
+
+/// The mode named on the command line, or null for a name no mode has.
+fn mode_of(value: []const u8) ?Mode {
+    if (std.mem.eql(u8, value, "oneshot")) return .oneshot;
+    if (std.mem.eql(u8, value, "repeating")) return .repeating;
+    return null;
+}
+
+const testing = std.testing;
+
+test "each mode is named on the command line, and nothing else is a mode" {
+    try testing.expectEqual(Mode.oneshot, mode_of("oneshot").?);
+    try testing.expectEqual(Mode.repeating, mode_of("repeating").?);
+    try testing.expectEqual(@as(?Mode, null), mode_of("repeat"));
+    try testing.expectEqual(@as(?Mode, null), mode_of(""));
+}
+
+test "a row names the mode it measured, because both are rotor" {
+    try testing.expectEqualStrings("rotor", candidate_name(.oneshot));
+    try testing.expectEqualStrings("rotor (repeating)", candidate_name(.repeating));
 }

@@ -539,9 +539,11 @@ depth 1 in fact.
 
 That is `docs/decisions/0002-scope.md`'s recorded choice and not a defect. That record weighed
 handing the read to a thread pool "as libuv does" and refused it, because the loop starts no
-thread, and it wrote down the consequence: macOS is a development platform, and no file-workload
-number from macOS is published as a claim. There is no fourth option either: macOS has `aio_read`
-but not `EVFILT_AIO`, so those completions cannot reach a kqueue loop.
+thread. There is no fourth option either: macOS has `aio_read` but not `EVFILT_AIO`, so those
+completions cannot reach a kqueue loop. What the record used to add — that macOS is a development
+platform, so no file number from it is a claim — was withdrawn on 2026-09-22: macOS is a production
+platform, the rows below are claims, and the consumer-supplied offload is what makes them level
+with libuv's.
 
 **It predicts the opposite on Linux.** io_uring submits N reads in one system call and the kernel
 holds all N in flight at the device, which is real queue depth with no thread at all. If the Linux
@@ -650,7 +652,8 @@ Weaker than the record assumed:
 Stronger than the record assumed:
 
 - Source 4 against libxev on kqueue. libxev makes two `kevent` calls per tick, and its source
-  carries a TODO to merge them. macOS numbers stay development numbers (decision 2).
+  carries a TODO to merge them. Since 2026-09-22 a macOS number is a claim (decision 2), so this is
+  a gap to measure and not an aside.
 
 Unchanged: against libxev on io_uring, sources 3 to 6 are parity, and sources 1 and 2 are the
 difference.
@@ -680,8 +683,13 @@ rotor and libuv are within 3 percent of each other on every row, in both directi
 percent behind at 16 connections and 4 KiB, 9 percent ahead at 64 connections and 4 KiB on a row
 whose runs disagree by 12 percent, and level on the 64 KiB rows; its server printed `invalid state
 in submission queue` during the 64-connection rows, the defect recorded above. `std.Io.Threaded`
-is 15 to 30 percent behind. No row here is a win for rotor on macOS, and macOS numbers are not the
-claim (decision 2): the same table on the `linux` machine is, and that machine is not named.
+is 15 to 30 percent behind.
+
+**These rows meet the bar and no more.** The owner set it on 2026-09-22, when the same day made
+macOS a production platform: on macOS rotor is at least as fast as libuv and libxev. Echo is a tie
+with libuv within 3 percent both ways and a win over libxev at 16 connections; nothing here is a
+loss outside the spread. The timer and file sections below carry the wins, and the cross-core
+section carries what is still behind.
 
 ### Accept storm: the client is still the bottleneck
 
@@ -748,6 +756,56 @@ alternatives do not; rotor's row is marked, at a spread of 14. `rotor_post`'s ot
 6,015 ns to 501 ns, and an empty tick from 12.5 µs to 358 ns. The echo rows did not move outside
 their spread: an echo server's tick mostly blocks, and the park was paid only by a tick that already
 held work.
+
+### Timer churn: each library's own best mode, and rotor's repeating timer wins
+
+The rows above drive all three libraries the same way: the caller arms a fired timer again. That is
+the only way libxev can keep a period, but rotor and libuv both have a repeating timer, and neither
+was being asked for one. So each candidate now runs the cheapest mode it offers, and the row names
+which (`bench/results/timers-modes-mac-2026-09-22.md`, five rounds, 1 ms period):
+
+| timers | candidate | fires per second | p50 late | p99 late | spread |
+|---:|---|---:|---:|---:|---:|
+| 256 | rotor (repeating) | 255,974 | 169 µs | 527 µs | 0 |
+| 256 | libxev | 220,901 | 180 µs | 250 µs | 1 |
+| 256 | libuv (repeating) | 209,337 | 185 µs | 757 µs | 3 |
+| 256 | libuv | 207,544 | 206 µs | 1,394 µs | 4 |
+| 256 | rotor | 207,301 | 206 µs | 1,139 µs | 4 |
+| 4,096 | rotor (repeating) | 4,094,231 | 793 µs | 1,075 µs | 0 |
+| 4,096 | libxev | 3,252,874 | 53 µs | 1,051 µs | 2 |
+| 4,096 | libuv (repeating) | 2,024,570 | 1,089 µs | 1,353 µs | 3 |
+| 4,096 | rotor | 2,016,061 | 1,259 µs | 1,487 µs | 3 |
+| 4,096 | libuv | 1,905,599 | 1,400 µs | 1,705 µs | 5 |
+
+Every spread is under the threshold, so no row disagrees with itself.
+
+**A repeating timer costs rotor 247 ns per fire against 404 for one the caller re-arms**, measured
+on the loop directly the same day; `submit` of 4,096 timers is 7 ns each and sampling changes
+nothing. The saving is the slot released and claimed again, and the event out and operation in, that
+a one-shot fire pays for.
+
+**rotor's repeating timer keeps the promised rate and no other candidate does.** 256 timers on a
+1 ms period is 256,000 fires per second and 4,096 timers is 4,096,000; rotor reaches 99.99 and 99.96
+percent of those, libxev 86 and 79, libuv 82 and 49. Above 79 percent nothing here is idle: this is
+the loop's own cost, since the workload touches no socket and no file.
+
+**libuv's native repeat gains libuv almost nothing**: 2,024,570 against 1,905,599, six percent, where
+the same change is worth twice that to rotor. What binds libuv is not who re-arms.
+
+**libxev has no repeating timer that keeps a period, and its row is not a worse mode.** Read in the
+pinned tree: a timer's `start` does `self.timers.insert(v)` without touching `v.next`
+(`src/backend/kqueue.zig`), so a callback returning `.rearm` re-inserts the deadline that has just
+passed and the timer fires again at once; `Timer.reset` updates it through a cancellation the loop
+re-adds. Calling `run` again from the callback, which `libxev_timers.zig` does, is the cheap and
+idiomatic way.
+
+**The one column rotor loses is p99 lateness at 256 timers, and p50 at 4,096, and the reason is in
+the promise.** rotor's repeating timer schedules each fire from the deadline of the one before, so it
+never drops a period and never drifts; at saturation that means a queue, and the fire is measured
+against a deadline that has passed. libuv's repeat and libxev's callback both re-arm from the loop's
+clock at that moment, so their deadlines slide forward and each individual fire stays near one, at
+the cost of firing less often. Both are honest, and they are different promises: rotor's is the rate,
+theirs is the interval since the last fire.
 
 ### File rows: the offload puts rotor level with libuv's pool
 

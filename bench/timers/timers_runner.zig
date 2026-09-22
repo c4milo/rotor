@@ -50,7 +50,21 @@ const Candidate = struct {
 
 const candidates = [_]Candidate{
     .{ .name = "rotor", .program = "rotor_timers" },
+    // Each library re-arms a fired timer the cheapest way it offers. rotor and libuv have a
+    // repeating timer and are measured both ways, because a caller with periodic work would use
+    // it; libxev has none that keeps a period, so its one row is already its fastest
+    // (`bench/alternatives/README.md`, timer churn).
+    .{
+        .name = "rotor (repeating)",
+        .program = "rotor_timers",
+        .arguments = &.{ "--mode", "repeating" },
+    },
     .{ .name = "libuv", .program = "libuv_timers" },
+    .{
+        .name = "libuv (repeating)",
+        .program = "libuv_timers",
+        .arguments = &.{ "--mode", "repeating" },
+    },
     .{ .name = "libxev", .program = "libxev_timers" },
     .{
         .name = "std.Io.Threaded",
@@ -208,7 +222,7 @@ fn one_run(
     const used = try append_arguments(&argv, 7, candidate.arguments);
 
     // The arena outlives the run, and the result's strings point into the bytes it holds.
-    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used]);
+    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used], candidate.name);
 }
 
 /// Writes `extra` into `argv` after the `used` entries already there, and returns how many
@@ -370,12 +384,39 @@ test "every candidate has a distinct name, and its arguments come in pairs" {
     }
 }
 
+/// The candidate of that name. A test says which candidate it means by name, so a row added to the
+/// table above cannot silently move what a test checks.
+fn named(name: []const u8) Candidate {
+    for (candidates) |candidate| {
+        if (std.mem.eql(u8, candidate.name, name)) return candidate;
+    }
+    unreachable;
+}
+
+test "each library's repeating candidate runs its own program in that mode" {
+    const plain = named("rotor");
+    const repeating = named("rotor (repeating)");
+    try testing.expectEqualStrings(plain.program, repeating.program);
+    try testing.expectEqual(@as(usize, 0), plain.arguments.len);
+    try testing.expectEqualStrings("--mode", repeating.arguments[0]);
+    try testing.expectEqualStrings("repeating", repeating.arguments[1]);
+    const libuv = named("libuv");
+    const libuv_repeating = named("libuv (repeating)");
+    try testing.expectEqualStrings(libuv.program, libuv_repeating.program);
+    try testing.expectEqualStrings("repeating", libuv_repeating.arguments[1]);
+    // libxev has no repeating row: `.rearm` cannot keep a period there.
+    for (candidates) |candidate| {
+        const is_libxev = std.mem.startsWith(u8, candidate.name, "libxev");
+        if (is_libxev) try testing.expectEqualStrings("libxev", candidate.name);
+    }
+}
+
 test "the two std.Io candidates share one program and differ only in the backend" {
     // `std.Io` is an interface, and the two are implementations of it. They have to be two
     // candidates and not two runs of one, or a `Series` would average them into a number that
     // describes neither.
-    const threaded = candidates[3];
-    const uring = candidates[4];
+    const threaded = named("std.Io.Threaded");
+    const uring = named("std.Io.Uring");
     try testing.expectEqualStrings("std.Io.Threaded", threaded.name);
     try testing.expectEqualStrings("std.Io.Uring", uring.name);
     try testing.expectEqualStrings(threaded.program, uring.program);

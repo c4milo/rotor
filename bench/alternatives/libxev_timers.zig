@@ -14,6 +14,13 @@
 //! reporting a row that looks like a comparison. rotor's timer takes nanoseconds, and that is a
 //! difference in what the three can be asked for and not only in what they do.
 //!
+//! **`.rearm` cannot keep a period here, so this is libxev's fastest correct mode.** Read in the
+//! pinned tree on 2026-09-22: a timer's `start` does `self.timers.insert(v)` and never touches
+//! `v.next` (`src/backend/kqueue.zig`), so a callback returning `.rearm` re-inserts the deadline
+//! that has just passed and the timer fires again at once. `Timer.reset` does update it, through a
+//! cancellation the loop then re-adds. So calling `run` again is both the idiomatic way and the
+//! cheap one, and no row here understates libxev by driving it the slow way.
+//!
 //! Each timer re-arms by calling `run` again from its own callback rather than returning `.rearm`,
 //! so the deadline this program sets is visible in one place and no timer outlives the run.
 const std = @import("std");

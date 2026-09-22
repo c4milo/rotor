@@ -11,6 +11,18 @@
  * refuses anything else, so a change to `render_json_line` has to be made here too; the runner
  * reports a parse failure by name, which is what catches it.
  *
+ * **libuv has a repeating timer, and `--mode repeating` is it.** `uv_timer_start`'s fourth
+ * argument is a repeat, and after the callback libuv re-arms the handle itself
+ * (`uv_timer_again` in src/timer.c of the pinned tree, read 2026-09-22). So the caller pays
+ * nothing per fire, as rotor's `repeat_ns` costs nothing. The default mode has the callback arm
+ * the timer again, which is what the other candidates of this workload do.
+ *
+ * In repeating mode the deadline a fire is measured against is the one libuv will use next: the
+ * time the callback ran plus the period, because libuv computes it from the loop's own clock at
+ * that iteration. rotor schedules from the previous deadline instead, so it cannot drift. Taking
+ * libuv's deadline from the callback hides any drift of its own, which leaves the bias against
+ * rotor and never for it.
+ *
  * **libuv timers are milliseconds.** `uv_timer_start` takes its timeout as a whole number of
  * milliseconds, so a period this program cannot express is one under 1,000 microseconds, and a
  * period that is not a whole number of them is rounded down. rotor's timer takes nanoseconds.
@@ -41,6 +53,8 @@ static uint64_t fired;
 static uint64_t period_ns;
 static uint64_t deadline_ns;
 static unsigned in_flight;
+/* True when libuv re-arms every timer itself, which is `--mode repeating`. */
+static int repeating = 0;
 
 static uint64_t now_ns(void)
 {
@@ -52,8 +66,9 @@ static uint64_t now_ns(void)
 static void arm(uv_timer_t *handle)
 {
     size_t index = (size_t)(handle - timers);
+    uint64_t period_ms = period_ns / NS_PER_MS;
     due_ns[index] = now_ns() + period_ns;
-    uv_timer_start(handle, (uv_timer_cb)handle->data, period_ns / NS_PER_MS, 0);
+    uv_timer_start(handle, (uv_timer_cb)handle->data, period_ms, repeating ? period_ms : 0);
 }
 
 static void on_timer(uv_timer_t *handle)
@@ -71,6 +86,12 @@ static void on_timer(uv_timer_t *handle)
         uv_timer_stop(handle);
         uv_close((uv_handle_t *)handle, NULL);
         in_flight--;
+        return;
+    }
+    if (repeating) {
+        /* libuv re-arms this handle itself, from the loop's clock at that iteration. See the
+         * header: taking the deadline from here is the reading that favours libuv. */
+        due_ns[index] = at_ns + period_ns;
         return;
     }
     arm(handle);
@@ -122,6 +143,16 @@ int main(int argc, char **argv)
 
     for (int index = 1; index + 1 < argc; index += 2) {
         uint64_t value = 0;
+        /* The one argument that is not a number. */
+        if (strcmp(argv[index], "--mode") == 0) {
+            if (strcmp(argv[index + 1], "repeating") == 0) {
+                repeating = 1;
+            } else if (strcmp(argv[index + 1], "oneshot") != 0) {
+                fprintf(stderr, "libuv_timers: unknown mode %s\n", argv[index + 1]);
+                return 1;
+            }
+            continue;
+        }
         if (!parse_number(argv[index + 1], &value)) {
             fprintf(stderr, "libuv_timers: %s needs a positive number\n", argv[index]);
             return 1;
@@ -171,7 +202,8 @@ int main(int argc, char **argv)
     if (span_ns < 1) span_ns = 1;
     unsigned long long per_second = (unsigned long long)fired * NS_PER_S / span_ns;
 
-    printf("{\"workload\":\"timer-churn\",\"candidate\":\"libuv\",\"version\":\"%s\"",
+    printf("{\"workload\":\"timer-churn\",\"candidate\":\"%s\",\"version\":\"%s\"",
+           repeating ? "libuv (repeating)" : "libuv",
            uv_version_string());
     printf(",\"cores\":0,\"connections\":%llu,\"payload_bytes\":0,\"load\":\"even\"",
            (unsigned long long)wanted_timers);
