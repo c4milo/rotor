@@ -101,6 +101,10 @@ lifetime. For a connection that carries 1,000 echo round trips at C14, the hando
 `C17 / (1,000 × C14)`. With C17 at even 1,000 ns and C14 at 10,000 ns that is 0.01 percent. It
 matters only in the accept storm, which is why the harness runs the storm both ways.
 
+Measured on 2026-09-22 (`docs/costs.md`): on `orbstack` C17 is 10,981 ns and C14 is 1,416 ns, so
+the handoff is 0.78 percent of such a connection there; on `mac` C18 is 18,125 ns against C14 at
+12,791 ns, 0.14 percent. The conclusion stands.
+
 The first reading of C18 by the probe on `mac`, taken on 2026-09-19 while the machine was busy and
 therefore not entered in `docs/costs.md`, was about 25,000 ns: 25 times the figure above. At that
 cost the handoff is 0.25 percent of such a connection, so the conclusion stands, and the storm is

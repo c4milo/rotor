@@ -28,6 +28,9 @@ C15 and C17 agree at about 15,000 ns and share one thing: each wakes a thread th
 C19 crosses the same boundary with the receiver awake for about 100 ns. **Crossing a core is
 nearly free. Waking a thread on another core is not.**
 
+Measured on 2026-09-22 on `orbstack`, with both threads pinned (`docs/costs.md`): C14 1,416 ns, C15
+9,333 ns (8,896 to 13,000 across three runs), C19 98 ns, C17 10,981 ns. The ratios hold.
+
 `bench/uring/post.zig` measures the same thing through rotor's own loops, which is what decides
 whether the loop can act on it:
 

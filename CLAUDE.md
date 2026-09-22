@@ -258,10 +258,11 @@ there now needs a policy named at init**: a caller that wants the old inline beh
 `blocking`. `Remote` was built on 2026-09-22: `post` for a thread that has no loop, one per
 backend, exported from `src/rotor.zig`. Decision 4 records what it settled.
 
-Measurement is next, and deferred: fill `docs/costs.md` from serial runs on a quiet machine, and run
-decision 8's experiment. No cell is filled yet. The owner made `orbstack` a named machine on
-2026-09-20, so its column is filled from probes run on it; the `linux` column is the deployment
-target, needs a machine of the family stompy builds for, and that machine is not named.
+The `mac` and `orbstack` columns of `docs/costs.md` were filled on 2026-09-22, from three serial
+runs each with the desktop in use; `bench/results/` holds the runs. Decision 8's experiment ran on
+`orbstack` the same day and could not decide its 2 percent question: the noise between rounds is
+25 percent there. The `linux` column is the deployment target, needs a machine of the family stompy
+builds for, and that machine is not named. Milestone 4's comparisons are next.
 
 The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
 2026-09-21 and decision 19 records it, amending decision 4. The reason: neither libuv nor libxev

@@ -4,8 +4,9 @@ This document holds the latency of the low-level operations rotor's design argum
 add. Every design argument in `docs/decisions/` cites a row of it by its id. A claim that
 something is fast enough shows the arithmetic over these rows.
 
-**Status: no row is measured yet.** The measured columns are empty on purpose. Milestone 0 fills
-them, before any loop code is written, with the probes of `bench/costs/`.
+**Status: the `mac` and `orbstack` columns were filled on 2026-09-22**, with the probes of
+`bench/costs/`; "How the columns were filled" below says from which runs, and what each column
+cannot carry. The `linux` column is empty, because that machine is not named.
 
 ## Rules
 
@@ -84,27 +85,27 @@ file may be filled from a machine of another architecture, however convenient it
 
 | id | operation | prior (ns) | prior source | `mac` measured (ns) | `orbstack` measured (ns) | `linux` measured (ns) |
 |---|---|---|---|---|---|---|
-| C1 | L1 cache reference | 0.5 | Abseil | | | |
-| C2 | L2 cache reference | 3 | Abseil | | | |
-| C3 | main memory reference, a last-level cache miss | 50 | Abseil | | | |
-| C4 | branch mispredict | 5 | Abseil | | | |
-| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | | | |
-| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | | | |
-| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | | |
-| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | | |
-| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | | |
-| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | | not applicable | not applicable |
-| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | | not applicable | not applicable |
+| C1 | L1 cache reference | 0.5 | Abseil | 0.93 (1.32) | 0.93 (1.44) | |
+| C2 | L2 cache reference | 3 | Abseil | 5.43 (8.54) | 6.78 (14.4) | |
+| C3 | main memory reference, a last-level cache miss | 50 | Abseil | 128 (199) | 185 (327) | |
+| C4 | branch mispredict | 5 | Abseil | 5.77 (8.34) | 5.78 (9.32) | |
+| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | 1.50 (2.39) | 1.53 (2.45) | |
+| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | 112 (133) | 88.9 (160) | |
+| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | 193 (389) | |
+| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | 51.6 (81.1) | |
+| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | 11.7 (14.3) | |
+| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | 294 (379) | not applicable | not applicable |
+| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | 45.7 (65.0) | not applicable | not applicable |
 | C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | not applicable | |
 | C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | not applicable | |
-| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | | | |
-| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | | | |
-| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | |
-| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | | |
-| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | | not applicable | not applicable |
-| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | | | |
-| C20 | monotonic clock read | 20 | recalled | | | |
-| C21 | thread-local variable read and compare | 1 | recalled | | | |
+| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | |
+| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | |
+| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | |
+| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | |
+| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | 18,125 (46,750) | not applicable | not applicable |
+| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | |
+| C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | |
+| C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | |
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.
@@ -113,69 +114,70 @@ macOS has no O_DIRECT. `F_NOCACHE` is the nearest setting, and kqueue does not r
 regular files, so rows C12 and C13 have no `mac` cell
 (`docs/decisions/0002-scope.md` states what the kqueue backend does with files).
 
-## Two priors a loaded run already casts doubt on
+## How the columns were filled
 
-Read on 2026-09-20 on `orbstack` while the `mac` machine carried a load average of 46, which is
-why neither is in the table and neither supports a claim. A reading taken on a machine that busy
-is an upper bound: load makes an operation slower, never faster. So one direction of inference is
-sound, and it is the only one drawn here.
+On 2026-09-22, on mains power, with the desktop in use and no batch job running: the `mac`
+machine's load average was 4.7 to 5.1 on 10 cores before every run. Each column holds run 1 of
+three serial runs, and `bench/results/` holds all three as they were printed:
 
-- **C14's prior is too pessimistic.** The loopback round trip read about 1,500 ns against a prior
-  of 10,000 to 30,000. A loaded machine cannot make a round trip 7 times faster than it is, so
-  the prior is wrong by roughly that much, and every argument that divides by C14 understates
-  what it is dividing. The prior is recalled and cites no source.
-- **C17 is at most about 16,000 ns, and the wake is nearly all of it.** The same run read C19,
-  the same message to a receiver that is already awake, at about 100 ns. Whatever the quiet
-  numbers turn out to be, the gap between a sleeping receiver and a waking one is the cost that
-  matters, and `docs/decisions/0004-threading.md` does not price it.
+- `mac`: `zig build bench-costs`, three times one minute apart
+  (`bench/results/costs-mac-2026-09-22.md`).
+- `orbstack`: the probes built with `zig build-exe bench/costs/main.zig -target aarch64-linux-musl
+  -O ReleaseSafe` and run in the Linux gate's container, three times a few seconds apart
+  (`bench/results/costs-orbstack-2026-09-22.md`, and `bench/costs/README.md` for the command).
+  C12 and C13 are excluded here, as the Machines section says.
 
-Neither is a measurement. Both are reasons to take C14, C17 and C19 first when the machine is
-quiet.
+Where the three runs disagreed by more than a few percent, the cell is one run and the range is
+this: on `mac`, C14 12,417 to 13,792 ns and C18 18,125 to 25,291 ns; on `orbstack`, C7 193 to
+238 ns, C8 51.6 to 64.4 ns, C9 11.7 to 14.3 ns and C15 8,896 to 13,000 ns. Every other median
+agreed within 2 percent. Two things about `orbstack` explain its spread: the rows before C14 run
+on whichever virtual CPU the guest chose, and a virtual CPU can be backed by an efficiency core of
+the host, which the probe cannot see; and the two-thread rows pin to cores 0 and 1, which are two
+virtual CPUs and not two known physical cores.
 
-## What crossing a core costs, and what waking a thread costs
+On `orbstack`, C15, C17 and C19 pinned both threads and C14 its one thread, and every method line
+says so. On `mac` nothing can be pinned, and the rows that wake a thread are the ones that moved.
 
-Read on 2026-09-20 on `orbstack`, with both threads pinned by `sched_setaffinity`. Not in the
-table: a container's numbers describe the container. The ratios are wide enough to act on.
+## What the measured rows changed
 
-| row | what | ns |
-|---|---|---|
-| C14 | round trip, both ends on one core | 1,458 |
-| C15 | round trip, ends on two cores | 13,334 to 14,813 |
-| C19 | cross-core message, receiver already awake | about 100 |
-| C17 | cross-core message by `MSG_RING`, receiver asleep | about 16,300 |
+Against the priors:
 
-The first reading of C15, before the probe pinned anything, was 2,209 ns. The probe started two
-threads and let the scheduler place them, and the scheduler put them on one core, so the row
-measured the thing it was written to exclude. Pinning is what made it a measurement.
+- C1, C2 and C3 are about twice the prior on `mac` (0.93, 5.43 and 128 ns) and C3 is 3.7 times
+  it on `orbstack` (185 ns). A miss to memory costs more than the table assumed, which strengthens
+  every argument that keeps a hot structure in one line.
+- C14 on `orbstack` is 1,416 ns, 7 times under the prior's floor. On `mac` it is 12,791 ns, inside
+  the prior. The prior described macOS and not Linux, and every argument that divided by C14 on
+  Linux understated its result by that much.
+- C7 (193 ns) and C10 (294 ns) are under their priors' floors; C8 (52 ns) is at the top of its
+  range; C6, C9, C11, C20 and C21 are inside theirs.
+- C17, with no prior, is 10,981 ns on `orbstack`: a `MSG_RING` to a receiver that sleeps costs
+  what waking a thread costs. C19, the same message to a receiver that is awake, is 98 ns on both
+  machines. C15, a round trip whose far end wakes for every byte, is 9,333 ns on `orbstack` and
+  11,750 ns on `mac`; C18, the kqueue wake, is 18,125 ns on `mac`. The reading of 2026-09-20, taken
+  under a load average of 46, said the same in shape: the cost is the wake and not the core, by a
+  factor of about 100.
 
-**The cost is the wake, not the core.** C15 and C17 agree at about 15,000 ns and share one thing:
-each wakes a thread that was asleep. C19 crosses the same boundary with the receiver spinning and
-costs about 100 ns, 150 times less. So a design that moves work between cores pays almost nothing
-for the move and almost everything for the sleep it interrupts.
-
-So a loop that stays awake a little after its last completion should turn a 15,000 ns handoff
-into a 700 ns one. `bench/uring/post.zig` measures that, with rotor's own loops, on `orbstack`:
+`bench/uring/post.zig`, run five times on `orbstack` beside decision 8's experiment
+(`bench/results/decision-8-orbstack-2026-09-22.md`), measures the same wake with rotor's own loops.
+One message, in ns, across the five runs:
 
 | how the receiving loop waits | one message, ns |
 |---|---|
-| blocks until the message arrives | 11,021 |
-| never blocks, ticks without waiting | 687 |
-| ticks without waiting for 50 µs, then blocks | 729 |
+| blocks until the message arrives | 11,041 to 11,479 |
+| never blocks, ticks without waiting | 666 to 1,354 |
+| ticks without waiting for 50 µs, then blocks | 687 to 1,375 |
 
-**A bounded spin takes back almost all of it**: 729 ns against 687 for a loop that never sleeps,
-and against 11,021 for one that always does. Fifteen times, for 6 percent more than the loop that
-burns a core outright.
+A bounded spin takes back almost all of the wake when the peer answers inside the window. What it
+costs when the peer does not answer is not measured, which is what keeps
+`docs/decisions/0013-when-a-loop-sleeps.md` proposed.
 
-What the benchmark does not measure is the case the spin is wrong for. Here the peer always
-answers inside the window, so the spin always pays. A loop whose work has stopped burns the whole
-budget and then sleeps anyway, which costs a core 50 µs per idle cycle and is exactly what
-decision 4's shared-nothing model was meant to avoid paying for. The shape of an answer is an
-adaptive budget, and what it should key on is not measured.
+### Records re-read on 2026-09-22
 
-Decision 4 prices a cross-core message and does not price the sleep.
-`docs/decisions/0013-when-a-loop-sleeps.md` is the record these numbers earned. It is proposed,
-not accepted: none of these numbers is admissible, and the case a spin is wrong for is not
-measured at all.
+Rule 4: every record that cited a prior was re-read against the measured cells. No argument
+broke. Four records restate their arithmetic with the measured numbers, and say so in place:
+decision 3 (the multishot saving against a Linux round trip), decision 4 (the handoff of
+`single_acceptor`), decision 11 (the skip-success flag, now settled by C17) and decision 13 (its
+table). Decision 8 gains a results section for its experiment, which `orbstack` could not decide.
 
 ## How the rows are used
 
@@ -183,4 +185,5 @@ A decision record writes its arithmetic over row ids, then over the numbers. For
 per-message syscall cost of a readiness loop that calls `recv` and `send` once each is `2 × C6`,
 and the same message through a batch of 32 on io_uring costs `C7 / 32 + 2 × C8 + 2 × C9`. With
 the priors that is 200 to 1,000 ns against 60 to 190 ns. The priors say the batch is worth
-building. Only the measured columns can say the batch won.
+building. Only the measured columns can say the batch won: on `orbstack` they say 178 ns against
+133 ns, a saving of 45 ns per message and not the 140 to 810 the priors allowed.

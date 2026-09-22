@@ -166,6 +166,10 @@ loopback round trip (C14, 10,000 to 30,000 ns). So the claim is throughput per c
 CPU is the limit, and not latency. The accept storm is where multishot accept should show most:
 every connection otherwise costs a fresh accept submission.
 
+Measured on 2026-09-22 (`docs/costs.md`): on `orbstack` C8 is 52 ns and C14 is 1,416 ns, so the
+saving is 3.6 percent of a loopback round trip on Linux and not under 1. The prior for C14 described
+macOS. The claim is the same.
+
 Cost it adds: the kernel picks the buffer, so the caller gets a buffer index with the event and
 must return the buffer. That is API surface, and one more thing the simulator has to model.
 

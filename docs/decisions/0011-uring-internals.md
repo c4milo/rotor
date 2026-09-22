@@ -42,7 +42,8 @@ The sender's own completion says whether the post reached the target's ring: 0, 
 post is therefore an operation like any other, with a slot and one final event. A skip-success
 flag would save the sender one completion per post (`C9`), and it would break decision 5's rule
 1, that a slot is freed by its final event and by nothing else. That trade waits for C17's
-measurement.
+measurement. Measured on 2026-09-22 (`docs/costs.md`): C17 is 10,981 ns and C9 is 11.7 ns on
+`orbstack`, so the flag would save 0.1 percent of a message. The trade is settled against the flag.
 
 ## 3. Cancel requests wait as handles, not as slot links
 
