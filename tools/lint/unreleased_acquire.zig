@@ -16,6 +16,17 @@
 //! `probe_descriptor` is left out for the same reason: it closes the socket it opened and hands
 //! back the number, so a caller that closes what it returns closes a descriptor twice.
 //!
+//! `read_loop_reentry` is on, and it earns its keep: an acquire that ends a loop body has nothing
+//! under it, so without this switch nothing in the acquire's own block could fail and the rule
+//! passed it, while the next turn took another value and named the last one nowhere. That is
+//! exactly the leak `bench/echo/rotor_echo.zig` had, where the listeners' cleanup sat below the
+//! loop that opened them.
+//!
+//! It first reported `connect_all` in `bench/echo/client.zig` too, which opened a socket into a
+//! local and then handed it to an entry it marked live. That window only stayed safe because
+//! nothing fallible sat in it. The socket is now opened straight into the entry that owns it, so
+//! there is no window and no finding; the rule pointed at something real rather than at itself.
+//!
 //! `Loop.init` and `Ring.init` are left out. Both are written `try loop.init(&memory)` against a
 //! variable that already exists, so no declaration binds them and the rule cannot see them. Their
 //! pairing with `deinit` is what the halt check covers (decision 5, rule 7: a loop must be empty
@@ -58,6 +69,8 @@ pub const config: unreleased_acquire.Config = .{
     },
     .acquire_prefixes = &acquires,
     .read_assignments = true,
+    .read_loop_reentry = true,
+    .read_subscript_targets = true,
 };
 
 const Rule = unreleased_acquire.Rule(config);
@@ -144,3 +157,40 @@ test "unreleased-acquire reads a loop that fills descriptors through a pointer" 
 /// The finding the rule reports for a descriptor assigned through `client`.
 const client_message = "client is acquired here and a statement under it can fail," ++
     " and no defer releases client";
+
+test "unreleased-acquire reads a subscript target, which has no root of its own" {
+    // `read_subscript_targets` is what makes this a finding: the acquire binds no name, and the
+    // target is an element, so the rule reports the array. Without the switch the whole statement
+    // is invisible, which its header says plainly.
+    try expect_findings("bench/echo/client.zig",
+        \\pub fn connect_all(sockets: []Descriptor) !void {
+        \\    sockets[0] = try open_socket(.ipv4);
+        \\    try connect_now(sockets[0], &address);
+        \\}
+    , &.{sockets_message});
+}
+
+/// The finding the rule reports for a descriptor assigned into `sockets`.
+const sockets_message = "sockets is acquired here and a statement under it can fail," ++
+    " and no defer releases sockets";
+
+test "unreleased-acquire reads an acquire that ends a loop body" {
+    // `read_loop_reentry` is what makes this a finding. Nothing sits under the acquire inside its
+    // own block, so without the switch the rule passed it while every turn dropped the last
+    // descriptor. This is `bench/echo/rotor_echo.zig` as it stood before 2026-09-22, with the
+    // cleanup below the loop instead of above it.
+    try expect_findings("bench/echo/rotor_echo.zig",
+        \\pub fn serve_all(loops: u32) !void {
+        \\    var listeners: [8]Descriptor = undefined;
+        \\    var opened: u32 = 0;
+        \\    while (opened < loops) : (opened += 1) {
+        \\        listeners[opened] = try listen(&address, .{});
+        \\    }
+        \\    defer for (listeners[0..loops]) |l| close_now(l);
+        \\}
+    , &.{listeners_message});
+}
+
+/// The finding the rule reports for listeners a loop opens and nothing above it releases.
+const listeners_message = "listeners is acquired here and a statement under it can fail," ++
+    " and no defer releases listeners";
