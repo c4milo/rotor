@@ -262,7 +262,11 @@ The `mac` and `orbstack` columns of `docs/costs.md` were filled on 2026-09-22, f
 runs each with the desktop in use; `bench/results/` holds the runs. Decision 8's experiment ran on
 `orbstack` the same day and could not decide its 2 percent question: the noise between rounds is
 25 percent there. The `linux` column is the deployment target, needs a machine of the family stompy
-builds for, and that machine is not named. Milestone 4's comparisons are next.
+builds for, and that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
+(`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;
+decision 18's offload puts rotor level with libuv's pool on the file rows, where inline is a
+quarter of both; the cross-core row is rotor's loss by four times and is unexplained; and the load
+mark is tripped by the harness's own load. The io_uring comparison waits on the `linux` machine.
 
 The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
 2026-09-21 and decision 19 records it, amending decision 4. The reason: neither libuv nor libxev

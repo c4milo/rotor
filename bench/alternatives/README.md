@@ -347,7 +347,8 @@ kind of mixed result a single run is least able to settle.
 `bench/timers/timers_runner.zig` now drives this workload: it starts each candidate's program
 once per round, alternating the candidates within a round, and reads the result line each one
 printed. So these single runs are superseded by rows with a spread as soon as a quiet machine is
-available. Nothing above has been re-taken.
+available. Re-taken on 2026-09-22 with five rounds: "What the comparison measured on `mac` on
+2026-09-22" below.
 
 ### `std.Io` is the fourth candidate, and its shape is the row
 
@@ -428,8 +429,8 @@ reader can be misled in rotor's favour by it. It is worth fixing when two candid
 one percent of each other, and no run has. Throughput is unaffected, because every candidate
 counts its own operations and divides by its own span.
 
-No cross-core row is recorded here yet. The first three-way run was made on 2026-09-20 on a `mac`
-carrying a load average above 13, which is not a measurement and is not reproduced in this file.
+The first three-way run was made on 2026-09-20 on a `mac` carrying a load average above 13, which
+is not a measurement and is not reproduced in this file. The first row is from 2026-09-22, below.
 
 ## Every file row before 2026-09-22 read unwritten extents
 
@@ -648,3 +649,131 @@ Stronger than the record assumed:
 
 Unchanged: against libxev on io_uring, sources 3 to 6 are parity, and sources 1 and 2 are the
 difference.
+
+## What the comparison measured on `mac` on 2026-09-22
+
+The first comparison taken on a machine that carried no other job: mains power, the desktop in use,
+a load average of 4.7 to 7 on 10 cores at the start of each runner, no batch work. Every row is in
+`bench/results/` as it was printed, with the load average before and after each runner. The
+runners' defaults were used: echo, 3 rounds of 4 seconds after 1 of warm-up, at 16 and 64
+connections with 4 KiB and 64 KiB payloads; storm, 3 rounds at 16 and 64 connections; timers, 5
+rounds of 3 seconds at 256 and 4,096 timers with a 1 ms period; cross-core, 5 rounds of 20,000
+messages.
+
+### Echo: rotor and libuv are level
+
+Median messages per second; median p50 and p99 in µs; spread in percent:
+
+| connections | payload | rotor | libuv | libxev | `std.Io.Threaded` |
+|---:|---:|---|---|---|---|
+| 16 | 4 KiB | 159,103; 92 / 207; 2 | 158,001; 92 / 217; 0 | 128,484; 118 / 238; 0 | 111,588; 143 / 218; 0 |
+| 16 | 64 KiB | 61,937; 260 / 444; 3 | 63,673; 232 / 489; 3 | 63,193; 224 / 496; 2 | 51,208; 315 / 420; 0 |
+| 64 | 4 KiB | 151,102; 381 / 844; 2 | 148,613; 430 / 1,028; 5 | 164,166; 319 / 782; 12 | 128,432; 508 / 635; 2 |
+| 64 | 64 KiB | 56,632; 1,114 / 1,950; 1 | 57,000; 1,122 / 2,015; 2 | 53,869; 1,212 / 1,761; 1 | 48,038; 1,343 / 1,589; 1 |
+
+rotor and libuv are within 3 percent of each other on every row, in both directions. libxev is 19
+percent behind at 16 connections and 4 KiB, 9 percent ahead at 64 connections and 4 KiB on a row
+whose runs disagree by 12 percent, and level on the 64 KiB rows; its server printed `invalid state
+in submission queue` during the 64-connection rows, the defect recorded above. `std.Io.Threaded`
+is 15 to 30 percent behind. No row here is a win for rotor on macOS, and macOS numbers are not the
+claim (decision 2): the same table on the `linux` machine is, and that machine is not named.
+
+### Accept storm: the client is still the bottleneck
+
+Connections per second; spread in percent:
+
+| connections | rotor | libuv | libxev | `std.Io.Threaded` |
+|---:|---|---|---|---|
+| 16 | 7,877; 59 | 10,781; 6 | 8,815; 84 | 10,457; 53 |
+| 64 | 12,050; 28 | 12,121; 17 | 11,575; 65 | 10,418; 47 |
+
+Seven rows of eight are marked `RUNS DISAGREE`, with spreads up to 84 percent, so nothing is
+decided, as the storm section above says of macOS. The one clean row decides nothing on its own.
+
+### Timer churn: five rounds, superseding the single runs above
+
+Fires per second; median lateness p50 and p99 in µs; spread in percent:
+
+| timers | rotor | libuv | libxev | `std.Io.Threaded` |
+|---:|---|---|---|---|
+| 256 | 209,223; 164 / 438; 5 | 213,746; 183 / 288; 6 | 220,546; 171 / 231; 1 | 204,044; 259 / 486; 0 |
+| 4,096 | 2,382,212; 540 / 654; 13 | 2,084,026; 917 / 1,060; 10 | 3,231,801; 436 / 850; 1 | 446,145; 300 / 2,559; 9 |
+
+At 256 timers the four are within 8 percent of each other. At 4,096, libxev fires 36 percent more
+than rotor and 55 percent more than libuv, on a clean row; rotor's and libuv's rows are marked, with
+spreads of 13 and 10. rotor's median lateness is under libuv's at both loads, 164 against 183 µs
+and 540 against 917 µs, as the single runs also showed; libxev's is under rotor's at 4,096.
+`std.Io.Threaded` at 4,096 timers is 4,096 sleeping threads, and that shape is the row: 446,145
+fires per second, and a one-minute load average of 327 while it ran. That load is the candidate's
+own, and it is what the marks on this table and on the next record.
+
+### The cross-core message: rotor is four times slower than libuv here
+
+| candidate | messages per second | p50 ns | p99 ns | spread |
+|---|---:|---:|---:|---:|
+| rotor, `waiting` | 154,795 | 6,015 | 16,511 | 5 |
+| libuv | 619,348 | 1,500 | 5,500 | 15 |
+| libxev | 481,064 | 2,007 | 7,007 | 16 |
+
+One message from post to reap, the receiver blocked between messages. rotor's is 6.0 µs against
+libuv's 1.5 and libxev's 2.0. The two alternatives' rows are marked, with spreads of 15 and 16, and
+all three ran while the load average was still decaying from the timer run's 327, although that
+process had exited. The section above records that the three do not carry the same thing: rotor
+moves a 16-byte message through a bounded ring and wakes the receiver's kqueue with `EVFILT_USER`;
+the alternatives wake the loop and carry nothing. That explains part of the gap and not four times
+of it. C18 in `docs/costs.md`, the same ring and wake with no loop around them, measured 18 to 25
+µs on this machine the same day, and `bench/crosscore/rotor_post.zig`'s `waiting` mode is that
+path. How the alternatives wake a loop in 1.5 µs on macOS has not been read from their source, and
+this row is the first to re-take and to explain.
+
+### File rows: the offload puts rotor level with libuv's pool
+
+`reads_runner` swept reads, unsynced writes and synced writes (an `fdatasync` after each write,
+the `durable` rows), sequential and random, 4 KiB and 16 KiB, at depth 1 and 32, five rounds of
+three seconds each, on a 256 MiB file on the internal NVMe (`bench/results/files-mac-2026-09-22.md`).
+`rotor (registered, offload)` is decision 18's caller-supplied pool, the candidate the section above
+said was missing. Operations per second at depth 32, and the spread in percent:
+
+| workload | block | rotor inline | rotor offload | libuv pool |
+|---|---:|---|---|---|
+| read, sequential | 4 KiB | 44,878; 3 | 125,285; 2 | 123,006; 1 |
+| read, random | 4 KiB | 12,452; 0 | 48,095; 3 | 48,145; 1 |
+| read, random | 16 KiB | 9,899; 1 | 37,812; 0 | 37,693; 1 |
+| write, sequential | 4 KiB | 60,176; 4 | 50,321; 6 | 51,667; 13 |
+| write, sequential | 16 KiB | 38,790; 12 | 102,160; 8 | 107,418; 8 |
+| write, random | 4 KiB | 7,416; 4 | 18,238; 1 | 18,362; 3 |
+| durable write, sequential | 4 KiB | 5,181; 7 | 662; 94 | 2,005; 28 |
+| durable write, random | 16 KiB | 5,079; 13 | 352; 24 | 1,839; 5 |
+
+- The offload and libuv's pool are within 2 percent of each other on every unsynced row at depth
+  32 but one, reads and writes alike, and rotor inline is a quarter to a third of both, as the
+  section above predicted: an inline `pread` is depth 1 whatever the caller asked for. The one
+  exception is sequential 4 KiB writes, where inline is ahead of both by a fifth; why is not
+  measured. `rotor (registered)` and `rotor` agree within 2 percent on every row, as they must on
+  kqueue, which has nothing to register with.
+- At depth 1 the pool is ahead of inline by 35 percent on 4 KiB reads, 35,742 against 26,519 per
+  second and a p50 of 27 against 38 µs, and by 5 to 25 percent on the other unsynced rows: a read
+  on the loop thread costs the loop a tick around it, and a read on a worker does not.
+- Synced writes invert it. At depth 32 rotor inline does 5,100 to 5,300 per second, libuv's pool
+  1,800 to 2,000, and the offload 350 to 660 with spreads to 249 percent: four threads each waiting
+  on the drive's flush contend for it, and one thread flushing in order does not. At depth 1 every
+  candidate is 200 per second, which is the drive's flush at 4.6 ms. Half the durable rows are
+  marked, so the ratios are what to take from them and not the numbers.
+
+The random 16 KiB unsynced write rows at depth 32 have spreads of 98 to 230 percent for every
+candidate and decide nothing.
+
+### The load mark reads the harness's own load
+
+`LOAD MOVED` is on 13 of the 16 echo rows, with spans of 1.4 to 3.0 points, and the spreads on those
+rows are 0 to 5 percent. The span is the harness's own: a series alternates four candidates over
+about 75 seconds, and two processes running flat out for that long raise a one-minute load average
+by about 1.3 on their own, and more at 64 connections. The threshold of one point in
+`bench/harness/load.zig` came from an attempt where the load moved by six, and it cannot tell the
+harness's own load from a job arriving. The timer run shows the other side: the `std.Io.Threaded`
+candidate's 4,096 threads took the average to 327, and the cross-core rows taken two minutes later
+carry a "load low" of 301 from an average still decaying on an idle machine. What the mark should
+read is not decided here. The harness could subtract what its own processes add, or read idle CPU
+time instead of the load average; either is a change to `load.zig` for the owner to rule on. Until
+then, a marked row with a small spread was most likely moved by the harness itself, and the load
+columns say by how much.
