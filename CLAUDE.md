@@ -202,6 +202,19 @@ measured against `zig build halt-check`.
 - Halt check: `zig build halt-check` — every scenario of `tools/halt/` must reach its violating
   statement and die by a signal, and the canary's scenarios must not.
 - Format: `zig build fmt`.
+- Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
+  request. Four jobs, each the command a developer runs by hand: `zig build test` on macOS, the
+  Linux gate and the race gate on Ubuntu with Docker, and `zig build lint-commits` on a pull
+  request. Zig is downloaded from ziglang.org and checked against a pinned SHA-256; no third-party
+  action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor
+  quiet, and rule 1 of that file stands.
+- Cost gates: `src/conformance/conformance_cost.zig` bounds what the loop's own work costs — a
+  poll, one fire of a repeating timer, one operation of a batch submit — so a path that becomes
+  slow fails `zig build test` on both backends. The 12 µs polling park of 2026-09-22 is why: every
+  correctness scenario passed while it was there. Each bound is checked against the best of twenty
+  attempts, because other work makes a run slower and never faster, and sits an order of magnitude
+  above what was measured. A bound that proves flaky is raised deliberately with the number beside
+  it, never retried until it passes.
 - Commit messages: `zig build hooks` once after cloning points `core.hooksPath` at `.githooks`;
   `zig build lint-commits` checks `origin/main..HEAD`. `.githooks/pre-push` is a copy of
   pepegrillo's hook, and `zig build test` fails when the two differ.

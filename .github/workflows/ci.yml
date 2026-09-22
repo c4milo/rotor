@@ -1,0 +1,116 @@
+# What runs on every push to main and every pull request.
+#
+# Three gates, the same three a developer runs by hand:
+#
+#   - `macos`: `zig build test`, which is the lint, every module's unit tests, the kqueue
+#     conformance suite, the halt check, the tools' tests, the bench compile, the hook check and
+#     the format check.
+#   - `linux`: the io_uring conformance suite and the uring unit tests, in the container
+#     `tools/linux_test.sh` pins by digest, with `seccomp=unconfined` because Docker's default
+#     profile refuses `io_uring_setup`.
+#   - `race`: the same suites under ThreadSanitizer, which needs Docker and a dynamic glibc.
+#
+# **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
+# both the macOS and the Linux job bound the loop's own work: a poll, a timer fire and a submit.
+# Each bound is checked against the best of twenty attempts and sits an order of magnitude above
+# what was measured, so a busy runner costs attempts and not a false failure. A failure here is a
+# regression. If one of these ever proves flaky the answer is to raise that bound deliberately,
+# with the number and the machine beside it, and never to retry until it passes.
+#
+# **No number from CI enters `docs/costs.md`.** Rule 1 of that file stands: a measured cell comes
+# from a probe run on a named machine. These runners are neither named nor quiet, and the gate
+# above is a tripwire and not a measurement.
+#
+# Zig is downloaded from ziglang.org and checked against the SHA-256 the release index published
+# for 0.16.0, so the toolchain is pinned as the container and the alternatives are. No third-party
+# action runs here; `actions/checkout` is GitHub's own.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  ZIG_VERSION: "0.16.0"
+
+jobs:
+  macos:
+    name: macOS, kqueue
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-macos-${ZIG_VERSION}.tar.xz"
+          sha="b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | shasum -a 256 -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-aarch64-macos-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - run: zig version
+      - name: The whole local gate
+        run: zig build test
+
+  linux:
+    name: Linux, io_uring
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - run: zig version
+      - name: Build the Linux test executables
+        run: zig build test-linux
+      - name: Run them against a real kernel
+        run: bash tools/linux_test.sh
+
+  race:
+    name: Linux, ThreadSanitizer
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: Build the sanitized executables
+        run: zig build test-race
+      - name: Run them
+        run: bash tools/race_test.sh
+
+  commits:
+    name: Commit messages
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: Every commit of this branch is a Conventional Commit
+        run: zig build lint-commits
