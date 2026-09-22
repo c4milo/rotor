@@ -187,6 +187,54 @@ pub const Operation = struct {
     /// Bytes the kernel reads.
     pub const ConstBuffer = struct { bytes: []const u8, registered: ?u16 = null };
 
+    // Each builds the common shape of one kind in a call, with no deadline and no registered
+    // descriptor: set `timeout_ns` or `descriptor_registered` on the result when either is wanted.
+    // A receive into a registered buffer, or a group receive that is not multishot, is written out.
+    pub fn accept(user_data: u64, listener: Descriptor, multishot: bool) Operation {
+        return .{ .user_data = user_data, .kind = .{ .accept = .{ .listener = listener, .multishot = multishot } } };
+    }
+    pub fn connect(user_data: u64, socket: Descriptor, address: *const Address) Operation {
+        return .{ .user_data = user_data, .kind = .{ .connect = .{ .socket = socket, .address = address } } };
+    }
+    /// One receive into `bytes`.
+    pub fn receive(user_data: u64, socket: Descriptor, bytes: []u8) Operation {
+        return .{ .user_data = user_data, .kind = .{ .receive = .{ .socket = socket, .target = .{ .buffer = .{ .bytes = bytes } } } } };
+    }
+    /// A multishot receive from provided-buffer group `group`.
+    pub fn receive_group(user_data: u64, socket: Descriptor, group: u16) Operation {
+        return .{ .user_data = user_data, .kind = .{ .receive = .{ .socket = socket, .target = .{ .group = group }, .multishot = true } } };
+    }
+    pub fn send(user_data: u64, socket: Descriptor, bytes: []const u8) Operation {
+        return .{ .user_data = user_data, .kind = .{ .send = .{ .socket = socket, .buffer = .{ .bytes = bytes } } } };
+    }
+    pub fn shutdown(user_data: u64, socket: Descriptor, how: How) Operation {
+        return .{ .user_data = user_data, .kind = .{ .shutdown = .{ .socket = socket, .how = how } } };
+    }
+    pub fn close(user_data: u64, closing: Descriptor) Operation {
+        return .{ .user_data = user_data, .kind = .{ .close = .{ .descriptor = closing } } };
+    }
+    pub fn read(user_data: u64, file: Descriptor, bytes: []u8, offset: u64) Operation {
+        return .{ .user_data = user_data, .kind = .{ .read = .{ .file = file, .buffer = .{ .bytes = bytes }, .offset = offset } } };
+    }
+    pub fn write(user_data: u64, file: Descriptor, bytes: []const u8, offset: u64) Operation {
+        return .{ .user_data = user_data, .kind = .{ .write = .{ .file = file, .buffer = .{ .bytes = bytes }, .offset = offset } } };
+    }
+    pub fn fdatasync(user_data: u64, file: Descriptor) Operation {
+        return .{ .user_data = user_data, .kind = .{ .fdatasync = .{ .file = file } } };
+    }
+    pub fn timer(user_data: u64, after_ns: u64, repeat_ns: u64) Operation {
+        return .{ .user_data = user_data, .kind = .{ .timer = .{ .after_ns = after_ns, .repeat_ns = repeat_ns } } };
+    }
+    pub fn post(user_data: u64, target: LoopId, message: Message) Operation {
+        return .{ .user_data = user_data, .kind = .{ .post = .{ .target = target, .message = message } } };
+    }
+    pub fn receive_from(user_data: u64, socket: Descriptor, group: u16) Operation {
+        return .{ .user_data = user_data, .kind = .{ .receive_from = .{ .socket = socket, .group = group } } };
+    }
+    pub fn send_to(user_data: u64, socket: Descriptor, bytes: []const u8, to: *const datagram.Outbound) Operation {
+        return .{ .user_data = user_data, .kind = .{ .send_to = .{ .socket = socket, .buffer = .{ .bytes = bytes }, .to = to } } };
+    }
+
     pub fn code(operation: *const Operation) Code {
         return std.meta.activeTag(operation.kind);
     }
@@ -194,17 +242,17 @@ pub const Operation = struct {
     /// The descriptor the kind names, or null for a kind that names none.
     pub fn descriptor(operation: *const Operation) ?Descriptor {
         return switch (operation.kind) {
-            .accept => |accept| accept.listener,
-            .connect => |connect| connect.socket,
-            .receive => |receive| receive.socket,
-            .send => |send| send.socket,
-            .shutdown => |shutdown| shutdown.socket,
-            .close => |close| close.descriptor,
-            .read => |read| read.file,
-            .write => |write| write.file,
-            .fdatasync => |fdatasync| fdatasync.file,
-            .receive_from => |receive| receive.socket,
-            .send_to => |send| send.socket,
+            .accept => |kind| kind.listener,
+            .connect => |kind| kind.socket,
+            .receive => |kind| kind.socket,
+            .send => |kind| kind.socket,
+            .shutdown => |kind| kind.socket,
+            .close => |kind| kind.descriptor,
+            .read => |kind| kind.file,
+            .write => |kind| kind.file,
+            .fdatasync => |kind| kind.file,
+            .receive_from => |kind| kind.socket,
+            .send_to => |kind| kind.socket,
             .timer, .post, .nop => null,
         };
     }
@@ -219,48 +267,48 @@ pub const Operation = struct {
             assert(operation.descriptor().? < constants.registered_descriptors_max);
         }
         switch (operation.kind) {
-            .accept => |accept| assert(accept.listener >= 0),
-            .connect => |connect| assert(connect.socket >= 0),
-            .receive => |receive| assert_receive(receive),
-            .send => |send| {
-                assert_transfer(send.socket, send.buffer.bytes.len);
-                assert_socket_buffer(send.buffer.registered);
+            .accept => |kind| assert(kind.listener >= 0),
+            .connect => |kind| assert(kind.socket >= 0),
+            .receive => |kind| assert_receive(kind),
+            .send => |kind| {
+                assert_transfer(kind.socket, kind.buffer.bytes.len);
+                assert_socket_buffer(kind.buffer.registered);
             },
-            .shutdown => |shutdown| assert(shutdown.socket >= 0),
-            .close => |close| assert(close.descriptor >= 0),
-            .read => |read| {
-                assert_transfer(read.file, read.buffer.bytes.len);
-                assert_file_buffer(read.buffer.registered);
+            .shutdown => |kind| assert(kind.socket >= 0),
+            .close => |kind| assert(kind.descriptor >= 0),
+            .read => |kind| {
+                assert_transfer(kind.file, kind.buffer.bytes.len);
+                assert_file_buffer(kind.buffer.registered);
             },
-            .write => |write| {
-                assert_transfer(write.file, write.buffer.bytes.len);
-                assert_file_buffer(write.buffer.registered);
+            .write => |kind| {
+                assert_transfer(kind.file, kind.buffer.bytes.len);
+                assert_file_buffer(kind.buffer.registered);
             },
-            .fdatasync => |fdatasync| assert(fdatasync.file >= 0),
-            .timer => |timer| {
+            .fdatasync => |kind| assert(kind.file >= 0),
+            .timer => |kind| {
                 // A timer is a deadline, so it carries none: `Slot.timeout_ns` holds its period
                 // instead (decision 14).
                 assert(operation.timeout_ns == 0);
-                assert(timer.after_ns <= constants.timeout_ns_max);
-                assert(timer.repeat_ns <= constants.timeout_ns_max);
+                assert(kind.after_ns <= constants.timeout_ns_max);
+                assert(kind.repeat_ns <= constants.timeout_ns_max);
             },
             .nop => assert(operation.timeout_ns == 0),
-            .post => |post| {
+            .post => |kind| {
                 assert(operation.timeout_ns == 0);
-                assert(post.target < constants.loops_max);
-                assert(post.message.tag <= constants.message_tag_max);
+                assert(kind.target < constants.loops_max);
+                assert(kind.message.tag <= constants.message_tag_max);
             },
-            .receive_from => |receive| assert_receive_from(receive),
-            .send_to => |send| assert_send_to(send),
+            .receive_from => |kind| assert_receive_from(kind),
+            .send_to => |kind| assert_send_to(kind),
         }
     }
 
-    fn assert_receive(receive: Receive) void {
-        assert(receive.socket >= 0);
-        switch (receive.target) {
+    fn assert_receive(kind: Receive) void {
+        assert(kind.socket >= 0);
+        switch (kind.target) {
             .buffer => |buffer| {
-                assert(!receive.multishot);
-                assert_transfer(receive.socket, buffer.bytes.len);
+                assert(!kind.multishot);
+                assert_transfer(kind.socket, buffer.bytes.len);
                 assert_socket_buffer(buffer.registered);
             },
             .group => |group| assert(group < constants.buffer_groups_max),
@@ -280,20 +328,20 @@ pub const Operation = struct {
     /// A datagram receive takes the same targets a stream receive does, and the same rule that
     /// only a group may be multishot. Its buffer holds the prefix in front of the datagram, so a
     /// buffer that cannot hold one byte past the prefix is a caller's mistake.
-    fn assert_receive_from(receive: ReceiveFrom) void {
-        assert(receive.socket >= 0);
-        assert(receive.group < constants.buffer_groups_max);
+    fn assert_receive_from(kind: ReceiveFrom) void {
+        assert(kind.socket >= 0);
+        assert(kind.group < constants.buffer_groups_max);
     }
 
     /// A datagram send names where it goes. A segment size, when it names one, is smaller than
     /// the buffer: cutting a buffer into one piece is what 0 already means.
-    fn assert_send_to(send: SendTo) void {
-        assert_transfer(send.socket, send.buffer.bytes.len);
-        assert_socket_buffer(send.buffer.registered);
-        assert(send.to.flags.peer or send.to.flags.local);
-        if (send.to.segment_bytes != 0) {
-            assert(send.to.segment_bytes < send.buffer.bytes.len);
-            assert(send.buffer.bytes.len / send.to.segment_bytes <= constants.segments_max);
+    fn assert_send_to(kind: SendTo) void {
+        assert_transfer(kind.socket, kind.buffer.bytes.len);
+        assert_socket_buffer(kind.buffer.registered);
+        assert(kind.to.flags.peer or kind.to.flags.local);
+        if (kind.to.segment_bytes != 0) {
+            assert(kind.to.segment_bytes < kind.buffer.bytes.len);
+            assert(kind.buffer.bytes.len / kind.to.segment_bytes <= constants.segments_max);
         }
     }
 
@@ -387,4 +435,58 @@ test "every kind that names a descriptor may name a registered one, but a close"
     try testing.expectEqual(@as(?Descriptor, 7), close.descriptor());
     const nop: Operation = .{ .user_data = 1, .kind = .nop };
     try testing.expectEqual(@as(?Descriptor, null), nop.descriptor());
+}
+
+test "each constructor builds its kind with every field it was given, and nothing else set" {
+    var bytes: [4]u8 = undefined;
+    const address = Address.ipv4(.{ 127, 0, 0, 1 }, 53);
+    const outbound: datagram.Outbound = .{
+        .peer = address,
+        .local = address,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    const built = [_]Operation{
+        Operation.accept(1, 3, true),
+        Operation.connect(2, 4, &address),
+        Operation.receive(3, 5, &bytes),
+        Operation.receive_group(4, 6, 2),
+        Operation.send(5, 7, bytes[0..3]),
+        Operation.shutdown(6, 8, .send),
+        Operation.close(7, 9),
+        Operation.read(8, 10, &bytes, 4096),
+        Operation.write(9, 11, bytes[0..2], 8192),
+        Operation.fdatasync(10, 12),
+        Operation.timer(11, 1_000, 500),
+        Operation.post(12, 13, .{ .payload = 99, .tag = 7 }),
+        Operation.receive_from(13, 14, 3),
+        Operation.send_to(14, 15, bytes[0..1], &outbound),
+    };
+    const codes = [_]Operation.Code{
+        .accept, .connect, .receive,   .receive, .send, .shutdown,     .close,
+        .read,   .write,   .fdatasync, .timer,   .post, .receive_from, .send_to,
+    };
+    for (built, codes, 1..) |operation, expected, user_data| {
+        try std.testing.expectEqual(expected, operation.code());
+        try std.testing.expectEqual(@as(u64, user_data), operation.user_data);
+        try std.testing.expectEqual(@as(u64, 0), operation.timeout_ns);
+        try std.testing.expect(!operation.descriptor_registered);
+    }
+    try std.testing.expect(built[0].kind.accept.multishot and built[0].kind.accept.listener == 3);
+    try std.testing.expect(built[1].kind.connect.socket == 4 and built[1].kind.connect.address == &address);
+    try std.testing.expect(built[2].kind.receive.socket == 5 and !built[2].kind.receive.multishot);
+    try std.testing.expect(built[2].kind.receive.target.buffer.bytes.len == 4);
+    try std.testing.expect(built[3].kind.receive.multishot and built[3].kind.receive.target.group == 2);
+    try std.testing.expect(built[4].kind.send.socket == 7 and built[4].kind.send.buffer.bytes.len == 3);
+    try std.testing.expect(built[5].kind.shutdown.socket == 8 and built[5].kind.shutdown.how == .send);
+    try std.testing.expect(built[6].kind.close.descriptor == 9);
+    try std.testing.expect(built[7].kind.read.file == 10 and built[7].kind.read.offset == 4096);
+    try std.testing.expect(built[8].kind.write.file == 11 and built[8].kind.write.buffer.bytes.len == 2);
+    try std.testing.expect(built[8].kind.write.offset == 8192 and built[9].kind.fdatasync.file == 12);
+    try std.testing.expect(built[10].kind.timer.after_ns == 1_000 and built[10].kind.timer.repeat_ns == 500);
+    try std.testing.expect(built[11].kind.post.target == 13 and built[11].kind.post.message.payload == 99);
+    try std.testing.expect(built[12].kind.receive_from.socket == 14 and built[12].kind.receive_from.group == 3);
+    try std.testing.expect(built[13].kind.send_to.socket == 15 and built[13].kind.send_to.to == &outbound);
+    try std.testing.expect(built[13].kind.send_to.buffer.bytes.len == 1);
 }
