@@ -29,6 +29,20 @@ pub const user_data_close_cancel: u64 = 2;
 /// the largest and is right on all three.
 pub const buffer_ring_alignment = 64 * 1024;
 
+/// Submission entries the ring a `Remote` creates holds (decision 4, "a small ring created for that
+/// thread, used only to submit `MSG_RING`"). One, derived and not chosen: a `Remote.post` submits
+/// one entry and does not submit another until the kernel has answered it, which `Remote.unanswered`
+/// keeps true when the answer is late, so one is enough and the kernel's completion ring of two
+/// holds the one answer. A batching mode would change this limit and that field together.
+pub const remote_entries: u16 = 1;
+
+/// How long a `Remote.post` waits for the kernel's answer to its `MSG_RING`. On Linux 6.1 and on
+/// 6.10 and later the answer is posted inside the `io_uring_enter` that submits, and the wait is
+/// nothing. On 6.3 to 6.9 the answer waits for the target's thread to run once (recalled from
+/// `io_uring/msg_ring.c`), which takes a scheduling delay, so a second is passed only by a thread
+/// that is stopped or starved. After it, the post is `Unanswered` and the message may still land.
+pub const remote_wait_ns: u64 = 1 * @import("core").constants.ns_per_s;
+
 /// The largest errno Linux returns. A completion's result in [-errno_max, -1] is an operation
 /// that failed; a result below that range is a message another loop posted.
 pub const errno_max: i32 = 4095;
@@ -45,6 +59,11 @@ comptime {
     assert(lowest_message_result < -errno_max);
     assert(tag_max & message_result_flag == 0);
     assert(std.math.isPowerOfTwo(entries_max));
+    assert(remote_entries >= 1);
+    assert(remote_entries <= entries_max);
+    assert(std.math.isPowerOfTwo(remote_entries));
+    assert(remote_wait_ns >= 1);
+    assert(remote_wait_ns <= @import("core").constants.wait_ns_max);
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));
     assert(enter_retries_max >= 1);
     assert(kernel_workers_max >= 1);

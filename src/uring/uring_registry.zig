@@ -10,6 +10,12 @@ const core = @import("core");
 /// The entry of a loop that has not started or has stopped.
 pub const descriptor_none: core.Descriptor = -1;
 
+/// The entry of a `Remote`: an id a thread claimed so its messages can name a sender, which runs no
+/// loop and receives nothing (decision 4). It is distinct from `descriptor_none` so that claiming an
+/// id twice is caught, and negative so that every `post` to it is already answered `loop_not_found`
+/// by the check each backend makes on a target's descriptor.
+pub const descriptor_remote: core.Descriptor = -2;
+
 pub const Registry = struct {
     descriptors: [core.constants.loops_max]std.atomic.Value(core.Descriptor),
     /// How many loops the application said it runs. A `post` to an id at or above it finds no
@@ -48,10 +54,20 @@ pub const Registry = struct {
         assert(previous == descriptor_none);
     }
 
+    /// A `Remote` claims `id` at init: it publishes no ring, because it receives nothing, and the
+    /// sentinel is what makes a second claim on one id halt (decision 4).
+    pub fn set_remote(registry: *Registry, id: core.LoopId) void {
+        assert(id < registry.loop_count);
+        const previous = registry.descriptors[id].swap(descriptor_remote, .release);
+        assert(previous == descriptor_none);
+    }
+
     pub fn clear(registry: *Registry, id: core.LoopId) void {
         assert(id < core.constants.loops_max);
         const previous = registry.descriptors[id].swap(descriptor_none, .release);
-        assert(previous >= 0);
+        // A loop publishes its ring and a `Remote` publishes the sentinel. Either way the id was
+        // claimed, and withdrawing one that was not is a programmer error.
+        assert(previous != descriptor_none);
     }
 
     /// The ring of loop `id`, or `descriptor_none`: for a loop that has not started or has

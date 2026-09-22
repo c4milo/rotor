@@ -20,6 +20,7 @@ pub const descriptors = @import("uring_descriptors.zig");
 pub const errno = @import("uring_errno.zig");
 pub const reap_module = @import("uring_reap.zig");
 pub const registry_module = @import("uring_registry.zig");
+pub const remote_module = @import("uring_remote.zig");
 pub const ring_module = @import("uring_ring.zig");
 pub const submit_module = @import("uring_submit.zig");
 pub const sync = @import("uring_sync.zig");
@@ -27,10 +28,24 @@ pub const testing = @import("uring_testing.zig");
 pub const tick_module = @import("uring_tick.zig");
 
 pub const Registry = registry_module.Registry;
+pub const Remote = remote_module.Remote;
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation without a thread, so there is nothing to hand out and
 /// `Options.file_policy` is taken and ignored (decision 18).
 pub const files_block = false;
+
+/// Whether a `post` can be refused for lack of room at the target, which decides what a caller
+/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). The ring is
+/// created with `IORING_FEAT_NODROP` required, so a target whose completion ring is full has the
+/// completion kept by the kernel in an overflow list, bounded by kernel memory and not by rotor.
+/// A `MSG_RING` to a running loop therefore lands unless the kernel is out of memory. What it
+/// answers then depends on the kernel: `EOVERFLOW`, `mailbox_full`, when the overflow entry could
+/// not be allocated (Linux 6.1, and 6.3 to 6.9 from the target's task work); `ENOMEM`,
+/// `system_resources`, when the request that carries the message could not be allocated (6.10
+/// and later, where a later failure to allocate the overflow entry drops the message with no
+/// answer to the sender). Recalled from `io_uring/msg_ring.c`; `uring_errno.zig` records what
+/// was read there.
+pub const post_bounded = false;
 
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag == .linux;
@@ -274,6 +289,7 @@ pub const Loop = struct {
 
 comptime {
     core.surface.check(Loop);
+    core.surface.check_remote(Remote);
 }
 
 test {
@@ -285,6 +301,7 @@ test {
     _ = errno;
     _ = reap_module;
     _ = registry_module;
+    _ = remote_module;
     _ = ring_module;
     _ = submit_module;
     _ = sync;

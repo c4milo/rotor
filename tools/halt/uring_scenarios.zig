@@ -66,6 +66,76 @@ fn submit_more_handles_than_operations() void {
     _ = loop.submit(&one_timer, &handles);
 }
 
+// The Remote's assertions (decision 4). Each is a mistake only the caller can make. On io_uring a
+// Remote's `init` creates a ring, which this host may not have, so the scenarios claim the registry
+// slot themselves and fill the remote's fields by hand; each assertion then fires before the ring
+// would be touched, so the check runs on every host.
+
+/// A registry of two slots, which the scenarios claim as a loop and a remote would.
+const remote_ids: u16 = 2;
+const remote_registry_bytes = uring.Registry.memory_bytes(remote_ids);
+var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
+    undefined;
+var remote_registry: uring.Registry = undefined;
+var remote_one: uring.Remote = undefined;
+
+/// What `Remote.init` would record for `id` on this thread, without the ring.
+fn claim_remote_one_by_hand(id: core.LoopId) void {
+    remote_one.registry = &remote_registry;
+    remote_one.owner = core.tables.thread_identity();
+    remote_one.id = id;
+    remote_one.unanswered = false;
+    remote_registry.set_remote(id);
+}
+
+/// Two remotes claiming one id: the second would take a slot whose messages name the first.
+fn claim_one_id_with_two_remotes() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_registry.set_remote(1);
+    scenario.reached_violation();
+    remote_registry.set_remote(1);
+}
+
+/// A remote claiming an id a loop already holds: the loop published its ring there, and the remote
+/// would overwrite it.
+fn claim_a_loops_id_with_a_remote() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_registry.set(0, 3);
+    scenario.reached_violation();
+    remote_registry.set_remote(0);
+}
+
+/// A remote posting to its own id. It has no ring to receive with, so a message to oneself is a
+/// programmer error, as a loop posting to itself is.
+fn post_from_a_remote_to_itself() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    claim_remote_one_by_hand(1);
+    scenario.reached_violation();
+    _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A remote used from a thread that did not create it: the ring is single-issuer, and the halt
+/// comes before the kernel would refuse the entry.
+fn post_from_a_remote_on_another_thread() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    claim_remote_one_by_hand(1);
+    const thread = std.Thread.spawn(.{}, post_through_remote_one, .{}) catch return;
+    thread.join();
+}
+
+fn post_through_remote_one() void {
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A tag above `message_tag_max`, which would collide with the flag the reap tells a message by.
+fn post_a_tag_above_the_limit() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    claim_remote_one_by_hand(1);
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
@@ -78,6 +148,14 @@ const scenarios = [_]scenario.Scenario{
         .name = "loop: submit with more handles than operations",
         .run = submit_more_handles_than_operations,
     },
+    .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
+    .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
+    .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
+    .{
+        .name = "remote: post from a remote on another thread",
+        .run = post_from_a_remote_on_another_thread,
+    },
+    .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
 };
 
 pub fn main(init: std.process.Init) !void {
