@@ -1,5 +1,7 @@
-//! The map from an errno to a `core.Code`: the branch an operation that succeeded never takes.
-//! On kqueue the backend makes each system call itself, so the errno is the call's own.
+//! The map from an errno to a `Code`: the branch an operation that succeeded never takes. A
+//! readiness backend makes each system call itself, so the errno is the call's own. `kqueue` and
+//! `epoll` share this file; `uring` has its own, because io_uring returns `-errno` in a completion
+//! and its map documents each kernel situation that produces one.
 //!
 //! Two errnos never reach this map. EAGAIN means the descriptor is not ready: the operation waits
 //! for readiness and is tried again (decision 12, point 1). EINTR means a signal interrupted the
@@ -9,7 +11,7 @@
 //! name, so it compiles and its tests run on every host.
 const std = @import("std");
 const assert = std.debug.assert;
-const core = @import("core");
+const event_module = @import("event.zig");
 
 pub const E = std.posix.E;
 
@@ -19,7 +21,7 @@ pub fn is_handled_by_the_backend(errno: E) bool {
 }
 
 /// The code a failed call's errno carries.
-pub fn code_of(errno: E) core.Code {
+pub fn code_of(errno: E) event_module.Code {
     assert(errno != .SUCCESS);
     assert(!is_handled_by_the_backend(errno));
     return switch (errno) {
@@ -44,7 +46,7 @@ pub fn code_of(errno: E) core.Code {
 
 const testing = std.testing;
 
-const Row = struct { errno: E, code: core.Code };
+const Row = struct { errno: E, code: event_module.Code };
 
 const rows = [_]Row{
     .{ .errno = .NOMEM, .code = .system_resources },

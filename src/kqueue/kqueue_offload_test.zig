@@ -129,7 +129,7 @@ test "a worker on another thread hands its result back, and the loop finishes th
 
     var events: [2]core.Event = undefined;
     try testing.expectEqual(@as(u32, 1), loop_fixture.loop.tables.drain_finished(&events));
-    // The descriptor is closed, so the kernel answered EBADF, which `kqueue_errno.zig` maps to
+    // The descriptor is closed, so the kernel answered EBADF, which `core/errno.zig` maps to
     // `unexpected`. The trip carried the failure intact: one that lost the sign of the result would
     // read as an enormous transfer count instead of as an error at all.
     try testing.expectError(error.Unexpected, events[0].outcome());

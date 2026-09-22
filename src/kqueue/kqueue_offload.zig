@@ -27,7 +27,6 @@ const std = @import("std");
 const assert = std.debug.assert;
 const posix = std.posix;
 const core = @import("core");
-const errno_module = @import("kqueue_errno.zig");
 const queue_module = @import("kqueue_queue.zig");
 const constants = @import("constants.zig");
 const kqueue = @import("kqueue.zig");
@@ -160,7 +159,7 @@ fn transfer(work: *const Work) i32 {
         if (rc >= 0) return @intCast(rc);
         switch (posix.errno(rc)) {
             .INTR => continue,
-            else => |code| return core.event.result_of(errno_module.code_of(code)),
+            else => |code| return core.event.result_of(core.errno.code_of(code)),
         }
     }
     return core.event.result_of(.would_block);
@@ -170,7 +169,7 @@ fn transfer(work: *const Work) i32 {
 fn sync(descriptor: core.Descriptor) i32 {
     if (std.c.fcntl(descriptor, std.c.F.FULLFSYNC, @as(c_int, 0)) == 0) return 0;
     if (std.c.fsync(descriptor) == 0) return 0;
-    return core.event.result_of(errno_module.code_of(posix.errno(-1)));
+    return core.event.result_of(core.errno.code_of(posix.errno(-1)));
 }
 
 /// Moves every result the workers pushed into the loop's finished list, on the loop thread. The

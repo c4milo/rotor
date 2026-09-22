@@ -3,7 +3,7 @@
 //! and says what came of it: a result, or a filter to wait on because the call would block.
 //!
 //! EINTR transferred nothing, so the call is made again, a bounded number of times. Every other
-//! errno is the operation's result, through `kqueue_errno.code_of`.
+//! errno is the operation's result, through `core.errno.code_of`.
 //!
 //! Everything here enters the kernel, so it is tested under macOS alone, through the loop.
 const std = @import("std");
@@ -14,7 +14,6 @@ const datagram = @import("kqueue_datagram.zig");
 const constants = @import("constants.zig");
 const address_module = @import("kqueue_address.zig");
 const buffers_module = @import("kqueue_buffers.zig");
-const errno_module = @import("kqueue_errno.zig");
 const sync = @import("kqueue_sync.zig");
 const socket_calls = @import("kqueue_sync_socket.zig");
 const kqueue = @import("kqueue.zig");
@@ -42,7 +41,7 @@ pub const Attempt = struct {
     }
 
     fn failed(errno: posix.E) Attempt {
-        return done(core.event.result_of(errno_module.code_of(errno)));
+        return done(core.event.result_of(core.errno.code_of(errno)));
     }
 
     /// The filter an attempt that must wait asks for.
