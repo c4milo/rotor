@@ -16,6 +16,7 @@ const address_module = @import("kqueue_address.zig");
 const buffers_module = @import("kqueue_buffers.zig");
 const errno_module = @import("kqueue_errno.zig");
 const sync = @import("kqueue_sync.zig");
+const socket_calls = @import("kqueue_sync_socket.zig");
 const waiters_module = @import("kqueue_waiters.zig");
 const kqueue = @import("kqueue.zig");
 
@@ -105,7 +106,7 @@ fn attempt_accept(slot: *Slot) Attempt {
                 const descriptor: core.Descriptor = @intCast(accepted);
                 // An accepted socket does not inherit what the loop needs of it (decision 12,
                 // point 8).
-                sync.prepare_accepted(descriptor) catch {
+                socket_calls.prepare_accepted(descriptor) catch {
                     sync.close_now(descriptor);
                     return Attempt.done(core.event.result_of(.unexpected));
                 };

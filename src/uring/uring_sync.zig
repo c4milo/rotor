@@ -33,13 +33,13 @@ pub const file_size = file_calls.file_size;
 pub const set_file_size = file_calls.set_file_size;
 pub const sync_directory = file_calls.sync_directory;
 
-/// This file's public declarations, which `kqueue_sync.zig` carries too, with `prepare_accepted`
-/// beside them. Its own test writes the surface out, and this one holds the count they share.
+/// This file's public declarations, which `kqueue_sync.zig` carries too, name for name. Its own
+/// test writes the surface out, and this one holds the count they share.
 const declarations = 20;
 
 const expect = std.testing.expect;
 
-test "the surface is the one kqueue_sync.zig presents, less prepare_accepted" {
+test "the surface is the one kqueue_sync.zig presents, name for name" {
     const Address = core.Address;
     const Descriptor = core.Descriptor;
     const Path = [*:0]const u8;

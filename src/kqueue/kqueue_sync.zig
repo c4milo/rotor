@@ -8,8 +8,9 @@
 //! it (decision 10). An error macOS never produces keeps its place in its set. The calls are in
 //! `kqueue_sync_socket.zig` and `kqueue_sync_file.zig`, each with its tests.
 //!
-//! One call is this backend's alone: `prepare_accepted`, which the loop's accept path calls
-//! because macOS has no `accept4` (decision 12, point 8).
+//! `prepare_accepted`, which the loop's accept path calls because macOS has no `accept4`
+//! (decision 12, point 8), stays in `kqueue_sync_socket.zig` and off this surface: the loop
+//! makes that call, and a consumer never does.
 const std = @import("std");
 const core = @import("core");
 const socket_calls = @import("kqueue_sync_socket.zig");
@@ -24,7 +25,6 @@ pub const open_socket = socket_calls.open_socket;
 pub const listen = socket_calls.listen;
 pub const local_address = socket_calls.local_address;
 pub const set_no_delay = socket_calls.set_no_delay;
-pub const prepare_accepted = socket_calls.prepare_accepted;
 pub const close_now = socket_calls.close_now;
 pub const DatagramOptions = socket_calls.DatagramOptions;
 pub const open_datagram = socket_calls.open_datagram;
@@ -38,13 +38,13 @@ pub const file_size = file_calls.file_size;
 pub const set_file_size = file_calls.set_file_size;
 pub const sync_directory = file_calls.sync_directory;
 
-/// The public declarations of `uring_sync.zig`, and `prepare_accepted`. The module graph keeps
-/// `uring` out of this module's reach, so the tests below write its surface out.
-const declarations = 21;
+/// The public declarations of `uring_sync.zig`, name for name. The module graph keeps `uring` out
+/// of this module's reach, so the tests below write its surface out.
+const declarations = 20;
 
 const expect = std.testing.expect;
 
-test "the surface is the one uring_sync.zig presents, with prepare_accepted beside it" {
+test "the surface is the one uring_sync.zig presents, name for name" {
     const Address = core.Address;
     const Descriptor = core.Descriptor;
     const Path = [*:0]const u8;
@@ -53,7 +53,6 @@ test "the surface is the one uring_sync.zig presents, with prepare_accepted besi
     try expect(@TypeOf(listen) == fn (*const Address, ListenOptions) ListenError!Descriptor);
     try expect(@TypeOf(local_address) == fn (Descriptor) AddressError!Address);
     try expect(@TypeOf(set_no_delay) == fn (Descriptor, bool) OptionError!void);
-    try expect(@TypeOf(prepare_accepted) == fn (Descriptor) OptionError!void);
     try expect(@TypeOf(close_now) == fn (Descriptor) void);
     const open_datagram_type = fn (Address.Family, ?*const Address, DatagramOptions) ListenError!Descriptor;
     try expect(@TypeOf(open_datagram) == open_datagram_type);
