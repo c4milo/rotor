@@ -22,7 +22,8 @@ const pepegrillo = @import("pepegrillo");
 
 /// The scopes CLAUDE.md names: one per module, plus `bench` and `tools`.
 pub const module_scopes = [_][]const u8{
-    "core", "uring", "kqueue", "conformance", "adapter", "bench", "tools",
+    "core",        "uring",   "kqueue", "epoll",
+    "conformance", "adapter", "bench",  "tools",
 };
 
 /// First words that describe the commit instead of commanding it.
@@ -83,7 +84,8 @@ fn expect_findings(text: []const u8, expected: []const []const u8) !void {
 test "every scope CLAUDE.md names passes" {
     // Written out rather than read from `module_scopes`, so a scope dropped from that list fails.
     const scopes = [_][]const u8{
-        "core", "uring", "kqueue", "conformance", "adapter", "bench", "tools",
+        "core",        "uring",   "kqueue", "epoll",
+        "conformance", "adapter", "bench",  "tools",
     };
     try testing.expectEqual(scopes.len, module_scopes.len);
     for (scopes) |scope| {
@@ -94,9 +96,12 @@ test "every scope CLAUDE.md names passes" {
 }
 
 test "a well-formed scope the graph does not name draws a warning" {
-    try expect_findings("feat(epoll): add the submission queue\n", &.{
-        "warning: scope-known: the scope \"epoll\" is not a module of the graph" ++
-            " (core, uring, kqueue, conformance, adapter, bench, tools)",
+    // `windows` and not a plausible backend name: decision 2 excludes Windows, so this example
+    // cannot become a module and quietly stop testing anything. `epoll` stood here until it did
+    // exactly that, on 2026-09-22.
+    try expect_findings("feat(windows): add the completion port\n", &.{
+        "warning: scope-known: the scope \"windows\" is not a module of the graph" ++
+            " (core, uring, kqueue, epoll, conformance, adapter, bench, tools)",
     });
 }
 

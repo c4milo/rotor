@@ -116,7 +116,7 @@ measured against `zig build halt-check`.
 
 - A commit message is a Conventional Commit: `type(scope)!: description`, with the scope and the
   `!` optional. The type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
-  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `conformance`,
+  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `epoll`, `conformance`,
   `adapter`, `bench`, `tools`. A scope outside that set is a warning.
 - The description is imperative, starts with a lowercase letter, and ends without a period. The
   subject line stays at or under 72 columns.
