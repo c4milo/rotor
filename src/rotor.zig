@@ -33,6 +33,10 @@ pub const Loop = backend.Loop;
 /// The registry a group of loops shares, for `post` between them.
 pub const Registry = backend.Registry;
 
+/// What a thread that owns no loop holds to post with: `post` for a thread with no loop
+/// (decision 4). It takes one slot of the registry, sends, and never receives.
+pub const Remote = backend.Remote;
+
 /// Opening, closing and naming a socket: the calls a caller makes before it has a loop, and the
 /// ones a loop does not make for it.
 pub const sync = backend.sync;
@@ -45,6 +49,10 @@ pub const buffers = backend.buffers;
 /// `Loop.Options.file_policy` and an offload mean anything here (decision 18).
 pub const files_block = backend.files_block;
 
+/// Whether a `post` can be refused for lack of room at the target, from a loop or from a
+/// `Remote`: what a caller may assume of `mailbox_full` and `MailboxFull` here (decision 4).
+pub const post_bounded = backend.post_bounded;
+
 /// True when this backend's kernel is the one running. False in a cross build.
 pub const supported = backend.supported;
 
@@ -53,6 +61,7 @@ pub const constants = core.constants;
 pub const datagram = core.datagram;
 pub const layout = core.layout;
 pub const offload = core.offload;
+pub const remote = core.remote;
 pub const statistics = core.statistics;
 
 pub const Address = core.Address;
@@ -70,4 +79,5 @@ comptime {
     // The host's backend carries the surface every backend must (decision 1). The backends check
     // this for themselves; checking it here as well is what makes this file's promise its own.
     core.surface.check(Loop);
+    core.surface.check_remote(Remote);
 }
