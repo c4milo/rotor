@@ -95,3 +95,36 @@ class A because it must run in production, and it reads a line the reap has alre
   record gains a results section.
 - Each class A and B assertion has a test that violates it and expects the halt. The mutation
   that deletes the assertion must be reported `CAUGHT`.
+
+## Results, 2026-09-22, `orbstack`
+
+`bench/uring/nop.zig` in ReleaseSafe against ReleaseFast, five rounds each, alternating, on one
+virtual CPU (`bench/results/decision-8-orbstack-2026-09-22.md`). Nanoseconds per operation, the
+five rounds in order:
+
+| batch | ReleaseSafe | ReleaseFast |
+|---|---|---|
+| 1 | 250, 250, 250, 250, 334 | 333, 292, 292, 333, 333 |
+| 8 | 83, 83, 78, 78, 104 | 93, 93, 93, 93, 93 |
+| 32 | 63, 62, 62, 62, 78 | 70, 69, 70, 69, 70 |
+| 64 | 58, 59, 59, 59, 72 | 66, 66, 66, 67, 67 |
+| 128 | 57, 57, 57, 57, 70 | 64, 64, 64, 64, 64 |
+
+Two things this says, and one it cannot:
+
+- ReleaseSafe was not slower than ReleaseFast in four rounds of five at every batch size, and one
+  ReleaseSafe round was 25 percent slower than the other four. The difference between the modes is
+  inside the difference between rounds of one mode, so this machine cannot resolve a 2 percent
+  question. The likely cause is the one `docs/costs.md` names for `orbstack`: a virtual CPU may be
+  backed by an efficiency core, and neither program can see or choose that.
+- The upper bound the experiment asked for is therefore not established here. What can be said is
+  that every check ReleaseSafe adds costs less than the noise of this machine, which at batch 32
+  is 25 percent.
+- The comptime flag of step 2, which compiles class A out alone, is not built: the benchmark build
+  offers ReleaseSafe and ReleaseFast and nothing between. The thresholds stay as fixed, and the
+  experiment waits for the `linux` machine and for that flag. Until then the provisional rule
+  stands, unmeasured.
+
+`docs/costs.md` measured a miss to memory (C3) at 128 to 185 ns against a per-entry budget (C8) of
+52 ns, so the dividing line above, memory and not count, holds with more room than the priors gave
+it.
