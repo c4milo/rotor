@@ -4,8 +4,8 @@ This document holds the latency of the low-level operations rotor's design argum
 add. Every design argument in `docs/decisions/` cites a row of it by its id. A claim that
 something is fast enough shows the arithmetic over these rows.
 
-**Status: the `mac` and `orbstack` columns were filled on 2026-09-22**, with the probes of
-`bench/costs/`; "How the columns were filled" below says from which runs, and what each column
+**Status: the `mac`, `orbstack` and `github` columns were filled on 2026-09-22**, with the probes
+of `bench/costs/`; "How the columns were filled" below says from which runs, and what each column
 cannot carry. The `linux` column is empty, because that machine is not named.
 
 ## Rules
@@ -28,6 +28,7 @@ cannot carry. The `linux` column is empty, because that machine is not named.
 |---|---|---|---|---|---|---|---|
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
 | `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine; the guest reports CPU implementer `0x61`, Apple's | 10, as the guest reports them | 15.66 GiB (`MemTotal` 16,425,400 kB), plus a 16 GiB `zram0` swap | Linux 7.0.14-orbstack-00380-ga7e0a2dc9535, aarch64 | virtio: `vda` 415 MiB, `vdb` 460 GiB, `vdc` 1 GiB, each backed by a file on the `mac` machine's APFS | 2026-09-20 |
+| `github` | x86-64 cross-check, io_uring backend | Intel Xeon Platinum 8370C at 2.80 GHz, as this run's `/proc/cpuinfo` named it; a later run gets whichever the pool has | 4 virtual | 15.61 GiB (`MemTotal` 16,372,436 kB) | Linux 6.17.0-1022-azure, x86_64 | an Azure cloud volume, not an NVMe | 2026-09-22 |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
@@ -63,6 +64,29 @@ never enters this file — is amended to what it was actually protecting against
 - A design argument may cite an `orbstack` cell, and must say which machine it came from. A claim
   that rotor is faster than another candidate is still made on the machine the claim names.
 
+### The owner added `github` on 2026-09-22
+
+A GitHub-hosted `ubuntu-24.04` runner, filled by the `costs` job of `.github/workflows/ci.yml`,
+which is started by hand. It is here because **it is the only x86-64 machine this project has
+measured anything on**: `mac` and `orbstack` are both Apple silicon, and the deployment target is
+x86-64. An argument about the target's architecture had nothing but priors before it.
+
+It is a named machine under three rules of its own, because it is not the same machine twice:
+
+- **Every cell of this column comes from one run**, and `bench/results/costs-github-2026-09-22.md`
+  is that run, with the CPU it reported. The probe reads `/proc/cpuinfo` for exactly this reason.
+- **The column is replaced whole, never cell by cell.** GitHub hands out whichever processor its
+  pool had, so a cell taken from a Xeon beside one taken from an EPYC would be a column describing
+  no machine. A later run replaces all of it and names its own CPU.
+- **C12 and C13 stay empty**, as they do for `orbstack` and for a different reason: the file those
+  rows read sits on an Azure cloud volume, and the row names an NVMe. The probe ran and its numbers
+  are in the results file; they are not this column's.
+
+**It is not the `linux` row and cannot become it.** That row is the deployment target, and stompy
+builds for `znver4` and `znver5`. A Xeon Platinum 8370C is Ice Lake, so a cell here is x86-64 and
+not Zen. It is also shared, virtualised and unpinned, where the `linux` row wants a machine
+somebody can keep quiet.
+
 ### Why `orbstack` cannot become the `linux` row
 
 It was asked, and the guest answered it: **`orbstack` is `aarch64`**, on Apple silicon (CPU
@@ -83,29 +107,29 @@ file may be filled from a machine of another architecture, however convenient it
 
 ## The table
 
-| id | operation | prior (ns) | prior source | `mac` measured (ns) | `orbstack` measured (ns) | `linux` measured (ns) |
-|---|---|---|---|---|---|---|
-| C1 | L1 cache reference | 0.5 | Abseil | 0.93 (1.32) | 0.93 (1.44) | |
-| C2 | L2 cache reference | 3 | Abseil | 5.43 (8.54) | 6.78 (14.4) | |
-| C3 | main memory reference, a last-level cache miss | 50 | Abseil | 128 (199) | 185 (327) | |
-| C4 | branch mispredict | 5 | Abseil | 5.77 (8.34) | 5.78 (9.32) | |
-| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | 1.50 (2.39) | 1.53 (2.45) | |
-| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | 112 (133) | 88.9 (160) | |
-| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | 193 (389) | |
-| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | 51.6 (81.1) | |
-| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | 11.7 (14.3) | |
-| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | 294 (379) | not applicable | not applicable |
-| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | 45.7 (65.0) | not applicable | not applicable |
-| C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | not applicable | |
-| C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | not applicable | |
-| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | |
-| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | |
-| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | |
-| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | |
-| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | 18,125 (46,750) | not applicable | not applicable |
-| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | |
-| C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | |
-| C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | |
+| id | operation | prior (ns) | prior source | `mac` measured (ns) | `orbstack` measured (ns) | `github` measured (ns) | `linux` measured (ns) |
+|---|---|---|---|---|---|---|---|
+| C1 | L1 cache reference | 0.5 | Abseil | 0.93 (1.32) | 0.93 (1.44) | 1.43 (1.63) | |
+| C2 | L2 cache reference | 3 | Abseil | 5.43 (8.54) | 6.78 (14.4) | 23.4 (24.7) | |
+| C3 | main memory reference, a last-level cache miss | 50 | Abseil | 128 (199) | 185 (327) | 93.8 (109) | |
+| C4 | branch mispredict | 5 | Abseil | 5.77 (8.34) | 5.78 (9.32) | 7.09 (8.56) | |
+| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | 1.50 (2.39) | 1.53 (2.45) | 1.15 (1.51) | |
+| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | 112 (133) | 88.9 (160) | 98.6 (139) | |
+| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | 193 (389) | 202 (251) | |
+| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | 51.6 (81.1) | 54.8 (67.4) | |
+| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | 11.7 (14.3) | 8.06 (11.3) | |
+| C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | 294 (379) | not applicable | not applicable | not applicable |
+| C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | 45.7 (65.0) | not applicable | not applicable | not applicable |
+| C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | not applicable | not applicable | |
+| C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | not applicable | not applicable | |
+| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | 5,772 (15,958) | |
+| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | 8,363 (20,259) | |
+| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | 4,902 (6,832) | |
+| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | 8,926 (9,743) | |
+| C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | 18,125 (46,750) | not applicable | not applicable | not applicable |
+| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | 35.4 (49.4) | |
+| C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | 16.3 (26.6) | |
+| C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.43 (1.89) | |
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.
@@ -126,6 +150,10 @@ three serial runs, and `bench/results/` holds all three as they were printed:
   -O ReleaseSafe` and run in the Linux gate's container, three times a few seconds apart
   (`bench/results/costs-orbstack-2026-09-22.md`, and `bench/costs/README.md` for the command).
   C12 and C13 are excluded here, as the Machines section says.
+
+- `github`: the `costs` job of `.github/workflows/ci.yml`, started by hand, one run
+  (`bench/results/costs-github-2026-09-22.md`). One run and not three: the runner is not the same
+  machine twice, so a spread across runs would mix processors. What that column may carry is above.
 
 Where the three runs disagreed by more than a few percent, the cell is one run and the range is
 this: on `mac`, C14 12,417 to 13,792 ns and C18 18,125 to 25,291 ns; on `orbstack`, C7 193 to
@@ -170,6 +198,26 @@ One message, in ns, across the five runs:
 A bounded spin takes back almost all of the wake when the peer answers inside the window. What it
 costs when the peer does not answer is not measured, which is what keeps
 `docs/decisions/0013-when-a-loop-sleeps.md` proposed.
+
+### What the x86-64 column changed
+
+`github` is the first x86-64 reading this project has. Against the two Apple-silicon machines and
+against the priors:
+
+- **An L2 hit costs 23.4 ns there, against 5.43 on `mac` and a prior of 3.** That is the largest
+  miss in the table, nearly eight times the prior, and it lands on the argument decision 8 rests
+  on: "an assertion that reads memory the function would not otherwise read pays C2 or C3, 3 to 50
+  ns". On the deployment architecture that is 23 to 94 ns, against a per-entry budget (C8) of 55.
+  The dividing line that record draws — memory, not count — is wider on x86 than the priors made
+  it, not narrower.
+- **A cross-core message to a receiver that is already awake costs 35.4 ns, a third of the 97 and
+  98 the two Apple machines read.** Decision 4's cheapest case is cheaper still on the target.
+- **The two Linuxes disagree about loopback by four times**: C14 is 5,772 ns here and 1,416 on
+  `orbstack`. A loopback number is the machine's before it is the kernel's, and no argument may
+  divide by one without naming which.
+- C1 is slower than Apple's in nanoseconds (1.43 against 0.93) and C3 is faster (93.8 against
+  128). C6, C7, C8, C9, C20 and C21 are inside their priors and close to `orbstack`'s, which is
+  the other Linux.
 
 ### Records re-read on 2026-09-22
 

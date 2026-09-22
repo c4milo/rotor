@@ -278,11 +278,15 @@ there now needs a policy named at init**: a caller that wants the old inline beh
 `blocking`. `Remote` was built on 2026-09-22: `post` for a thread that has no loop, one per
 backend, exported from `src/rotor.zig`. Decision 4 records what it settled.
 
-The `mac` and `orbstack` columns of `docs/costs.md` were filled on 2026-09-22, from three serial
-runs each with the desktop in use; `bench/results/` holds the runs. Decision 8's experiment ran on
-`orbstack` the same day and could not decide its 2 percent question: the noise between rounds is
-25 percent there. The `linux` column is the deployment target, needs a machine of the family stompy
-builds for, and that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
+The `mac`, `orbstack` and `github` columns of `docs/costs.md` were filled on 2026-09-22;
+`bench/results/` holds the runs. `github` is a GitHub-hosted x86-64 runner, added as a named
+machine that day: the only x86-64 this project has measured on, filled by a CI job started by hand,
+and replaced whole rather than cell by cell because the pool gives whichever processor it has. On
+it decision 8's experiment is decidable, where `orbstack`'s 25 percent noise had swallowed it:
+ReleaseSafe costs 9 to 10 percent against ReleaseFast, which is the upper bound over every class
+and every safety check, and class A's own share still needs the comptime flag that record asks for.
+The `linux` column is the deployment target, needs a machine of the family stompy builds for, and
+that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 (`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;
 decision 18's offload puts rotor level with libuv's pool on the file rows, where inline is a
 quarter of both; and the cross-core row, rotor's loss by four times, was a 12 µs kernel park on
