@@ -74,6 +74,26 @@ jobs:
       - run: zig version
       - name: Build the Linux test executables
         run: zig build test-linux
+      # A consumer reported on 2026-09-22 that GitHub's runners "disable io_uring". On this image
+      # they do not: the cost and comparison jobs measure rows C7 and C17 natively and run rotor's
+      # io_uring echo, and rotor has no fallback to hide behind. What does refuse io_uring_setup is
+      # Docker's default seccomp profile, which is why the step below passes seccomp=unconfined.
+      # This step prints both facts so a run's log answers the question without anyone guessing.
+      # It never fails the job: it reports what the runner allows, it does not require anything.
+      - name: Whether this runner allows io_uring without a container
+        run: |
+          sysctl_path=/proc/sys/kernel/io_uring_disabled
+          if [ -r "$sysctl_path" ]; then
+            echo "io_uring_disabled: $(cat $sysctl_path) (0 allows, 1 needs CAP_SYS_ADMIN, 2 forbids)"
+          else
+            echo "io_uring_disabled: absent, so this kernel predates the 6.6 switch"
+          fi
+          if ./zig-out/linux/uring_probe; then
+            echo "native io_uring: every feature the loop needs is present, no container involved"
+          else
+            echo "native io_uring: refused; the probe named the first missing feature above"
+          fi
+
       - name: Run them against a real kernel
         run: bash tools/linux_test.sh
 
