@@ -15,6 +15,7 @@
 //! `bench/alternatives/libuv_reads.c` fills with the same byte and samples the same way, so the two
 //! programs read and overwrite the same content whichever of them created the file.
 const std = @import("std");
+const builtin = @import("builtin");
 const assert = std.debug.assert;
 const core = @import("core");
 const backend = @import("backend");
@@ -143,7 +144,11 @@ pub fn fill_if_needed(file: core.Descriptor, setup: Setup, block: []u8) !void {
     var written: u64 = 0;
     while (written < blocks) : (written += 1) {
         const offset: i64 = @intCast(written * block.len);
-        const count = std.c.pwrite(file, block.ptr, block.len, offset);
+        // Spelled twice: Linux is built without libc here, and `std.posix` has no pwrite.
+        const count = if (builtin.os.tag == .linux)
+            std.os.linux.pwrite(file, block.ptr, block.len, offset)
+        else
+            std.c.pwrite(file, block.ptr, block.len, offset);
         if (count != block.len) return error.FillFailed;
     }
 }
@@ -151,7 +156,10 @@ pub fn fill_if_needed(file: core.Descriptor, setup: Setup, block: []u8) !void {
 /// True when the file's last block already holds `fill_byte`, so the fill can be skipped.
 pub fn already_filled(file: core.Descriptor, setup: Setup, block: []u8) !bool {
     const last: i64 = @intCast(setup.file_bytes - block.len);
-    const count = std.c.pread(file, block.ptr, block.len, last);
+    const count = if (builtin.os.tag == .linux)
+        std.os.linux.pread(file, block.ptr, block.len, last)
+    else
+        std.c.pread(file, block.ptr, block.len, last);
     if (count != block.len) return false;
     for (block) |byte| {
         if (byte != fill_byte) return false;

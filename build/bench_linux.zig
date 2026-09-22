@@ -69,6 +69,11 @@ fn add_program(
     });
     program.root_module.addImport("core", graph.core);
     program.root_module.addImport("backend", graph.uring);
+    program.root_module.addImport("harness", b.createModule(.{
+        .root_source_file = b.path("bench/harness/harness.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    }));
     const install = b.addInstallArtifact(program, .{
         .dest_dir = .{ .override = .{ .custom = install_directory } },
     });
