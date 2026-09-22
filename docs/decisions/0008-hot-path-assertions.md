@@ -128,3 +128,32 @@ Two things this says, and one it cannot:
 `docs/costs.md` measured a miss to memory (C3) at 128 to 185 ns against a per-entry budget (C8) of
 52 ns, so the dividing line above, memory and not count, holds with more room than the priors gave
 it.
+
+## Results, 2026-09-22, `github`: the experiment is decidable, and this is what it costs
+
+The same benchmark on the x86-64 machine `docs/costs.md` added the same day: a GitHub-hosted
+runner, an Intel Xeon Platinum 8370C, five rounds alternating
+(`bench/results/decision-8-github-2026-09-22.md`). Nanoseconds per operation, the five rounds in
+order:
+
+| batch | ReleaseSafe | ReleaseFast | ReleaseSafe costs |
+|---|---|---|---|
+| 8 | 101, 101, 101, 101, 101 | 94, 94, 94, 94, 94 | 7.4 percent |
+| 32 | 80, 80, 80, 80, 80 | 74, 73, 73, 73, 73 | 9.0 percent |
+| 64 | 77, 77, 77, 77, 77 | 70, 70, 70, 70, 70 | 10.0 percent |
+| 128 | 76, 76, 77, 76, 76 | 69, 69, 69, 69, 69 | 10.4 percent |
+
+**The machine problem is solved.** `orbstack` could not resolve a 2 percent question because its
+rounds disagreed by 25 percent and ReleaseSafe came out faster in four of five. Here every round of
+each mode repeats to within 1 ns, so a difference of 6 ns is a measurement.
+
+**What the 9 to 10 percent is, and what it is not.** ReleaseFast removes every assertion of every
+class and every bounds and overflow check, so this is the upper bound this record already said it
+would be: class A and class B together, plus the safety checks, on the workload built to be the
+worst case for them. It is **not** class A's own cost, and this record's threshold — 2 percent for
+class A in total — is still untested.
+
+**What is missing is step 2 of the experiment**, the comptime flag that compiles class A out alone.
+It is still not built, so the thresholds stand as fixed and the provisional rule stands unmeasured.
+What changed on 2026-09-22 is that building the flag is now worth the work: before, on the only
+Linux available, the answer would have been lost in the noise.
