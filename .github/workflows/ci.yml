@@ -30,6 +30,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -94,6 +95,42 @@ jobs:
         run: zig build test-race
       - name: Run them
         run: bash tools/race_test.sh
+
+  # Started by hand, because it takes minutes and answers a question rather than guarding a
+  # change. The runner is x86-64 Linux, which is the architecture rotor's deployment target is and
+  # which no machine this project has measured on shares: `mac` and `orbstack` are both Apple
+  # silicon. What it prints is read into `bench/results/` by hand, with the CPU the run reported,
+  # because a hosted runner gives whichever processor its pool had.
+  costs:
+    name: Linux x86-64, cost probes
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: What this runner is
+        run: |
+          grep -m1 "model name" /proc/cpuinfo || true
+          nproc; uname -r; grep -m1 MemTotal /proc/meminfo
+      - name: The probes
+        run: zig build bench-costs
+      - name: Decision 8's experiment, five rounds alternating
+        run: |
+          set -euo pipefail
+          zig build bench-linux
+          for round in 1 2 3 4 5; do
+            echo "== round $round"
+            ./zig-out/linux-bench/uring_nop_safe
+            ./zig-out/linux-bench/uring_nop_fast
+          done
 
   commits:
     name: Commit messages

@@ -21,9 +21,16 @@
 //!   - **A failure prints what it measured**, so a reader can tell a real regression from a
 //!     machine that cannot be measured on at all.
 //!
+//! **The bounds are for Debug**, which is what `zig build test` compiles a test in, and they are
+//! eight to ten times the Debug reading and not the ReleaseSafe one. The first version of this
+//! file took its numbers from a ReleaseSafe program and left the submit bound 1.3 times what the
+//! path costs; a hosted runner read 110 ns against a bound of 100 and the first CI run went red.
+//! Under a sanitizer these skip: the race gate's job is races, and TSan's cost is not this loop's.
+//!
 //! What these do not do is measure. `docs/costs.md` and `bench/` are where a number that supports
 //! a claim comes from; a bound here is a tripwire and never a result.
 const std = @import("std");
+const builtin = @import("builtin");
 const testing = std.testing;
 const core = @import("core");
 const backend = @import("backend");
@@ -58,23 +65,31 @@ var loop: Loop = undefined;
 
 /// A poll with nothing in flight: `tick` with no wait, which returns at once.
 ///
-/// Measured 358 ns on `mac` (M1 Pro, macOS 26.6.2) on 2026-09-22, and 12,495 ns on the same
-/// machine before `kqueue_tick.zig` gave a polling tick its own wake trigger. The bound is eight
-/// times the measured cost and a third of the regression it exists to catch.
-const poll_bound_ns = 3000;
+/// Measured on `mac` (M1 Pro, macOS 26.6.2) on 2026-09-22: 750 ns in Debug, 406 in ReleaseSafe.
+/// Before `kqueue_tick.zig` gave a polling tick its own wake trigger the same path cost 12,495 ns,
+/// and that cost is a scheduler park rather than code, so it is the same on any machine. The bound
+/// is eight times the Debug reading and half the regression it exists to catch.
+const poll_bound_ns = 6000;
 
 /// One fire of a repeating timer, delivered in a batch: the heap's pop, the finished list and the
-/// event. Measured 43 ns on `mac` on 2026-09-22, over `fire_timers` on a period short enough that
-/// every tick returns a full batch. The same fire at 4,096 timers on a 1 ms period costs 247 ns,
-/// and a timer the caller re-arms costs 404, so this shape is the cheapest of the three and the
-/// bound is twenty times it: it answers "did a fire stop being cheap", not "how cheap is it".
-const fire_bound_ns = 1000;
+/// event. Measured on `mac` on 2026-09-22 over `fire_timers`, on a period short enough that every
+/// tick returns a full batch: 374 ns in Debug and 57 in ReleaseSafe. The same fire at 4,096 timers
+/// on a 1 ms period costs 247 ns in ReleaseSafe, and a timer the caller re-arms costs 404.
+const fire_bound_ns = 4000;
 
 /// One operation of a batch `submit` takes: the slot claimed, the operation checked and the timer
-/// armed. Measured 3 ns on `mac` on 2026-09-22, and 7 on a first reading the same day.
-const submit_bound_ns = 100;
+/// armed. Measured on `mac` on 2026-09-22: 78 ns in Debug and 7 in ReleaseSafe. A GitHub-hosted
+/// x86-64 runner read 110 ns in Debug and 119 under ThreadSanitizer, which is what a bound of 100
+/// tripped on and why this one is ten times the Debug reading.
+const submit_bound_ns = 800;
 
 const now_ns = backend.testing.monotonic_ns;
+
+/// True where a cost cannot be read: a sanitizer's own work is most of what a timing loop would
+/// measure there, and the race gate runs this suite under ThreadSanitizer to find races.
+fn unmeasurable() bool {
+    return builtin.sanitize_thread;
+}
 
 /// Fails with what it measured, because a bound that trips says nothing by itself.
 fn expect_under(measured_ns: u64, bound_ns: u64, what: []const u8) !void {
@@ -89,7 +104,7 @@ fn expect_under(measured_ns: u64, bound_ns: u64, what: []const u8) !void {
 }
 
 test "a poll with nothing to do stays under its bound" {
-    if (conformance.unsupported()) return error.SkipZigTest;
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
     try loop.init(&memory, options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
@@ -106,7 +121,7 @@ test "a poll with nothing to do stays under its bound" {
 }
 
 test "one fire of a repeating timer stays under its bound" {
-    if (conformance.unsupported()) return error.SkipZigTest;
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
     try loop.init(&memory, options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
@@ -136,7 +151,7 @@ test "one fire of a repeating timer stays under its bound" {
 }
 
 test "one operation of a batch submit stays under its bound" {
-    if (conformance.unsupported()) return error.SkipZigTest;
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
     try loop.init(&memory, options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
