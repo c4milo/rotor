@@ -176,13 +176,19 @@ pub fn run(options: Options) !Result {
 
 /// Opens every connection and waits for all of them, before any timing starts.
 fn connect_all(client: *Client) !void {
+    // Every caller already defers `close_all`, and this makes the function safe without one:
+    // `close_all` clears `live` as it goes, so the caller's deferred call after this one closes
+    // nothing twice. A caller that forgot is what cost a comparison run on 2026-09-22.
+    errdefer close_all();
     const options = client.options;
     const address = core.Address.ipv4(.{ 127, 0, 0, 1 }, options.port);
     var index: u32 = 0;
     while (index < options.connections) : (index += 1) {
-        const descriptor = try sync.open_socket(.ipv4);
+        // Opened into the entry that owns it, so no statement stands between the socket existing
+        // and `close_all` being able to close it. A `const` above the entry left a window that
+        // only stayed safe because nothing fallible sat in it.
         connections[index] = .{
-            .descriptor = descriptor,
+            .descriptor = try sync.open_socket(.ipv4),
             .sent = 0,
             .received = 0,
             .started_ns = 0,
@@ -190,7 +196,7 @@ fn connect_all(client: *Client) !void {
         };
         _ = client.loop.submit(&.{.{
             .user_data = user_data_of(.connect, index),
-            .kind = .{ .connect = .{ .socket = descriptor, .address = &address } },
+            .kind = .{ .connect = .{ .socket = connections[index].descriptor, .address = &address } },
         }}, &.{});
     }
 

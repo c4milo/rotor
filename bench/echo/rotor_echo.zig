@@ -184,15 +184,19 @@ pub fn main(init: std.process.Init) !void {
     // the ready line cannot reach a port only half the loops are listening on.
     var listeners: [loops_max]core.Descriptor = undefined;
     const address = core.Address.ipv4(.{ 127, 0, 0, 1 }, port);
-    var index: u32 = 0;
-    while (index < loops) : (index += 1) {
+    // Registered above the loop and counting with the variable the loop advances, which is
+    // `src/conformance/conformance_reuse_port.zig`'s shape. Below the loop this defer was never
+    // reached when a `listen` failed part way through, so a third listener refused left the first
+    // two open; written against `loops` it would close descriptors nothing opened.
+    var opened: u32 = 0;
+    defer for (listeners[0..opened]) |listener| sync.close_now(listener);
+    while (opened < loops) : (opened += 1) {
         const share = loops > 1;
-        listeners[index] = try sync.listen(&address, .{
+        listeners[opened] = try sync.listen(&address, .{
             .backlog = backlog,
             .reuse_port = share,
         });
     }
-    defer for (listeners[0..loops]) |listener| sync.close_now(listener);
 
     var threads: [loops_max]std.Thread = undefined;
     var started: u32 = 1;
