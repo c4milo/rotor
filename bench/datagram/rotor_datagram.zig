@@ -71,11 +71,10 @@ var loop_memory: [
     Loop.memory_bytes(.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
-const ring_alignment = backend.buffers.ring_alignment;
-var server_memory: [group_buffers * buffer_bytes]u8 align(ring_alignment) = undefined;
-var client_memory: [group_buffers * buffer_bytes]u8 align(ring_alignment) = undefined;
-var server_ring: [backend.buffers.ring_bytes(group_buffers)]u8 align(ring_alignment) = undefined;
-var client_ring: [backend.buffers.ring_bytes(group_buffers)]u8 align(ring_alignment) = undefined;
+const group_alignment = backend.buffers.group_alignment;
+const group_bytes = backend.buffers.group_bytes(group_buffers, buffer_bytes);
+var server_memory: [group_bytes]u8 align(group_alignment) = undefined;
+var client_memory: [group_bytes]u8 align(group_alignment) = undefined;
 
 /// The bytes every datagram carries, written once.
 var payload: [bytes_max]u8 = undefined;
@@ -135,8 +134,8 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn provide(loop: *Loop) !void {
-    try loop.provide_datagram_buffers(server_group, &server_ring, &server_memory, buffer_bytes, .{});
-    try loop.provide_datagram_buffers(client_group, &client_ring, &client_memory, buffer_bytes, .{});
+    try loop.provide_datagram_buffers(server_group, &server_memory, group_buffers, buffer_bytes, .{});
+    try loop.provide_datagram_buffers(client_group, &client_memory, group_buffers, buffer_bytes, .{});
 }
 
 /// Arms both receives, fills the window, and keeps it full until the deadline. Returns the span.
@@ -188,8 +187,7 @@ fn handle(state: *Run, event: Event, server: core.Descriptor, client: core.Descr
 /// QUIC server makes per packet.
 fn serve(state: *Run, event: Event, server: core.Descriptor) void {
     const received = event.outcome() catch return;
-    const buffer = state.loop.provided_buffer(server_group, event.flags.buffer_id);
-    const delivery = state.loop.datagram(buffer, event);
+    const delivery = state.loop.datagram(server_group, event);
     // The window slot rides in the first bytes, so the client knows which round trip returned.
     const slot = slot_of(delivery.bytes);
     to_client[slot] = Outbound.reply_to(&delivery.from);
@@ -206,8 +204,7 @@ fn serve(state: *Run, event: Event, server: core.Descriptor) void {
 fn complete_round_trip(state: *Run, event: Event, client: core.Descriptor) void {
     defer state.loop.give_back_buffer(client_group, event.flags.buffer_id);
     _ = event.outcome() catch return;
-    const buffer = state.loop.provided_buffer(client_group, event.flags.buffer_id);
-    const delivery = state.loop.datagram(buffer, event);
+    const delivery = state.loop.datagram(client_group, event);
     const slot = slot_of(delivery.bytes);
     const at_ns = now_ns();
     state.round_trips += 1;

@@ -106,9 +106,10 @@ pub const Loop = struct {
         /// The most operations in flight, which is the slots in the table:
         /// [1, core.constants.operations_max].
         operations: u32,
-        /// What the uring backend sizes its submission ring by. This backend sizes nothing by
-        /// it, and takes it so that a caller's options are the same on both.
-        entries: u16,
+        /// What the uring backend sizes its submission ring by, or 0 for its default. This
+        /// backend sizes nothing by it, and takes it so that a caller's options are the same on
+        /// both.
+        entries: u16 = 0,
         /// How often the loop measures an operation (decision 9, rule 2).
         sampling: core.statistics.Options = .{},
         /// This loop's id among the loops of `registry`.
@@ -270,20 +271,23 @@ pub const Loop = struct {
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
-        ring_memory: []align(buffers.ring_alignment) u8,
-        memory: []u8,
+        memory: []align(buffers.group_alignment) u8,
+        count: u16,
         buffer_bytes: u32,
         group: core.datagram.GroupOptions,
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
         loop.datagram_group = group;
-        return buffers.provide(loop, group_id, ring_memory, memory, buffer_bytes);
+        return buffers.provide(loop, group_id, memory, count, buffer_bytes);
     }
 
-    /// The datagram an event names, out of the buffer it named. The only supported reader of
-    /// that buffer: a datagram's bytes do not start at its front.
-    pub fn datagram(loop: *const Loop, buffer: []u8, event: core.Event) core.Delivery {
+    /// The datagram an event of group `group_id` names: the only supported reader of that
+    /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
+    /// caller's until `give_back_buffer`.
+    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
         assert(!event.flags.message);
+        assert(event.flags.buffer);
+        const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
         return datagram_module.delivery(buffer, bytes, loop.datagram_group);
     }

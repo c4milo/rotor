@@ -34,10 +34,9 @@ test "a receive from a group that would block gives its buffer back and asks to 
     var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
     loop.init_tables(&memory, options);
-    const ring_bytes = comptime kqueue.buffers.ring_bytes(group_buffers);
-    var ring_memory: [ring_bytes]u8 align(kqueue.buffers.ring_alignment) = undefined;
-    var buffers: [group_buffers * group_buffer_bytes]u8 = undefined;
-    try loop.provide_buffers(group_id, &ring_memory, &buffers, group_buffer_bytes);
+    const group_bytes = comptime kqueue.buffers.group_bytes(group_buffers, group_buffer_bytes);
+    var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
+    try loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
     const pair = try nonblocking_pair();
     defer for (pair) |descriptor| {
         _ = std.c.close(descriptor);

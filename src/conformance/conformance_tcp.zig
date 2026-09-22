@@ -221,10 +221,9 @@ test "a multishot receive names the provided buffer of each event and ends when 
     const pair = try connected_pair(&harness, &listener);
     defer for (pair) |descriptor| sync.close_now(descriptor);
 
-    const ring_bytes = comptime backend.buffers.ring_bytes(group_buffers);
-    var ring_memory: [ring_bytes]u8 align(backend.buffers.ring_alignment) = undefined;
-    var memory: [group_buffers * group_buffer_bytes]u8 = undefined;
-    try harness.loop.provide_buffers(group_id, &ring_memory, &memory, group_buffer_bytes);
+    const group_bytes = comptime backend.buffers.group_bytes(group_buffers, group_buffer_bytes);
+    var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
+    try harness.loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
     try harness.submit(&.{.{ .user_data = 1, .kind = .{ .receive = .{
         .socket = pair[1],
         .target = .{ .group = group_id },

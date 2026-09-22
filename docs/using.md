@@ -35,7 +35,7 @@ operations from and reads events with (`Operation`, `Event`, `Handle`, `Address`
 ## A loop
 
 ```zig
-const options: rotor.Loop.Options = .{ .operations = 1024, .entries = 256 };
+const options: rotor.Loop.Options = .{ .operations = 1024 };
 var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.layout.memory_alignment) = undefined;
 var loop: rotor.Loop = undefined;
 try loop.init(&memory, options);
@@ -44,7 +44,8 @@ defer loop.deinit();
 
 - `operations` is the most operations the loop holds in flight at once, and what sizes its
   tables: at most `constants.operations_max`, 2^20.
-- `entries` sizes the io_uring submission ring; kqueue takes it and sizes nothing by it.
+- `entries` sizes the io_uring submission ring. Left at 0 it is `operations` rounded up to a
+  power of two, capped at 32,768; kqueue takes it and sizes nothing by it.
 - `memory_bytes` is a function of the options, and `init` asserts the block is large enough and
   aligned to `layout.memory_alignment`. The memory is the loop's until `deinit`.
 - `init` must run on the thread that will own the loop. Every other call on the loop asserts that
@@ -62,10 +63,18 @@ statistics, and `file_policy`, `offload` and `offload_memory` for files on macOS
 
 ```zig
 var handles: [2]rotor.Handle = undefined;
-const taken = loop.submit(&.{ operation_a, operation_b }, &handles);
+const taken = loop.submit(&.{
+    rotor.Operation.receive(1, socket, &buffer),
+    rotor.Operation.timer(2, rotor.constants.ns_per_s, 0),
+}, &handles);
 var events: [64]rotor.Event = undefined;
 const count = try loop.tick(&events, rotor.constants.ns_per_ms);
 ```
+
+`Operation` has one constructor per kind (`accept`, `connect`, `receive`, `receive_group`, `send`,
+`shutdown`, `close`, `read`, `write`, `fdatasync`, `timer`, `post`, `receive_from`, `send_to`),
+each building the common shape in one call. Set `timeout_ns` or `descriptor_registered` on the
+result when either is wanted, and write the struct out for a receive into a registered buffer.
 
 - `submit` takes a batch of operations, at most `constants.batch_max` (4,096), and returns how
   many it took. It takes fewer when the table has no room for the rest; the caller submits those
@@ -131,7 +140,7 @@ Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registe
 
 Descriptors come from `rotor.sync`, which makes the calls a loop does not: `open_socket`,
 `listen(&address, .{ .backlog, .reuse_port })`, `open_datagram(family, bind_to, .{})`,
-`prepare_accepted`, `local_address`, `set_no_delay`, `set_option`, `close_now`, and for files
+`local_address`, `set_no_delay`, `set_option`, `close_now`, and for files
 `open_file`, `file_size`, `set_file_size`, `sync_directory`. `Address` is rotor's own type,
 IPv4 or IPv6 with a port and a scope id; no kernel type is part of the surface.
 
@@ -144,14 +153,15 @@ Three ways to hand the loop memory for bytes:
   `registered_buffers_max` (1,024). An operation then names one by index in `Buffer.registered`,
   and io_uring skips pinning its pages per operation. kqueue accepts the same calls and gains
   nothing from them.
-- A provided-buffer group: `provide_buffers(&loop, group_id, ring_memory, memory, buffer_bytes)`,
-  with `ring_memory` of `buffers.ring_bytes(count)` bytes aligned to `buffers.ring_alignment` and
-  `memory` of `count × buffer_bytes`. A `receive` with `.target = .{ .group = id }` lets the
-  kernel pick a buffer; the event carries `flags.buffer` and `buffer_id`, and
-  `loop.provided_buffer(group_id, buffer_id)` is its bytes. The buffer is the caller's from that
-  event until `loop.give_back_buffer(group_id, buffer_id)`, whether or not the receive has ended.
-  A group that runs out ends a multishot receive with `buffers_exhausted`: give buffers back and
-  submit it again. At most `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
+- A provided-buffer group: `provide_buffers(&loop, group_id, memory, count, buffer_bytes)`, with
+  `memory` one block of `buffers.group_bytes(count, buffer_bytes)` bytes aligned to
+  `buffers.group_alignment`; the loop keeps its bookkeeping at the front and the buffers after it.
+  `count` is a power of two. `Operation.receive_group` lets the kernel pick a buffer; the event
+  carries `flags.buffer` and `buffer_id`, and `loop.provided_buffer(group_id, buffer_id)` is its
+  bytes. The buffer is the caller's from that event until `loop.give_back_buffer(group_id,
+  buffer_id)`, whether or not the receive has ended. A group that runs out ends a multishot
+  receive with `buffers_exhausted`: give buffers back and submit it again. At most
+  `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
 
 Registered descriptors work the same way: `register_descriptors(&loop, descriptors)` once, at
 most `registered_descriptors_max` (1,024), and an operation with `descriptor_registered = true`
@@ -160,10 +170,11 @@ names an index instead of a descriptor. A `close` always names a descriptor of t
 ## Datagrams
 
 A datagram group is a provided-buffer group with room in front of every buffer for the peer
-address and the control messages: `provide_datagram_buffers(&loop, group_id, ring_memory,
-memory, buffer_bytes, .{})`. One loop serves one datagram shape. `receive_from` receives into it,
-one event per datagram, and `loop.datagram(buffer, event)` is the only reader of such a buffer:
-it returns a `Delivery` with the peer, the local address when the socket was asked for it, the ECN
+address and the control messages: `provide_datagram_buffers(&loop, group_id, memory, count,
+buffer_bytes, .{})`, from one block as above. One loop serves one datagram shape. `receive_from`
+receives into it, one event per datagram, and `loop.datagram(group_id, event)` is the only reader
+of such a buffer: it returns a `Delivery` with the peer, the local address when the socket was asked
+for it, the ECN
 codepoint, the segment size when the kernel coalesced several datagrams into one, and the bytes.
 `send_to` takes an `Outbound`: the destination, the source address, the codepoint, and whether to
 cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmented send with

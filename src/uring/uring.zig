@@ -95,9 +95,10 @@ pub const Loop = struct {
         /// The most operations in flight, which is the slots in the table:
         /// [1, core.constants.operations_max].
         operations: u32,
-        /// Submission ring entries, a power of two in [1, constants.entries_max]. One tick
-        /// submits at most this many operations; the rest wait for the next.
-        entries: u16,
+        /// Submission ring entries, a power of two in [1, constants.entries_max], or 0 for the
+        /// default: `operations` rounded up to a power of two and capped at `entries_max`. One
+        /// tick submits at most this many operations; the rest wait for the next.
+        entries: u16 = 0,
         /// How often the loop measures an operation (decision 9, rule 2).
         sampling: core.statistics.Options = .{},
         /// This loop's id among the loops of `registry`.
@@ -117,6 +118,14 @@ pub const Loop = struct {
         offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
     };
 
+    /// The submission ring entries `options` asks for: its own, or the default derived from
+    /// `operations` when it names none.
+    pub fn entries_of(options: Options) u16 {
+        if (options.entries != 0) return options.entries;
+        const wanted: u32 = @min(options.operations, constants.entries_max);
+        return @intCast(std.math.ceilPowerOfTwoAssert(u32, wanted));
+    }
+
     /// The bytes of memory `init` needs for `options`, aligned to `core.layout.memory_alignment`.
     pub fn memory_bytes(options: Options) usize {
         var layout: Layout = .{};
@@ -124,8 +133,8 @@ pub const Loop = struct {
         _ = layout.add(TimerHeap.Entry, options.operations);
         _ = layout.add(u64, options.operations);
         _ = layout.add(Handle, HandleQueue.capacity_for(options.operations));
-        _ = layout.add(address.Storage, options.entries);
-        _ = layout.add(datagram_module.Message, options.entries);
+        _ = layout.add(address.Storage, entries_of(options));
+        _ = layout.add(datagram_module.Message, entries_of(options));
         return layout.bytes;
     }
 
@@ -137,7 +146,7 @@ pub const Loop = struct {
         options: Options,
     ) InitError!void {
         loop.init_tables(memory, options);
-        loop.ring = try ring_module.Ring.init(options.entries);
+        loop.ring = try ring_module.Ring.init(entries_of(options));
         if (loop.registry) |registry| registry.set(loop.tables.id, loop.ring.descriptor());
     }
 
@@ -157,8 +166,8 @@ pub const Loop = struct {
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
-        loop.addresses = layout.take(memory, address.Storage, options.entries);
-        loop.messages = layout.take(memory, datagram_module.Message, options.entries);
+        loop.addresses = layout.take(memory, address.Storage, entries_of(options));
+        loop.messages = layout.take(memory, datagram_module.Message, entries_of(options));
         assert(layout.bytes == memory_bytes(options));
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
@@ -252,21 +261,24 @@ pub const Loop = struct {
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
-        ring_memory: []align(buffers.ring_alignment) u8,
-        memory: []u8,
+        memory: []align(buffers.group_alignment) u8,
+        count: u16,
         buffer_bytes: u32,
         group: core.datagram.GroupOptions,
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
         loop.datagram_group = group;
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
-        return buffers.provide(loop, group_id, ring_memory, memory, buffer_bytes);
+        return buffers.provide(loop, group_id, memory, count, buffer_bytes);
     }
 
-    /// The datagram an event names, out of the buffer it named. The only supported reader of
-    /// that buffer: a datagram's bytes do not start at its front.
-    pub fn datagram(loop: *const Loop, buffer: []u8, event: core.Event) core.Delivery {
+    /// The datagram an event of group `group_id` names: the only supported reader of that
+    /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
+    /// caller's until `give_back_buffer`.
+    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
         assert(!event.flags.message);
+        assert(event.flags.buffer);
+        const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
         return datagram_module.delivery(buffer, bytes, loop.datagram_group);
     }
@@ -309,4 +321,13 @@ test {
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
+}
+
+test "entries default to the operations rounded up to a power of two, capped at the ring's most" {
+    try std.testing.expectEqual(@as(u16, 1), Loop.entries_of(.{ .operations = 1 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1000 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1024 }));
+    try std.testing.expectEqual(constants.entries_max, Loop.entries_of(.{ .operations = 1 << 20 }));
+    // A caller that names a count keeps it.
+    try std.testing.expectEqual(@as(u16, 8), Loop.entries_of(.{ .operations = 1000, .entries = 8 }));
 }

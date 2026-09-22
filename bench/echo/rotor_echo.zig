@@ -150,21 +150,28 @@ var loop_memory: [loops_max][
     })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
-const ring_alignment = backend.buffers.ring_alignment;
+const group_alignment = backend.buffers.group_alignment;
 
-var group_memory: [group_bytes]u8 align(ring_alignment) = undefined;
-const ring_bytes_max = backend.buffers.ring_bytes(group_buffers_max);
-var ring_memory: [loops_max][ring_bytes_max]u8 align(ring_alignment) = undefined;
+var group_memory: [group_bytes]u8 align(group_alignment) = undefined;
 
-/// The pool one loop gets: the whole of it divided between them.
-fn pool_of(index: u32) []u8 {
-    const each = group_bytes / loops;
-    return group_memory[index * each ..][0..each];
+/// The pool one loop gets: the whole of it divided between them, each share a whole number of
+/// the group alignment, so a share can hold a group with its bookkeeping in front.
+fn pool_of(index: u32) []align(group_alignment) u8 {
+    return @alignCast(group_memory[index * share_bytes() ..][0..share_bytes()]);
 }
 
-/// Buffers one loop's group holds, from its share of the pool.
+fn share_bytes() usize {
+    return (group_bytes / loops) & ~(@as(usize, group_alignment) - 1);
+}
+
+/// Buffers one loop's group holds: the largest power of two whose group, bookkeeping included,
+/// fits its share of the pool.
 fn buffers_of() u16 {
-    return @intCast((group_bytes / loops) / buffer_bytes);
+    const per_buffer = buffer_bytes + backend.buffers.ring_bytes(1);
+    const fit = @min(share_bytes() / per_buffer, core.constants.buffers_per_group_max);
+    const count = std.math.floorPowerOfTwo(u16, @intCast(fit));
+    std.debug.assert(backend.buffers.group_bytes(count, buffer_bytes) <= share_bytes());
+    return count;
 }
 
 pub fn main(init: std.process.Init) !void {
@@ -215,9 +222,7 @@ fn serve(index: u32, listener: core.Descriptor) void {
         @panic("the loop refused its memory");
     defer loop.deinit();
 
-    const used = @as(usize, group_buffers) * buffer_bytes;
-    const ring_used = ring_memory[index][0..backend.buffers.ring_bytes(group_buffers)];
-    loop.provide_buffers(group_id, @alignCast(ring_used), pool_of(index)[0..used], buffer_bytes) catch
+    loop.provide_buffers(group_id, pool_of(index), group_buffers, buffer_bytes) catch
         @panic("the buffer group was refused");
 
     submit_one(&loop, .{

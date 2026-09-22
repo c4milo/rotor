@@ -19,7 +19,9 @@ pub const RegisterError = error{ SystemResources, Unexpected };
 pub const ProvideError = error{ SystemResources, Unexpected };
 
 /// The alignment of the memory a group's bookkeeping sits in.
-pub const ring_alignment = constants.buffer_ring_alignment;
+/// The alignment of a group's memory: what io_uring's buffer ring needs, kept on both backends so
+/// one declaration in a caller's code serves both.
+pub const group_alignment = constants.buffer_ring_alignment;
 
 /// The bytes of bookkeeping a group of `count` buffers needs: what the uring backend's ring
 /// needs, which is more than the two bytes per id this backend uses.
@@ -82,22 +84,32 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
 
 /// Makes `buffers`, cut into pieces of `buffer_bytes`, group `group_id` of this loop, with every
 /// buffer free. Both memories stay the loop's until `deinit`.
+/// The bytes a group of `count` buffers of `buffer_bytes` needs: the bookkeeping, then the
+/// buffers, so buffer 0 starts `ring_bytes(count)` bytes in.
+pub fn group_bytes(count: u16, buffer_bytes: u32) usize {
+    assert(buffer_bytes >= 1);
+    return ring_bytes(count) + @as(usize, count) * buffer_bytes;
+}
+
+/// Makes group `group_id` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,
+/// every one free to start with. `memory` holds `group_bytes(count, buffer_bytes)` bytes aligned
+/// to `group_alignment`, the bookkeeping first and the buffers after it, and stays the loop's
+/// until `deinit`.
 pub fn provide(
     loop: *Loop,
     group_id: u16,
-    ring_memory: []align(ring_alignment) u8,
-    buffers: []u8,
+    memory: []align(group_alignment) u8,
+    count: u16,
     buffer_bytes: u32,
 ) ProvideError!void {
     loop.tables.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
     assert(loop.groups[group_id].buffer_bytes == 0);
-    assert(buffer_bytes >= 1);
-    assert(buffers.len % buffer_bytes == 0);
-    const count: u16 = @intCast(buffers.len / buffer_bytes);
+    assert(count >= 1);
     assert(count <= core.constants.buffers_per_group_max);
-    assert(ring_memory.len == ring_bytes(count));
-    const free: [*]u16 = @ptrCast(ring_memory.ptr);
+    assert(memory.len >= group_bytes(count, buffer_bytes));
+    const free: [*]u16 = @ptrCast(memory.ptr);
+    const buffers = memory[ring_bytes(count)..][0 .. @as(usize, count) * buffer_bytes];
     const group = &loop.groups[group_id];
     group.* = .{
         .buffers = buffers,
@@ -139,4 +151,22 @@ test "a group hands out every buffer once, lowest id first, and takes them back"
     try testing.expectEqual(@intFromPtr(&memory) + 32, @intFromPtr(group.bytes_of(2).ptr));
     try testing.expectEqual(@as(usize, 16), group.bytes_of(3).len);
     try testing.expectEqual(@as(usize, 64), ring_bytes(4));
+}
+
+test "a group's buffers start after its bookkeeping, and the size helper counts both" {
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    loop.init_tables(&memory, options);
+    const count = 4;
+    const buffer_bytes = 16;
+    var group_memory: [group_bytes(count, buffer_bytes)]u8 align(group_alignment) = undefined;
+    try provide(&loop, 0, &group_memory, count, buffer_bytes);
+    try testing.expectEqual(ring_bytes(count) + count * buffer_bytes, group_bytes(count, buffer_bytes));
+    // Buffer 0 starts where the bookkeeping ends, so a receive into it cannot overwrite the free
+    // stack, and the last buffer ends where the memory does.
+    const first = @intFromPtr(&group_memory[ring_bytes(count)]);
+    try testing.expectEqual(first, @intFromPtr(loop.provided_buffer(0, 0).ptr));
+    const last = @intFromPtr(&group_memory[ring_bytes(count) + (count - 1) * buffer_bytes]);
+    try testing.expectEqual(last, @intFromPtr(loop.provided_buffer(0, count - 1).ptr));
 }

@@ -21,7 +21,9 @@ const uring = @import("uring.zig");
 const Loop = uring.Loop;
 
 /// The alignment of the memory a group's ring sits in.
-pub const ring_alignment = constants.buffer_ring_alignment;
+/// The alignment of a group's memory: what the kernel's buffer ring needs, and it sits at the
+/// front of the memory.
+pub const group_alignment = constants.buffer_ring_alignment;
 
 pub const RegisterError = error{ SystemResources, Unexpected };
 pub const ProvideError = error{ SystemResources, Unexpected };
@@ -71,24 +73,32 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
     loop.buffers_registered = true;
 }
 
-/// Makes `buffers`, cut into pieces of `buffer_bytes`, group `group_id` of this loop, with every
-/// buffer handed to the kernel. `ring_memory` holds `ring_bytes(count)` bytes and stays the
-/// loop's until `deinit`, as `buffers` does.
+/// The bytes a group of `count` buffers of `buffer_bytes` needs: the kernel's ring, then the
+/// buffers, so buffer 0 starts `ring_bytes(count)` bytes in.
+pub fn group_bytes(count: u16, buffer_bytes: u32) usize {
+    assert(buffer_bytes >= 1);
+    return ring_bytes(count) + @as(usize, count) * buffer_bytes;
+}
+
+/// Makes group `group_id` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,
+/// every one handed to the kernel. `memory` holds `group_bytes(count, buffer_bytes)` bytes aligned
+/// to `group_alignment`, the kernel's ring first and the buffers after it, and stays the loop's
+/// until `deinit`.
 pub fn provide(
     loop: *Loop,
     group_id: u16,
-    ring_memory: []align(constants.buffer_ring_alignment) u8,
-    buffers: []u8,
+    memory: []align(group_alignment) u8,
+    count: u16,
     buffer_bytes: u32,
 ) ProvideError!void {
     loop.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
     assert(loop.groups[group_id].ring == null);
-    assert(buffer_bytes >= 1);
-    assert(buffers.len % buffer_bytes == 0);
-    const count: u16 = @intCast(buffers.len / buffer_bytes);
+    assert(count >= 1);
     assert(count <= core.constants.buffers_per_group_max);
-    assert(ring_memory.len == ring_bytes(count));
+    assert(memory.len >= group_bytes(count, buffer_bytes));
+    const ring_memory = memory[0..ring_bytes(count)];
+    const buffers = memory[ring_bytes(count)..][0 .. @as(usize, count) * buffer_bytes];
 
     var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{
         .ring_addr = @intFromPtr(ring_memory.ptr),

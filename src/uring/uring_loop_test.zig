@@ -347,10 +347,12 @@ test "a multishot receive names the provided buffer of each event and ends when 
     defer fixture.loop.deinit();
     const pair = try socket_pair();
     defer close_pair(pair);
-    const ring_alignment = constants.buffer_ring_alignment;
-    var ring_memory: [uring.buffers.ring_bytes(group_buffers)]u8 align(ring_alignment) = undefined;
-    var memory: [group_buffers * group_buffer_bytes]u8 = undefined;
-    try fixture.loop.provide_buffers(3, &ring_memory, &memory, group_buffer_bytes);
+    const group_bytes = comptime uring.buffers.group_bytes(group_buffers, group_buffer_bytes);
+    var group_memory: [group_bytes]u8 align(uring.buffers.group_alignment) = undefined;
+    try fixture.loop.provide_buffers(3, &group_memory, group_buffers, group_buffer_bytes);
+    // Buffer 0 starts where the kernel's ring ends, so a receive into it cannot overwrite the ring.
+    const ring_end = @intFromPtr(&group_memory[uring.buffers.ring_bytes(group_buffers)]);
+    try testing.expectEqual(ring_end, @intFromPtr(fixture.loop.provided_buffer(3, 0).ptr));
 
     _ = fixture.loop.submit(&.{.{ .user_data = 1, .kind = .{ .receive = .{
         .socket = pair[0],
@@ -403,13 +405,12 @@ test "more datagrams than the ring has entries reuse the message scratch" {
     try fixture.init(.{ .operations = operations, .entries = 8 });
     defer fixture.loop.deinit();
 
-    const alignment = buffers_module.ring_alignment;
-    var group_memory: [datagram_buffers * datagram_buffer_bytes]u8 align(alignment) = undefined;
-    var ring_memory: [buffers_module.ring_bytes(datagram_buffers)]u8 align(alignment) = undefined;
+    const group_bytes = comptime buffers_module.group_bytes(datagram_buffers, datagram_buffer_bytes);
+    var group_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
     try fixture.loop.provide_datagram_buffers(
         datagram_group,
-        &ring_memory,
         &group_memory,
+        datagram_buffers,
         datagram_buffer_bytes,
         .{},
     );

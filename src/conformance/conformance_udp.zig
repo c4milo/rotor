@@ -22,11 +22,11 @@ const group: core.datagram.GroupOptions = .{};
 /// Buffers in the group, and what each holds: the prefix plus room for the datagrams below.
 const group_buffers = 8;
 const buffer_bytes = 512;
-const group_id = 0;
+/// Not 0, so a read that names the wrong group cannot pass by naming the default.
+const group_id = 1;
 
-const ring_alignment = backend.buffers.ring_alignment;
-var group_memory: [group_buffers * buffer_bytes]u8 align(ring_alignment) = undefined;
-var ring_memory: [backend.buffers.ring_bytes(group_buffers)]u8 align(ring_alignment) = undefined;
+const group_bytes = backend.buffers.group_bytes(group_buffers, buffer_bytes);
+var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
 
 const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
 
@@ -71,8 +71,8 @@ fn send_to(user_data: u64, socket: core.Descriptor, bytes: []const u8, to: *cons
 fn provide(harness: *Harness) !void {
     try harness.loop.provide_datagram_buffers(
         group_id,
-        &ring_memory,
         &group_memory,
+        group_buffers,
         buffer_bytes,
         group,
     );
@@ -121,8 +121,7 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
     const got = try Harness.find(&events, 1);
     // The result is the datagram's own bytes: never the prefix in front of them (decision 15).
     try testing.expectEqual(@as(u32, message.len), try got.outcome());
-    const buffer = harness.loop.provided_buffer(group_id, got.flags.buffer_id);
-    const delivery = harness.loop.datagram(buffer, got);
+    const delivery = harness.loop.datagram(group_id, got);
     try testing.expectEqualStrings(message, delivery.bytes);
     try testing.expectEqual(sender_address.port, delivery.from.peer.port);
     try testing.expectEqualSlices(u8, &loopback.bytes, &delivery.from.peer.bytes);
@@ -237,8 +236,7 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
     try harness.collect(&events);
     const got = try Harness.find(&events, 1);
     const count = try got.outcome();
-    const buffer = harness.loop.provided_buffer(group_id, got.flags.buffer_id);
-    const delivery = harness.loop.datagram(buffer, got);
+    const delivery = harness.loop.datagram(group_id, got);
     // The kernel keeps what fits and says the rest is gone. Both kernels must say so.
     try testing.expect(delivery.from.flags.truncated);
     try testing.expect(count <= capacity);
