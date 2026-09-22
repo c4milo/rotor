@@ -1,7 +1,7 @@
 /* libuv_reads: O_DIRECT reads, sequential and random, the libuv side of the file workload.
  *
- * Run:  libuv_reads PATH [--transfer read|write] [--pattern seq|random] [--depth N]
- *                        [--block-bytes B]
+ * Run:  libuv_reads PATH [--transfer read|write] [--sync yes|no] [--pattern seq|random]
+ *                        [--depth N] [--block-bytes B]
  *                        [--backend threadpool|uring] [--seconds S] [--file-bytes N]
  *
  * It keeps `depth` reads in flight against one file and re-issues each as it completes, as
@@ -86,6 +86,7 @@ enum backend { BACKEND_THREADPOOL, BACKEND_URING };
 
 struct options {
     enum transfer transfer;
+    bool sync;
     const char *path;
     enum pattern pattern;
     enum backend backend;
@@ -134,6 +135,8 @@ static uint64_t next_offset(void) {
 }
 
 static void on_read(uv_fs_t *request);
+static void on_sync(uv_fs_t *request);
+static void finish(struct slot *slot);
 
 /* Issues one transfer from `slot`, unless the run is over. A write issues no fdatasync: O_DIRECT
  * bypasses the page cache and not the device's own, so the row is the write path and not a flush. */
@@ -159,6 +162,35 @@ static void on_read(uv_fs_t *request) {
         uv_fs_req_cleanup(request);
         return;
     }
+    /* A DURABLE WRITE IS NOT OVER UNTIL ITS FLUSH IS. The slot's latency spans the pair and the
+     * operation is counted once, when the flush lands. rotor_reads does the same, and fdatasync
+     * syncs the whole file in both: it has no narrower form. So at depth 1 this is a clean durable
+     * write, and above it the flushes of several slots overlap and the device coalesces them. */
+    if (run_options.sync && run_options.transfer == TRANSFER_WRITE) {
+        uv_fs_req_cleanup(request);
+        slot->request.data = slot;
+        if (uv_fs_fdatasync(loop_handle, &slot->request, file_handle, on_sync) != 0) {
+            stopping = true;
+        }
+        return;
+    }
+    finish(slot);
+}
+
+/* The flush half of one durable write. */
+static void on_sync(uv_fs_t *request) {
+    struct slot *slot = (struct slot *)request->data;
+    if (request->result < 0) {
+        fprintf(stderr, "libuv_reads: fdatasync failed: %s\n", uv_strerror((int)request->result));
+        stopping = true;
+        uv_fs_req_cleanup(request);
+        return;
+    }
+    finish(slot);
+}
+
+/* Records one completed operation and starts the next. */
+static void finish(struct slot *slot) {
     uint64_t at_ns = now_ns();
     reads++;
     if (taken < SAMPLES_MAX) latency_ns[taken++] = at_ns - slot->started_ns;
@@ -190,9 +222,14 @@ static void report(uint64_t span_ns, bool on_uring) {
     uint64_t per_second = reads * NS_PER_S / span_ns;
     const char *name = on_uring ? "libuv (io_uring)" : "libuv (thread pool)";
 
+    /* A durable write is its own workload: it measures the drive's flush as well as the loop, and a
+     * row of one must never join a series of the other. rotor_reads names them the same way. */
+    const char *direction = "read";
+    if (run_options.transfer == TRANSFER_WRITE) {
+        direction = run_options.sync ? "durable" : "write";
+    }
     printf("{\"workload\":\"file-%s-%s\",\"candidate\":\"%s\",\"version\":\"" VERSION "\"",
-           run_options.transfer == TRANSFER_WRITE ? "write" : "read",
-           run_options.pattern == PATTERN_SEQ ? "seq" : "random", name);
+           direction, run_options.pattern == PATTERN_SEQ ? "seq" : "random", name);
     printf(",\"cores\":0,\"connections\":%u,\"payload_bytes\":%u,\"load\":\"even\"",
            run_options.depth, run_options.block_bytes);
     printf(",\"duration_ns\":%" PRIu64 ",\"operations\":%" PRIu64, span_ns, reads);
@@ -293,6 +330,7 @@ static int open_and_fill(const struct options *options) {
 static int parse_cpu_free_options(int argc, char **argv, struct options *options) {
     options->pattern = PATTERN_SEQ;
     options->transfer = TRANSFER_READ;
+    options->sync = false;
     options->backend = BACKEND_THREADPOOL;
     options->depth = 32;
     options->block_bytes = 4096;
@@ -307,7 +345,11 @@ static int parse_cpu_free_options(int argc, char **argv, struct options *options
     for (int index = 2; index + 1 < argc; index += 2) {
         const char *name = argv[index];
         const char *value = argv[index + 1];
-        if (strcmp(name, "--transfer") == 0) {
+        if (strcmp(name, "--sync") == 0) {
+            if (strcmp(value, "yes") == 0) options->sync = true;
+            else if (strcmp(value, "no") == 0) options->sync = false;
+            else { fprintf(stderr, "libuv_reads: unknown sync %s\n", value); return 1; }
+        } else if (strcmp(name, "--transfer") == 0) {
             if (strcmp(value, "read") == 0) options->transfer = TRANSFER_READ;
             else if (strcmp(value, "write") == 0) options->transfer = TRANSFER_WRITE;
             else { fprintf(stderr, "libuv_reads: unknown transfer %s\n", value); return 1; }

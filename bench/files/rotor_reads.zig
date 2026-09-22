@@ -3,7 +3,7 @@
 //!
 //! Run:  rotor_reads PATH [--transfer read|write] [--pattern seq|random] [--depth N]
 //!                        [--block-bytes B] [--registered yes|no] [--seconds S]
-//!                        [--file-bytes N] [--file-policy blocking|offload]
+//!                        [--file-bytes N] [--file-policy blocking|offload] [--sync yes|no]
 //!
 //! The name says reads because that is what it measured first, and three decision records and
 //! `bench/alternatives/README.md` refer to it. `--transfer write` runs the other direction.
@@ -12,8 +12,15 @@
 //! file. A read changes nothing; a write overwrites whole blocks, so it may not overwrite a file
 //! somebody else named. Pointing this program at something valuable costs a file beside it.
 //!
-//! **A write run issues no `fdatasync`.** O_DIRECT bypasses the page cache, not the device's own
-//! cache, so a write row is the write path's latency and says nothing about durability.
+//! **`--sync` decides whether a write is durable.** With `no`, the default, a write ends when the
+//! kernel has handed the block to the device: O_DIRECT bypasses the page cache and not the drive's
+//! own, so the row is the write path's latency and says nothing about durability. With `yes`, every
+//! write is followed by an `fdatasync` and one operation is one durable write, which is what a
+//! journal pays. The two are separate workload names so their rows can never share a `Series`.
+//!
+//! On an NVMe drive with power-loss protection the two rows nearly coincide, because the drive
+//! reports no volatile write cache and the flush is almost free. On a consumer drive the flush
+//! dominates. `machine.zig` records which, or a durable row cannot be read.
 //!
 //! It keeps `depth` reads in flight against one file and re-issues each as it completes, so the
 //! device queue never drains and the measurement is of the path rather than of the program
@@ -42,41 +49,29 @@ const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
-const file_module = @import("rotor_reads_file.zig");
+const setup_module = @import("rotor_reads_setup.zig");
 const pool_module = @import("reads_pool.zig");
 
 const Loop = backend.Loop;
 const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
-const Transfer = file_module.Transfer;
+const percentile = harness.percentile;
+const Transfer = setup_module.Transfer;
+const Pattern = setup_module.Pattern;
+const Options = setup_module.Options;
+const Policy = setup_module.Policy;
 
-/// Re-exported so `rotor_reads_test.zig` and a reader find them where the program is.
-pub const write_suffix = file_module.write_suffix;
+const depth_max = setup_module.depth_max;
+const operations = setup_module.operations;
+const entries = setup_module.entries;
+const events_max = setup_module.events_max;
+const block_bytes_max = setup_module.block_bytes_max;
+const buffer_alignment = setup_module.buffer_alignment;
+const sync_bit = setup_module.sync_bit;
+const index_mask = setup_module.index_mask;
 
 /// Reads in flight at once, at most: one slot and one buffer each.
-const depth_max = 128;
-
-const operations = depth_max + 64;
-const entries = 256;
-const events_max = 256;
-
-/// The block a read moves, at most. Every offset and length is a multiple of the block asked for,
-/// and O_DIRECT refuses anything else.
-const block_bytes_max = 1 << 20;
-
-/// The alignment every O_DIRECT buffer needs. A page is at least the logical block of every
-/// device rotor runs on, and aligning to it costs nothing here.
-const buffer_alignment = 4096;
-
-/// The byte every block of the file holds before a run. `bench/alternatives/libuv_reads.c` writes
-/// the same one, so both programs read and overwrite the same content.
-const fill_byte: u8 = 0x5a;
-
-/// Blocks one file may hold, which bounds the fill loop. 256 MiB of 4 KiB blocks is 65,536, and the
-/// largest file `--file-bytes` is given in a sweep is well inside this.
-const blocks_max: u64 = 1 << 22;
-
 /// Latency samples kept, the first this many, as the other workloads keep them.
 const samples_max = 1 << 17;
 
@@ -99,7 +94,7 @@ const loop_bytes = Loop.memory_bytes(.{
 var loop_memory: [loop_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 /// One buffer per read in flight, each aligned and sized for the largest block offered.
-var buffer_memory: [depth_max * block_bytes_max]u8 align(buffer_alignment) = undefined;
+var buffer_memory: [setup_module.buffer_bytes_total]u8 align(buffer_alignment) = undefined;
 
 /// The offload's rings. The caller owns this memory because the caller's threads write it. It is
 /// one byte on a backend that offloads nothing, so the io_uring build carries none of it.
@@ -111,26 +106,6 @@ var ring_memory: [ring_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 var started_ns: [depth_max]u64 = undefined;
 var latency_ns: [samples_max]u64 = undefined;
-
-pub const Pattern = enum { seq, random };
-
-pub const Options = struct {
-    path: [:0]const u8,
-    pattern: Pattern = .seq,
-    depth: u32 = 16,
-    block_bytes: u32 = 4096,
-    registered: bool = true,
-    transfer: Transfer = .read,
-    seconds: u64 = 3,
-    file_bytes: u64 = 256 << 20,
-    /// What the loop does with a read it cannot perform without blocking (decision 18). On
-    /// io_uring it changes nothing; on kqueue it is the difference this workload's newest row
-    /// measures. `refuse` is not offered: a run that refused every read would measure nothing.
-    policy: Policy = .blocking,
-};
-
-/// The policies this workload runs, which are decision 18's two that perform the read.
-pub const Policy = enum { blocking, offload };
 
 const Run = struct {
     loop: *Loop,
@@ -147,7 +122,7 @@ const Run = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
-    const options = try parse(init);
+    const options = try setup_module.parse(init);
 
     // The pool the `offload` policy uses. Started before the loop, so a thread is already waiting
     // when the first flush hands an operation out.
@@ -177,7 +152,7 @@ pub fn main(init: std.process.Init) !void {
     // operation it holds (decision 18).
     defer if (options.policy == .offload) pool.stop();
 
-    const file = try file_module.open_and_fill(.{
+    const file = try setup_module.open_and_fill(.{
         .path = options.path,
         .transfer = options.transfer,
         .file_bytes = options.file_bytes,
@@ -269,6 +244,19 @@ pub fn operation_of(request: Request) Operation {
     };
 }
 
+/// The flush half of one durable write. It syncs the whole file, not one block: `fdatasync` has no
+/// narrower form. So at depth 1 this is a clean durable-write measurement, and above it the flushes
+/// of several slots overlap and the device coalesces them. libuv's program has the same property,
+/// so the comparison is of two loops and not of two flush policies.
+fn sync_one(state: *Run, index: u32) void {
+    const taken = state.loop.submit(&.{.{
+        .user_data = sync_bit | index,
+        .kind = .{ .fdatasync = .{ .file = state.file } },
+    }}, &.{});
+    std.debug.assert(taken == 1);
+    state.in_flight += 1;
+}
+
 /// One read, at the next offset the pattern names, into this slot's own buffer.
 fn issue(state: *Run, index: u32) void {
     if (state.stopping) return;
@@ -310,16 +298,25 @@ fn next_block(state: *Run) u64 {
 }
 
 fn complete(state: *Run, event: Event) void {
-    const index: u32 = @intCast(event.user_data);
+    const syncing = (event.user_data & sync_bit) != 0;
+    const index: u32 = @intCast(event.user_data & index_mask);
     const at_ns = now_ns();
     state.in_flight -= 1;
     const count = event.outcome() catch {
         state.stopping = true;
         return;
     };
-    // A short read means the file is smaller than the run was told, which makes every later
-    // offset wrong: it is a configuration fault and not a result.
-    std.debug.assert(count == state.options.block_bytes);
+    if (syncing) {
+        // An `fdatasync` transfers nothing, so it answers 0.
+        std.debug.assert(count == 0);
+    } else {
+        // A short transfer means the file is smaller than the run was told, which makes every later
+        // offset wrong: it is a configuration fault and not a result.
+        std.debug.assert(count == state.options.block_bytes);
+        // A durable write is not over until its flush is. The slot's latency spans the pair, and the
+        // operation is counted once, when the flush lands.
+        if (state.options.sync) return sync_one(state, index);
+    }
     state.reads += 1;
     record(state, at_ns - started_ns[index]);
     if (at_ns >= state.deadline_ns) {
@@ -340,13 +337,16 @@ const output_buffer_bytes = 1024;
 
 /// The workload's name for one pattern. Sequential and random are different measurements, so a
 /// row of each carries a different name and `Series.init` refuses to mix them.
-pub fn workload_of(transfer: Transfer, pattern: Pattern) []const u8 {
+pub fn workload_of(transfer: Transfer, pattern: Pattern, synced: bool) []const u8 {
     return switch (transfer) {
         .read => switch (pattern) {
             .seq => "file-read-seq",
             .random => "file-read-random",
         },
-        .write => switch (pattern) {
+        .write => if (synced) switch (pattern) {
+            .seq => "file-durable-seq",
+            .random => "file-durable-random",
+        } else switch (pattern) {
             .seq => "file-write-seq",
             .random => "file-write-random",
         },
@@ -370,7 +370,11 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     const duration_ns = @max(span_ns, 1);
 
     const result: harness.Result = .{
-        .workload = workload_of(state.options.transfer, state.options.pattern),
+        .workload = workload_of(
+            state.options.transfer,
+            state.options.pattern,
+            state.options.sync,
+        ),
         .candidate = candidate_of(state.options.registered, state.options.policy),
         .candidate_version = "this tree",
         .configuration = .{
@@ -384,9 +388,9 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
         .duration_ns = duration_ns,
         .operations = state.reads,
         .operations_per_second = harness.report.per_second(state.reads, duration_ns),
-        .p50_ns = percentile(samples, 500),
-        .p99_ns = percentile(samples, 990),
-        .p999_ns = percentile(samples, 999),
+        .p50_ns = percentile.nearest_rank(samples, percentile.p50),
+        .p99_ns = percentile.nearest_rank(samples, percentile.p99),
+        .p999_ns = percentile.nearest_rank(samples, percentile.p999),
         .overflow = 0,
     };
 
@@ -394,15 +398,6 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     try result.render_json_line(&out.interface);
     try out.interface.flush();
-}
-
-const per_mille = 1000;
-
-fn percentile(samples: []const u64, parts_per_thousand: u64) u64 {
-    if (samples.len == 0) return 0;
-    const rank = (samples.len * parts_per_thousand + per_mille - 1) / per_mille;
-    const index = @min(@max(rank, 1) - 1, samples.len - 1);
-    return samples[index];
 }
 
 fn now_ns() u64 {
@@ -414,70 +409,6 @@ fn now_ns() u64 {
     }
     const seconds: u64 = @intCast(value.sec);
     return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
-}
-
-fn parse(init: std.process.Init) !Options {
-    const arguments = try init.minimal.args.toSlice(init.arena.allocator());
-    if (arguments.len < 2) return error.MissingPath;
-    var options: Options = .{ .path = arguments[1] };
-    var index: usize = 2;
-    while (index < arguments.len) : (index += 2) {
-        if (index + 1 >= arguments.len) return error.MissingValue;
-        try apply(&options, arguments[index], arguments[index + 1]);
-    }
-    try check(options);
-    return options;
-}
-
-pub fn check(options: Options) !void {
-    // A depth above the pool's queue would make `Pool.submit` block the loop thread, which is the
-    // stall the offload removes. Refused here rather than found part way through a run.
-    if (options.policy == .offload and options.depth > pool_module.queue_max) {
-        return error.DepthAboveOffloadQueue;
-    }
-    if (options.depth == 0 or options.depth > depth_max) return error.DepthOutOfRange;
-    if (options.block_bytes < buffer_alignment) return error.BlockTooSmall;
-    if (options.block_bytes > block_bytes_max) return error.BlockTooLarge;
-    if (options.block_bytes % buffer_alignment != 0) return error.BlockNotAligned;
-    if (options.depth * options.block_bytes > buffer_memory.len) return error.BuffersTooLarge;
-    if (options.file_bytes < options.depth * options.block_bytes) return error.FileTooSmall;
-    // The fill writes whole blocks and samples the last one, and O_DIRECT refuses an offset that is
-    // not a multiple of the block size. A file that is not a whole number of blocks has neither.
-    if (options.file_bytes % options.block_bytes != 0) return error.FileNotWholeBlocks;
-    if (options.seconds == 0) return error.EmptyConfiguration;
-    // `register_buffers` takes at most this many, and one per read in flight is what it is given.
-    if (options.registered and options.depth > core.constants.registered_buffers_max) {
-        return error.TooManyRegistered;
-    }
-}
-
-fn apply(options: *Options, name: []const u8, value: []const u8) !void {
-    if (std.mem.eql(u8, name, "--pattern")) {
-        options.pattern = std.meta.stringToEnum(Pattern, value) orelse return error.UnknownPattern;
-    } else if (std.mem.eql(u8, name, "--depth")) {
-        options.depth = try std.fmt.parseInt(u32, value, 10);
-    } else if (std.mem.eql(u8, name, "--block-bytes")) {
-        options.block_bytes = try std.fmt.parseInt(u32, value, 10);
-    } else if (std.mem.eql(u8, name, "--registered")) {
-        options.registered = try yes_or_no(value);
-    } else if (std.mem.eql(u8, name, "--seconds")) {
-        options.seconds = try std.fmt.parseInt(u64, value, 10);
-    } else if (std.mem.eql(u8, name, "--file-bytes")) {
-        options.file_bytes = try std.fmt.parseInt(u64, value, 10);
-    } else if (std.mem.eql(u8, name, "--transfer")) {
-        options.transfer = std.meta.stringToEnum(Transfer, value) orelse
-            return error.UnknownTransfer;
-    } else if (std.mem.eql(u8, name, "--file-policy")) {
-        options.policy = std.meta.stringToEnum(Policy, value) orelse return error.UnknownPolicy;
-    } else {
-        return error.UnknownArgument;
-    }
-}
-
-fn yes_or_no(value: []const u8) !bool {
-    if (std.mem.eql(u8, value, "yes")) return true;
-    if (std.mem.eql(u8, value, "no")) return false;
-    return error.NotYesOrNo;
 }
 
 test {

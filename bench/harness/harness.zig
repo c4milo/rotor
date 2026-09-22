@@ -12,6 +12,8 @@
 //! - `clock`: the monotonic clock every benchmark reads, so two spans are comparable.
 //! - `load`: the machine's load average, and the window of it a series was taken inside, so a row
 //!   spoiled by other work arriving says so instead of leaving it to the spread.
+//! - `percentile`: the nearest-rank percentile of an exactly kept sample, which five bench programs
+//!   each carried a copy of.
 //! - `candidates`: starting a candidate's program and reading back the line it printed, which
 //!   the workloads that measure themselves all share.
 //! - `text`: the fixed-buffer string and the Markdown and JSON text rules the renderers share.
@@ -26,6 +28,7 @@ pub const report_comparison = @import("report_comparison.zig");
 pub const report_parse = @import("report_parse.zig");
 pub const clock = @import("clock.zig");
 pub const load = @import("load.zig");
+pub const percentile = @import("percentile.zig");
 pub const candidates = @import("candidates.zig");
 pub const text = @import("text.zig");
 pub const random = @import("random.zig");
@@ -47,6 +50,7 @@ test {
     _ = series;
     _ = clock;
     _ = load;
+    _ = percentile;
     _ = candidates;
     _ = text;
     _ = random;

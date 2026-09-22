@@ -1,6 +1,6 @@
 //! reads_runner: the comparison of milestone 4's O_DIRECT read workload, sequential and random.
 //!
-//! Run:  reads_runner PATH [--rounds N] [--depths N,N] [--block-bytes B] [--seconds S]
+//! Run:  reads_runner PATH [--rounds N] [--depths N,N] [--blocks B,B] [--seconds S]
 //!                    [--only NAME,NAME] [--directory D]
 //!
 //! Every candidate measures itself, as the timer and cross-core candidates do: a read has no
@@ -88,13 +88,27 @@ pub const patterns = [_][]const u8{ "seq", "random" };
 /// row and a write row can never land in one `Series`.
 pub const transfers = [_][]const u8{ "read", "write" };
 
+/// Whether a write is followed by an `fdatasync`. A read has nothing to flush, so the sweep pairs
+/// `yes` with the write direction alone.
+///
+/// The two rows answer different questions. Unsynced is the write path: what the loop costs. Synced
+/// is what a journal pays, and on an NVMe drive with power-loss protection the two nearly coincide,
+/// because the drive reports no volatile write cache and the flush is almost free. On a consumer
+/// drive the flush dominates everything the loop does. The pair says which drive this is.
+pub const syncs = [_][]const u8{ "no", "yes" };
+
+/// Block sizes a run sweeps. 4 KiB is the NVMe page and the size rows C12 and C13 of
+/// `docs/costs.md` name; 16 KiB is one command carrying four of them, which is how a caller batches
+/// without a vectored write. rotor's `write` takes one buffer, so a larger command is a larger
+/// block and there is no other way to ask for one.
+const blocks_default = [_]u32{ 4096, 16384 };
+
 const rounds_default: u32 = 5;
 const rounds_max = harness.series.runs_max;
 
 /// Queue depths a run sweeps. Depth 1 is row C12 of `docs/costs.md` and above it is C13.
 const depths_default = [_]u32{ 1, 32 };
 
-const block_bytes_default: u32 = 4096;
 const seconds_default: u64 = 3;
 const file_bytes_default: u64 = 256 << 20;
 
@@ -109,7 +123,7 @@ pub const Options = struct {
     path: []const u8,
     rounds: u32 = rounds_default,
     depths: []const u32 = &depths_default,
-    block_bytes: u32 = block_bytes_default,
+    blocks: []const u32 = &blocks_default,
     seconds: u64 = seconds_default,
     file_bytes: u64 = file_bytes_default,
     only: []const u8 = "",
@@ -123,6 +137,7 @@ var present: [candidates.len]bool = @splat(false);
 var loads: [candidates.len]LoadWindow = @splat(.empty);
 var path_buffer: [candidates.len][std.fs.max_path_bytes]u8 = undefined;
 var depths_buffer: [configurations_max]u32 = undefined;
+var blocks_buffer: [configurations_max]u32 = undefined;
 
 const output_buffer_bytes = 8192;
 
@@ -145,17 +160,8 @@ pub fn main(init: std.process.Init) !void {
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
     for (transfers) |transfer| {
-        for (patterns) |pattern| {
-            for (options.depths) |depth| {
-                var counts: [candidates.len]u32 = @splat(0);
-                try collect(init, options, .{
-                    .transfer = transfer,
-                    .pattern = pattern,
-                    .depth = depth,
-                }, &counts, writer);
-                try render(counts, writer);
-                try writer.flush();
-            }
+        for (syncs_for(transfer)) |sync_choice| {
+            try sweep(init, options, transfer, sync_choice, writer);
         }
     }
 }
@@ -173,7 +179,45 @@ pub const Configuration = struct {
     transfer: []const u8,
     pattern: []const u8,
     depth: u32,
+    block_bytes: u32,
+    sync: []const u8,
 };
+
+/// The flush policies one direction is swept at. A read has nothing to flush, so it takes the
+/// unsynced value alone: asking a read program for `--sync yes` makes it refuse the run, and the
+/// table would carry a failure line where a row should be.
+pub fn syncs_for(transfer: []const u8) []const []const u8 {
+    if (std.mem.eql(u8, transfer, "write")) return syncs[0..];
+    return syncs[0..1];
+}
+
+/// Every pattern, block size and depth of one direction and one flush policy, each its own row. It
+/// is a function of its own because the sweep has five dimensions now, and `main` was over the
+/// cognitive-complexity limit with all of them nested in it.
+fn sweep(
+    init: std.process.Init,
+    options: Options,
+    transfer: []const u8,
+    sync_choice: []const u8,
+    writer: *std.Io.Writer,
+) !void {
+    for (patterns) |pattern| {
+        for (options.blocks) |block_bytes| {
+            for (options.depths) |depth| {
+                var counts: [candidates.len]u32 = @splat(0);
+                try collect(init, options, .{
+                    .transfer = transfer,
+                    .pattern = pattern,
+                    .depth = depth,
+                    .block_bytes = block_bytes,
+                    .sync = sync_choice,
+                }, &counts, writer);
+                try render(counts, writer);
+                try writer.flush();
+            }
+        }
+    }
+}
 
 fn collect(
     init: std.process.Init,
@@ -192,10 +236,15 @@ fn collect(
             loads[index].sample();
             defer loads[index].sample();
             const measured = one_run(init, options, candidate, index, configuration) catch |err| {
-                try writer.print("reads_runner: {s} failed at {s} {s} depth {d}: {t}\n", .{
-                    candidate.name,      configuration.transfer, configuration.pattern,
-                    configuration.depth, err,
-                });
+                try writer.print(
+                    "reads_runner: {s} failed at {s} {s} sync {s} block {d} depth {d}: {t}\n",
+                    .{
+                        candidate.name,            configuration.transfer,
+                        configuration.pattern,     configuration.sync,
+                        configuration.block_bytes, configuration.depth,
+                        err,
+                    },
+                );
                 try writer.flush();
                 continue;
             };
@@ -228,7 +277,7 @@ fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
 }
 
 /// The most arguments one run passes: the program, the path, six pairs, and the candidate's own.
-pub const argv_max = 20;
+pub const argv_max = 22;
 
 fn one_run(
     init: std.process.Init,
@@ -273,14 +322,16 @@ pub fn fill_argv(
     argv[4] = "--depth";
     argv[5] = try std.fmt.bufPrint(&numbers.depth, "{d}", .{configuration.depth});
     argv[6] = "--block-bytes";
-    argv[7] = try std.fmt.bufPrint(&numbers.block, "{d}", .{options.block_bytes});
+    argv[7] = try std.fmt.bufPrint(&numbers.block, "{d}", .{configuration.block_bytes});
     argv[8] = "--seconds";
     argv[9] = try std.fmt.bufPrint(&numbers.seconds, "{d}", .{options.seconds});
     argv[10] = "--file-bytes";
     argv[11] = try std.fmt.bufPrint(&numbers.file, "{d}", .{options.file_bytes});
     argv[12] = "--transfer";
     argv[13] = configuration.transfer;
-    var used: usize = 14;
+    argv[14] = "--sync";
+    argv[15] = configuration.sync;
+    var used: usize = 16;
     for (candidate.arguments) |argument| {
         if (used == argv_max) return error.TooManyArguments;
         argv[used] = argument;
@@ -335,7 +386,7 @@ fn parse(init: std.process.Init) !Options {
     }
     if (options.rounds < harness.series.runs_min) return error.TooFewRounds;
     if (options.rounds > rounds_max) return error.TooManyRounds;
-    try check_block_bytes(options.block_bytes);
+    for (options.blocks) |block_bytes| try check_block_bytes(block_bytes);
     return options;
 }
 
@@ -352,8 +403,8 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.rounds = try std.fmt.parseInt(u32, value, 10);
     } else if (std.mem.eql(u8, name, "--depths")) {
         options.depths = try parse_list(value, &depths_buffer);
-    } else if (std.mem.eql(u8, name, "--block-bytes")) {
-        options.block_bytes = try std.fmt.parseInt(u32, value, 10);
+    } else if (std.mem.eql(u8, name, "--blocks")) {
+        options.blocks = try parse_list(value, &blocks_buffer);
     } else if (std.mem.eql(u8, name, "--seconds")) {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--file-bytes")) {

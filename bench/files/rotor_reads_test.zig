@@ -5,9 +5,9 @@ const std = @import("std");
 const core = @import("core");
 const backend = @import("backend");
 const reads = @import("rotor_reads.zig");
-const file_module = @import("rotor_reads_file.zig");
+const file_module = @import("rotor_reads_setup.zig");
 
-const Options = reads.Options;
+const Options = file_module.Options;
 const write_suffix = file_module.write_suffix;
 const testing = std.testing;
 
@@ -37,17 +37,25 @@ test "a path with no room for the suffix is an error, not a truncated path" {
 
 test "each direction and pattern names its own workload, and no two share a name" {
     const names = [_][]const u8{
-        reads.workload_of(.read, .seq),
-        reads.workload_of(.read, .random),
-        reads.workload_of(.write, .seq),
-        reads.workload_of(.write, .random),
+        reads.workload_of(.read, .seq, false),
+        reads.workload_of(.read, .random, false),
+        reads.workload_of(.write, .seq, false),
+        reads.workload_of(.write, .random, false),
+        reads.workload_of(.write, .seq, true),
+        reads.workload_of(.write, .random, true),
     };
     try testing.expectEqualStrings("file-read-seq", names[0]);
     try testing.expectEqualStrings("file-read-random", names[1]);
     try testing.expectEqualStrings("file-write-seq", names[2]);
     try testing.expectEqualStrings("file-write-random", names[3]);
+    // A durable write is its own workload: it measures the drive's flush as well as the loop, and a
+    // row of one must never join a series of the other.
+    try testing.expectEqualStrings("file-durable-seq", names[4]);
+    try testing.expectEqualStrings("file-durable-random", names[5]);
+    // A read cannot be synced, so its name does not change.
+    try testing.expectEqualStrings("file-read-seq", reads.workload_of(.read, .seq, true));
 
-    // Four distinct names, so a `Series` can never mix two of these workloads into one row.
+    // Every name distinct, so a `Series` can never mix two of these workloads into one row.
     for (names, 0..) |name, index| {
         for (names[index + 1 ..]) |other| {
             try testing.expect(!std.mem.eql(u8, name, other));
@@ -66,23 +74,29 @@ test "a candidate's name carries the buffer choice and the policy, not the direc
 
 test "a configuration the device or the buffers cannot carry is refused" {
     const sound: Options = .{ .path = "/tmp/scratch" };
-    try reads.check(sound);
+    try file_module.check(sound);
 
     var bad = sound;
     bad.depth = 0;
-    try testing.expectError(error.DepthOutOfRange, reads.check(bad));
+    try testing.expectError(error.DepthOutOfRange, file_module.check(bad));
     bad = sound;
     bad.block_bytes = 512;
-    try testing.expectError(error.BlockTooSmall, reads.check(bad));
+    try testing.expectError(error.BlockTooSmall, file_module.check(bad));
     bad = sound;
     bad.block_bytes = 4096 + 1;
-    try testing.expectError(error.BlockNotAligned, reads.check(bad));
+    try testing.expectError(error.BlockNotAligned, file_module.check(bad));
     bad = sound;
     bad.seconds = 0;
-    try testing.expectError(error.EmptyConfiguration, reads.check(bad));
+    try testing.expectError(error.EmptyConfiguration, file_module.check(bad));
     bad = sound;
     bad.file_bytes = 1024;
-    try testing.expectError(error.FileTooSmall, reads.check(bad));
+    try testing.expectError(error.FileTooSmall, file_module.check(bad));
+    // A read has nothing to flush.
+    bad = sound;
+    bad.sync = true;
+    try testing.expectError(error.SyncNeedsWrite, file_module.check(bad));
+    bad.transfer = .write;
+    try file_module.check(bad);
 }
 
 test "a write request becomes a write, and a read request a read" {
@@ -195,6 +209,17 @@ test "a real file's last block decides whether it is filled" {
     for (read_back) |byte| try testing.expectEqual(file_module.fill_byte, byte);
 }
 
+test "the sync bit sits above every slot index it shares a word with" {
+    // One completion handler tells a write from its flush by this bit of `user_data`. A bit low
+    // enough to collide with a slot index would make a flush finish the wrong operation, and the run
+    // would look healthy while measuring nonsense.
+    try testing.expect(file_module.sync_bit > file_module.operations);
+    try testing.expect(file_module.sync_bit > file_module.depth_max);
+    try testing.expectEqual(file_module.sync_bit - 1, file_module.index_mask);
+    // The two partition a u64 word: every index is under the mask, and the bit is outside it.
+    try testing.expectEqual(@as(u64, 0), file_module.sync_bit & file_module.index_mask);
+}
+
 test "the fill byte is the one libuv writes" {
     // bench/alternatives/libuv_reads.c defines FILL_BYTE as 0x5a. If the two disagree, whichever
     // program runs second refills the whole file on every invocation of a sweep, and each row pays
@@ -207,9 +232,9 @@ test "a file that is not a whole number of blocks is refused" {
     // not a multiple of the block size.
     var bad: Options = .{ .path = "/tmp/scratch" };
     bad.file_bytes = (256 << 20) + 1;
-    try testing.expectError(error.FileNotWholeBlocks, reads.check(bad));
+    try testing.expectError(error.FileNotWholeBlocks, file_module.check(bad));
 
     var sound: Options = .{ .path = "/tmp/scratch" };
     sound.file_bytes = 256 << 20;
-    try reads.check(sound);
+    try file_module.check(sound);
 }

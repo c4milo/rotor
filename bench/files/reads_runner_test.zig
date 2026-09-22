@@ -65,12 +65,38 @@ test "one run's arguments fit the buffer, with the longest candidate's own" {
     try testing.expect(14 + longest <= argv_max);
 }
 
-test "the sweep covers both directions and both patterns" {
-    // Four configurations per depth. A sweep that dropped one would quietly publish half a table.
+test "the sweep covers both directions, both patterns and both flush policies" {
+    // A sweep that dropped a dimension would quietly publish part of a table.
     try testing.expectEqual(@as(usize, 2), transfers.len);
     try testing.expectEqualStrings("read", transfers[0]);
     try testing.expectEqualStrings("write", transfers[1]);
     try testing.expectEqual(@as(usize, 2), patterns.len);
+    try testing.expectEqual(@as(usize, 2), runner.syncs.len);
+    // `no` first, so a read's one value is the unsynced one: a read cannot be flushed.
+    try testing.expectEqualStrings("no", runner.syncs[0]);
+    try testing.expectEqualStrings("yes", runner.syncs[1]);
+}
+
+test "a read is swept unsynced only, and a write both ways" {
+    // A read program refuses `--sync yes`, so pairing it with a read would put a failure line in the
+    // table where a row belongs.
+    const for_read = runner.syncs_for("read");
+    try testing.expectEqual(@as(usize, 1), for_read.len);
+    try testing.expectEqualStrings("no", for_read[0]);
+
+    const for_write = runner.syncs_for("write");
+    try testing.expectEqual(@as(usize, 2), for_write.len);
+    try testing.expectEqualStrings("no", for_write[0]);
+    try testing.expectEqualStrings("yes", for_write[1]);
+}
+
+test "the default block sweep holds the size costs.md names, and one command four times it" {
+    const options: Options = .{ .path = "/tmp/scratch" };
+    try testing.expectEqual(@as(usize, 2), options.blocks.len);
+    try testing.expectEqual(@as(u32, 4096), options.blocks[0]);
+    try testing.expectEqual(@as(u32, 16384), options.blocks[1]);
+    // Both are sizes O_DIRECT accepts, which `check_block_bytes` is what enforces.
+    for (options.blocks) |block_bytes| try runner.check_block_bytes(block_bytes);
 }
 
 test "only libuv's io_uring candidate is Linux-only, and only rotor's offload is macOS-only" {
@@ -102,8 +128,14 @@ test "a run is asked for the configuration its row will name" {
     // leave the candidate on its default, and the row would carry a name for a run nobody made.
     var argv: [argv_max][]const u8 = undefined;
     var numbers: Numbers = undefined;
-    const options: Options = .{ .path = "/tmp/scratch", .block_bytes = 4096, .seconds = 3 };
-    const configuration: Configuration = .{ .transfer = "write", .pattern = "random", .depth = 32 };
+    const options: Options = .{ .path = "/tmp/scratch", .seconds = 3 };
+    const configuration: Configuration = .{
+        .transfer = "write",
+        .pattern = "random",
+        .depth = 32,
+        .block_bytes = 16384,
+        .sync = "yes",
+    };
 
     const used = try runner.fill_argv(
         &argv,
@@ -120,7 +152,9 @@ test "a run is asked for the configuration its row will name" {
     try expect_pair(passed, "--transfer", "write");
     try expect_pair(passed, "--pattern", "random");
     try expect_pair(passed, "--depth", "32");
-    try expect_pair(passed, "--block-bytes", "4096");
+    // The block size and the sync come from the configuration, not the options: both are swept.
+    try expect_pair(passed, "--block-bytes", "16384");
+    try expect_pair(passed, "--sync", "yes");
     try expect_pair(passed, "--seconds", "3");
     // The candidate's own arguments come last and are not lost to the fixed ones.
     try expect_pair(passed, "--registered", "yes");
@@ -140,7 +174,13 @@ test "an argument list too long for the buffer is an error, not a silent cut" {
     var argv: [argv_max][]const u8 = undefined;
     var numbers: Numbers = undefined;
     const options: Options = .{ .path = "/tmp/scratch" };
-    const configuration: Configuration = .{ .transfer = "read", .pattern = "seq", .depth = 1 };
+    const configuration: Configuration = .{
+        .transfer = "read",
+        .pattern = "seq",
+        .depth = 1,
+        .block_bytes = 4096,
+        .sync = "no",
+    };
     // More candidate arguments than the buffer has room for after the fixed ones.
     var many: [argv_max][]const u8 = @splat("--x");
     const greedy: Candidate = .{ .name = "greedy", .program = "p", .arguments = &many };
