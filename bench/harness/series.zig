@@ -110,6 +110,20 @@ pub const Series = struct {
         return series.median_latency(latency_p9999);
     }
 
+    /// The middle run's peak resident memory. Reported and never judged: a fixed pool against a
+    /// buffer per connection is a trade a caller makes, not a regression, so `report_comparison`
+    /// leaves it out of what counts as a loss.
+    pub fn median_peak_rss_bytes(series: Series) u64 {
+        return series.median_latency(peak_rss_field);
+    }
+
+    /// The middle run's operation count. A row carries it because every percentile's footing is a
+    /// fraction of it: p9999 rests on one ten-thousandth of these, so a row with 90,000 operations
+    /// has nine values above its p9999 and a reader needs to see that before trusting the tail.
+    pub fn median_operations(series: Series) u64 {
+        return series.median_latency(operations_field);
+    }
+
     /// The fastest run's throughput, and the slowest run's.
     pub fn fastest_per_second(series: Series) u64 {
         var highest: u64 = 0;
@@ -155,19 +169,24 @@ pub const Series = struct {
         try text.markdown_cell(writer, first.candidate);
         try writer.writeAll(" | ");
         try text.markdown_cell(writer, first.candidate_version);
-        try writer.print(" | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | {d} | {d} | ", .{
-            first.configuration.cores,
-            first.configuration.connections,
-            first.configuration.payload_bytes,
-            first.configuration.load,
-            series.runs.len,
-            series.median_per_second(),
-            series.median_p50_ns(),
-            series.median_p99_ns(),
-            series.median_p999_ns(),
-            series.median_p9999_ns(),
-            series.spread_percent(),
-        });
+        try writer.print(
+            " | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | {d} | {d} | {d} | {d} | ",
+            .{
+                first.configuration.cores,
+                first.configuration.connections,
+                first.configuration.payload_bytes,
+                first.configuration.load,
+                series.runs.len,
+                series.median_per_second(),
+                series.median_operations(),
+                series.median_p50_ns(),
+                series.median_p99_ns(),
+                series.median_p999_ns(),
+                series.median_p9999_ns(),
+                series.median_peak_rss_bytes(),
+                series.spread_percent(),
+            },
+        );
         try series.render_other_work(writer);
         try writer.writeAll(" | ");
         try series.render_verdict(writer);
@@ -195,6 +214,8 @@ const latency_p50 = "p50_ns";
 const latency_p99 = "p99_ns";
 const latency_p999 = "p999_ns";
 const latency_p9999 = "p9999_ns";
+const operations_field = "operations";
+const peak_rss_field = "peak_rss_bytes";
 
 /// What a row says when its runs disagree too much to decide anything. Capitals, as
 /// report_comparison's loss mark is, so a reader who skims cannot miss it.
@@ -210,10 +231,11 @@ const other_work_unknown = "unknown";
 
 pub const markdown_header =
     "| workload | candidate | version | cores | connections | payload bytes | load " ++
-    "| runs | median per second | median p50 ns | median p99 ns | median p999 ns " ++
-    "| median p9999 ns | spread percent " ++
+    "| runs | median per second | median operations | median p50 ns | median p99 ns " ++
+    "| median p999 ns " ++
+    "| median p9999 ns | median peak rss bytes | spread percent " ++
     "| other work peak /100 | other work mean /100 | verdict |\n" ++
-    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n";
+    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|\n";
 
 /// Sorts `values` in place and returns the middle one. An even count takes the lower of the two
 /// middle values, so the answer is always a run that happened.

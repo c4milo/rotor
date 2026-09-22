@@ -29,6 +29,18 @@ const std = @import("std");
 const harness = @import("harness");
 const client = @import("client.zig");
 const storm = @import("storm.zig");
+const setup = @import("echo_runner_setup.zig");
+
+const Candidate = setup.Candidate;
+const candidates = setup.candidates;
+const Options = setup.Options;
+const Workload = setup.Workload;
+const found = setup.found;
+const installed = setup.installed;
+const program_path = setup.program_path;
+const payloads_storm = setup.payloads_storm;
+const ready_wait_ns = setup.ready_wait_ns;
+const rounds_max = setup.rounds_max;
 
 const Result = harness.report.Result;
 const Series = harness.series.Series;
@@ -36,124 +48,6 @@ const OtherWork = harness.other_work.Window;
 
 /// Candidates this runner knows. Each is a program that takes a port and listens on it, and each
 /// prints one line when it is ready, which this runner waits for.
-const Candidate = struct {
-    name: []const u8,
-    program: []const u8,
-    version: []const u8,
-    /// Arguments after the port.
-    arguments: []const []const u8 = &.{},
-    /// True for a candidate whose backend only exists on Linux: `std.Io.Uring` is the one.
-    linux_only: bool = false,
-    /// Why this candidate cannot run at all, or null when it can. `std.Io.Uring` carries one: it
-    /// does not compile on the pinned Zig, which `uring_compiles` in its own program and
-    /// `bench/alternatives/README.md` also record, and all three change together. Without this the
-    /// runner started a program that exits at once, once per round per configuration.
-    blocked: ?[]const u8 = null,
-    /// Why this candidate does not run the accept storm, or null when it does. The accumulate
-    /// shape carries one: it echoes when it holds a whole message, and the storm's message is one
-    /// probe byte against a 4 KiB buffer, so the server never replies and the run stalls. Six runs
-    /// died that way on 2026-09-22 before this field existed. The storm measures what an accept
-    /// costs, which both rotor shapes pay the same way, so the row carried nothing either.
-    storm_blocked: ?[]const u8 = null,
-    /// True when the server takes `--buffer-bytes`, which the runner sets to the payload. rotor
-    /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
-    /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
-    /// 8 KiB against candidates holding 64 KiB measured the sizing and not the loops: the
-    /// 64 KiB rows halved, and `bench/alternatives/README.md` records it.
-    takes_buffer_bytes: bool = false,
-};
-
-const candidates = [_]Candidate{
-    .{
-        .name = "rotor",
-        .program = "rotor_echo",
-        .version = "this tree",
-        .takes_buffer_bytes = true,
-    },
-    // rotor's second shape, which `rotor_echo.zig` calls the experiment: a receive into this
-    // connection's own buffer, re-armed until a whole message has arrived, then one send. The
-    // default shape takes a whole buffer of a provided group per completion, so a message TCP
-    // delivers in pieces is echoed with one send per piece. libuv, libxev and `std.Io` each hold a
-    // buffer per connection and accumulate, so this is the shape that compares like for like, and
-    // the pair says whether the 64 KiB rows are the loop or the reads.
-    .{
-        .name = "rotor (accumulate)",
-        .program = "rotor_echo",
-        .version = "this tree",
-        .arguments = &.{ "--shape", "accumulate" },
-        .takes_buffer_bytes = true,
-        .storm_blocked = "it echoes a whole message, and the storm's message is one byte",
-    },
-    .{
-        .name = "libuv",
-        .program = "libuv_echo",
-        .version = "v1.52.1",
-        .arguments = &.{ "--buffers", "one" },
-    },
-    .{ .name = "libxev", .program = "libxev_echo", .version = "9ce8e8e" },
-    .{
-        .name = "std.Io.Threaded",
-        .program = "std_io_echo",
-        .version = "0.16.0",
-        .arguments = &.{ "--backend", "threaded" },
-    },
-    .{
-        .name = "std.Io.Uring",
-        .blocked = "it does not compile on the pinned Zig",
-        .program = "std_io_echo",
-        .version = "0.16.0",
-        .arguments = &.{ "--backend", "uring" },
-        .linux_only = true,
-    },
-};
-
-/// Runs of each candidate per configuration. `harness.series` needs at least `runs_min`.
-const rounds_default: u32 = 3;
-const rounds_max: u32 = harness.series.runs_max;
-
-const seconds_default: u64 = 4;
-const warmup_seconds_default: u64 = 1;
-
-/// The first port, which `--port-base` moves. Every run takes the next one, so a socket left in
-/// TIME_WAIT by one run never collides with the next. The gate of `zig build test` is given a
-/// base of its own, so a comparison a person is running by hand and the gate cannot meet on a
-/// port.
-const port_first_default: u16 = 20000;
-
-/// How long a server is given to print its ready line before the runner gives up on it.
-const ready_wait_ns: u64 = 5 * std.time.ns_per_s;
-
-/// Where the servers are, under the install prefix.
-const directory_default = "zig-out/bin";
-
-const connections_default = [_]u32{ 16, 64 };
-/// The one entry the storm uses, because its message is one byte.
-const payloads_storm = [_]u32{4096};
-const payloads_default = [_]u32{ 4096, 65536 };
-
-/// Configurations and candidates together, which bounds every array below.
-const configurations_max = 8;
-const results_max = rounds_max * candidates.len;
-
-const Options = struct {
-    rounds: u32 = rounds_default,
-    seconds: u64 = seconds_default,
-    warmup_seconds: u64 = warmup_seconds_default,
-    /// When set, only the candidates named here run. `zig build test`'s smoke run names rotor
-    /// alone, so the gate needs no pinned alternative.
-    only: []const u8 = "",
-    port_base: u16 = port_first_default,
-    workload: Workload = .echo,
-    directory: []const u8 = directory_default,
-    connections: []const u32 = &connections_default,
-    payloads: []const u32 = &payloads_default,
-};
-
-var results: [results_max]Result = undefined;
-var connections_buffer: [configurations_max]u32 = undefined;
-var payloads_buffer: [configurations_max]u32 = undefined;
-var path_buffer: [candidates.len][std.fs.max_path_bytes]u8 = undefined;
-
 const output_buffer_bytes = 8192;
 
 pub fn main(init: std.process.Init) !void {
@@ -172,6 +66,7 @@ pub fn main(init: std.process.Init) !void {
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
     var port = options.port_base;
+    var rowless: u32 = 0;
     // The storm's message is one byte by definition, so it runs each connection count once and
     // ignores the payload list.
     const payloads = if (options.workload == .storm) payloads_storm[0..] else options.payloads;
@@ -180,10 +75,11 @@ pub fn main(init: std.process.Init) !void {
             port = try one_configuration(init, options, .{
                 .connections = connection_count,
                 .payload_bytes = payload_bytes,
-            }, port, writer);
+            }, port, writer, &rowless);
         }
     }
     try writer.flush();
+    if (rowless != 0) return error.CandidateProducedNoRow;
 }
 
 const Configuration = struct { connections: u32, payload_bytes: u32 };
@@ -193,10 +89,6 @@ const Configuration = struct { connections: u32, payload_bytes: u32 };
 /// a 1 KiB payload.
 const buffer_bytes_min: u32 = 2048;
 const buffer_bytes_max: u32 = 64 * 1024;
-
-/// The workloads this runner drives. Both use the same servers, so a candidate needs no line
-/// per workload: the storm opens and closes connections where echo keeps them.
-const Workload = enum { echo, storm };
 
 /// The buffer a candidate is given for `payload_bytes`: the payload where it can be, so a whole
 /// message costs one send, and the nearest the server accepts otherwise.
@@ -212,6 +104,10 @@ fn one_configuration(
     configuration: Configuration,
     port_from: u16,
     writer: *std.Io.Writer,
+    /// Rises once per candidate this configuration selected and could not produce a row for. A run
+    /// that measured nothing must not exit 0: the smoke gate would pass on a runner that failed
+    /// every run, which is what it exists to catch.
+    rowless: *u32,
 ) !u16 {
     var counts: [candidates.len]u32 = @splat(0);
     // The other work on the machine while each candidate's runs were taken. One window per candidate, and one
@@ -232,16 +128,17 @@ fn one_configuration(
                 try writer.flush();
                 continue;
             };
-            results[index * rounds_max + counts[index]] = measured;
+            setup.results[index * rounds_max + counts[index]] = measured;
             counts[index] += 1;
         }
     }
 
     for (candidates, 0..) |candidate, index| {
-        const taken = results[index * rounds_max ..][0..counts[index]];
+        const taken = setup.results[index * rounds_max ..][0..counts[index]];
         if (taken.len < harness.series.runs_min) {
             if (installed(options, index)) {
                 try writer.print("echo_runner: {s} has too few runs\n", .{candidate.name});
+                rowless.* += 1;
             }
             continue;
         }
@@ -285,11 +182,19 @@ fn one_run(
     // options for a person running it by hand.
     const argv = argv_buffer[0..used];
 
-    var child = try std.process.spawn(init.io, .{ .argv = argv, .stdout = .ignore });
+    var child = try std.process.spawn(init.io, .{
+        .argv = argv,
+        .stdout = .ignore,
+        // The peak memory of the candidate's own process, which `wait4` reports when the child is
+        // reaped. Without this the memory column has nothing to read.
+        .request_resource_usage_statistics = true,
+    });
     // `kill` terminates the child, waits for it and frees what it held, and does nothing when
     // called again, so it is the whole of the cleanup. A `wait` after it would halt: `wait`
-    // requires a child that is still there.
-    defer child.kill(init.io);
+    // requires a child that is still there. The success path kills the child itself, because the
+    // memory it used is only readable once it has been reaped; this covers every other path.
+    var reaped = false;
+    defer if (!reaped) child.kill(init.io);
 
     // The server needs a moment to bind before the client connects. Its ready line goes to
     // `ignore`, so the runner waits instead of reading it: a pipe the runner never drains would
@@ -300,7 +205,7 @@ fn one_run(
     };
     ready.sleep(init.io) catch {};
 
-    const measured = switch (options.workload) {
+    var measured = switch (options.workload) {
         .echo => try client.run(.{
             .port = port,
             .connections = configuration.connections,
@@ -318,78 +223,34 @@ fn one_run(
             .version = candidate.version,
         }),
     };
+
+    // Reaped here and not in the defer, so the peak memory is readable before this returns.
+    //
+    // Signalled and then waited for, rather than through `kill`: `kill` reaps the child without
+    // collecting its resource usage, so the memory column read 0 for every candidate when it was
+    // written that way (2026-09-22). `wait` collects it, and every server here documents SIGTERM
+    // as its stop and installs no handler for it. A host that reports nothing leaves the field 0,
+    // which the table prints as it is: a number nobody measured is not worth inventing.
+    if (child.id) |id| std.posix.kill(id, std.posix.SIG.TERM) catch {};
+    _ = child.wait(init.io) catch {};
+    reaped = true;
+    const reported = child.resource_usage_statistics.getMaxRss();
+    // The standard library fills this from `wait4` on both targets this harness runs on, so a null
+    // here is the runner asking wrong and not the host declining. It asked wrong until 2026-09-22,
+    // reaping with `kill`, and every memory cell read 0; refusing is what makes the smoke gate
+    // notice if that comes back.
+    if (memory_reported_here and reported == null) return error.MemoryNotReported;
+    measured.peak_rss_bytes = reported orelse 0;
     return measured;
 }
 
-fn program_path(options: Options, candidate: Candidate, slot: usize) ![]const u8 {
-    const buffer = &path_buffer[slot];
-    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ options.directory, candidate.program });
-}
+/// Whether this host reports a child's peak memory. Both targets of this harness do, through
+/// `wait4`; a host that does not leaves every memory cell 0 rather than failing a run.
+const memory_reported_here = switch (@import("builtin").os.tag) {
+    .linux, .macos => true,
+    else => false,
+};
 
-var present_candidates: [candidates.len]bool = @splat(false);
-
-fn installed(options: Options, index: usize) bool {
-    if (!present_candidates[index]) return false;
-    return wanted(options, candidates[index].name);
-}
-
-/// True when `--candidates` was not given, or names this candidate.
-fn wanted(options: Options, name: []const u8) bool {
-    if (options.only.len == 0) return true;
-    var pieces = std.mem.splitScalar(u8, options.only, ',');
-    while (pieces.next()) |piece| {
-        if (std.mem.eql(u8, piece, name)) return true;
-    }
-    return false;
-}
-
-/// Why this candidate does not run `workload`, or null when it runs it. Both reasons print the
-/// same line, because a reader of the table needs the same thing from either: the row is absent
-/// and this is why.
-fn unavailable(candidate: Candidate, workload: Workload) ?[]const u8 {
-    if (candidate.blocked) |reason| return reason;
-    if (workload == .storm) return candidate.storm_blocked;
-    return null;
-}
-
-/// Marks every candidate whose program is on disk, names the ones that are not, and returns how
-/// many are there.
-fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 {
-    var count: u32 = 0;
-    for (candidates, 0..) |candidate, index| {
-        if (!wanted(options, candidate.name)) {
-            present_candidates[index] = false;
-            continue;
-        }
-        if (candidate.linux_only and @import("builtin").os.tag != .linux) {
-            present_candidates[index] = false;
-            try writer.print("echo_runner: {s} runs on Linux alone, skipping it\n", .{
-                candidate.name,
-            });
-            continue;
-        }
-        if (unavailable(candidate, options.workload)) |reason| {
-            present_candidates[index] = false;
-            try writer.print("echo_runner: {s} is not run: {s}\n", .{ candidate.name, reason });
-            continue;
-        }
-        const path = try program_path(options, candidate, index);
-        const file = std.Io.Dir.cwd().openFile(init.io, path, .{}) catch {
-            present_candidates[index] = false;
-            try writer.print(
-                "echo_runner: {s} is not installed at {s}, skipping it\n",
-                .{ candidate.name, path },
-            );
-            continue;
-        };
-        file.close(init.io);
-        present_candidates[index] = true;
-        count += 1;
-    }
-    return count;
-}
-
-/// Reads a comma-separated list of counts into `buffer`.
 fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
     var count: usize = 0;
     var pieces = std.mem.splitScalar(u8, text, ',');
@@ -434,9 +295,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     } else if (std.mem.eql(u8, name, "--directory")) {
         options.directory = value;
     } else if (std.mem.eql(u8, name, "--connections")) {
-        options.connections = try parse_list(value, &connections_buffer);
+        options.connections = try parse_list(value, &setup.connections_buffer);
     } else if (std.mem.eql(u8, name, "--payloads")) {
-        options.payloads = try parse_list(value, &payloads_buffer);
+        options.payloads = try parse_list(value, &setup.payloads_buffer);
     } else {
         return error.UnknownArgument;
     }
@@ -445,29 +306,3 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
 // Tests. `build/bench.zig` names this file in `tested`, so these run under `zig build test`.
 
 const testing = std.testing;
-
-fn candidate_named(name: []const u8) ?Candidate {
-    for (candidates) |candidate| {
-        if (std.mem.eql(u8, candidate.name, name)) return candidate;
-    }
-    return null;
-}
-
-test "the accumulate shape runs echo and not the storm, and the default shape runs both" {
-    const accumulate = candidate_named("rotor (accumulate)") orelse return error.NoCandidate;
-    try testing.expect(unavailable(accumulate, .echo) == null);
-    // Without this the storm stalls: the shape waits for a whole message and gets one byte.
-    try testing.expect(unavailable(accumulate, .storm) != null);
-
-    // The storm still has a rotor row, so removing the one above loses no workload.
-    const default_shape = candidate_named("rotor") orelse return error.NoCandidate;
-    try testing.expect(unavailable(default_shape, .echo) == null);
-    try testing.expect(unavailable(default_shape, .storm) == null);
-}
-
-test "a candidate blocked outright is blocked in every workload" {
-    const blocked = candidate_named("std.Io.Uring") orelse return error.NoCandidate;
-    try testing.expect(blocked.blocked != null);
-    try testing.expect(unavailable(blocked, .echo) != null);
-    try testing.expect(unavailable(blocked, .storm) != null);
-}

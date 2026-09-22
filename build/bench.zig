@@ -115,7 +115,7 @@ const tested = [_]Tested{
     .{ .name = "bench-echo-client-tests", .root = "bench/echo/client.zig", .needs_loop = true },
     .{
         .name = "bench-echo-runner-tests",
-        .root = "bench/echo/echo_runner.zig",
+        .root = "bench/echo/echo_runner_setup.zig",
         .needs_loop = true,
     },
 };

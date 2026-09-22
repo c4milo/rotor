@@ -77,6 +77,11 @@ pub const Result = struct {
     /// Latencies above the histogram's range. When this is not 0 the tail was clamped, and the
     /// row says so.
     overflow: u64,
+    /// The peak resident memory of the candidate's own process, in bytes, or 0 when the host did
+    /// not report it. It is the candidate's number and not the runner's: rotor holds one fixed
+    /// pool for every connection where libuv, libxev and `std.Io` hold a buffer each, and this is
+    /// the column that shows which way that trade falls at a given connection count.
+    peak_rss_bytes: u64 = 0,
 
     /// The result of `run`: its throughput from the operations and the span, and its percentiles
     /// and overflow from `latencies`, the merged histogram of the run's threads.
@@ -112,8 +117,9 @@ pub const Result = struct {
         try writer.print("{d} | {d} | {d} | ", .{
             result.duration_ns, result.operations, result.operations_per_second,
         });
-        try writer.print("{d} | {d} | {d} | {d} | {d} |\n", .{
-            result.p50_ns, result.p99_ns, result.p999_ns, result.p9999_ns, result.overflow,
+        try writer.print("{d} | {d} | {d} | {d} | {d} | {d} |\n", .{
+            result.p50_ns,   result.p99_ns,   result.p999_ns,
+            result.p9999_ns, result.overflow, result.peak_rss_bytes,
         });
     }
 
@@ -139,7 +145,9 @@ pub const Result = struct {
         try writer.print(",\"p999_ns\":{d},\"p9999_ns\":{d}", .{
             result.p999_ns, result.p9999_ns,
         });
-        try writer.print(",\"overflow\":{d}}}\n", .{result.overflow});
+        try writer.print(",\"overflow\":{d},\"peak_rss_bytes\":{d}}}\n", .{
+            result.overflow, result.peak_rss_bytes,
+        });
     }
 };
 
@@ -147,8 +155,8 @@ pub const Result = struct {
 pub const markdown_header =
     "| workload | candidate | version | cores | connections | payload bytes | load " ++
     "| duration ns | operations | operations per second " ++
-    "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
-    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
+    "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow | peak rss bytes |\n" ++
+    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 
 /// The two header lines of a table of results.
 pub fn render_markdown_header(writer: *Writer) Writer.Error!void {
@@ -301,10 +309,10 @@ test "the Markdown header and a row, as exact text" {
     try rotor_result.render_markdown_row(&writer);
     try testing.expectEqualStrings("| workload | candidate | version | cores | connections " ++
         "| payload bytes | load | duration ns | operations | operations per second " ++
-        "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
-        "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|\n" ++
+        "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow | peak rss bytes |\n" ++
+        "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n" ++
         "| echo | rotor | 0.1.0 | 4 | 1024 | 4096 | even | 10000000000 | 2000000 | 200000 " ++
-        "| 10000 | 20000 | 30000 | 40000 | 0 |\n", writer.buffered());
+        "| 10000 | 20000 | 30000 | 40000 | 0 | 0 |\n", writer.buffered());
 }
 
 test "a JSON line, as exact text, with its names escaped" {
@@ -318,7 +326,8 @@ test "a JSON line, as exact text, with its names escaped" {
         "\"version\":\"0.1.0\",\"cores\":4,\"connections\":1024,\"payload_bytes\":4096," ++
         "\"load\":\"even\",\"duration_ns\":10000000000,\"operations\":2000000," ++
         "\"operations_per_second\":200000,\"p50_ns\":10000,\"p99_ns\":20000," ++
-        "\"p999_ns\":30000,\"p9999_ns\":40000,\"overflow\":7}\n", writer.buffered());
+        "\"p999_ns\":30000,\"p9999_ns\":40000,\"overflow\":7," ++
+        "\"peak_rss_bytes\":0}\n", writer.buffered());
 
     var escaped: Writer = .fixed(&buffer);
     result.workload = "echo \"4 KiB\"";

@@ -111,6 +111,7 @@ const Measurements = struct {
     p999_ns: u64,
     p9999_ns: u64,
     overflow: u64,
+    peak_rss_bytes: u64,
 };
 
 /// One `Result` from one line, with every string pointing into `line`.
@@ -143,6 +144,7 @@ pub fn parse_line(line: []const u8) ParseError!Result {
         .p999_ns = measured.p999_ns,
         .p9999_ns = measured.p9999_ns,
         .overflow = measured.overflow,
+        .peak_rss_bytes = measured.peak_rss_bytes,
     };
 }
 
@@ -184,6 +186,8 @@ fn parse_measurements(scanner: *Scanner) ParseError!Measurements {
     const p9999_ns = try scanner.number();
     try scanner.expect(",\"overflow\":");
     const overflow = try scanner.number();
+    try scanner.expect(",\"peak_rss_bytes\":");
+    const peak_rss_bytes = try scanner.number();
     assert(scanner.index <= scanner.line.len);
     return .{
         .duration_ns = duration_ns,
@@ -194,6 +198,7 @@ fn parse_measurements(scanner: *Scanner) ParseError!Measurements {
         .p999_ns = p999_ns,
         .p9999_ns = p9999_ns,
         .overflow = overflow,
+        .peak_rss_bytes = peak_rss_bytes,
     };
 }
 
@@ -236,6 +241,7 @@ const sample: Result = .{
     .p999_ns = 90_000,
     .p9999_ns = 250_000,
     .overflow = 3,
+    .peak_rss_bytes = 67_108_864,
 };
 
 test "a rendered result parses back field for field" {

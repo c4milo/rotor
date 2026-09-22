@@ -33,8 +33,8 @@ const losing_mark_end = "**";
 
 pub const comparison_header =
     "| verdict | candidate | version | operations per second | thousandths of rotor " ++
-    "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
-    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n";
+    "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow | peak rss bytes |\n" ++
+    "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 
 pub const ComparisonError = Writer.Error || error{
     /// No result is rotor's, so there is nothing to compare the others with.
@@ -122,9 +122,9 @@ fn render_comparison_row(
     } else {
         try writer.writeAll("n/a");
     }
-    try writer.print(" | {d} | {d} | {d} | {d} | {d} |\n", .{
+    try writer.print(" | {d} | {d} | {d} | {d} | {d} | {d} |\n", .{
         result.p50_ns,   result.p99_ns,   result.p999_ns,
-        result.p9999_ns, result.overflow,
+        result.p9999_ns, result.overflow, result.peak_rss_bytes,
     });
 }
 
@@ -204,17 +204,17 @@ test "a comparison marks every row rotor loses, in the first column, and counts 
     try testing.expectEqualStrings("Workload `echo`: 4 cores, 1024 connections, " ++
         "4096 payload bytes, even load.\n\n" ++
         "| verdict | candidate | version | operations per second | thousandths of rotor " ++
-        "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow |\n" ++
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|\n" ++
+        "| p50 ns | p99 ns | p999 ns | p9999 ns | overflow | peak rss bytes |\n" ++
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n" ++
         "| **ROTOR LOSES: p999, p9999** | libuv | 1.0.0 | 100000 | 500 " ++
-        "| 20000 | 40000 | 29000 | 39000 | 0 |\n" ++
-        "| baseline | rotor | 0.1.0 | 200000 | 1000 | 10000 | 20000 | 30000 | 40000 | 0 |\n" ++
+        "| 20000 | 40000 | 29000 | 39000 | 0 | 0 |\n" ++
+        "| baseline | rotor | 0.1.0 | 200000 | 1000 | 10000 | 20000 | 30000 | 40000 | 0 | 0 |\n" ++
         "| **ROTOR LOSES: throughput, p50, p999, p9999** | libxev | 2.0.0 | 250000 | 1250 " ++
-        "| 9000 | 25000 | 28000 | 38000 | 0 |\n" ++
+        "| 9000 | 25000 | 28000 | 38000 | 0 | 0 |\n" ++
         "| no loss | std.Io.Threaded | 0.16.0 | 200000 | 1000 " ++
-        "| 10000 | 20000 | 30000 | 40000 | 0 |\n" ++
+        "| 10000 | 20000 | 30000 | 40000 | 0 | 0 |\n" ++
         "| **ROTOR LOSES: p99** | std.Io.Uring | 0.16.0 | 150000 | 750 " ++
-        "| 10000 | 19999 | 30000 | 40000 | 0 |\n" ++
+        "| 10000 | 19999 | 30000 | 40000 | 0 | 0 |\n" ++
         "\n**ROTOR LOSES to 3 of 4 candidates.**\n", writer.buffered());
 }
 
@@ -227,7 +227,7 @@ test "a comparison rotor loses no row of says so in plain letters, and the mark 
     var writer: Writer = .fixed(&buffer);
     try render_comparison(&writer, &results);
     try testing.expect(std.mem.endsWith(u8, writer.buffered(), "| no loss | libuv | 1.0.0 " ++
-        "| 100000 | 500 | 20000 | 40000 | 60000 | 70000 | 0 |\n" ++
+        "| 100000 | 500 | 20000 | 40000 | 60000 | 70000 | 0 | 0 |\n" ++
         "\nrotor loses to 0 of 1 candidates.\n"));
     try testing.expectEqual(@as(usize, 0), std.mem.count(u8, writer.buffered(), "LOSES"));
     try testing.expectEqual(@as(usize, 0), std.mem.count(u8, writer.buffered(), "**"));
@@ -246,9 +246,9 @@ test "a comparison without rotor is an error, and an idle rotor loses without a 
     };
     try render_comparison(&writer, &idle);
     try testing.expect(std.mem.indexOf(u8, writer.buffered(), "| **ROTOR LOSES: throughput** " ++
-        "| libuv | 1.0.0 | 100000 | n/a | 1 | 2 | 3 | 10003 | 0 |\n") != null);
+        "| libuv | 1.0.0 | 100000 | n/a | 1 | 2 | 3 | 10003 | 0 | 0 |\n") != null);
     try testing.expect(std.mem.indexOf(u8, writer.buffered(), "| baseline | rotor | 0.1.0 " ++
-        "| 0 | n/a | 0 | 0 | 0 | 10000 | 0 |\n") != null);
+        "| 0 | n/a | 0 | 0 | 0 | 10000 | 0 | 0 |\n") != null);
     try testing.expect(std.mem.endsWith(u8, writer.buffered(), "\n**ROTOR LOSES to 1 of 1 " ++
         "candidates.**\n"));
 }
