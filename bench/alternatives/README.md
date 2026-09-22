@@ -397,6 +397,23 @@ compared in its `waiting` mode alone; `bench/crosscore/rotor_post.zig` keeps rot
 modes and names them in the candidate column, so no table reads as though an alternative had been
 offered the same choice.
 
+**The three do not carry the same thing, and this is the largest asymmetry of the row.** rotor's
+`post` moves a 16-byte `Message`, a payload and a tag, through a bounded ring, and reports
+`mailbox_full` when there is no room. Neither alternative moves anything:
+
+- `uv_async_send` sets a flag and writes to an eventfd on the 0 to 1 edge alone
+  (`src/unix/async.c:93`). A second send before the loop runs is a no-op, it carries no payload, and
+  it returns 0 unconditionally: there is no queue, so nothing can be full.
+- `xev.Async.notify` writes the value 1 to an eventfd, which the kernel coalesces into a counter, and
+  treats `error.WouldBlock` as success (`src/watcher/async.zig:205`). On Darwin its own comment says
+  it: "This constructs an empty mach message. It has no data."
+
+So a caller of either library keeps its own queue and uses the notification only to wake the loop.
+**A gap against rotor on this row is partly rotor doing more work**, and no reader can see that from
+the numbers. Recorded and not corrected, by the owner's ruling of 2026-09-22: the row compares what
+each library actually offers, which is the question worth asking, and giving rotor a payload-free
+mode or writing a queue for the alternatives would each measure something no consumer would use.
+
 **The percentiles are not computed the same way in all three.** rotor and libxev record into
 `bench/harness/histogram.zig`. libuv sorts an array in C, because a C program cannot import that
 file.
