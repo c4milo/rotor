@@ -55,10 +55,19 @@
 //!   blocking `kevent` call, so its cost is lost in the system call.
 //! - `begin_sleep` first loads the flag with `.unordered` to assert it is clear. The loop is the
 //!   flag's only writer, so the load returns the loop's last store.
-//! - `set` and `clear` swap a descriptor with `.release` and `get` loads it with `.acquire`, as
-//!   the `uring` registry does. The entry is one word, and a reader that sees the old value
-//!   behaves as if it ran before the swap. The swap returns the value it replaced, so the
-//!   assertion tests the value that was overwritten and not an earlier one.
+//! - `clear` swaps a descriptor with `.release` and `get` loads it with `.acquire`, as the
+//!   `uring` registry does. The entry is one word, and a reader that sees the old value behaves
+//!   as if it ran before the swap. The swap returns the value it replaced, so the assertion
+//!   tests the value that was overwritten and not an earlier one.
+//! - `set` and `set_remote` swap with `.acq_rel`. The thread that claims an id becomes the
+//!   producer of the rings from that id, and for a loop the consumer of the rings toward it. The
+//!   previous holder of the id wrote those rings' slots with plain stores and read its own index
+//!   with `.unordered` loads, and the claimant will do the same. The claimant learns that the id
+//!   is free from the application, through a signal that may order nothing, so the swap that
+//!   reads the `descriptor_none` the previous holder's `clear` stored is the one edge rotor
+//!   controls: its acquire half makes every store before that `clear` visible to the claimant.
+//!   No test shows it, because the claimant's first loads would have to be served stale; the
+//!   argument is the evidence. The `uring` registry holds no rings, so its claim stays `.release`.
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
@@ -66,6 +75,12 @@ const constants = @import("constants.zig");
 
 /// The entry of a loop that has not started or has stopped.
 pub const descriptor_none: core.Descriptor = -1;
+
+/// The entry of a `Remote`: an id a thread claimed so its messages can name a sender, which runs no
+/// loop and receives nothing (decision 4). It is distinct from `descriptor_none` so that claiming an
+/// id twice is caught, and negative so that every `post` to it is already answered `loop_not_found`
+/// by the check each backend makes on a target's descriptor.
+pub const descriptor_remote: core.Descriptor = -2;
 
 /// The fewest loops a registry serves: one loop alone has nobody to post to.
 const loops_min: u16 = 2;
@@ -218,11 +233,20 @@ pub const Registry = struct {
     }
 
     /// A loop publishes its kqueue descriptor at init. The id must be free: two loops with one
-    /// id is a programmer error.
+    /// id is a programmer error. `.acq_rel`: the claim carries the previous holder's ring stores
+    /// to this loop, which is about to read those rings (the header says why).
     pub fn set(registry: *Registry, id: core.LoopId, queue: core.Descriptor) void {
         assert(id < registry.entries.len);
         assert(queue >= 0);
-        const previous = registry.entries[id].queue.swap(queue, .release);
+        const previous = registry.entries[id].queue.swap(queue, .acq_rel);
+        assert(previous == descriptor_none);
+    }
+
+    /// A `Remote` claims `id` at init: it publishes no queue, because it receives nothing, and the
+    /// sentinel is what makes a second claim on one id halt (decision 4).
+    pub fn set_remote(registry: *Registry, id: core.LoopId) void {
+        assert(id < registry.entries.len);
+        const previous = registry.entries[id].queue.swap(descriptor_remote, .acq_rel);
         assert(previous == descriptor_none);
     }
 
@@ -231,7 +255,9 @@ pub const Registry = struct {
     pub fn clear(registry: *Registry, id: core.LoopId) void {
         assert(id < registry.entries.len);
         const previous = registry.entries[id].queue.swap(descriptor_none, .release);
-        assert(previous >= 0);
+        // A loop publishes its queue and a `Remote` publishes the sentinel. Either way the id was
+        // claimed, and withdrawing one that was not is a programmer error.
+        assert(previous != descriptor_none);
     }
 
     /// The kqueue descriptor of loop `id`, or a negative value when it has none.

@@ -21,6 +21,7 @@ pub const errno = @import("kqueue_errno.zig");
 pub const mailbox = @import("kqueue_mailbox.zig");
 pub const offload_module = @import("kqueue_offload.zig");
 pub const perform = @import("kqueue_perform.zig");
+pub const remote_module = @import("kqueue_remote.zig");
 pub const queue_module = @import("kqueue_queue.zig");
 pub const reap_module = @import("kqueue_reap.zig");
 pub const submit_module = @import("kqueue_submit.zig");
@@ -34,10 +35,16 @@ pub const waiters_module = @import("kqueue_waiters.zig");
 /// `pread`, `pwrite` and `fsync` calls itself and they block the loop thread (decision 18).
 pub const files_block = true;
 
+/// Whether a `post` can be refused for lack of room at the target, which decides what a caller
+/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). A mailbox holds `constants.mailbox_messages`, and a post to a full one is refused with
+/// `mailbox_full`, from a loop or from a `Remote`.
+pub const post_bounded = true;
+
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag.isDarwin();
 
 pub const Registry = mailbox.Registry;
+pub const Remote = remote_module.Remote;
 pub const InitError = queue_module.InitError;
 pub const TickError = tick_module.TickError;
 pub const DrainError = TickError || error{StillInFlight};
@@ -345,6 +352,7 @@ pub const Loop = struct {
 
 comptime {
     core.surface.check(Loop);
+    core.surface.check_remote(Remote);
 }
 
 test {
@@ -356,6 +364,7 @@ test {
     _ = errno;
     _ = mailbox;
     _ = perform;
+    _ = remote_module;
     _ = queue_module;
     _ = reap_module;
     _ = submit_module;

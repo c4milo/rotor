@@ -165,6 +165,67 @@ fn give_an_offload_more_workers_than_the_limit() void {
     loop.init_tables(&offload_memory, options_many);
 }
 
+// The Remote's assertions (decision 4). Each is a mistake only the caller can make, and each halts
+// before anything would enter the kernel: on kqueue a Remote's `init` and `post` reach the
+// registry and its rings before any system call, so a remote here is set up as a caller sets one
+// up.
+
+/// A registry of two slots, which the scenarios claim as a loop and a remote would.
+const remote_ids: u16 = 2;
+const remote_registry_bytes = kqueue.Registry.memory_bytes(remote_ids);
+var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
+    undefined;
+var remote_registry: kqueue.Registry = undefined;
+var remote_one: kqueue.Remote = undefined;
+
+/// Two remotes claiming one id would put two producers on a single-producer ring.
+fn claim_one_id_with_two_remotes() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    var remote_two: kqueue.Remote = undefined;
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    remote_two.init(&remote_registry, 1) catch return;
+}
+
+/// A remote claiming an id a loop already holds: the loop published a queue there, and the remote
+/// would overwrite it.
+fn claim_a_loops_id_with_a_remote() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_registry.set(0, 3);
+    scenario.reached_violation();
+    remote_one.init(&remote_registry, 0) catch return;
+}
+
+/// A remote posting to its own id. It has no queue to receive with, so a message to oneself is a
+/// programmer error, as a loop posting to itself is.
+fn post_from_a_remote_to_itself() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A remote used from a thread that did not create it: two producers on one ring.
+fn post_from_a_remote_on_another_thread() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    const thread = std.Thread.spawn(.{}, post_through_remote_one, .{}) catch return;
+    thread.join();
+}
+
+fn post_through_remote_one() void {
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
+fn post_a_tag_above_the_limit() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
@@ -190,6 +251,14 @@ const scenarios = [_]scenario.Scenario{
         .name = "offload: give an offload more workers than the limit",
         .run = give_an_offload_more_workers_than_the_limit,
     },
+    .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
+    .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
+    .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
+    .{
+        .name = "remote: post from a remote on another thread",
+        .run = post_from_a_remote_on_another_thread,
+    },
+    .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
 };
 
 pub fn main(init: std.process.Init) !void {
