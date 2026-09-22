@@ -32,6 +32,12 @@ const TimerHeap = timer_heap_module.TimerHeap;
 /// One per thread, and its address is that thread's identity.
 threadlocal var thread_marker: u8 = 0;
 
+/// The calling thread's identity: the address of its `thread_marker`. A loop records it at init
+/// and compares it at every entry point; a `Remote` does the same (decision 4).
+pub fn thread_identity() usize {
+    return @intFromPtr(&thread_marker);
+}
+
 /// What the backend must do about a cancel that `request_cancel` accepted.
 pub const CancelAction = enum {
     /// Nothing: the operation was already marked, was still queued, or was a timer, which the
@@ -85,7 +91,7 @@ pub const Tables = struct {
         tables.finished = SlotList.empty;
         tables.now_ns = 0;
         tables.operation_sequence = 0;
-        tables.owner = @intFromPtr(&thread_marker);
+        tables.owner = thread_identity();
         tables.descriptors_registered = 0;
         tables.id = options.id;
     }
@@ -102,7 +108,7 @@ pub const Tables = struct {
     /// Halts when another thread calls into the loop: a call from the wrong thread is a
     /// programmer error, and by the time it is seen the tables may already be torn.
     pub fn assert_owner(tables: *const Tables) void {
-        assert(tables.owner == @intFromPtr(&thread_marker));
+        assert(tables.owner == thread_identity());
     }
 
     /// Halts when an operation has not had its final event (decision 5, rule 7).

@@ -32,11 +32,29 @@ pub const loop_declarations = [_][]const u8{
     "provided_buffer",
 };
 
+/// Every public declaration of a backend's `Remote`: what a thread that owns no loop holds to
+/// post with (decision 4). It is the whole of the surface, because a `Remote` does one thing.
+pub const remote_declarations = [_][]const u8{
+    "init",
+    "deinit",
+    "post",
+};
+
 /// Fails the compile, naming the first declaration `Loop` lacks.
 pub fn check(comptime Loop: type) void {
     inline for (loop_declarations) |name| {
         if (!@hasDecl(Loop, name)) {
             @compileError("backend Loop lacks the declaration '" ++ name ++ "' (core/surface.zig)");
+        }
+    }
+}
+
+/// Fails the compile, naming the first declaration `Remote` lacks. Each backend calls it on its
+/// own `Remote`, as it calls `check` on its `Loop`.
+pub fn check_remote(comptime Remote: type) void {
+    inline for (remote_declarations) |name| {
+        if (!@hasDecl(Remote, name)) {
+            @compileError("backend Remote lacks the declaration '" ++ name ++ "' (core/surface.zig)");
         }
     }
 }
@@ -68,4 +86,15 @@ const Complete = struct {
 test "a loop with every declaration passes the check" {
     comptime check(Complete);
     try testing.expectEqual(loop_declarations.len, @typeInfo(Complete).@"struct".decls.len);
+}
+
+const CompleteRemote = struct {
+    pub fn init() void {}
+    pub fn deinit() void {}
+    pub fn post() void {}
+};
+
+test "a remote with every declaration passes the check, and the list is exactly those three" {
+    comptime check_remote(CompleteRemote);
+    try testing.expectEqual(remote_declarations.len, @typeInfo(CompleteRemote).@"struct".decls.len);
 }

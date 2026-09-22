@@ -11,6 +11,7 @@ pub const layout = @import("layout.zig");
 pub const offload = @import("offload.zig");
 pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
+pub const remote = @import("remote.zig");
 pub const shutdown = @import("shutdown.zig");
 pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
@@ -42,6 +43,7 @@ test {
     _ = offload;
     _ = operation;
     _ = random;
+    _ = remote;
     _ = shutdown;
     _ = slot;
     _ = slot_list;
