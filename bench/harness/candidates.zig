@@ -30,6 +30,9 @@ pub const RunError = error{
     CandidateKilled,
     /// The program printed nothing at all.
     NoResultLine,
+    /// The program named itself something other than the candidate the runner asked for, so the
+    /// row would carry a name for a configuration that never ran.
+    CandidateMismatch,
 };
 
 /// The most bytes one candidate may print. A result line is a few hundred; this leaves room for a
@@ -41,13 +44,19 @@ pub const output_bytes_max: usize = 64 * 1024;
 /// The strings of the returned `Result` point into memory `allocator` holds, so the caller passes
 /// an allocator that outlives every use of the result. A runner passes its arena, which lives as
 /// long as the run does.
+/// `expected` is the name the runner's table gives this candidate, which the program must print as
+/// its own. A mismatch is a run that is not the candidate it was asked for: an argument was dropped,
+/// or a program ignored a flag that picks its mode, and the row would then carry a name for
+/// something that never ran. It is a parameter and not an optional check, so no runner can forget it.
 pub fn run_once(
     io: std.Io,
     allocator: std.mem.Allocator,
     argv: []const []const u8,
+    expected: []const u8,
 ) !Result {
     assert(argv.len >= 1);
     assert(argv[0].len >= 1);
+    assert(expected.len >= 1);
     const run = try std.process.run(allocator, io, .{
         .argv = argv,
         .stdout_limit = .limited(output_bytes_max),
@@ -55,7 +64,16 @@ pub fn run_once(
     });
     try check_exit(run.term);
     const line = report_parse.last_line(run.stdout) orelse return error.NoResultLine;
-    return try report_parse.parse_line(line);
+    const result = try report_parse.parse_line(line);
+    try expect_candidate(result.candidate, expected);
+    return result;
+}
+
+/// Halts a run whose program named itself something else. A function of its own so a test can reach
+/// it: the comparison is what stops a mislabelled row, and a row that lies about which candidate or
+/// which mode it measured is worse than a row that is missing.
+pub fn expect_candidate(reported: []const u8, expected: []const u8) RunError!void {
+    if (!std.mem.eql(u8, reported, expected)) return error.CandidateMismatch;
 }
 
 /// A candidate that did not exit cleanly measured nothing, whatever it printed.
@@ -97,6 +115,20 @@ pub fn installed(io: std.Io, path: []const u8) bool {
 }
 
 const testing = std.testing;
+
+test "a program that names itself something else does not become a row" {
+    try expect_candidate("rotor", "rotor");
+    try expect_candidate("rotor (repeating)", "rotor (repeating)");
+    // A mode flag a program ignored: it runs the plain mode and prints the plain name, and the
+    // table's name would otherwise label it as the mode that never ran.
+    try testing.expectError(error.CandidateMismatch, expect_candidate("libuv", "libuv (repeating)"));
+    try testing.expectError(error.CandidateMismatch, expect_candidate("libuv (repeating)", "libuv"));
+    try testing.expectError(error.CandidateMismatch, expect_candidate("", "rotor"));
+    try testing.expectError(error.CandidateMismatch, expect_candidate("rotor ", "rotor"));
+    // Two names of one length: a comparison of lengths alone would pass this, and the row would
+    // carry the wrong library.
+    try testing.expectError(error.CandidateMismatch, expect_candidate("rotor", "libuv"));
+}
 
 test "a candidate that did not exit cleanly measured nothing" {
     try check_exit(.{ .exited = 0 });

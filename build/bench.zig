@@ -104,7 +104,54 @@ const tested = [_]Tested{
     .{ .name = "bench-reads-pool-tests", .root = "bench/files/reads_pool.zig", .needs_loop = true },
     .{ .name = "bench-storm-tests", .root = "bench/echo/storm.zig", .needs_loop = true },
     .{ .name = "bench-rotor-reads-tests", .root = "bench/files/rotor_reads.zig", .needs_loop = true },
+    .{
+        .name = "bench-rotor-timers-tests",
+        .root = "bench/timers/rotor_timers.zig",
+        .needs_loop = true,
+    },
 };
+
+/// The most bytes of one bench program `require_every_test_runs` reads. The longest is under
+/// 40,000; this is room to spare.
+const program_bytes_max = 1 << 18;
+
+/// Refuses a bench program that holds a `test` block and is missing from `tested`, whose tests
+/// would then never run. The list above cannot notice its own gap, and no test in the tree can:
+/// a program taken off it simply stops being tested, which happened to
+/// `bench/timers/rotor_timers.zig` and was found by hand on 2026-09-22. This runs at configure
+/// time, so the build fails rather than a later reading of a passing summary.
+///
+/// A program is a file under `bench/` with a `main`. A file without one belongs to a module whose
+/// own step runs its tests (`bench/harness`, the cost probes), and a program whose tests live in a
+/// `_test.zig` beside it is listed here all the same.
+fn require_every_test_runs(b: *std.Build) void {
+    const io = b.graph.io;
+    const root = b.build_root.handle;
+    var directory = root.openDir(io, "bench", .{ .iterate = true }) catch return;
+    defer directory.close(io);
+    var walker = directory.walk(b.allocator) catch return;
+    defer walker.deinit();
+    while (walker.next(io) catch return) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.basename, ".zig")) continue;
+        const path = b.fmt("bench/{s}", .{entry.path});
+        const source = root.readFileAlloc(io, path, b.allocator, .limited(program_bytes_max)) catch
+            continue;
+        if (untested_program(path, source)) {
+            std.debug.panic("build/bench.zig: {s} holds tests and is not in `tested`", .{path});
+        }
+    }
+}
+
+/// True for a program with a `main` and a `test` block that `tested` does not name.
+fn untested_program(path: []const u8, source: []const u8) bool {
+    if (std.mem.indexOf(u8, source, "\npub fn main(") == null) return false;
+    if (std.mem.indexOf(u8, source, "\ntest \"") == null) return false;
+    for (tested) |entry| {
+        if (std.mem.eql(u8, entry.root, path)) return false;
+    }
+    return true;
+}
 
 /// Runs the `test` blocks inside the bench programs. They are executables, so `zig build test`
 /// compiled them and ran none of their tests; every one of them was decoration until this step.
@@ -114,6 +161,7 @@ fn add_program_tests(
     graph: modules.Modules,
 ) *std.Build.Step {
     const backend = if (target.result.os.tag == .linux) graph.uring else graph.kqueue;
+    require_every_test_runs(b);
     const step = b.step("test-bench-programs", "Run the tests inside the bench programs");
     for (tested) |program| {
         const module = b.createModule(.{

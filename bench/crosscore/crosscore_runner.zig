@@ -161,7 +161,7 @@ fn one_run(
 
     // The arena outlives the run, and the result's strings point into the bytes it holds, so
     // nothing here is freed while a `Series` still reads it.
-    return try programs.run_once(init.io, init.arena.allocator(), &argv);
+    return try programs.run_once(init.io, init.arena.allocator(), &argv, candidate.name);
 }
 
 fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u8 {

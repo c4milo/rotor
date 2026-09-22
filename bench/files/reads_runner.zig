@@ -290,7 +290,7 @@ fn one_run(
     var argv: [argv_max][]const u8 = undefined;
     const program = try program_path(options, candidate, index);
     const used = try fill_argv(&argv, &numbers, program, options, configuration, candidate);
-    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used]);
+    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used], candidate.name);
 }
 
 /// The buffers the numeric arguments are printed into. They outlive `fill_argv`, because the argv it
