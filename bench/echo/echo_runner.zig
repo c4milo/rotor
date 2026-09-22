@@ -45,6 +45,7 @@ const rounds_max = setup.rounds_max;
 const Result = harness.report.Result;
 const Series = harness.series.Series;
 const OtherWork = harness.other_work.Window;
+const baseline = harness.baseline;
 
 /// Candidates this runner knows. Each is a program that takes a port and listens on it, and each
 /// prints one line when it is ready, which this runner waits for.
@@ -55,6 +56,9 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [output_buffer_bytes]u8 = undefined;
     var output = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     const writer = &output.interface;
+
+    var baseline_rows: [baseline.rows_max]baseline.Row = undefined;
+    const recorded = try read_baseline(init, options, &baseline_rows);
 
     const present = try found(init, options, writer);
     if (present == 0) {
@@ -67,6 +71,7 @@ pub fn main(init: std.process.Init) !void {
     try writer.flush();
     var port = options.port_base;
     var rowless: u32 = 0;
+    var regressed: u32 = 0;
     // The storm's message is one byte by definition, so it runs each connection count once and
     // ignores the payload list.
     const payloads = if (options.workload == .storm) payloads_storm[0..] else options.payloads;
@@ -75,11 +80,37 @@ pub fn main(init: std.process.Init) !void {
             port = try one_configuration(init, options, .{
                 .connections = connection_count,
                 .payload_bytes = payload_bytes,
-            }, port, writer, &rowless);
+            }, port, writer, &rowless, recorded, &regressed);
         }
+    }
+    if (recorded.len != 0) {
+        try writer.print("echo_runner: {d} row(s) fell behind the baseline\n", .{regressed});
     }
     try writer.flush();
     if (rowless != 0) return error.CandidateProducedNoRow;
+    if (regressed != 0) return error.BehindBaseline;
+}
+
+/// The baseline file's rows, or an empty slice when no `--baseline` was given. The text is read into
+/// a buffer this function owns, and the rows borrow it, so both live as long as the process: a run
+/// reads its baseline once and holds it.
+var baseline_text: [baseline_bytes_max]u8 = undefined;
+
+/// The most bytes a baseline file may hold. `rows_max` rows of a line each, with room to spare.
+const baseline_bytes_max = 16 * 1024;
+
+fn read_baseline(
+    init: std.process.Init,
+    options: Options,
+    into: []baseline.Row,
+) ![]const baseline.Row {
+    const path = options.baseline_path orelse return &.{};
+    var file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
+    defer file.close(init.io);
+    var reader = file.reader(init.io, &.{});
+    const read = try reader.interface.readSliceShort(&baseline_text);
+    if (read == baseline_text.len) return error.BaselineTooLarge;
+    return baseline.parse(baseline_text[0..read], into);
 }
 
 const Configuration = struct { connections: u32, payload_bytes: u32 };
@@ -108,6 +139,10 @@ fn one_configuration(
     /// that measured nothing must not exit 0: the smoke gate would pass on a runner that failed
     /// every run, which is what it exists to catch.
     rowless: *u32,
+    /// The baseline this run is held to, empty when there is none.
+    recorded: []const baseline.Row,
+    /// Rises once per row that fell further behind than the baseline allows.
+    regressed: *u32,
 ) !u16 {
     var counts: [candidates.len]u32 = @splat(0);
     // The other work on the machine while each candidate's runs were taken. One window per candidate, and one
@@ -133,6 +168,24 @@ fn one_configuration(
         }
     }
 
+    var built: [candidates.len]?Series = @splat(null);
+    try build_series(options, &counts, &other_work, &built, writer, rowless);
+    try render_rows(options, &built, writer, recorded, regressed);
+    try writer.flush();
+    return port;
+}
+
+/// One series per candidate that produced enough runs, and a line naming each that did not. Built
+/// before any row is written, because a verdict needs rotor's throughput from this same run and
+/// rotor is not always the first candidate the table walks.
+fn build_series(
+    options: Options,
+    counts: *const [candidates.len]u32,
+    other_work: *const [candidates.len]OtherWork,
+    built: *[candidates.len]?Series,
+    writer: *std.Io.Writer,
+    rowless: *u32,
+) !void {
     for (candidates, 0..) |candidate, index| {
         const taken = setup.results[index * rounds_max ..][0..counts[index]];
         if (taken.len < harness.series.runs_min) {
@@ -142,12 +195,76 @@ fn one_configuration(
             }
             continue;
         }
-        const series = try Series.init_with_other_work(taken, other_work[index]);
+        built[index] = try Series.init_with_other_work(taken, other_work[index]);
+    }
+}
+
+/// One table row per series, then whatever the baseline has to say about it.
+fn render_rows(
+    options: Options,
+    built: *const [candidates.len]?Series,
+    writer: *std.Io.Writer,
+    recorded: []const baseline.Row,
+    regressed: *u32,
+) !void {
+    const rotor_per_second = rotor_throughput(built);
+    for (built) |maybe| {
+        const series = maybe orelse continue;
         try series.render_markdown_row(writer);
         try writer.writeByte('\n');
+        if (options.write_baseline and rotor_per_second != 0) {
+            try baseline.render_row(writer, @tagName(options.workload), &series, rotor_per_second);
+        }
+        if (recorded.len != 0) {
+            try report_verdict(writer, options, recorded, &series, rotor_per_second, regressed);
+        }
     }
-    try writer.flush();
-    return port;
+}
+
+/// rotor's own throughput from this configuration, which every ratio is taken against, or 0 when
+/// rotor produced no row. The default shape is the baseline and not the accumulate one: two rotor
+/// rows would otherwise each be measured against whichever came first.
+fn rotor_throughput(built: *const [candidates.len]?Series) u64 {
+    for (candidates, 0..) |candidate, index| {
+        if (!std.mem.eql(u8, candidate.name, rotor_candidate_name)) continue;
+        const series = built[index] orelse return 0;
+        return series.median_per_second();
+    }
+    return 0;
+}
+
+/// The candidate every ratio is measured against.
+const rotor_candidate_name = "rotor";
+
+/// Names this row's standing against the baseline, and counts it when rotor fell behind. A row the
+/// baseline does not hold, or one whose runs disagreed, is named and not counted: neither decides
+/// anything, and a silent pass would read as one.
+fn report_verdict(
+    writer: *std.Io.Writer,
+    options: Options,
+    recorded: []const baseline.Row,
+    series: *const Series,
+    rotor_per_second: u64,
+    regressed: *u32,
+) !void {
+    const workload = @tagName(options.workload);
+    const verdict = baseline.judge(recorded, workload, series, rotor_per_second);
+    const name = series.runs[0].candidate;
+    switch (verdict) {
+        .within => {},
+        .regressed => {
+            regressed.* += 1;
+            try writer.print("echo_runner: **{s} GAINED ON ROTOR** past the baseline\n", .{name});
+        },
+        .undecided => try writer.print(
+            "echo_runner: {s} decides nothing against the baseline: the runs disagreed\n",
+            .{name},
+        ),
+        .unrecorded => try writer.print(
+            "echo_runner: {s} is not in the baseline for this configuration\n",
+            .{name},
+        ),
+    }
 }
 
 /// Starts `candidate`'s server on `port`, measures it, and stops it.
@@ -298,6 +415,11 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.connections = try parse_list(value, &setup.connections_buffer);
     } else if (std.mem.eql(u8, name, "--payloads")) {
         options.payloads = try parse_list(value, &setup.payloads_buffer);
+    } else if (std.mem.eql(u8, name, "--baseline")) {
+        options.baseline_path = value;
+    } else if (std.mem.eql(u8, name, "--write-baseline")) {
+        // A value is taken and ignored, because every option here is a pair.
+        options.write_baseline = std.mem.eql(u8, value, "yes");
     } else {
         return error.UnknownArgument;
     }

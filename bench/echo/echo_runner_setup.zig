@@ -115,6 +115,10 @@ pub const configurations_max = 8;
 pub const results_max = rounds_max * candidates.len;
 
 pub const Options = struct {
+    /// The baseline to hold this run to, or null to report and gate nothing.
+    baseline_path: ?[]const u8 = null,
+    /// Print each row in the baseline's own format instead of gating, which is how one is taken.
+    write_baseline: bool = false,
     rounds: u32 = rounds_default,
     seconds: u64 = seconds_default,
     warmup_seconds: u64 = warmup_seconds_default,

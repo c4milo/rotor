@@ -29,6 +29,7 @@ pub const report_parse = @import("report_parse.zig");
 pub const clock = @import("clock.zig");
 pub const other_work = @import("other_work.zig");
 pub const percentile = @import("percentile.zig");
+pub const baseline = @import("baseline.zig");
 pub const candidates = @import("candidates.zig");
 pub const text = @import("text.zig");
 pub const random = @import("random.zig");
@@ -52,6 +53,7 @@ test {
     _ = clock;
     _ = other_work;
     _ = percentile;
+    _ = baseline;
     _ = candidates;
     _ = text;
     _ = random;
