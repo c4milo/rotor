@@ -400,6 +400,18 @@ int main(int argc, char **argv) {
     }
 #endif
 
+    /* The second half of libuv's io_uring opt-in is `UV_USE_IO_URING` in the environment, read
+     * once when the loop is created. It is set here and not by the runner: Zig 0.16 has no
+     * `setenv` for a program that does not link libc, and the program that needs the variable is
+     * the one that should ask for it. Setting it changes nothing for the thread-pool candidate,
+     * which never sets the loop flag. */
+    if (run_options.backend == BACKEND_URING) {
+        if (setenv("UV_USE_IO_URING", "1", 1) != 0) {
+            fprintf(stderr, "libuv_reads: could not set UV_USE_IO_URING\n");
+            return 1;
+        }
+    }
+
     uv_loop_t loop;
     if (uv_loop_init(&loop) != 0) return 1;
     loop_handle = &loop;

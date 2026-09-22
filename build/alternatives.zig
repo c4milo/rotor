@@ -27,7 +27,13 @@ const libuv_flags = [_][]const u8{ "-std=gnu11", "-fno-strict-aliasing" };
 
 /// The flags of rotor's own C programs under bench/alternatives: libuv's, because `uv.h` names
 /// POSIX types that glibc hides under a strict `-std=c11`, plus every warning as an error.
-const libuv_program_flags = libuv_flags ++ [_][]const u8{ "-Wall", "-Wextra", "-Werror" };
+///
+/// `_GNU_SOURCE` is here and not in the files because glibc reads it in `features.h`, which the
+/// first system header pulls in: a `#define` under the includes comes too late and the
+/// declarations never appear. `libuv_async.c` had it there and did not compile for Linux at all,
+/// and `libuv_reads.c` would have met the same wall at `O_DIRECT`. On macOS it means nothing.
+const libuv_program_flags = libuv_flags ++
+    [_][]const u8{ "-D_GNU_SOURCE", "-Wall", "-Wextra", "-Werror" };
 
 /// libuv's sources for every target: `uv_sources`, CMakeLists.txt lines 175 to 187.
 const libuv_common_sources = [_][]const u8{

@@ -115,10 +115,6 @@ const file_bytes_default: u64 = 256 << 20;
 pub const configurations_max = 8;
 const directory_default = "zig-out/bin";
 
-/// The variable libuv reads, and the value it wants.
-const uring_variable = "UV_USE_IO_URING";
-const uring_value = "1";
-
 pub const Options = struct {
     path: []const u8,
     rounds: u32 = rounds_default,
@@ -147,8 +143,6 @@ pub fn main(init: std.process.Init) !void {
     var output = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     const writer = &output.interface;
 
-    enable_libuv_uring();
-
     const found_count = try found(init, options, writer);
     if (found_count == 0) {
         try writer.writeAll("reads_runner: no candidate is installed; " ++
@@ -164,14 +158,6 @@ pub fn main(init: std.process.Init) !void {
             try sweep(init, options, transfer, sync_choice, writer);
         }
     }
-}
-
-/// Sets `UV_USE_IO_URING` for this process, which children inherit. It is half of what libuv's
-/// io_uring path needs; the other half is the loop option, which only the `uring` candidate's
-/// program sets, so this changes nothing for anybody else.
-fn enable_libuv_uring() void {
-    if (builtin.os.tag != .linux) return;
-    _ = std.c.setenv(uring_variable, uring_value, 1);
 }
 
 /// One configuration a row covers: the direction, the pattern and the queue depth.

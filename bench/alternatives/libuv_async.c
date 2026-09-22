@@ -32,7 +32,8 @@
 #include <uv.h>
 
 #ifdef __linux__
-#define _GNU_SOURCE
+/* `_GNU_SOURCE` is on the command line (build/alternatives.zig): defining it here would come
+ * after the first system header, and glibc would already have read `features.h`. */
 #include <sched.h>
 #endif
 
