@@ -143,14 +143,18 @@ pub fn set_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) 
 
 /// fcntl(F_SETFL) with the status flags, or fcntl(F_SETFD) with the descriptor flags. It sets
 /// `flags` whole and reads nothing first, which keeps a setting at one system call.
-fn set_flags(descriptor: Descriptor, command: c_int, flags: c_int) OptionError!void {
+/// `pub` for `kqueue_sync_socket_test.zig`, which checks what it answers.
+/// `kqueue_sync.zig` names what this backend exports, so this reaches no consumer.
+pub fn set_flags(descriptor: Descriptor, command: c_int, flags: c_int) OptionError!void {
     assert(descriptor >= 0);
     assert(command == c.F.SETFL or command == c.F.SETFD);
     const rc = c.fcntl(descriptor, command, flags);
     if (posix.errno(rc) != .SUCCESS) return error.Unexpected;
 }
 
-fn socket_error(errno: E) SocketError {
+/// `pub` for `kqueue_sync_socket_test.zig`, which checks what it answers.
+/// `kqueue_sync.zig` names what this backend exports, so this reaches no consumer.
+pub fn socket_error(errno: E) SocketError {
     assert(errno != .SUCCESS);
     return switch (errno) {
         .AFNOSUPPORT => error.AddressFamilyUnsupported,
@@ -161,7 +165,9 @@ fn socket_error(errno: E) SocketError {
 }
 
 /// The errno of a `bind(2)` or of a `listen(2)`.
-fn listen_error(errno: E) ListenError {
+/// `pub` for `kqueue_sync_socket_test.zig`, which checks what it answers.
+/// `kqueue_sync.zig` names what this backend exports, so this reaches no consumer.
+pub fn listen_error(errno: E) ListenError {
     assert(errno != .SUCCESS);
     return switch (errno) {
         .ADDRINUSE => error.AddressInUse,
@@ -172,13 +178,84 @@ fn listen_error(errno: E) ListenError {
 }
 
 /// The errno of a call that takes a socket: `getsockname(2)` or `setsockopt(2)`.
-fn socket_call_error(errno: E) error{ NotSocket, Unexpected } {
+/// `pub` for `kqueue_sync_socket_test.zig`, which checks what it answers.
+/// `kqueue_sync.zig` names what this backend exports, so this reaches no consumer.
+pub fn socket_call_error(errno: E) error{ NotSocket, Unexpected } {
     assert(errno != .SUCCESS);
     return if (errno == .NOTSOCK) error.NotSocket else error.Unexpected;
 }
 
-/// Options a datagram socket is opened with (decision 15). The same shape `uring_sync_socket`
-/// offers, because the conformance suite calls `backend.sync` on whichever backend it was given.
+/// The errno of a buffer call. ENOBUFS is this kernel refusing the size, which is the one answer a
+/// caller can act on: ask for less.
+fn buffer_error(errno: E) BufferError {
+    assert(errno != .SUCCESS);
+    if (errno == .NOBUFS) return error.SizeRefused;
+    return socket_call_error(errno);
+}
+
+/// Which of a socket's two kernel buffers `set_buffer_bytes` sizes.
+pub const SocketBuffer = enum { receive, send };
+
+/// The largest `bytes` this call carries, which is what `setsockopt` takes. It is not a size any
+/// kernel grants: both refuse or cap long before it, each in its own way, which is what the call
+/// answers and `SizeRefused` reports.
+pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
+
+/// What `set_buffer_bytes` answers beyond an option call's own errors.
+pub const BufferError = OptionError || error{
+    /// The kernel would not give a buffer of that size. macOS answers this for a size above its
+    /// limit; Linux caps instead and does not refuse.
+    SizeRefused,
+};
+
+/// Asks the kernel for `bytes` of buffer on this socket, and answers the size it set.
+///
+/// **The answer is not the request, and the two kernels differ in how.** Measured on 2026-09-22:
+///
+/// - Linux doubles what it is asked for, to cover its own bookkeeping, floors it at 2,304 bytes
+///   for a receive buffer and 4,608 for a send buffer, and caps it at `net.core.rmem_max` or
+///   `wmem_max` for a caller without `CAP_NET_ADMIN`. It never refuses: 1 byte becomes 2,304 and
+///   2 GiB became 15,000,000 on the kernel of that day.
+/// - macOS grants exactly what it is asked for, 1 byte included, up to its own limit, which was
+///   8 MiB on the machine measured. Above that it does one of two things, and which one depends on
+///   the size the socket already has: from a small buffer it capped a 2 GiB request to 8 MiB, and
+///   from 8 MiB it refused the same request with ENOBUFS. That refusal is `SizeRefused`, and it is
+///   why this call has an error of its own.
+///
+/// So a caller reads the answer, as it reads back the port `local_address` reports for port 0.
+///
+/// A datagram receiver under load is what this is for: a socket whose receive buffer is too small
+/// drops what arrives while the loop is elsewhere, and no operation reports that.
+pub fn set_buffer_bytes(
+    descriptor: Descriptor,
+    which: SocketBuffer,
+    bytes: u32,
+) BufferError!u32 {
+    assert(descriptor >= 0);
+    assert(bytes >= 1);
+    assert(bytes <= socket_buffer_bytes_max);
+    const name: u32 = switch (which) {
+        .receive => c.SO.RCVBUF,
+        .send => c.SO.SNDBUF,
+    };
+    const wanted: c_int = @intCast(bytes);
+    const set = c.setsockopt(descriptor, c.SOL.SOCKET, name, &wanted, @sizeOf(c_int));
+    if (posix.errno(set) != .SUCCESS) return buffer_error(posix.errno(set));
+    var value: c_int = 0;
+    var len: c.socklen_t = @sizeOf(c_int);
+    const read = c.getsockopt(descriptor, c.SOL.SOCKET, name, &value, &len);
+    if (posix.errno(read) != .SUCCESS) return buffer_error(posix.errno(read));
+    assert(value >= 0);
+    return @intCast(value);
+}
+
+/// Options a datagram socket is opened with (decision 15). macOS carries every one a QUIC stack
+/// needs; the IPv6 names sit behind `__APPLE_USE_RFC_3542` in the SDK, which gates the header and
+/// not the kernel, so they are named by their numbers in `kqueue_datagram.zig`. A refusal costs the
+/// caller that answer and nothing else.
+///
+/// The same shape `uring_sync_socket` offers, because the conformance suite calls `backend.sync`
+/// on whichever backend it was given.
 pub const DatagramOptions = struct {
     control: bool = true,
     dont_fragment: bool = true,
@@ -214,282 +291,4 @@ pub fn open_datagram(
         if (bind_errno != .SUCCESS) return listen_error(bind_errno);
     }
     return rc;
-}
-
-/// The options of a datagram socket. macOS carries every one a QUIC stack needs; the IPv6 names
-/// sit behind `__APPLE_USE_RFC_3542` in the SDK, which gates the header and not the kernel, so
-/// they are named by their numbers in `kqueue_datagram.zig`. A refusal costs the caller that
-/// answer and nothing else.
-const testing = std.testing;
-
-test "every errno of a socket call maps to its named error, any other to Unexpected" {
-    for ([_]struct { E, SocketError }{
-        .{ .AFNOSUPPORT, error.AddressFamilyUnsupported }, .{ .MFILE, error.DescriptorLimit },
-        .{ .NFILE, error.DescriptorLimit },                .{ .NOMEM, error.SystemResources },
-        .{ .NOBUFS, error.SystemResources },               .{ .ACCES, error.Unexpected },
-    }) |case| try testing.expectEqual(case[1], socket_error(case[0]));
-    for ([_]struct { E, ListenError }{
-        .{ .ADDRINUSE, error.AddressInUse }, .{ .ADDRNOTAVAIL, error.AddressNotAvailable },
-        .{ .ACCES, error.AccessDenied },     .{ .BADF, error.Unexpected },
-    }) |case| try testing.expectEqual(case[1], listen_error(case[0]));
-    try testing.expectEqual(error.NotSocket, socket_call_error(.NOTSOCK));
-    try testing.expectEqual(error.Unexpected, socket_call_error(.BADF));
-}
-
-/// The longest a test waits for a socket to become ready, in milliseconds.
-const wait_ms_max = 2000;
-
-/// Sends `send_until_refused` makes before it gives up, and the wait between two of them, in
-/// milliseconds: the peer's reset arrives some time after the send that provoked it returned.
-const send_tries_max = 200;
-const send_retry_ms = 1;
-
-/// SIGPIPE signals this process took while `count_sigpipes` was installed.
-var sigpipes = std.atomic.Value(u32).init(0);
-
-fn count_sigpipe(_: c.SIG) callconv(.c) void {
-    _ = sigpipes.fetchAdd(1, .monotonic);
-}
-
-/// Installs `count_sigpipe` and returns what it replaced, which the caller installs again.
-fn count_sigpipes() !c.Sigaction {
-    sigpipes.store(0, .monotonic);
-    const counting: c.Sigaction = .{
-        .handler = .{ .handler = count_sigpipe },
-        .mask = std.mem.zeroes(c.sigset_t),
-        .flags = 0,
-    };
-    var replaced: c.Sigaction = undefined;
-    try testing.expectEqual(E.SUCCESS, posix.errno(c.sigaction(.PIPE, &counting, &replaced)));
-    return replaced;
-}
-
-fn restore_sigpipe(replaced: *const c.Sigaction) void {
-    assert(posix.errno(c.sigaction(.PIPE, replaced, null)) == .SUCCESS);
-}
-
-/// macOS answers a set boolean option with the option's own bit, not with 1.
-fn expect_option(descriptor: Descriptor, level: i32, name: u32, enabled: bool) !void {
-    var value: c_int = -1;
-    var len: c.socklen_t = @sizeOf(c_int);
-    const rc = c.getsockopt(descriptor, level, name, &value, &len);
-    try testing.expectEqual(E.SUCCESS, posix.errno(rc));
-    try testing.expectEqual(enabled, value != 0);
-}
-
-/// O_NONBLOCK, FD_CLOEXEC and SO_NOSIGPIPE: all three set, or none of them.
-fn expect_settings(socket: Descriptor, set: bool) !void {
-    const status_flags = c.fcntl(socket, c.F.GETFL, @as(c_int, 0));
-    try testing.expectEqual(E.SUCCESS, posix.errno(status_flags));
-    try testing.expectEqual(set, @as(c.O, @bitCast(status_flags)).NONBLOCK);
-    const descriptor_flags = c.fcntl(socket, c.F.GETFD, @as(c_int, 0));
-    try testing.expectEqual(E.SUCCESS, posix.errno(descriptor_flags));
-    try testing.expectEqual(set, descriptor_flags & c.FD_CLOEXEC != 0);
-    try expect_option(socket, c.SOL.SOCKET, c.SO.NOSIGPIPE, set);
-}
-
-/// The kernel hands out the lowest free descriptor, so two probes with no descriptor opened and
-/// left open between them get one number.
-fn probe_descriptor() !Descriptor {
-    const probe = try open_socket(.ipv4);
-    close_now(probe);
-    return probe;
-}
-
-fn wait_until_ready(descriptor: Descriptor, events: i16) !void {
-    var polled = [_]c.pollfd{.{ .fd = descriptor, .events = events, .revents = 0 }};
-    try testing.expectEqual(@as(c_int, 1), c.poll(&polled, polled.len, wait_ms_max));
-}
-
-/// A connected client of the listener at `address`. The client does not block, so connect(2)
-/// answers EINPROGRESS and the socket turns writable when the handshake ends. A port nobody
-/// listens on ends it with ECONNREFUSED in SO_ERROR, so this also shows that `listen` listens.
-fn connect_to(address: *const Address) !Descriptor {
-    const client = try open_socket(address.family);
-    errdefer close_now(client);
-    var storage: kqueue_address.Storage = undefined;
-    const len = kqueue_address.to_kernel(address, &storage);
-    const errno = posix.errno(c.connect(client, @ptrCast(&storage), len));
-    try testing.expect(errno == .SUCCESS or errno == .INPROGRESS);
-    try wait_until_ready(client, c.POLL.OUT);
-    try expect_option(client, c.SOL.SOCKET, c.SO.ERROR, false);
-    return client;
-}
-
-/// The server end of the one connection `listener` holds or is about to hold.
-fn accept_from(listener: Descriptor) !Descriptor {
-    try wait_until_ready(listener, c.POLL.IN);
-    const accepted = c.accept(listener, null, null);
-    try testing.expectEqual(E.SUCCESS, posix.errno(accepted));
-    return accepted;
-}
-
-/// An IPv4 listener made with none of this file's calls: it blocks and has no SO_NOSIGPIPE. A
-/// socket accepted from a listener inherits both, so one accepted from this listener starts
-/// with none of the three settings.
-fn plain_listener(address: *const Address) !Descriptor {
-    assert(address.family == .ipv4);
-    const listener = c.socket(c.AF.INET, c.SOCK.STREAM, c.IPPROTO.TCP);
-    try testing.expectEqual(E.SUCCESS, posix.errno(listener));
-    errdefer close_now(listener);
-    var storage: kqueue_address.Storage = undefined;
-    const len = kqueue_address.to_kernel(address, &storage);
-    try testing.expectEqual(E.SUCCESS, posix.errno(c.bind(listener, @ptrCast(&storage), len)));
-    try testing.expectEqual(E.SUCCESS, posix.errno(c.listen(listener, 1)));
-    return listener;
-}
-
-/// A socket accepted from `listener` whose client connected and closed again.
-fn accept_orphan(listener: Descriptor) !Descriptor {
-    const client = try connect_to(&try local_address(listener));
-    defer close_now(client);
-    return accept_from(listener);
-}
-
-/// Sends one byte at a time until the kernel refuses one, and returns that errno. The peer is
-/// closed: it answers the first byte with a reset, and every send after the reset is refused.
-fn send_until_refused(socket: Descriptor) !E {
-    var nothing: [1]c.pollfd = undefined;
-    for (0..send_tries_max) |_| {
-        const rc = c.send(socket, "x", 1, 0);
-        if (rc == -1) return posix.errno(rc);
-        try testing.expectEqual(@as(c_int, 0), c.poll(&nothing, 0, send_retry_ms));
-    }
-    return error.SendNeverRefused;
-}
-
-const alone: ListenOptions = .{ .backlog = 1, .reuse_port = false };
-const sharing: ListenOptions = .{ .backlog = 1, .reuse_port = true };
-
-test "a listener on port 0 reports the port the kernel chose, and a client connects to it" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    var loopback6: [Address.ipv6_bytes]u8 = @splat(0);
-    loopback6[Address.ipv6_bytes - 1] = 1;
-    const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
-    for ([_]Address{ loopback, Address.ipv6(loopback6, 0, 0) }) |any_port| {
-        const listener = listen(&any_port, alone) catch |err| {
-            // A host with IPv6 switched off cannot run the second round.
-            const no_stack = err == error.AddressFamilyUnsupported or
-                err == error.AddressNotAvailable;
-            return if (any_port.family == .ipv6 and no_stack) error.SkipZigTest else err;
-        };
-        defer close_now(listener);
-        const bound = try local_address(listener);
-        try testing.expectEqual(any_port.family, bound.family);
-        try testing.expect(bound.port != 0);
-        try testing.expectEqualSlices(u8, &any_port.bytes, &bound.bytes);
-        // The loop accepts from the listener itself, so an accept with no connection must not
-        // block: it answers EAGAIN.
-        try expect_settings(listener, true);
-        try testing.expectEqual(E.AGAIN, posix.errno(c.accept(listener, null, null)));
-        try expect_option(listener, c.SOL.SOCKET, c.SO.REUSEADDR, true);
-        try expect_option(listener, c.SOL.SOCKET, c.SO.REUSEPORT, false);
-        const client = try connect_to(&bound);
-        defer close_now(client);
-        try testing.expect((try local_address(client)).port != bound.port);
-    }
-}
-
-test "listeners share a port only when all ask, and a refused listen closes its socket" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
-    const first = try listen(&loopback, sharing);
-    defer close_now(first);
-    try expect_option(first, c.SOL.SOCKET, c.SO.REUSEPORT, true);
-    const shared_address = try local_address(first);
-    const second = try listen(&shared_address, sharing);
-    defer close_now(second);
-    try testing.expectEqual(shared_address.port, (try local_address(second)).port);
-    const third = try listen(&loopback, alone);
-    defer close_now(third);
-    const third_address = try local_address(third);
-    // A socket a refused listen left open would hold the number the first probe had.
-    const probe_before = try probe_descriptor();
-    try testing.expectError(error.AddressInUse, listen(&shared_address, alone));
-    try testing.expectError(error.AddressInUse, listen(&third_address, alone));
-    try testing.expectError(error.AddressInUse, listen(&third_address, sharing));
-    // 192.0.2.1 is a documentation address (RFC 5737), which no interface carries.
-    const nowhere = Address.ipv4(.{ 192, 0, 2, 1 }, 0);
-    try testing.expectError(error.AddressNotAvailable, listen(&nowhere, alone));
-    try testing.expectEqual(probe_before, try probe_descriptor());
-}
-
-test "a socket has its three settings and takes TCP_NODELAY; a file and a unix socket are refused" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    const socket = try open_socket(.ipv4);
-    try expect_settings(socket, true);
-    try set_no_delay(socket, true);
-    try expect_option(socket, c.IPPROTO.TCP, c.TCP.NODELAY, true);
-    try set_no_delay(socket, false);
-    try expect_option(socket, c.IPPROTO.TCP, c.TCP.NODELAY, false);
-    close_now(socket);
-    // The descriptor is free again: close_now closed it and did not only forget it.
-    try testing.expectEqual(E.BADF, posix.errno(c.fcntl(socket, c.F.GETFD, @as(c_int, 0))));
-    // fcntl refuses a closed descriptor, and `set_flags` reads the refusal.
-    try testing.expectError(error.Unexpected, set_flags(socket, c.F.SETFD, c.FD_CLOEXEC));
-    const file = c.open("/dev/null", .{ .ACCMODE = .RDWR });
-    try testing.expectEqual(E.SUCCESS, posix.errno(file));
-    defer close_now(file);
-    try testing.expectError(error.NotSocket, set_no_delay(file, true));
-    try testing.expectError(error.NotSocket, local_address(file));
-    const unix_socket = c.socket(c.AF.UNIX, c.SOCK.STREAM, 0);
-    try testing.expectEqual(E.SUCCESS, posix.errno(unix_socket));
-    defer close_now(unix_socket);
-    try testing.expectError(error.AddressFamilyUnsupported, local_address(unix_socket));
-}
-
-test "prepare_accepted gives an accepted socket its three settings, and leaves a file as it was" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    const listener = try plain_listener(&Address.ipv4(.{ 127, 0, 0, 1 }, 0));
-    defer close_now(listener);
-    const client = try connect_to(&try local_address(listener));
-    defer close_now(client);
-    const accepted = try accept_from(listener);
-    defer close_now(accepted);
-    try expect_settings(accepted, false);
-    try prepare_accepted(accepted);
-    try expect_settings(accepted, true);
-    // The refusal comes before any flag changes: the file still blocks.
-    const file = c.open("/dev/null", .{ .ACCMODE = .RDWR });
-    try testing.expectEqual(E.SUCCESS, posix.errno(file));
-    defer close_now(file);
-    try testing.expectError(error.NotSocket, prepare_accepted(file));
-    const status_flags = c.fcntl(file, c.F.GETFL, @as(c_int, 0));
-    try testing.expect(!@as(c.O, @bitCast(status_flags)).NONBLOCK);
-}
-
-test "a send to a closed peer answers EPIPE and raises no SIGPIPE, from either end" {
-    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    // Without SO_NOSIGPIPE the kernel raises SIGPIPE beside the EPIPE, which kills a process
-    // that does not handle it. The handler counts, so a lost setting fails an expectation here
-    // and does not kill the test runner.
-    const replaced = try count_sigpipes();
-    defer restore_sigpipe(&replaced);
-    const listener = try plain_listener(&Address.ipv4(.{ 127, 0, 0, 1 }, 0));
-    defer close_now(listener);
-    // The end `open_socket` made sends to an accepted socket that is closed.
-    const client = try connect_to(&try local_address(listener));
-    defer close_now(client);
-    close_now(try accept_from(listener));
-    try testing.expectEqual(E.PIPE, try send_until_refused(client));
-    // The end `prepare_accepted` prepared sends to a client that is closed.
-    const accepted = try accept_orphan(listener);
-    defer close_now(accepted);
-    try prepare_accepted(accepted);
-    try testing.expectEqual(E.PIPE, try send_until_refused(accepted));
-    try testing.expectEqual(@as(u32, 0), sigpipes.load(.monotonic));
-}
-
-test "a datagram socket closes on exec, does not block, and raises no SIGPIPE" {
-    if (builtin.os.tag == .linux) return error.SkipZigTest;
-    // macOS has no SOCK_CLOEXEC and no SOCK_NONBLOCK, so a separate `fcntl(2)` sets both.
-    const any_port = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
-    const bound = try open_datagram(.ipv4, &any_port, .{});
-    defer close_now(bound);
-    try expect_settings(bound, true);
-    const unbound = try open_datagram(.ipv4, null, .{});
-    defer close_now(unbound);
-    try expect_settings(unbound, true);
-    try testing.expect((try local_address(bound)).port != 0);
-    try testing.expectEqual(@as(u16, 0), (try local_address(unbound)).port);
 }

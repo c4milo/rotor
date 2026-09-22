@@ -380,5 +380,6 @@ test {
     _ = @import("kqueue_mailbox_test.zig");
     _ = @import("kqueue_offload_test.zig");
     _ = @import("kqueue_perform_test.zig");
+    _ = @import("kqueue_sync_socket_test.zig");
     _ = @import("kqueue_waiters_test.zig");
 }
