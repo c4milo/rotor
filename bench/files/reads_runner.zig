@@ -22,8 +22,14 @@
 //! children inherit it. Setting it changes nothing for the other candidates: libuv creates the
 //! ring only when the loop flag is set too, so the thread-pool candidate stays on the pool.
 //!
-//! **Sequential and random are different workloads, not different rows of one.** Each candidate
-//! names its pattern in the workload column, so a `Series` can never mix them.
+//! **Sequential and random are different workloads, not different rows of one, and so are reads and
+//! writes.** Each candidate names its direction and its pattern in the workload column, so a
+//! `Series` can never mix them.
+//!
+//! **A write run writes a file of its own.** Both programs append `.rotor_write` to the path and
+//! create that file, so a write row never overwrites the file the read rows use, or anything else
+//! the caller named. Neither program issues an `fdatasync`, so a write row is the write path's
+//! latency and says nothing about durability.
 const std = @import("std");
 const builtin = @import("builtin");
 const harness = @import("harness");
@@ -35,7 +41,7 @@ const LoadWindow = harness.load.Window;
 
 /// A candidate: a program and the arguments that make it this candidate. The name a row carries
 /// comes from the program itself, because only the program knows which libuv it linked.
-const Candidate = struct {
+pub const Candidate = struct {
     name: []const u8,
     program: []const u8,
     arguments: []const []const u8,
@@ -46,7 +52,7 @@ const Candidate = struct {
     kqueue_only: bool = false,
 };
 
-const candidates = [_]Candidate{
+pub const candidates = [_]Candidate{
     .{
         .name = "rotor-registered",
         .program = "rotor_reads",
@@ -76,7 +82,11 @@ const candidates = [_]Candidate{
     },
 };
 
-const patterns = [_][]const u8{ "seq", "random" };
+pub const patterns = [_][]const u8{ "seq", "random" };
+
+/// The directions a run sweeps. Each is its own workload, named apart by the candidates, so a read
+/// row and a write row can never land in one `Series`.
+pub const transfers = [_][]const u8{ "read", "write" };
 
 const rounds_default: u32 = 5;
 const rounds_max = harness.series.runs_max;
@@ -88,14 +98,14 @@ const block_bytes_default: u32 = 4096;
 const seconds_default: u64 = 3;
 const file_bytes_default: u64 = 256 << 20;
 
-const configurations_max = 8;
+pub const configurations_max = 8;
 const directory_default = "zig-out/bin";
 
 /// The variable libuv reads, and the value it wants.
 const uring_variable = "UV_USE_IO_URING";
 const uring_value = "1";
 
-const Options = struct {
+pub const Options = struct {
     path: []const u8,
     rounds: u32 = rounds_default,
     depths: []const u32 = &depths_default,
@@ -134,12 +144,18 @@ pub fn main(init: std.process.Init) !void {
 
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
-    for (patterns) |pattern| {
-        for (options.depths) |depth| {
-            var counts: [candidates.len]u32 = @splat(0);
-            try collect(init, options, pattern, depth, &counts, writer);
-            try render(counts, writer);
-            try writer.flush();
+    for (transfers) |transfer| {
+        for (patterns) |pattern| {
+            for (options.depths) |depth| {
+                var counts: [candidates.len]u32 = @splat(0);
+                try collect(init, options, .{
+                    .transfer = transfer,
+                    .pattern = pattern,
+                    .depth = depth,
+                }, &counts, writer);
+                try render(counts, writer);
+                try writer.flush();
+            }
         }
     }
 }
@@ -152,11 +168,17 @@ fn enable_libuv_uring() void {
     _ = std.c.setenv(uring_variable, uring_value, 1);
 }
 
+/// One configuration a row covers: the direction, the pattern and the queue depth.
+pub const Configuration = struct {
+    transfer: []const u8,
+    pattern: []const u8,
+    depth: u32,
+};
+
 fn collect(
     init: std.process.Init,
     options: Options,
-    pattern: []const u8,
-    depth: u32,
+    configuration: Configuration,
     counts: *[candidates.len]u32,
     writer: *std.Io.Writer,
 ) !void {
@@ -169,9 +191,10 @@ fn collect(
             // what spoiled the 2026-09-20 attempts, and only a sample on each side sees it.
             loads[index].sample();
             defer loads[index].sample();
-            const measured = one_run(init, options, candidate, index, pattern, depth) catch |err| {
-                try writer.print("reads_runner: {s} failed at {s} depth {d}: {t}\n", .{
-                    candidate.name, pattern, depth, err,
+            const measured = one_run(init, options, candidate, index, configuration) catch |err| {
+                try writer.print("reads_runner: {s} failed at {s} {s} depth {d}: {t}\n", .{
+                    candidate.name,      configuration.transfer, configuration.pattern,
+                    configuration.depth, err,
                 });
                 try writer.flush();
                 continue;
@@ -204,43 +227,66 @@ fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
     }
 }
 
-/// The most arguments one run passes: the program, the path, five pairs, and the candidate's own.
-const argv_max = 16;
+/// The most arguments one run passes: the program, the path, six pairs, and the candidate's own.
+pub const argv_max = 20;
 
 fn one_run(
     init: std.process.Init,
     options: Options,
     candidate: Candidate,
     index: usize,
-    pattern: []const u8,
-    depth: u32,
+    configuration: Configuration,
 ) !Result {
-    var depth_text: [16]u8 = undefined;
-    var block_text: [16]u8 = undefined;
-    var seconds_text: [16]u8 = undefined;
-    var file_text: [24]u8 = undefined;
-
+    var numbers: Numbers = undefined;
     var argv: [argv_max][]const u8 = undefined;
-    argv[0] = try program_path(options, candidate, index);
+    const program = try program_path(options, candidate, index);
+    const used = try fill_argv(&argv, &numbers, program, options, configuration, candidate);
+    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used]);
+}
+
+/// The buffers the numeric arguments are printed into. They outlive `fill_argv`, because the argv it
+/// returns points into them.
+pub const Numbers = struct {
+    depth: [16]u8 = undefined,
+    block: [16]u8 = undefined,
+    seconds: [16]u8 = undefined,
+    file: [24]u8 = undefined,
+};
+
+/// Writes one run's whole argument list and returns how many entries it holds.
+///
+/// It is a function of its own so a test can read what a run is actually asked for. An argument the
+/// runner stopped passing would leave the candidate on its own default, and the row would carry the
+/// name of the configuration it was meant to run rather than the one it ran.
+pub fn fill_argv(
+    argv: *[argv_max][]const u8,
+    numbers: *Numbers,
+    program: []const u8,
+    options: Options,
+    configuration: Configuration,
+    candidate: Candidate,
+) !usize {
+    argv[0] = program;
     argv[1] = options.path;
     argv[2] = "--pattern";
-    argv[3] = pattern;
+    argv[3] = configuration.pattern;
     argv[4] = "--depth";
-    argv[5] = try std.fmt.bufPrint(&depth_text, "{d}", .{depth});
+    argv[5] = try std.fmt.bufPrint(&numbers.depth, "{d}", .{configuration.depth});
     argv[6] = "--block-bytes";
-    argv[7] = try std.fmt.bufPrint(&block_text, "{d}", .{options.block_bytes});
+    argv[7] = try std.fmt.bufPrint(&numbers.block, "{d}", .{options.block_bytes});
     argv[8] = "--seconds";
-    argv[9] = try std.fmt.bufPrint(&seconds_text, "{d}", .{options.seconds});
+    argv[9] = try std.fmt.bufPrint(&numbers.seconds, "{d}", .{options.seconds});
     argv[10] = "--file-bytes";
-    argv[11] = try std.fmt.bufPrint(&file_text, "{d}", .{options.file_bytes});
-    var used: usize = 12;
+    argv[11] = try std.fmt.bufPrint(&numbers.file, "{d}", .{options.file_bytes});
+    argv[12] = "--transfer";
+    argv[13] = configuration.transfer;
+    var used: usize = 14;
     for (candidate.arguments) |argument| {
         if (used == argv_max) return error.TooManyArguments;
         argv[used] = argument;
         used += 1;
     }
-
-    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used]);
+    return used;
 }
 
 fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u8 {
@@ -296,7 +342,7 @@ fn parse(init: std.process.Init) !Options {
 /// O_DIRECT refuses a length that is not a multiple of the device's block size, so a block size
 /// that is not a power of two at or above 512 cannot be read at all. It is a function of its own
 /// so a test can reach it.
-fn check_block_bytes(block_bytes: u32) !void {
+pub fn check_block_bytes(block_bytes: u32) !void {
     if (block_bytes < 512) return error.BlockTooSmall;
     if (!std.math.isPowerOfTwo(block_bytes)) return error.BlockNotPowerOfTwo;
 }
@@ -323,7 +369,7 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
 
 /// Reads a comma-separated list of counts into `buffer`. The empty list refuses itself: the split
 /// yields one empty piece and `parseInt` refuses that.
-fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
+pub fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
     var count: usize = 0;
     var pieces = std.mem.splitScalar(u8, text, ',');
     while (pieces.next()) |piece| {
@@ -336,78 +382,6 @@ fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
     return buffer[0..count];
 }
 
-const testing = std.testing;
-
-test "a block size O_DIRECT cannot use is refused" {
-    try testing.expectError(error.BlockTooSmall, check_block_bytes(0));
-    try testing.expectError(error.BlockTooSmall, check_block_bytes(511));
-    try testing.expectError(error.BlockNotPowerOfTwo, check_block_bytes(4095));
-    try testing.expectError(error.BlockNotPowerOfTwo, check_block_bytes(6144));
-
-    try check_block_bytes(512);
-    try check_block_bytes(4096);
-    try check_block_bytes(65536);
-}
-
-test "a depth list is read, and an empty or oversized one is refused" {
-    var buffer: [configurations_max]u32 = undefined;
-    try testing.expectEqualSlices(u32, &.{ 1, 32 }, try parse_list("1,32", &buffer));
-    try testing.expectError(error.InvalidCharacter, parse_list("", &buffer));
-    try testing.expectError(error.EmptyConfiguration, parse_list("1,0", &buffer));
-
-    var small: [1]u32 = undefined;
-    try testing.expectError(error.TooManyValues, parse_list("1,32", &small));
-}
-
-test "the two rotor candidates differ only in registration, and both name it" {
-    // The A and the B of decision 3's first speed source have to be two candidates and not two
-    // runs of one, or a `Series` would average them into a number that describes neither.
-    const registered = candidates[0];
-    const plain = candidates[1];
-    try testing.expectEqualStrings(registered.program, plain.program);
-    try testing.expect(!std.mem.eql(u8, registered.name, plain.name));
-    try testing.expectEqualStrings("yes", registered.arguments[1]);
-    try testing.expectEqualStrings("no", plain.arguments[1]);
-}
-
-test "every candidate has a distinct name, and its arguments come in pairs" {
-    for (candidates, 0..) |candidate, index| {
-        try testing.expect(candidate.name.len >= 1);
-        try testing.expect(candidate.program.len >= 1);
-        try testing.expectEqual(@as(usize, 0), candidate.arguments.len % 2);
-        for (candidates[index + 1 ..]) |other| {
-            try testing.expect(!std.mem.eql(u8, candidate.name, other.name));
-        }
-    }
-}
-
-test "one run's arguments fit the buffer, with the longest candidate's own" {
-    var longest: usize = 0;
-    for (candidates) |candidate| longest = @max(longest, candidate.arguments.len);
-    // 12 fixed: the program, the path, and five name-value pairs.
-    try testing.expect(12 + longest <= argv_max);
-}
-
-test "only libuv's io_uring candidate is Linux-only, and only rotor's offload is macOS-only" {
-    for (candidates) |candidate| {
-        const is_uring = std.mem.eql(u8, candidate.name, "libuv-uring");
-        try testing.expectEqual(is_uring, candidate.linux_only);
-        const is_offload = std.mem.eql(u8, candidate.name, "rotor-offload");
-        try testing.expectEqual(is_offload, candidate.kqueue_only);
-        // No candidate is both: no host could run it.
-        try testing.expect(!(candidate.linux_only and candidate.kqueue_only));
-    }
-}
-
-test "the offload candidate registers its buffers, so the row differs only in the policy" {
-    // The two candidates must differ in one setting, or the row measures two changes at once.
-    // Both register their buffers; only the policy differs.
-    const registered = candidates[0];
-    const offload = candidates[2];
-    try testing.expectEqualStrings("rotor-registered", registered.name);
-    try testing.expectEqualStrings("rotor-offload", offload.name);
-    try testing.expectEqualStrings(registered.program, offload.program);
-    try testing.expectEqualStrings("yes", offload.arguments[1]);
-    try testing.expectEqualStrings("--file-policy", offload.arguments[2]);
-    try testing.expectEqualStrings("offload", offload.arguments[3]);
+test {
+    _ = @import("reads_runner_test.zig");
 }

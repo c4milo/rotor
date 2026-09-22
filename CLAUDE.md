@@ -228,9 +228,10 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   `zig build test-bench-echo` is the gate: the echo workload end to end against rotor's server.
   `zig build bench-echo` builds the servers and the runner; `zig build bench-competitors` adds
   the pinned libuv and libxev; `./zig-out/bin/echo_runner` runs the comparison, and
-  `--workload storm` runs the accept storm against the same servers. Echo at N connections with 4 KiB and 64 KiB
-  payloads, sequential and random O_DIRECT reads, timer churn, accept storm; **on 1 core**, by the
-  owner's ruling of 2026-09-21; one cross-core message on its own. Throughput and p50, p99, p999.
+  `--workload storm` runs the accept storm against the same servers. Echo at N connections with
+  4 KiB and 64 KiB payloads, sequential and random O_DIRECT reads and writes, timer churn, accept
+  storm; **on 1 core**, by the owner's ruling of 2026-09-21; one cross-core message on its own.
+  Throughput and p50, p99, p999.
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
   (`bench/competitors/README.md`), in the same harness, in the same run, the losing runs
   included.

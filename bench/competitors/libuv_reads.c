@@ -1,6 +1,7 @@
 /* libuv_reads: O_DIRECT reads, sequential and random, the libuv side of the file workload.
  *
- * Run:  libuv_reads PATH [--pattern seq|random] [--depth N] [--block-bytes B]
+ * Run:  libuv_reads PATH [--transfer read|write] [--pattern seq|random] [--depth N]
+ *                        [--block-bytes B]
  *                        [--backend threadpool|uring] [--seconds S] [--file-bytes N]
  *
  * It keeps `depth` reads in flight against one file and re-issues each as it completes, as
@@ -30,6 +31,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,9 +70,18 @@ static uint64_t random_next(void) {
 }
 
 enum pattern { PATTERN_SEQ, PATTERN_RANDOM };
+
+/* Which direction the run measures. rotor_reads takes the same option and names the two workloads
+ * apart, so a read row and a write row never share a series. */
+enum transfer { TRANSFER_READ, TRANSFER_WRITE };
+
+/* What a write run appends to the path it was given, so it writes its own file and never overwrites
+ * one the caller named. rotor_reads uses the same suffix and the same rule. */
+#define WRITE_SUFFIX ".rotor_write"
 enum backend { BACKEND_THREADPOOL, BACKEND_URING };
 
 struct options {
+    enum transfer transfer;
     const char *path;
     enum pattern pattern;
     enum backend backend;
@@ -120,13 +131,18 @@ static uint64_t next_offset(void) {
 
 static void on_read(uv_fs_t *request);
 
-/* Issues one read from `slot`, unless the run is over. */
+/* Issues one transfer from `slot`, unless the run is over. A write issues no fdatasync: O_DIRECT
+ * bypasses the page cache and not the device's own, so the row is the write path and not a flush. */
 static int issue(struct slot *slot) {
     if (stopping) return 0;
     uv_fs_req_cleanup(&slot->request);
     slot->buffer = uv_buf_init(slot->bytes, run_options.block_bytes);
     slot->started_ns = now_ns();
     slot->request.data = slot;
+    if (run_options.transfer == TRANSFER_WRITE) {
+        return uv_fs_write(loop_handle, &slot->request, file_handle, &slot->buffer, 1,
+                           (int64_t)next_offset(), on_read);
+    }
     return uv_fs_read(loop_handle, &slot->request, file_handle, &slot->buffer, 1,
                       (int64_t)next_offset(), on_read);
 }
@@ -134,7 +150,7 @@ static int issue(struct slot *slot) {
 static void on_read(uv_fs_t *request) {
     struct slot *slot = (struct slot *)request->data;
     if (request->result < 0) {
-        fprintf(stderr, "libuv_reads: read failed: %s\n", uv_strerror((int)request->result));
+        fprintf(stderr, "libuv_reads: transfer failed: %s\n", uv_strerror((int)request->result));
         stopping = true;
         uv_fs_req_cleanup(request);
         return;
@@ -170,7 +186,8 @@ static void report(uint64_t span_ns, bool on_uring) {
     uint64_t per_second = reads * NS_PER_S / span_ns;
     const char *name = on_uring ? "libuv (io_uring)" : "libuv (thread pool)";
 
-    printf("{\"workload\":\"file-read-%s\",\"candidate\":\"%s\",\"version\":\"" VERSION "\"",
+    printf("{\"workload\":\"file-%s-%s\",\"candidate\":\"%s\",\"version\":\"" VERSION "\"",
+           run_options.transfer == TRANSFER_WRITE ? "write" : "read",
            run_options.pattern == PATTERN_SEQ ? "seq" : "random", name);
     printf(",\"cores\":0,\"connections\":%u,\"payload_bytes\":%u,\"load\":\"even\"",
            run_options.depth, run_options.block_bytes);
@@ -189,9 +206,25 @@ static int open_and_fill(const struct options *options) {
 #ifdef O_DIRECT
     flags |= O_DIRECT;
 #endif
-    int descriptor = open(options->path, flags, 0644);
+    /* A write run appends WRITE_SUFFIX, so it writes a file of its own and can never overwrite the
+     * one the caller named. rotor_reads follows the same rule with the same suffix. */
+    char path[PATH_MAX];
+    if (options->transfer == TRANSFER_WRITE) {
+        int written = snprintf(path, sizeof(path), "%s%s", options->path, WRITE_SUFFIX);
+        if (written < 0 || (size_t)written >= sizeof(path)) {
+            fprintf(stderr, "libuv_reads: path too long for a write run\n");
+            return -1;
+        }
+    } else {
+        int written = snprintf(path, sizeof(path), "%s", options->path);
+        if (written < 0 || (size_t)written >= sizeof(path)) {
+            fprintf(stderr, "libuv_reads: path too long\n");
+            return -1;
+        }
+    }
+    int descriptor = open(path, flags, 0644);
     if (descriptor < 0) {
-        fprintf(stderr, "libuv_reads: cannot open %s: %s\n", options->path, strerror(errno));
+        fprintf(stderr, "libuv_reads: cannot open %s: %s\n", path, strerror(errno));
         return -1;
     }
 #ifdef F_NOCACHE
@@ -221,6 +254,7 @@ static int open_and_fill(const struct options *options) {
 
 static int parse_cpu_free_options(int argc, char **argv, struct options *options) {
     options->pattern = PATTERN_SEQ;
+    options->transfer = TRANSFER_READ;
     options->backend = BACKEND_THREADPOOL;
     options->depth = 32;
     options->block_bytes = 4096;
@@ -235,7 +269,11 @@ static int parse_cpu_free_options(int argc, char **argv, struct options *options
     for (int index = 2; index + 1 < argc; index += 2) {
         const char *name = argv[index];
         const char *value = argv[index + 1];
-        if (strcmp(name, "--pattern") == 0) {
+        if (strcmp(name, "--transfer") == 0) {
+            if (strcmp(value, "read") == 0) options->transfer = TRANSFER_READ;
+            else if (strcmp(value, "write") == 0) options->transfer = TRANSFER_WRITE;
+            else { fprintf(stderr, "libuv_reads: unknown transfer %s\n", value); return 1; }
+        } else if (strcmp(name, "--pattern") == 0) {
             if (strcmp(value, "seq") == 0) options->pattern = PATTERN_SEQ;
             else if (strcmp(value, "random") == 0) options->pattern = PATTERN_RANDOM;
             else { fprintf(stderr, "libuv_reads: unknown pattern %s\n", value); return 1; }

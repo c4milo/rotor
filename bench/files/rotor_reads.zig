@@ -1,9 +1,19 @@
-//! rotor_reads: O_DIRECT reads, sequential and random, which is the file half of milestone 4's
-//! workload list and the only program in this tree that registers a buffer.
+//! rotor_reads: O_DIRECT reads and writes, sequential and random, which is the file half of
+//! milestone 4's workload list and the only program in this tree that registers a buffer.
 //!
-//! Run:  rotor_reads PATH [--pattern seq|random] [--depth N] [--block-bytes B]
-//!                        [--registered yes|no] [--seconds S] [--file-bytes N]
-//!                        [--file-policy blocking|offload]
+//! Run:  rotor_reads PATH [--transfer read|write] [--pattern seq|random] [--depth N]
+//!                        [--block-bytes B] [--registered yes|no] [--seconds S]
+//!                        [--file-bytes N] [--file-policy blocking|offload]
+//!
+//! The name says reads because that is what it measured first, and three decision records and
+//! `bench/competitors/README.md` refer to it. `--transfer write` runs the other direction.
+//!
+//! **A write run never touches the path it is given.** It appends `write_suffix` and creates that
+//! file. A read changes nothing; a write overwrites whole blocks, so it may not overwrite a file
+//! somebody else named. Pointing this program at something valuable costs a file beside it.
+//!
+//! **A write run issues no `fdatasync`.** O_DIRECT bypasses the page cache, not the device's own
+//! cache, so a write row is the write path's latency and says nothing about durability.
 //!
 //! It keeps `depth` reads in flight against one file and re-issues each as it completes, so the
 //! device queue never drains and the measurement is of the path rather than of the program
@@ -89,14 +99,23 @@ var ring_memory: [ring_bytes]u8 align(core.layout.memory_alignment) = undefined;
 var started_ns: [depth_max]u64 = undefined;
 var latency_ns: [samples_max]u64 = undefined;
 
-const Pattern = enum { seq, random };
+pub const Pattern = enum { seq, random };
 
-const Options = struct {
+/// Which direction the run measures. Two workloads, not two runs of one: a read row and a write row
+/// must never share a `Series`, which `workload_of` enforces by naming them apart.
+pub const Transfer = enum { read, write };
+
+/// What a write run appends to the path it was given, so it writes its own file and can never
+/// overwrite one the caller named.
+pub const write_suffix = ".rotor_write";
+
+pub const Options = struct {
     path: [:0]const u8,
     pattern: Pattern = .seq,
     depth: u32 = 16,
     block_bytes: u32 = 4096,
     registered: bool = true,
+    transfer: Transfer = .read,
     seconds: u64 = 3,
     file_bytes: u64 = 256 << 20,
     /// What the loop does with a read it cannot perform without blocking (decision 18). On
@@ -106,7 +125,7 @@ const Options = struct {
 };
 
 /// The policies this workload runs, which are decision 18's two that perform the read.
-const Policy = enum { blocking, offload };
+pub const Policy = enum { blocking, offload };
 
 const Run = struct {
     loop: *Loop,
@@ -193,9 +212,18 @@ fn buffer_of(options: Options, index: u32) []u8 {
 
 /// Opens the file with O_DIRECT, creating and preallocating it when it is not there. A file the
 /// filesystem cannot carry O_DIRECT for is refused here and not discovered inside the first read.
+/// The path a run uses: the one it was given for a read, and that path plus `write_suffix` for a
+/// write. A write overwrites whole blocks, so it writes a file of its own and never the caller's.
+pub fn path_of(options: Options, buffer: []u8) ![:0]const u8 {
+    if (options.transfer == .read) return options.path;
+    return std.fmt.bufPrintZ(buffer, "{s}" ++ write_suffix, .{options.path});
+}
+
 fn open_and_fill(options: Options) !core.Descriptor {
+    var buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const path = try path_of(options, &buffer);
     const direct: sync.OpenOptions = .{ .create = false, .direct = true };
-    if (sync.open_file(options.path, direct)) |file| {
+    if (sync.open_file(path, direct)) |file| {
         const have = try sync.file_size(file);
         if (have >= options.file_bytes) return file;
         try sync.set_file_size(file, options.file_bytes);
@@ -204,7 +232,7 @@ fn open_and_fill(options: Options) !core.Descriptor {
         error.FileNotFound => {},
         else => return failure,
     }
-    const created = try sync.open_file(options.path, .{ .create = true, .direct = true });
+    const created = try sync.open_file(path, .{ .create = true, .direct = true });
     errdefer sync.close_now(created);
     try sync.set_file_size(created, options.file_bytes);
     return created;
@@ -228,6 +256,36 @@ fn run(state: *Run) !u64 {
     return span;
 }
 
+/// What one transfer is: everything the operation needs, gathered so `operation_of` is a function
+/// of its arguments and a test can read what it builds.
+pub const Request = struct {
+    transfer: Transfer,
+    user_data: u64,
+    file: core.Descriptor,
+    buffer: []u8,
+    registered: ?u16,
+    offset: u64,
+};
+
+/// The operation one request becomes. A write submitted as a read would measure the wrong direction
+/// under a row named for the right one, and nothing else in this program would notice, so this is a
+/// function a test can check.
+pub fn operation_of(request: Request) Operation {
+    // A read takes a `Buffer` and a write a `ConstBuffer`, so each arm names its own.
+    return switch (request.transfer) {
+        .read => .{ .user_data = request.user_data, .kind = .{ .read = .{
+            .file = request.file,
+            .buffer = .{ .bytes = request.buffer, .registered = request.registered },
+            .offset = request.offset,
+        } } },
+        .write => .{ .user_data = request.user_data, .kind = .{ .write = .{
+            .file = request.file,
+            .buffer = .{ .bytes = request.buffer, .registered = request.registered },
+            .offset = request.offset,
+        } } },
+    };
+}
+
 /// One read, at the next offset the pattern names, into this slot's own buffer.
 fn issue(state: *Run, index: u32) void {
     if (state.stopping) return;
@@ -240,18 +298,16 @@ fn issue(state: *Run, index: u32) void {
     std.debug.assert(@intFromPtr(buffer.ptr) % buffer_alignment == 0);
     std.debug.assert(buffer.len % state.options.block_bytes == 0);
 
+    const registered: ?u16 = if (state.options.registered) @intCast(index) else null;
     started_ns[index] = now_ns();
-    const taken = state.loop.submit(&.{.{
+    const taken = state.loop.submit(&.{operation_of(.{
+        .transfer = state.options.transfer,
         .user_data = index,
-        .kind = .{ .read = .{
-            .file = state.file,
-            .buffer = .{
-                .bytes = buffer,
-                .registered = if (state.options.registered) @intCast(index) else null,
-            },
-            .offset = offset,
-        } },
-    }}, &.{});
+        .file = state.file,
+        .buffer = buffer,
+        .registered = registered,
+        .offset = offset,
+    })}, &.{});
     // A refusal means the slot table is too small for the depth this run was given, and a
     // benchmark that swallowed it would report the stall as throughput.
     std.debug.assert(taken == 1);
@@ -301,16 +357,24 @@ const output_buffer_bytes = 1024;
 
 /// The workload's name for one pattern. Sequential and random are different measurements, so a
 /// row of each carries a different name and `Series.init` refuses to mix them.
-fn workload_of(pattern: Pattern) []const u8 {
-    return switch (pattern) {
-        .seq => "file-read-seq",
-        .random => "file-read-random",
+pub fn workload_of(transfer: Transfer, pattern: Pattern) []const u8 {
+    return switch (transfer) {
+        .read => switch (pattern) {
+            .seq => "file-read-seq",
+            .random => "file-read-random",
+        },
+        .write => switch (pattern) {
+            .seq => "file-write-seq",
+            .random => "file-write-random",
+        },
     };
 }
 
 /// The candidate's name for one buffer choice. Registration is decision 3's first speed source,
 /// so the A and the B of it are two candidates and not two runs of one.
-fn candidate_of(registered: bool, policy: Policy) []const u8 {
+pub fn candidate_of(registered: bool, policy: Policy) []const u8 {
+    // The direction is in the workload's name, not the candidate's: a read row and a write row are
+    // different workloads, and the candidate is the same rotor either way.
     return switch (policy) {
         .blocking => if (registered) "rotor (registered)" else "rotor",
         .offload => if (registered) "rotor (registered, offload)" else "rotor (offload)",
@@ -323,7 +387,7 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     const duration_ns = @max(span_ns, 1);
 
     const result: harness.Result = .{
-        .workload = workload_of(state.options.pattern),
+        .workload = workload_of(state.options.transfer, state.options.pattern),
         .candidate = candidate_of(state.options.registered, state.options.policy),
         .candidate_version = "this tree",
         .configuration = .{
@@ -382,7 +446,7 @@ fn parse(init: std.process.Init) !Options {
     return options;
 }
 
-fn check(options: Options) !void {
+pub fn check(options: Options) !void {
     // A depth above the pool's queue would make `Pool.submit` block the loop thread, which is the
     // stall the offload removes. Refused here rather than found part way through a run.
     if (options.policy == .offload and options.depth > pool_module.queue_max) {
@@ -414,6 +478,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--file-bytes")) {
         options.file_bytes = try std.fmt.parseInt(u64, value, 10);
+    } else if (std.mem.eql(u8, name, "--transfer")) {
+        options.transfer = std.meta.stringToEnum(Transfer, value) orelse
+            return error.UnknownTransfer;
     } else if (std.mem.eql(u8, name, "--file-policy")) {
         options.policy = std.meta.stringToEnum(Policy, value) orelse return error.UnknownPolicy;
     } else {
@@ -425,4 +492,8 @@ fn yes_or_no(value: []const u8) !bool {
     if (std.mem.eql(u8, value, "yes")) return true;
     if (std.mem.eql(u8, value, "no")) return false;
     return error.NotYesOrNo;
+}
+
+test {
+    _ = @import("rotor_reads_test.zig");
 }
