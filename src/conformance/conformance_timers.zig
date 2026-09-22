@@ -34,17 +34,11 @@ fn hold_off(nanoseconds: u64) void {
     while (now_ns() < until) {}
 }
 
-fn now_ns() u64 {
-    const builtin = @import("builtin");
-    var value: if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.timespec = undefined;
-    if (builtin.os.tag == .linux) {
-        std.debug.assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
-    } else {
-        std.debug.assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
-    }
-    const seconds: u64 = @intCast(value.sec);
-    return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
-}
+/// The backend's own monotonic clock. This file read one itself until 2026-09-22, spelling the
+/// syscall twice for the two kernels, which both backends already export for their own tests. The
+/// determinism rule reads `src/` outside the backends, so a clock spelled here was a clock it could
+/// not see; taking the backend's keeps one definition per kernel and the rule's scope intact.
+const now_ns = backend.testing.monotonic_ns;
 
 const fires_wanted = 3;
 

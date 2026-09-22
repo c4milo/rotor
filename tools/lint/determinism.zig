@@ -3,10 +3,26 @@
 //! entropy source: a property test draws from `core.random`, and a sampling decision is a
 //! function of the operation sequence (docs/decisions/0009-sampling-and-replay.md).
 //!
-//! Over every `.zig` file under `src/` but not under a kernel backend, the rule flags a chain
-//! that starts with `std.time`, `std.Random` or `std.crypto.random` at a dot boundary, and a
-//! chain that starts with `std.posix.clock_` with no boundary. `std.time` is flagged whole, its
-//! unit constants included: a duration rotor uses is a named limit in a `constants.zig`.
+//! Over every `.zig` file under `src/` but not under a kernel backend, the rule flags a chain that
+//! starts with one of `forbidden_prefixes` at a dot boundary, and a chain that starts with one of
+//! `forbidden_raw_prefixes` with no boundary. `std.time` is flagged whole, its unit constants
+//! included: a duration rotor uses is a named limit in a `constants.zig`.
+//!
+//! **The list is the whole of the guard, so a name that stops naming anything is a hole.** Three
+//! clocks reachable from `core` were missing on 2026-09-22, found by auditing the list against
+//! Zig 0.16 rather than by any failure: `std.Io.Clock`, `std.c.clock_gettime` and
+//! `std.os.linux.clock_gettime`. The tree used all three, in the backends alone, so nothing was
+//! violated and nothing would have been reported had `core` reached for them.
+//!
+//! `std.crypto.random` went the other way. It was listed and Zig 0.16 has no such declaration, so
+//! that entry had been guarding an impossible mistake since the upgrade. The `comptime` check below
+//! is why it is gone: a listed name that resolves to nothing now fails the build instead of going
+//! quiet. It cannot catch the first kind, a name that exists and is missing from the list, which is
+//! why that list is read by a person against the standard library when Zig moves.
+//!
+//! `std.posix.clock_` stays, and now matches only `clock_t` and `clockid_t`: `std.posix` lost its
+//! clock function in Zig 0.16. It is kept as a raw prefix because those types are a step towards
+//! reading a clock, and because Zig may put the function back.
 //!
 //! The kernel backends, `src/uring/` and `src/kqueue/`, are exempt: reading the monotonic clock
 //! for a timer is their job. `bench/` is outside `src/` and is not read.
@@ -21,8 +37,22 @@ const pepegrillo = @import("pepegrillo");
 const lint = pepegrillo.lint;
 const forbidden_references = lint.rules.forbidden_references;
 
-const forbidden_prefixes = [_][]const u8{ "std.time", "std.Random", "std.crypto.random" };
+const forbidden_prefixes = [_][]const u8{
+    "std.time",
+    "std.Random",
+    "std.Io.Clock",
+    "std.c.clock_gettime",
+    "std.os.linux.clock_gettime",
+};
 const forbidden_raw_prefixes = [_][]const u8{"std.posix.clock_"};
+
+comptime {
+    // Every whole name above must still name something in the standard library, and every partial
+    // name must still match something. A Zig upgrade that removes one fails this build rather than
+    // leaving a rule that reports nothing.
+    lint.names.assert_all_resolve(std, "std", &forbidden_prefixes);
+    lint.names.assert_all_match(std, "std", &forbidden_raw_prefixes);
+}
 
 /// The modules that talk to a kernel and so may read its clock.
 const kernel_backend_directories = [_][]const u8{ "src/uring", "src/kqueue" };
@@ -56,7 +86,10 @@ const failing_fixture: [:0]const u8 =
     \\    self.now_ns = std.time.nanoTimestamp();
     \\    var generator = std.Random.DefaultPrng.init(0);
     \\    _ = std.posix.clock_gettime(.MONOTONIC);
-    \\    return std.crypto.random.int(u8) == 0;
+    \\    _ = std.c.clock_gettime(.MONOTONIC, &now);
+    \\    _ = std.os.linux.clock_gettime(.MONOTONIC, &now);
+    \\    _ = std.Io.Clock.Timestamp.fromNow(io, .{});
+    \\    return generator.random().int(u8) == 0;
     \\}
 ;
 
@@ -71,7 +104,7 @@ test "determinism passes a sampling decision drawn from the op clock" {
     try harness.expect_messages(findings, &.{});
 }
 
-test "determinism flags the clock, the PRNG and the entropy source" {
+test "determinism flags every clock it names, and the PRNG" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
@@ -80,7 +113,9 @@ test "determinism flags the clock, the PRNG and the entropy source" {
         "reference to std.time.nanoTimestamp: " ++ reason,
         "reference to std.Random.DefaultPrng.init: " ++ reason,
         "reference to std.posix.clock_gettime: " ++ reason,
-        "reference to std.crypto.random.int: " ++ reason,
+        "reference to std.c.clock_gettime: " ++ reason,
+        "reference to std.os.linux.clock_gettime: " ++ reason,
+        "reference to std.Io.Clock.Timestamp.fromNow: " ++ reason,
     });
 }
 
