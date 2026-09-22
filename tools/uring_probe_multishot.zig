@@ -57,9 +57,43 @@ var receive_buffers: [buffer_ring_entries][buffer_bytes]u8 = undefined;
 
 /// Runs the three checks on `ring` in the order of decision 2's table.
 pub fn check(report: *Report, ring: *IoUring) !void {
-    const connection = try check_multishot_accept(report, ring);
+    // The listener outlives the accept check on purpose. Closing it cancels the multishot accept
+    // still armed on it, and that cancellation posts a completion the two reaps below would
+    // mistake for their own, so it is closed after every check has read what it needed.
+    var listener: linux.fd_t = unopened;
+    defer close_if_opened(listener);
+    const connection = try check_multishot_accept(report, ring, &listener);
+    defer if (connection) |peer| close_connection(peer);
     const buffers_ready = try check_buffer_ring(report, ring);
     try check_multishot_receive(report, ring, connection, buffers_ready);
+}
+
+/// No descriptor. A slot holding this is one the close helpers leave alone: either it was never
+/// opened, or something else took it over.
+const unopened: linux.fd_t = -1;
+
+fn close_if_opened(descriptor: linux.fd_t) void {
+    if (descriptor != unopened) _ = linux.close(descriptor);
+}
+
+/// Closes every descriptor still in `opened`.
+fn close_opened(opened: []const linux.fd_t) void {
+    for (opened) |descriptor| close_if_opened(descriptor);
+}
+
+/// Closes the descriptors a multishot accept produced. `keep_first` leaves the first one open,
+/// which is the one the caller receives. A completion that failed carries a negative result and
+/// no descriptor.
+fn close_accepted(cqes: []const linux.io_uring_cqe, keep_first: bool) void {
+    for (cqes, 0..) |cqe, index| {
+        if (index == 0 and keep_first) continue;
+        if (cqe.res >= 0) _ = linux.close(cqe.res);
+    }
+}
+
+fn close_connection(peer: Connection) void {
+    _ = linux.close(peer.client);
+    _ = linux.close(peer.accepted);
 }
 
 /// One end each of a loopback TCP connection: `client` connected and the kernel `accepted`.
@@ -71,8 +105,13 @@ fn open_socket() !linux.fd_t {
 }
 
 /// Arms one multishot accept, then opens `connections` connections to it.
-fn check_multishot_accept(report: *Report, ring: *IoUring) !?Connection {
+fn check_multishot_accept(
+    report: *Report,
+    ring: *IoUring,
+    listener_out: *linux.fd_t,
+) !?Connection {
     const listener = try open_socket();
+    listener_out.* = listener;
     var address: linux.sockaddr.in = .{ .port = 0, .addr = loopback_address };
     var address_bytes: linux.socklen_t = @sizeOf(linux.sockaddr.in);
     _ = try probe.check("bind", linux.bind(listener, @ptrCast(&address), address_bytes));
@@ -86,7 +125,11 @@ fn check_multishot_accept(report: *Report, ring: *IoUring) !?Connection {
     sqe.user_data = user_data_accept;
     _ = try ring.submit();
 
-    var clients: [connections]linux.fd_t = undefined;
+    var clients: [connections]linux.fd_t = @splat(unopened);
+    // Every client this function opened and does not hand back. A failure part way through the
+    // loop leaves the rest at `unopened`, and the one that is returned is taken out of the array
+    // first, so this closes exactly what nothing else owns.
+    defer close_opened(&clients);
     for (&clients) |*client| {
         client.* = try open_socket();
         _ = try probe.check("connect", linux.connect(client.*, &address, address_bytes));
@@ -95,9 +138,15 @@ fn check_multishot_accept(report: *Report, ring: *IoUring) !?Connection {
     const count = try probe.reap(ring, &cqes, connections);
     const outcome = judge(cqes[0..count], user_data_accept, connections);
     try report_outcome(report, multishot_accept, "accepts", outcome, connections);
-    if (outcome != .present) return null;
+    // The probe drives one connection, so every other accepted descriptor is closed here, and the
+    // first with them when the outcome means the caller receives nothing.
+    const keep_first = outcome == .present;
+    close_accepted(cqes[0..count], keep_first);
+    if (!keep_first) return null;
     // The accept queue is first in, first out, so the first completion is the first client's.
-    return .{ .client = clients[0], .accepted = cqes[0].res };
+    const kept = clients[0];
+    clients[0] = unopened;
+    return .{ .client = kept, .accepted = cqes[0].res };
 }
 
 /// What the completions of one multishot submission show.
