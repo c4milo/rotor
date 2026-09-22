@@ -305,6 +305,8 @@ test "a datagram socket closes on exec, does not block, and raises no SIGPIPE" {
 }
 
 test "a socket's buffer is set to what the kernel allows, and read back in the same call" {
+    // Every number below is what this kernel answered, so the test names macOS and no other.
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const socket = try open_socket(.ipv4);
     defer close_now(socket);
 
