@@ -109,6 +109,10 @@ const tested = [_]Tested{
         .root = "bench/timers/rotor_timers.zig",
         .needs_loop = true,
     },
+    // No `main` of its own: it is the client inside `echo_runner`, and its tests run because it
+    // is named here. The guard below requires a program with a `main`; naming one without is how
+    // a file like this is covered.
+    .{ .name = "bench-echo-client-tests", .root = "bench/echo/client.zig", .needs_loop = true },
 };
 
 /// The most bytes of one bench program `require_every_test_runs` reads. The longest is under

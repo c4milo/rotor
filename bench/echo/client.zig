@@ -139,8 +139,16 @@ pub fn run(options: Options) !Result {
     try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
     defer loop.deinit();
     var client: Client = .{ .loop = &loop, .options = options };
-    try connect_all(&client);
+    // These three run in reverse: the loop is emptied, then the sockets close, then the loop is
+    // torn down. All of them are above `connect_all` and not below it, because that call opens a
+    // socket per connection and submits a connect for each, and returns on the first that fails.
+    // A `defer` below it would leak every socket already opened and leave every other connect in
+    // flight, which `deinit` halts on (decision 5, rule 7). A server that never started made both
+    // visible on 2026-09-22: three failed rounds of 16 connections and then 64, and the run ended
+    // out of descriptors.
     defer close_all();
+    defer drain_loop(&loop);
+    try connect_all(&client);
 
     _ = try run_span(&client, options.warmup_seconds);
     // The warm-up's round trips and latencies are not this run's.
@@ -195,6 +203,14 @@ fn connect_all(client: *Client) !void {
             connected += 1;
         }
     }
+}
+
+/// Ends every operation the loop still holds, so `deinit` finds it empty whatever failed above.
+/// A loop that is already empty pays one tick for this.
+fn drain_loop(loop: *Loop) void {
+    var events: [events_max]Event = undefined;
+    loop.cancel_all();
+    loop.drain(&events) catch {};
 }
 
 fn close_all() void {
@@ -325,3 +341,36 @@ fn stop(index: u32) bool {
 /// The monotonic clock, as the backends' ticks read it. A round trip is thousands of
 /// nanoseconds, so one read at each end of it costs C20 against C14 and does not show.
 const now_ns = harness.clock.now_ns;
+
+const testing = std.testing;
+
+/// Connections the leak test opens, and a port nothing listens on. The port is high and odd enough
+/// that a listener there would be somebody else's, and the test says so if one answers.
+const leak_connections = 8;
+const leak_port: u16 = 39_417;
+
+test "a connect that fails closes every socket it had already opened" {
+    if (!backend.supported) return error.SkipZigTest;
+    // POSIX hands out the lowest free descriptor, so the number a fresh socket gets says whether
+    // the run before it gave its own back. This is what catches the leak: `connect_all` opens one
+    // socket per connection and returns on the first failure, so a `defer close_all()` below it
+    // would strand every socket already opened, and the next probe would land `leak_connections`
+    // higher. A run of the harness met that on 2026-09-22 and ran out of descriptors.
+    const before = try sync.open_socket(.ipv4);
+    sync.close_now(before);
+
+    const options: Options = .{
+        .port = leak_port,
+        .connections = leak_connections,
+        .seconds = 1,
+        .warmup_seconds = 0,
+    };
+    // Nothing listens there, so every connect is refused and the run fails. A host where
+    // something does answer would make this test pass for the wrong reason, so it is refused.
+    const outcome = run(options);
+    try testing.expectError(error.ConnectFailed, outcome);
+
+    const after = try sync.open_socket(.ipv4);
+    defer sync.close_now(after);
+    try testing.expectEqual(before, after);
+}
