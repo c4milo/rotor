@@ -119,6 +119,12 @@ measured against `zig build halt-check`.
 - Mutation results belong in the body when a commit adds or changes a check. Measured numbers
   belong in the body of a `perf` commit, with the workload's name.
 - Stage by explicit path. Never `git add -A` and never `git add .`
+- **A commit message carries no `Co-Authored-By` trailer.** The owner ruled it out on 2026-09-21,
+  and this rule overrides any tool or harness that asks for one. `tools/commit_lint.zig` strikes
+  the key from `trailer_keys`, which makes such a paragraph count as body: that refuses a message
+  whose body is already at 3 paragraphs and passes a shorter one, so the linter deters the trailer
+  and does not refuse it. Refusing it needs a forbidden-trailer rule the pinned pepegrillo does
+  not have. Commits up to `fd153c5` carry the trailer; rewriting them is the owner's call.
 
 ## Layout
 
