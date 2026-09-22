@@ -33,7 +33,7 @@ pub const queue_module = @import("epoll_queue.zig");
 pub const files_block = true;
 
 /// Whether a `post` can be refused for lack of room at the target (decision 4). The mailbox rings
-/// are `core`'s and hold `constants.mailbox_messages`, as on every backend, so a post to a full one
+/// are `core`'s and hold `core.constants.mailbox_messages`, as on every backend, so a post to a full one
 /// is refused with `mailbox_full`.
 pub const post_bounded = true;
 

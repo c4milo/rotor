@@ -1,9 +1,15 @@
-//! The mailboxes a `post` travels through on kqueue (decision 4, "How cores talk"; decision 12,
-//! point 6). `Mailbox` is one single-producer single-consumer ring of `core.Message`, and there
-//! is one per ordered pair of loops. `Registry` holds the rings, each loop's kqueue descriptor,
-//! and whether each loop sleeps. Nothing here enters the kernel: the wake itself, an EVFILT_USER
-//! trigger on the receiver's kqueue, is the loop's job. So this file compiles, and its tests run,
-//! on every host. The tests with threads are in `kqueue_mailbox_test.zig`.
+//! The mailboxes a `post` travels through on a readiness backend (decision 4, "How cores talk";
+//! decision 12, point 6). `Mailbox` is one single-producer single-consumer ring of `Message`, and
+//! there is one per ordered pair of loops. `Registry` holds the rings, each loop's readiness
+//! descriptor, and whether each loop sleeps.
+//!
+//! It is in `core` because `kqueue` and `epoll` both need it and it names no kernel type: neither
+//! has io_uring's `msg_ring`, so a message crosses in user space on both, and only the wake differs,
+//! which is the loop's job. `uring` holds its own `Registry` with no rings. It lived in
+//! `src/kqueue/` until the second readiness backend needed it, on 2026-09-22.
+//!
+//! Nothing here enters the kernel, so this file compiles on every host. The tests that start a
+//! thread are in `src/kqueue/kqueue_mailbox_test.zig`, which says why they are there.
 //!
 //! These rings are the one place in rotor where two threads touch the same memory. Every atomic
 //! operation has its ordering for a reason, and the reasons follow.
@@ -46,7 +52,7 @@
 //!   in the ring, its receiver blocks, and nobody is obliged to wake it. That lost wake is the
 //!   bug. On AArch64 the orderings are different instructions, seen in Zig 0.16's output: a
 //!   `.seq_cst` load is LDAR, an `.acquire` load is LDAPR, and a plain load is LDR. On an Apple
-//!   M1 Pro the handshake test of `kqueue_mailbox_test.zig` loses a wake when any one of the
+//!   M1 Pro the handshake test of `core/mailbox_test.zig` loses a wake when any one of the
 //!   four is weakened to a different instruction. A `.release` store of `tail` is the
 //!   instruction a `.seq_cst` store is, STLR, so there the argument is the only evidence.
 //! - `end_sleep` stores `sleeping` with `.seq_cst` too, so every access to the flag has a place
@@ -70,17 +76,22 @@
 //!   argument is the evidence. The `uring` registry holds no rings, so its claim stays `.release`.
 const std = @import("std");
 const assert = std.debug.assert;
-const core = @import("core");
 const constants = @import("constants.zig");
+const layout = @import("layout.zig");
+const operation_module = @import("operation.zig");
+
+const Descriptor = operation_module.Descriptor;
+const LoopId = operation_module.LoopId;
+const Message = operation_module.Message;
 
 /// The entry of a loop that has not started or has stopped.
-pub const descriptor_none: core.Descriptor = -1;
+pub const descriptor_none: Descriptor = -1;
 
 /// The entry of a `Remote`: an id a thread claimed so its messages can name a sender, which runs no
 /// loop and receives nothing (decision 4). It is distinct from `descriptor_none` so that claiming an
 /// id twice is caught, and negative so that every `post` to it is already answered `loop_not_found`
 /// by the check each backend makes on a target's descriptor.
-pub const descriptor_remote: core.Descriptor = -2;
+pub const descriptor_remote: Descriptor = -2;
 
 /// The fewest loops a registry serves: one loop alone has nobody to post to.
 const loops_min: u16 = 2;
@@ -97,7 +108,7 @@ pub const Mailbox = extern struct {
     head: std.atomic.Value(u32) align(constants.mailbox_index_alignment),
     /// Written by the producer alone. It starts on the line after `head`, so a slot the
     /// producer writes never shares a line with the index the consumer writes.
-    messages: [constants.mailbox_messages]core.Message align(constants.mailbox_index_alignment),
+    messages: [constants.mailbox_messages]Message align(constants.mailbox_index_alignment),
 
     /// Leaves the ring empty. It writes no slot: no slot is read before `push` has written it.
     pub fn init(mailbox: *Mailbox) void {
@@ -107,7 +118,7 @@ pub const Mailbox = extern struct {
     }
 
     /// Producer only. False when the ring is full, and the message is not written.
-    pub fn push(mailbox: *Mailbox, message: core.Message) bool {
+    pub fn push(mailbox: *Mailbox, message: Message) bool {
         const tail = mailbox.tail.load(.unordered);
         const head = mailbox.head.load(.acquire);
         const used = tail -% head;
@@ -121,7 +132,7 @@ pub const Mailbox = extern struct {
     /// Consumer only. Moves the oldest messages into `out`, oldest first, at most `out.len`, and
     /// returns how many. An empty ring costs no store, so polling it leaves the producer's copy
     /// of the `head` line valid.
-    pub fn pop_into(mailbox: *Mailbox, out: []core.Message) u32 {
+    pub fn pop_into(mailbox: *Mailbox, out: []Message) u32 {
         const head = mailbox.head.load(.unordered);
         const tail = mailbox.tail.load(.seq_cst);
         const available = tail -% head;
@@ -150,17 +161,17 @@ pub const Mailbox = extern struct {
 const Entry = extern struct {
     /// The loop's kqueue descriptor, or `descriptor_none`. Written by the loop, at init and at
     /// deinit. Read by the loops that post to it.
-    queue: std.atomic.Value(core.Descriptor) align(constants.mailbox_index_alignment),
+    queue: std.atomic.Value(Descriptor) align(constants.mailbox_index_alignment),
     /// True from `begin_sleep` to `end_sleep`. Written by the loop. Read by the loops that post
     /// to it.
     sleeping: std.atomic.Value(bool),
 };
 
 /// The bytes `init` may have to skip to reach an address aligned for a `Mailbox`.
-const alignment_slack_bytes: usize = @alignOf(Mailbox) - core.layout.memory_alignment;
+const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
 
 comptime {
-    assert(@sizeOf(core.Message) == 16);
+    assert(@sizeOf(Message) == 16);
     assert(@alignOf(Mailbox) == constants.mailbox_index_alignment);
     assert(@offsetOf(Mailbox, "tail") == 0);
     assert(@offsetOf(Mailbox, "head") == constants.mailbox_index_alignment);
@@ -168,8 +179,8 @@ comptime {
     assert(@sizeOf(Mailbox) == 4352);
     assert(@sizeOf(Entry) == constants.mailbox_index_alignment);
     assert(@alignOf(Entry) == @alignOf(Mailbox));
-    assert(@alignOf(Mailbox) >= core.layout.memory_alignment);
-    assert(std.math.isPowerOfTwo(core.layout.memory_alignment));
+    assert(@alignOf(Mailbox) >= layout.memory_alignment);
+    assert(std.math.isPowerOfTwo(layout.memory_alignment));
     assert(slot_mask & constants.mailbox_messages == 0);
 }
 
@@ -187,25 +198,25 @@ pub const Registry = struct {
     mailboxes: []Mailbox,
 
     /// The bytes `init` needs for `loop_count` loops: a function of the loops the application
-    /// runs, never of `core.constants.loops_max` (decision 12, point 6).
+    /// runs, never of `constants.loops_max` (decision 12, point 6).
     pub fn memory_bytes(loop_count: u16) usize {
         assert(loop_count >= loops_min);
-        assert(loop_count <= core.constants.loops_max);
+        assert(loop_count <= constants.loops_max);
         const count: usize = loop_count;
         const tables_bytes = count * @sizeOf(Entry) + count * count * @sizeOf(Mailbox);
         return alignment_slack_bytes + tables_bytes;
     }
 
-    /// `loop_count` is in [2, core.constants.loops_max] and `memory.len` is at least
+    /// `loop_count` is in [2, constants.loops_max] and `memory.len` is at least
     /// `memory_bytes(loop_count)`. Afterwards every mailbox is empty, every descriptor is
     /// absent, and no loop sleeps.
     ///
-    /// `memory` is aligned to `core.layout.memory_alignment`, 64, and a `Mailbox` and an `Entry`
+    /// `memory` is aligned to `layout.memory_alignment`, 64, and a `Mailbox` and an `Entry`
     /// need 128. So `memory_bytes` asks for `alignment_slack_bytes` more than the tables take,
     /// and `init` skips to the first address aligned to 128, which is at most that far in.
     pub fn init(
         registry: *Registry,
-        memory: []align(core.layout.memory_alignment) u8,
+        memory: []align(layout.memory_alignment) u8,
         loop_count: u16,
     ) void {
         assert(memory.len >= memory_bytes(loop_count));
@@ -228,14 +239,14 @@ pub const Registry = struct {
     /// How many loops the registry was sized for.
     pub fn loops(registry: *const Registry) u16 {
         assert(registry.entries.len >= loops_min);
-        assert(registry.entries.len <= core.constants.loops_max);
+        assert(registry.entries.len <= constants.loops_max);
         return @intCast(registry.entries.len);
     }
 
     /// A loop publishes its kqueue descriptor at init. The id must be free: two loops with one
     /// id is a programmer error. `.acq_rel`: the claim carries the previous holder's ring stores
     /// to this loop, which is about to read those rings (the header says why).
-    pub fn set(registry: *Registry, id: core.LoopId, queue: core.Descriptor) void {
+    pub fn set(registry: *Registry, id: LoopId, queue: Descriptor) void {
         assert(id < registry.entries.len);
         assert(queue >= 0);
         const previous = registry.entries[id].queue.swap(queue, .acq_rel);
@@ -244,7 +255,7 @@ pub const Registry = struct {
 
     /// A `Remote` claims `id` at init: it publishes no queue, because it receives nothing, and the
     /// sentinel is what makes a second claim on one id halt (decision 4).
-    pub fn set_remote(registry: *Registry, id: core.LoopId) void {
+    pub fn set_remote(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
         const previous = registry.entries[id].queue.swap(descriptor_remote, .acq_rel);
         assert(previous == descriptor_none);
@@ -252,7 +263,7 @@ pub const Registry = struct {
 
     /// A loop withdraws its descriptor at deinit. Withdrawing an absent loop is a programmer
     /// error.
-    pub fn clear(registry: *Registry, id: core.LoopId) void {
+    pub fn clear(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
         const previous = registry.entries[id].queue.swap(descriptor_none, .release);
         // A loop publishes its queue and a `Remote` publishes the sentinel. Either way the id was
@@ -261,13 +272,13 @@ pub const Registry = struct {
     }
 
     /// The kqueue descriptor of loop `id`, or a negative value when it has none.
-    pub fn get(registry: *const Registry, id: core.LoopId) core.Descriptor {
+    pub fn get(registry: *const Registry, id: LoopId) Descriptor {
         assert(id < registry.entries.len);
         return registry.entries[id].queue.load(.acquire);
     }
 
     /// The ring `sender` writes and `receiver` reads.
-    pub fn mailbox(registry: *Registry, sender: core.LoopId, receiver: core.LoopId) *Mailbox {
+    pub fn mailbox(registry: *Registry, sender: LoopId, receiver: LoopId) *Mailbox {
         const count = registry.entries.len;
         assert(sender < count);
         assert(receiver < count);
@@ -278,7 +289,7 @@ pub const Registry = struct {
     /// check its inbound mailboxes once more, and must not block when any holds a message. A
     /// loop that begins a sleep twice forgot `end_sleep`, and every post to it would then pay
     /// for a wake: a programmer error.
-    pub fn begin_sleep(registry: *Registry, id: core.LoopId) void {
+    pub fn begin_sleep(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
         const sleeping = &registry.entries[id].sleeping;
         assert(!sleeping.load(.unordered));
@@ -287,14 +298,14 @@ pub const Registry = struct {
 
     /// Consumer: call after `kevent` returns, or when the check after `begin_sleep` found a
     /// message. Harmless for a loop that is not marked asleep.
-    pub fn end_sleep(registry: *Registry, id: core.LoopId) void {
+    pub fn end_sleep(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
         registry.entries[id].sleeping.store(false, .seq_cst);
     }
 
     /// Producer: call after a successful `push`. True when the receiver is, or may be, asleep,
     /// and the producer must then trigger the receiver's kqueue.
-    pub fn must_wake(registry: *const Registry, id: core.LoopId) bool {
+    pub fn must_wake(registry: *const Registry, id: LoopId) bool {
         assert(id < registry.entries.len);
         return registry.entries[id].sleeping.load(.seq_cst);
     }
@@ -306,11 +317,11 @@ const testing = std.testing;
 /// two pushes does not pass for a whole one.
 const tag_modulus: u64 = 8191;
 
-fn message_of(sequence: u64) core.Message {
+fn message_of(sequence: u64) Message {
     return .{ .payload = sequence, .tag = @intCast(sequence % tag_modulus) };
 }
 
-fn expect_message(sequence: u64, message: core.Message) !void {
+fn expect_message(sequence: u64, message: Message) !void {
     const expected = message_of(sequence);
     try testing.expectEqual(expected.payload, message.payload);
     try testing.expectEqual(expected.tag, message.tag);
@@ -320,7 +331,7 @@ fn expect_message(sequence: u64, message: core.Message) !void {
 test "a mailbox hands its messages over in the order they were pushed" {
     var ring: Mailbox = undefined;
     ring.init();
-    var out: [8]core.Message = undefined;
+    var out: [8]Message = undefined;
     try testing.expect(ring.is_empty());
     try testing.expectEqual(@as(u32, 0), ring.pop_into(&out));
     for (0..5) |sequence| try testing.expect(ring.push(message_of(sequence)));
@@ -339,7 +350,7 @@ test "a full mailbox refuses a message and writes nothing" {
     }
     try testing.expect(!ring.push(message_of(77_777)));
     try testing.expectEqual(constants.mailbox_messages, ring.tail.load(.unordered));
-    var out: [constants.mailbox_messages]core.Message = undefined;
+    var out: [constants.mailbox_messages]Message = undefined;
     try testing.expectEqual(constants.mailbox_messages, ring.pop_into(&out));
     for (out, 0..) |message, sequence| try expect_message(sequence, message);
     // The ring has room again, and the message it refused was never in it.
@@ -352,7 +363,7 @@ test "pop_into takes no more than out holds and leaves the rest in the ring" {
     var ring: Mailbox = undefined;
     ring.init();
     for (0..10) |sequence| try testing.expect(ring.push(message_of(sequence)));
-    var out: [4]core.Message = undefined;
+    var out: [4]Message = undefined;
     try testing.expectEqual(@as(u32, 0), ring.pop_into(out[0..0]));
     try testing.expectEqual(@as(u32, 4), ring.pop_into(&out));
     for (out, 0..) |message, sequence| try expect_message(sequence, message);
@@ -376,7 +387,7 @@ test "the indices wrap past 2^32 and the ring keeps its count and its order" {
     }
     try testing.expect(!ring.push(message_of(77_777)));
     try testing.expectEqual(@as(u32, 155), ring.tail.load(.unordered));
-    var out: [100]core.Message = undefined;
+    var out: [100]Message = undefined;
     var popped: u64 = 0;
     for ([_]u32{ 100, 100, 56, 0 }) |expected| {
         const count = ring.pop_into(&out);
@@ -393,11 +404,11 @@ const pair_bytes = Registry.memory_bytes(pair_loops);
 
 /// A distinct payload for the ring from `sender` to `receiver`.
 fn pair_sequence(sender: usize, receiver: usize) u64 {
-    return sender * core.constants.loops_max + receiver;
+    return sender * constants.loops_max + receiver;
 }
 
 test "every ordered pair of loops has a mailbox of its own" {
-    var memory: [pair_bytes]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [pair_bytes]u8 align(layout.memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&memory, pair_loops);
     try testing.expectEqual(@as(u16, pair_loops), registry.loops());
@@ -408,7 +419,7 @@ test "every ordered pair of loops has a mailbox of its own" {
         try testing.expect(ring.is_empty());
         try testing.expect(ring.push(message_of(pair_sequence(sender, receiver))));
     }
-    var out: [2]core.Message = undefined;
+    var out: [2]Message = undefined;
     for (0..pair_loops * pair_loops) |pair| {
         const sender = pair / pair_loops;
         const receiver = pair % pair_loops;
@@ -421,9 +432,9 @@ test "every ordered pair of loops has a mailbox of its own" {
 test "the rings one loop reads are adjacent, aligned, and inside the memory, at either base" {
     // `buffer` is aligned to 128. Its first slice starts on a 128-byte line and its second 64
     // bytes past one, which are the two bases memory aligned to 64 can have.
-    const slack = core.layout.memory_alignment;
+    const slack = layout.memory_alignment;
     var buffer: [pair_bytes + slack]u8 align(@alignOf(Mailbox)) = undefined;
-    const bases = [_][]align(core.layout.memory_alignment) u8{
+    const bases = [_][]align(layout.memory_alignment) u8{
         buffer[0..pair_bytes],
         buffer[slack..][0..pair_bytes],
     };
@@ -445,24 +456,24 @@ test "the rings one loop reads are adjacent, aligned, and inside the memory, at 
 }
 
 test "a registry starts with no descriptor, publishes one and forgets it" {
-    var memory: [pair_bytes]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [pair_bytes]u8 align(layout.memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&memory, pair_loops);
     for (0..pair_loops) |id| try testing.expect(registry.get(@intCast(id)) < 0);
     registry.set(3, 17);
     registry.set(pair_loops - 1, 0);
-    try testing.expectEqual(@as(core.Descriptor, 17), registry.get(3));
-    try testing.expectEqual(@as(core.Descriptor, 0), registry.get(pair_loops - 1));
+    try testing.expectEqual(@as(Descriptor, 17), registry.get(3));
+    try testing.expectEqual(@as(Descriptor, 0), registry.get(pair_loops - 1));
     try testing.expectEqual(descriptor_none, registry.get(2));
     registry.clear(3);
     try testing.expectEqual(descriptor_none, registry.get(3));
-    try testing.expectEqual(@as(core.Descriptor, 0), registry.get(pair_loops - 1));
+    try testing.expectEqual(@as(Descriptor, 0), registry.get(pair_loops - 1));
     registry.set(3, 21);
-    try testing.expectEqual(@as(core.Descriptor, 21), registry.get(3));
+    try testing.expectEqual(@as(Descriptor, 21), registry.get(3));
 }
 
 test "a loop must be woken from begin_sleep to end_sleep, and no other loop with it" {
-    var memory: [pair_bytes]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [pair_bytes]u8 align(layout.memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&memory, pair_loops);
     for (0..pair_loops) |id| try testing.expect(!registry.must_wake(@intCast(id)));
@@ -483,6 +494,6 @@ test "memory_bytes grows with the square of the loops and not with loops_max" {
     const two = Registry.memory_bytes(2);
     try testing.expectEqual(@as(usize, 64 + 2 * 128 + 4 * 4352), two);
     try testing.expectEqual(@as(usize, 64 + 5 * 128 + 25 * 4352), pair_bytes);
-    const most = Registry.memory_bytes(core.constants.loops_max);
+    const most = Registry.memory_bytes(constants.loops_max);
     try testing.expectEqual(@as(usize, 64 + 256 * 128 + 65536 * 4352), most);
 }

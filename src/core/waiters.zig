@@ -1,6 +1,12 @@
 //! `Waiters`: the table from a descriptor to the operations waiting for it to become readable or
-//! writable (decision 12, point 2). kqueue knows one registration per descriptor and filter, and
-//! its user data is one word, so the loop keeps the lists itself, linked through `Slot.next`.
+//! writable (decision 12, point 2). A readiness backend knows one registration per descriptor and
+//! filter, and its user data is one word, so the loop keeps the lists itself, linked through
+//! `Slot.next`.
+//!
+//! It is in `core` because it names no kernel type: `kqueue` and `epoll` both hold one, and the only
+//! difference between them is how a registration reaches the kernel, which stays in the backend
+//! (decision 20, "The shape"). It lived in `src/kqueue/` until the second readiness backend needed
+//! it, on 2026-09-22.
 //!
 //! The table is touched when an operation has to wait, when one is cancelled, when readiness
 //! arrives, and at close: never on the path of an operation that completes at once.
@@ -12,19 +18,23 @@
 //! a probe ends at the first vacant entry.
 const std = @import("std");
 const assert = std.debug.assert;
-const core = @import("core");
 const constants = @import("constants.zig");
+const operation_module = @import("operation.zig");
+const slot_module = @import("slot.zig");
+const slot_list_module = @import("slot_list.zig");
 
-const Slot = core.Slot;
-const SlotList = core.slot_list.SlotList;
-const next_none = core.slot.next_none;
+const Descriptor = operation_module.Descriptor;
+const Slot = slot_module.Slot;
+const SlotList = slot_list_module.SlotList;
+const next_none = slot_module.next_none;
 
+/// What a descriptor is registered for: the two directions a socket operation waits on.
 pub const Filter = enum(u1) { read, write };
 
 const filter_count = 2;
 
 /// The descriptor of a vacant entry. No open descriptor is negative.
-const descriptor_vacant: core.Descriptor = -1;
+const descriptor_vacant: Descriptor = -1;
 
 /// Fibonacci hashing: the multiplier is 2^32 divided by the golden ratio, which spreads
 /// consecutive descriptors, the common case, across the table.
@@ -32,7 +42,7 @@ const hash_multiplier: u32 = 0x9E37_79B1;
 const hash_bits = 32;
 
 pub const Entry = struct {
-    descriptor: core.Descriptor,
+    descriptor: Descriptor,
     lists: [filter_count]SlotList,
 
     const vacant: Entry = .{
@@ -53,7 +63,7 @@ pub const Waiters = struct {
     /// The entries a slot table of `operations` slots needs.
     pub fn capacity_for(operations: u32) u32 {
         assert(operations >= 1);
-        assert(operations <= core.constants.operations_max);
+        assert(operations <= constants.operations_max);
         const wanted = operations * constants.descriptor_entries_per_slot;
         return std.math.ceilPowerOfTwoAssert(u32, wanted);
     }
@@ -70,7 +80,7 @@ pub const Waiters = struct {
     pub fn add(
         waiters: *Waiters,
         slots: []Slot,
-        descriptor: core.Descriptor,
+        descriptor: Descriptor,
         filter: Filter,
         index: u32,
     ) bool {
@@ -82,7 +92,7 @@ pub const Waiters = struct {
     }
 
     /// The oldest waiter of `descriptor` on `filter`, which stays on its list.
-    pub fn first(waiters: *Waiters, descriptor: core.Descriptor, filter: Filter) ?u32 {
+    pub fn first(waiters: *Waiters, descriptor: Descriptor, filter: Filter) ?u32 {
         const entry = waiters.find(descriptor) orelse return null;
         return entry.lists[@intFromEnum(filter)].peek();
     }
@@ -91,7 +101,7 @@ pub const Waiters = struct {
     pub fn pop(
         waiters: *Waiters,
         slots: []Slot,
-        descriptor: core.Descriptor,
+        descriptor: Descriptor,
         filter: Filter,
     ) ?u32 {
         const entry = waiters.find(descriptor) orelse return null;
@@ -102,7 +112,7 @@ pub const Waiters = struct {
 
     /// Removes and returns the oldest waiter of `descriptor` on either filter, reads first: what
     /// a close calls until it answers null.
-    pub fn pop_any(waiters: *Waiters, slots: []Slot, descriptor: core.Descriptor) ?u32 {
+    pub fn pop_any(waiters: *Waiters, slots: []Slot, descriptor: Descriptor) ?u32 {
         if (waiters.pop(slots, descriptor, .read)) |index| return index;
         return waiters.pop(slots, descriptor, .write);
     }
@@ -112,7 +122,7 @@ pub const Waiters = struct {
     pub fn remove(
         waiters: *Waiters,
         slots: []Slot,
-        descriptor: core.Descriptor,
+        descriptor: Descriptor,
         filter: Filter,
         index: u32,
     ) bool {
@@ -124,7 +134,7 @@ pub const Waiters = struct {
     }
 
     /// How many operations wait for `descriptor` on `filter`.
-    pub fn count(waiters: *Waiters, descriptor: core.Descriptor, filter: Filter) u32 {
+    pub fn count(waiters: *Waiters, descriptor: Descriptor, filter: Filter) u32 {
         const entry = waiters.find(descriptor) orelse return 0;
         return entry.lists[@intFromEnum(filter)].count;
     }
@@ -133,7 +143,7 @@ pub const Waiters = struct {
         return @intCast(waiters.entries.len - 1);
     }
 
-    fn home(waiters: *const Waiters, descriptor: core.Descriptor) u32 {
+    fn home(waiters: *const Waiters, descriptor: Descriptor) u32 {
         assert(descriptor >= 0);
         const key: u32 = @intCast(descriptor);
         const bits = std.math.log2_int(usize, waiters.entries.len);
@@ -143,7 +153,7 @@ pub const Waiters = struct {
 
     /// The entry of `descriptor`, or null. The probe ends at the first vacant entry, and the
     /// table is at most half full, so it ends.
-    fn find(waiters: *Waiters, descriptor: core.Descriptor) ?*Entry {
+    fn find(waiters: *Waiters, descriptor: Descriptor) ?*Entry {
         var position = waiters.home(descriptor);
         var probed: u32 = 0;
         while (probed < waiters.entries.len) : (probed += 1) {
@@ -155,7 +165,7 @@ pub const Waiters = struct {
         unreachable;
     }
 
-    fn claim(waiters: *Waiters, descriptor: core.Descriptor) *Entry {
+    fn claim(waiters: *Waiters, descriptor: Descriptor) *Entry {
         assert(waiters.used * constants.descriptor_entries_per_slot < waiters.entries.len + 1);
         var position = waiters.home(descriptor);
         var probed: u32 = 0;

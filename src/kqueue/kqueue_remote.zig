@@ -1,7 +1,7 @@
 //! `Remote`: how a thread that owns no loop posts to one on kqueue (decision 4, "What another thread
 //! may do").
 //!
-//! It is the producer end of a mailbox pair and nothing more. `kqueue_mailbox.zig` holds the rings,
+//! It is the producer end of a mailbox pair and nothing more. `core/mailbox.zig` holds the rings,
 //! one per ordered pair of ids, and the `EVFILT_USER` wake; a loop posting to another loop uses
 //! them through `kqueue_submit.post`. A `Remote` makes the same two steps from a thread that has no
 //! loop to submit through: push into the ring this id owns toward the target, and wake the target
@@ -17,7 +17,7 @@
 //! `LoopNotFound`.
 //!
 //! One thread owns a `Remote`, as one thread owns a loop. Two threads posting through one remote
-//! would put two producers on a single-producer ring, which `kqueue_mailbox.zig`'s ordering
+//! would put two producers on a single-producer ring, which `core/mailbox.zig`'s ordering
 //! argument forbids. `init` records the thread, and `post` and `deinit` halt on any other, with the
 //! compare `core/tables.zig` makes for a loop. A caller that wants two threads takes two remotes.
 const std = @import("std");
@@ -25,10 +25,9 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const core = @import("core");
 const constants = @import("constants.zig");
-const mailbox_module = @import("kqueue_mailbox.zig");
 const queue_module = @import("kqueue_queue.zig");
 
-const Registry = mailbox_module.Registry;
+const Registry = core.mailbox.Registry;
 
 pub const InitError = core.remote.InitError;
 pub const PostError = core.remote.PostError;
@@ -51,13 +50,13 @@ pub const Remote = struct {
         assert(id < registry.loops());
         remote.* = .{ .registry = registry, .owner = core.tables.thread_identity(), .id = id };
         registry.set_remote(id);
-        assert(registry.get(id) == mailbox_module.descriptor_remote);
+        assert(registry.get(id) == core.mailbox.descriptor_remote);
     }
 
     /// Gives the id back. A `post` naming it is answered `LoopNotFound` again. A loop or another
     /// remote may then claim it, once this thread is done with it: the application decides when
     /// that is, and the claim carries this thread's last stores to the claimant
-    /// (`kqueue_mailbox.zig`, the ordering argument).
+    /// (`core/mailbox.zig`, the ordering argument).
     pub fn deinit(remote: *Remote) void {
         remote.assert_owner();
         remote.registry.clear(remote.id);
@@ -105,10 +104,10 @@ test "a remote claims an id, gives it back, and is refused a post to itself" {
     try testing.expectEqual(@as(core.LoopId, 2), remote.id);
     try testing.expectEqual(core.tables.thread_identity(), remote.owner);
     // The id is claimed with the sentinel, so it names no queue and a post to it finds no loop.
-    try testing.expectEqual(mailbox_module.descriptor_remote, registry.get(2));
+    try testing.expectEqual(core.mailbox.descriptor_remote, registry.get(2));
 
     remote.deinit();
-    try testing.expectEqual(mailbox_module.descriptor_none, registry.get(2));
+    try testing.expectEqual(core.mailbox.descriptor_none, registry.get(2));
 }
 
 test "a post to an id that runs no loop is refused, and nothing is queued" {
@@ -183,7 +182,7 @@ test "a message reaches the ring the target drains, and a full ring is refused" 
 
     // Fill the ring, then one more: the message is refused and not dropped silently.
     var sent: u32 = 0;
-    while (sent < constants.mailbox_messages) : (sent += 1) {
+    while (sent < core.constants.mailbox_messages) : (sent += 1) {
         try remote.post(0, .{ .payload = sent, .tag = 0 });
     }
     try testing.expectError(error.MailboxFull, remote.post(0, .{ .payload = 0, .tag = 0 }));

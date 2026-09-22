@@ -15,18 +15,6 @@ pub const readiness_max: u32 = 256;
 /// its changelist has no counterpart here, and its absence is the difference.
 pub const registrations_per_tick_max: u32 = readiness_max;
 
-/// Entries of the table that maps a descriptor to the operations waiting on it, per slot of the
-/// slot table: two, so the open-addressing table stays at most half full (decision 12, point 2).
-pub const descriptor_entries_per_slot: u32 = 2;
-
-/// Messages one mailbox ring holds, a power of two. A sender that finds its ring to a loop full
-/// hears `mailbox_full` (decision 12, point 6).
-pub const mailbox_messages: u32 = 256;
-
-/// The alignment that keeps a mailbox's producer index and consumer index on separate cache
-/// lines: Apple silicon reports 128-byte lines, and 128 also clears the 64-byte lines of x86-64.
-pub const mailbox_index_alignment = 128;
-
 /// The alignment of the memory a provided-buffer group's bookkeeping sits in: what the uring
 /// backend asks for its buffer ring, so one declaration in a caller's code serves every backend.
 pub const buffer_ring_alignment = 64 * 1024;
@@ -48,9 +36,6 @@ comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
     assert(registrations_per_tick_max >= 1);
-    assert(descriptor_entries_per_slot >= 2);
     assert(interrupt_retries_max >= 1);
-    assert(std.math.isPowerOfTwo(mailbox_messages));
-    assert(std.math.isPowerOfTwo(mailbox_index_alignment));
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));
 }

@@ -17,12 +17,11 @@ const buffers_module = @import("kqueue_buffers.zig");
 const errno_module = @import("kqueue_errno.zig");
 const sync = @import("kqueue_sync.zig");
 const socket_calls = @import("kqueue_sync_socket.zig");
-const waiters_module = @import("kqueue_waiters.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Slot = core.Slot;
-const Filter = waiters_module.Filter;
+const Filter = core.waiters.Filter;
 
 pub const Attempt = struct {
     outcome: Outcome,

@@ -11,12 +11,11 @@ const constants = @import("constants.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const submit_module = @import("kqueue_submit.zig");
-const waiters_module = @import("kqueue_waiters.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Event = core.Event;
-const Filter = waiters_module.Filter;
+const Filter = core.waiters.Filter;
 const Kevent = queue_module.Kevent;
 
 /// Turns readiness into events. Each readiness yields at most one event, and `events` has room

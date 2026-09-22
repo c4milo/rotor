@@ -1,13 +1,15 @@
 //! The `core` module: what every backend shares (decision 1). The types the caller sees
 //! (`Operation`, `Event`, `Handle`), the record of an in-flight operation (`Slot`) with its table
-//! and its lists, the timer heap, the layout of a loop's memory, the list of declarations every
-//! backend carries, the drain of a loop that is shutting down, the seeded generator the property
-//! tests draw from, and the named limits. It imports nothing but std and reads no clock.
+//! and its lists, the timer heap, the table of what waits for a descriptor, the layout of a loop's
+//! memory, the list of declarations every backend carries, the drain of a loop that is shutting
+//! down, the seeded generator the property tests draw from, and the named limits. It imports
+//! nothing but std and reads no clock.
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
 pub const event = @import("event.zig");
 pub const handle = @import("handle.zig");
 pub const layout = @import("layout.zig");
+pub const mailbox = @import("mailbox.zig");
 pub const offload = @import("offload.zig");
 pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
@@ -20,6 +22,7 @@ pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
 pub const tables = @import("tables.zig");
 pub const timer_heap = @import("timer_heap.zig");
+pub const waiters = @import("waiters.zig");
 
 pub const Address = operation.Address;
 pub const Code = event.Code;
@@ -40,6 +43,7 @@ test {
     _ = event;
     _ = handle;
     _ = layout;
+    _ = mailbox;
     _ = offload;
     _ = operation;
     _ = random;
@@ -54,4 +58,6 @@ test {
     _ = tables;
     _ = @import("tables_test.zig");
     _ = timer_heap;
+    _ = waiters;
+    _ = @import("waiters_test.zig");
 }

@@ -12,7 +12,7 @@
 //! worker's ring. The loop pops the ring on its own thread and calls `finish_local`. So only the
 //! loop thread writes a slot, and non-negotiable 4 holds: no lock, and the loop starts no thread.
 //!
-//! Each worker has its own ring, so each ring has one producer. `kqueue_mailbox.zig`'s `Mailbox` is
+//! Each worker has its own ring, so each ring has one producer. `core/mailbox.zig`'s `Mailbox` is
 //! single-producer and single-consumer, and its memory-ordering argument depends on that. One ring
 //! per worker keeps that true and needs no multi-producer structure. libxev shares one Vyukov MPSC
 //! queue between its pool threads instead, and its source carries a TODO saying the atomics are
@@ -28,14 +28,13 @@ const assert = std.debug.assert;
 const posix = std.posix;
 const core = @import("core");
 const errno_module = @import("kqueue_errno.zig");
-const mailbox_module = @import("kqueue_mailbox.zig");
 const queue_module = @import("kqueue_queue.zig");
 const constants = @import("constants.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Slot = core.Slot;
-const Mailbox = mailbox_module.Mailbox;
+const Mailbox = core.mailbox.Mailbox;
 const Work = core.offload.Work;
 
 /// Messages one drain moves out of one worker's ring at a time. The same bound
@@ -43,13 +42,13 @@ const Work = core.offload.Work;
 /// next tick, which does not wait while one does.
 const messages_per_drain = 32;
 
-/// Rounds one drain pops one ring in. A ring holds `constants.mailbox_messages` and each round
+/// Rounds one drain pops one ring in. A ring holds `core.constants.mailbox_messages` and each round
 /// takes `messages_per_drain`, so this many empties a ring that was full when the drain began.
 ///
 /// A worker may push while the drain runs, so a drain is not promised to leave the ring empty. It
 /// does not have to: what it leaves the next tick takes, and a tick with anything to hand over does
 /// not wait (`kqueue_tick.zig`). `drain_mailboxes` makes the same trade for the same reason.
-const drain_rounds_max = constants.mailbox_messages / messages_per_drain;
+const drain_rounds_max = core.constants.mailbox_messages / messages_per_drain;
 
 /// A `Mailbox` is aligned to 128 and `core.layout.Layout` carves to 64, which is why the registry
 /// carries the same constant: the caller's memory is aligned to 64 like every other memory rotor

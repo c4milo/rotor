@@ -18,7 +18,7 @@ const datagram_module = @import("kqueue_datagram.zig");
 pub const cancel_module = @import("kqueue_cancel.zig");
 pub const descriptors_module = @import("kqueue_descriptors.zig");
 pub const errno = @import("kqueue_errno.zig");
-pub const mailbox = @import("kqueue_mailbox.zig");
+pub const mailbox = core.mailbox;
 pub const offload_module = @import("kqueue_offload.zig");
 pub const perform = @import("kqueue_perform.zig");
 pub const remote_module = @import("kqueue_remote.zig");
@@ -28,15 +28,13 @@ pub const submit_module = @import("kqueue_submit.zig");
 pub const sync = @import("kqueue_sync.zig");
 pub const testing = @import("kqueue_testing.zig");
 pub const tick_module = @import("kqueue_tick.zig");
-pub const waiters_module = @import("kqueue_waiters.zig");
-
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. kqueue reports readiness and never completes a file operation, so this backend makes the
 /// `pread`, `pwrite` and `fsync` calls itself and they block the loop thread (decision 18).
 pub const files_block = true;
 
 /// Whether a `post` can be refused for lack of room at the target, which decides what a caller
-/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). A mailbox holds `constants.mailbox_messages`, and a post to a full one is refused with
+/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). A mailbox holds `core.constants.mailbox_messages`, and a post to a full one is refused with
 /// `mailbox_full`, from a loop or from a `Remote`.
 pub const post_bounded = true;
 
@@ -56,7 +54,7 @@ const Slot = core.Slot;
 const Tables = core.Tables;
 const TimerHeap = core.timer_heap.TimerHeap;
 const Layout = core.layout.Layout;
-const Waiters = waiters_module.Waiters;
+const Waiters = core.waiters.Waiters;
 const Kevent = queue_module.Kevent;
 
 /// Messages one call of `drain_mailboxes` moves out of one ring at a time.
@@ -138,7 +136,7 @@ pub const Loop = struct {
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
         _ = layout.add(u64, options.operations);
-        _ = layout.add(waiters_module.Entry, Waiters.capacity_for(options.operations));
+        _ = layout.add(core.waiters.Entry, Waiters.capacity_for(options.operations));
         // Nothing for an offload the options did not ask for, so a caller that wants none pays no
         // byte for one (decision 12, point 6 makes the same argument for the registry).
         // The rings are not here: they are 128-byte aligned, which `Layout` does not carve, and
@@ -173,7 +171,7 @@ pub const Loop = struct {
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
         const waiting = Waiters.capacity_for(options.operations);
-        loop.waiters.init(layout.take(memory, waiters_module.Entry, waiting));
+        loop.waiters.init(layout.take(memory, core.waiters.Entry, waiting));
         const workers = workers_of(options);
         // An `offload` policy without an offload, or one with workers the rings cannot hold, is a
         // programmer error and not an operational one: it is a mistake at init and nothing can
@@ -375,11 +373,9 @@ test {
     _ = sync;
     _ = testing;
     _ = tick_module;
-    _ = waiters_module;
     _ = offload_module;
     _ = @import("kqueue_mailbox_test.zig");
     _ = @import("kqueue_offload_test.zig");
     _ = @import("kqueue_perform_test.zig");
     _ = @import("kqueue_sync_socket_test.zig");
-    _ = @import("kqueue_waiters_test.zig");
 }

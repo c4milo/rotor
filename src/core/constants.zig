@@ -24,6 +24,19 @@ pub const operations_max: u32 = 1 << 20;
 /// The most operations one `submit` call takes, and the most events one `tick` call returns.
 pub const batch_max: u32 = 4096;
 
+/// Entries of the table that maps a descriptor to the operations waiting on it, per slot of the
+/// slot table: two, so the open-addressing table of `waiters.zig` stays at most half full
+/// (decision 12, point 2). Both readiness backends read it, which is why it is here.
+pub const descriptor_entries_per_slot: u32 = 2;
+
+/// Messages one mailbox ring of `mailbox.zig` holds, a power of two. A sender that finds its ring
+/// to a loop full hears `mailbox_full` (decision 12, point 6). Both readiness backends read it.
+pub const mailbox_messages: u32 = 256;
+
+/// The alignment that keeps a mailbox's producer index and consumer index on separate cache
+/// lines: Apple silicon reports 128-byte lines, and 128 also clears the 64-byte lines of x86-64.
+pub const mailbox_index_alignment = 128;
+
 /// Children per node of the timer heap (decision 5, rule 5).
 pub const timer_heap_arity: u32 = 4;
 
@@ -100,6 +113,9 @@ comptime {
     assert(operations_max >= batch_max);
     assert(batch_max >= 1);
     assert(timer_heap_arity >= 2);
+    assert(descriptor_entries_per_slot >= 2);
+    assert(std.math.isPowerOfTwo(mailbox_messages));
+    assert(std.math.isPowerOfTwo(mailbox_index_alignment));
     assert(generation_first >= 1);
     assert(timeout_ns_max >= wait_ns_max);
     assert(transfer_bytes_max <= std.math.maxInt(i32));

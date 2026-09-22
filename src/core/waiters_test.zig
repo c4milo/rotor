@@ -2,10 +2,12 @@
 //! that keeps, for every descriptor and filter, the slots that wait in the order they joined.
 const std = @import("std");
 const testing = std.testing;
-const core = @import("core");
-const waiters_module = @import("kqueue_waiters.zig");
+const random_module = @import("random.zig");
+const slot_module = @import("slot.zig");
+const waiters_module = @import("waiters.zig");
 
-const Slot = core.Slot;
+const Descriptor = @import("operation.zig").Descriptor;
+const Slot = slot_module.Slot;
 const Waiters = waiters_module.Waiters;
 const Filter = waiters_module.Filter;
 const Entry = waiters_module.Entry;
@@ -21,7 +23,7 @@ const Fixture = struct {
     fn init(fixture: *Fixture) void {
         for (&fixture.slots) |*slot| {
             slot.* = std.mem.zeroes(Slot);
-            slot.next = core.slot.next_none;
+            slot.next = slot_module.next_none;
         }
         fixture.waiters.init(&fixture.entries);
     }
@@ -95,14 +97,14 @@ test "an entry removed from a run of collisions leaves the ones behind it findab
     const waiters = &fixture.waiters;
     // One slot per descriptor, as many descriptors as the table may hold: probes run long.
     for (0..slots_count) |index| {
-        const descriptor: core.Descriptor = @intCast(index * 32);
+        const descriptor: Descriptor = @intCast(index * 32);
         try testing.expect(waiters.add(&fixture.slots, descriptor, .read, @intCast(index)));
     }
     try testing.expectEqual(@as(u32, slots_count), waiters.used);
     for (0..slots_count) |round| {
         // Remove them in an order that is not the order they joined.
         const index = (round * 5) % slots_count;
-        const descriptor: core.Descriptor = @intCast(index * 32);
+        const descriptor: Descriptor = @intCast(index * 32);
         const popped = waiters.pop(&fixture.slots, descriptor, .read);
         try testing.expectEqual(@as(?u32, @intCast(index)), popped);
         for (0..slots_count) |other| {
@@ -157,10 +159,10 @@ const Model = struct {
     }
 };
 
-fn one_step(fixture: *Fixture, model: *Model, random: *core.random.Random) !void {
+fn one_step(fixture: *Fixture, model: *Model, random: *random_module.Random) !void {
     const descriptor = random.below(descriptors);
     const filter = random.below(2);
-    const kernel_descriptor: core.Descriptor = @intCast(descriptor * 7 + 3);
+    const kernel_descriptor: Descriptor = @intCast(descriptor * 7 + 3);
     const kernel_filter: Filter = @enumFromInt(filter);
     const length = model.lengths[descriptor][filter];
     switch (random.below(3)) {
@@ -195,7 +197,7 @@ test "a seeded run of adds, pops and removes agrees with a model at every step" 
         var fixture: Fixture = undefined;
         fixture.init();
         var model = Model.init();
-        var random = core.random.Random.init(seed);
+        var random = random_module.Random.init(seed);
         for (0..steps_per_seed) |at| {
             one_step(&fixture, &model, &random) catch |err| {
                 std.debug.print("waiters property test: seed {d}, step {d}\n", .{ seed, at });

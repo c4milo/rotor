@@ -13,12 +13,11 @@ const offload_module = @import("kqueue_offload.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const sync = @import("kqueue_sync.zig");
-const waiters_module = @import("kqueue_waiters.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Slot = core.Slot;
-const Filter = waiters_module.Filter;
+const Filter = core.waiters.Filter;
 
 /// Handles queued slots, oldest first, until none is left or the tick's changes are full.
 pub fn flush(loop: *Loop) void {

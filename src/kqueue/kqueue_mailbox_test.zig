@@ -1,6 +1,13 @@
-//! The mailboxes of `kqueue_mailbox.zig` under real threads (decision 12, point 6): one ring
+//! The mailboxes of `core/mailbox.zig` under real threads (decision 12, point 6): one ring
 //! between two threads, the sleep handshake with a thread that really blocks, and several
 //! producers into one consumer. No test here enters kqueue, so all of them run on every host.
+//!
+//! The rings moved to `core` on 2026-09-22 and these tests did not, for two reasons. The handshake
+//! test needs a deadline to call a wake lost, and `core` reads no clock (CLAUDE.md, non-negotiable
+//! 2), which `tools/lint/determinism.zig` enforces. And the race gate builds this module's tests
+//! under ThreadSanitizer because they are the ones that start a thread (CLAUDE.md, Race gate), so a
+//! test that moved out of it would stop being checked for races. `core/mailbox.zig` keeps the unit
+//! tests that need neither.
 //!
 //! A test that fails prints its seed. The seed replays what the test drew. It cannot replay how
 //! the threads interleaved: the kernel's scheduler decides that.
@@ -13,11 +20,9 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
-const constants = @import("constants.zig");
-const mailbox_module = @import("kqueue_mailbox.zig");
 
-const Mailbox = mailbox_module.Mailbox;
-const Registry = mailbox_module.Registry;
+const Mailbox = core.mailbox.Mailbox;
+const Registry = core.mailbox.Registry;
 const Random = core.random.Random;
 
 const seed: u64 = 0x6D61_696C_626F_7821;
@@ -258,15 +263,15 @@ const Handshake = struct {
     wake: std.Io.Event = .unset,
     /// True while the consumer is in, or about to enter, its blocking wait. It is the test's own
     /// flag, so the producer can aim at a sleeping consumer without asking the code under test.
-    blocking: std.atomic.Value(bool) align(constants.mailbox_index_alignment) = .init(false),
+    blocking: std.atomic.Value(bool) align(core.constants.mailbox_index_alignment) = .init(false),
     /// How often the consumer blocked, and the messages it took. Written by the consumer alone.
-    sleeps: u64 align(constants.mailbox_index_alignment) = 0,
+    sleeps: u64 align(core.constants.mailbox_index_alignment) = 0,
     /// How often the check after `begin_sleep` found a message, so the consumer did not block.
     averted: u64 = 0,
     received: u64 = 0,
     /// How often `must_wake` told the producer to wake, and the messages it posted. Written by
     /// the producer alone.
-    wakes: u64 align(constants.mailbox_index_alignment) = 0,
+    wakes: u64 align(core.constants.mailbox_index_alignment) = 0,
     sent: u64 = 0,
 
     fn ring(handshake: *Handshake) *Mailbox {
