@@ -24,6 +24,7 @@ const canary_rules = [_][]const u8{
     "file-length",
     "magic-numbers",
     "defer-order",
+    "unreleased-acquire",
 };
 
 /// The most lines a hand-written file may hold (tools/lint/file_length.zig).
@@ -123,9 +124,20 @@ pub fn add(b: *std.Build, options: Options) *std.Build.Step {
     return lint_step;
 }
 
+/// One violation of `unreleased-acquire`, which reads `bench` alone
+/// (`tools/lint/unreleased_acquire.zig` says why), so the src canary cannot carry it. It violates
+/// that rule and no other: `canary_source` already carries the file-length one.
+const canary_bench_source =
+    \\pub fn canary() !void {
+    \\    const socket = try open_socket(.ipv4);
+    \\    try connect_now(socket);
+    \\}
+;
+
 fn add_canary_tree(b: *std.Build) std.Build.LazyPath {
     const tree = b.addWriteFiles();
     _ = tree.add("src/core/canary.zig", canary_source);
+    _ = tree.add("bench/echo/canary.zig", canary_bench_source);
     _ = tree.add("docs/canary.md", canary_markdown);
     return tree.getDirectory();
 }
