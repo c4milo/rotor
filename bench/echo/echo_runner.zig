@@ -64,6 +64,19 @@ const candidates = [_]Candidate{
         .version = "this tree",
         .takes_buffer_bytes = true,
     },
+    // rotor's second shape, which `rotor_echo.zig` calls the experiment: a receive into this
+    // connection's own buffer, re-armed until a whole message has arrived, then one send. The
+    // default shape takes a whole buffer of a provided group per completion, so a message TCP
+    // delivers in pieces is echoed with one send per piece. libuv, libxev and `std.Io` each hold a
+    // buffer per connection and accumulate, so this is the shape that compares like for like, and
+    // the pair says whether the 64 KiB rows are the loop or the reads.
+    .{
+        .name = "rotor (accumulate)",
+        .program = "rotor_echo",
+        .version = "this tree",
+        .arguments = &.{ "--shape", "accumulate" },
+        .takes_buffer_bytes = true,
+    },
     .{
         .name = "libuv",
         .program = "libuv_echo",
