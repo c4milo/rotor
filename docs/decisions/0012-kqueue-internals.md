@@ -4,8 +4,14 @@ Status: accepted on 2026-09-19, by the author of the backend before writing it. 
 choice the code will embody, with the alternative it beat. kqueue reports readiness and io_uring
 reports completion, so this backend does what the kernel does for `uring`: it performs the
 operation when the descriptor is ready. The caller sees one behaviour, which the conformance
-suite checks on both (decision 10). macOS is a development platform (decision 2), so where speed
-and sameness pull apart, sameness wins here.
+suite checks on both (decision 10). Where speed and sameness pull apart, sameness wins for what the
+caller sees: one behaviour on both kernels is what decision 10 rests on.
+
+**Amended on 2026-09-22.** This record used to add "macOS is a development platform (decision 2)"
+as the reason a speed cost here was acceptable. Decision 2 now says macOS is a production platform,
+so that reason is gone: a cost on this backend is a cost in production, and point 6's amendment of
+the same day — a polling tick carrying its own wake trigger, worth 12 µs a tick — is what looking
+for one found.
 
 ## 1. An operation is tried first, and waits for readiness only when it would block
 

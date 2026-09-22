@@ -143,8 +143,9 @@ kernels', and hiding it would make a harness row depend on which path ran, which
 
 - `0002-scope.md`, the correction "files on macOS": its three choices become four, and its
   consequence — "macOS is a development platform" — weakens to "macOS is a development platform
-  unless the consumer supplies threads". No file number from macOS is published as a claim either
-  way, because the device and the scheduler are a laptop's.
+  unless the consumer supplies threads". **Withdrawn on 2026-09-22**: that record now says macOS is
+  a production platform, so a macOS file number is a claim, and the offload measured level with
+  libuv's own pool (`bench/alternatives/README.md`).
 - `0004-threading.md`: `Remote` moves from described to required.
 - `0017-the-layer-that-owns-the-loop.md`, open question 5: answered, build it.
 - CLAUDE.md, non-negotiable 4: unchanged in force, and worth a sentence saying a caller may hand

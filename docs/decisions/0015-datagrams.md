@@ -227,9 +227,10 @@ header and not the kernel, and rotor passes the level and name as integers alrea
   without ECN**, and rotor reports `not_ect` there however the sender marked it. Whether a real
   interface differs is unmeasured, because this tree measures loopback.
 
-The second is a finding and not a fault, and it belongs beside decision 2's conclusion that macOS
-is a development platform: a congestion controller developed on a Mac is not the one that runs in
-production, and nothing in the suite may assert an ECN codepoint on that host.
+The second is a finding and not a fault: nothing in the suite may assert an ECN codepoint on that
+host. What it is not, since decision 2's amendment of 2026-09-22, is a reason to treat macOS as a
+rehearsal. It is a property of macOS loopback, measured there and nowhere else, so a congestion
+controller that needs ECN needs a real interface to be tested on — on either kernel.
 
 **What macOS does not have is segmentation.** `netinet/udp.h` defines exactly one option,
 `UDP_NOCKSUM`. There is no GSO and no GRO. So:
@@ -243,9 +244,11 @@ production, and nothing in the suite may assert an ECN codepoint on that host.
   them, so using them means hand-declaring a private kernel structure. rotor does not, and this
   record names the door in case a later one wants it.
 
-This is consistent with decision 2's finding that **macOS is a development platform**. A QUIC
-stack builds, runs and is debugged on a Mac. No macOS datagram throughput number is published as
-a claim.
+**Amended on 2026-09-22.** This paragraph used to read that macOS is a development platform and
+that no macOS datagram throughput number is published as a claim. Decision 2 now says macOS is a
+production platform, so a macOS datagram number is a claim like any other. What stands is the
+capability difference above: a QUIC stack on macOS sends one datagram per call and marks no
+codepoint, and a row measured there is measuring that.
 
 One correction worth recording, because it changes where macOS datagram work should go: the
 missing GSO is not the kqueue backend's largest datagram cost. `kqueue_reap.zig` yields at most

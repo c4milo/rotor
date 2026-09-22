@@ -239,6 +239,10 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
   (`bench/alternatives/README.md`), in the same harness, in the same run, the losing runs
   included.
+  **The bar on macOS is parity or better**, by the owner's ruling of 2026-09-22 with that day's
+  amendment of decision 2: rotor is at least as fast as libuv and libxev on every workload here.
+  Each candidate runs the cheapest mode it offers, and a row names the mode, so a win is not a
+  matter of how an alternative was driven.
 
 ## Where the work stands
 

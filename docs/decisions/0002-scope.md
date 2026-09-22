@@ -85,8 +85,26 @@ claim. Socket and timer numbers from macOS are reported as what they are: kqueue
 four. The fourth is a thread pool the **caller** supplies, which libxev takes and which this
 record did not weigh: the loop still starts no thread, and the consumer decides. Choice 1 stays
 available and stops being the default, because a measured 2.8 ms stall that nothing reports is
-worse than a refusal. The consequence above holds, with "unless the consumer supplies threads"
-added to it.
+worse than a refusal.
+
+**Amended on 2026-09-22 by the owner: macOS is a production platform, which happens also to be the
+development platform.** The paragraph above it is withdrawn. What that changes:
+
+- **A macOS number is a claim.** It stops being "kqueue on a laptop" and starts being a result the
+  project stands behind, for sockets, timers, datagrams and files alike. It still names its machine,
+  as every number does.
+- **The bar is parity or better.** The owner set it the same day: on macOS rotor is at least as fast
+  as libuv and libxev on every workload of milestone 4. A row where rotor is behind is a defect to
+  explain and fix, not a platform to excuse. CLAUDE.md's milestone 4 carries it, and
+  `bench/alternatives/README.md` is where each row is read.
+- **The file choice is unchanged and is now a production property.** kqueue reports readiness and
+  never completes a file operation, so a `read` blocks the loop thread unless the consumer supplies
+  threads (decision 18). The default policy refuses, so no stall is silent; a consumer that wants
+  parallel file I/O on a Mac supplies a pool, and the measured rows say that pool is level with
+  libuv's own.
+- **The `linux` column of `docs/costs.md` is unaffected.** It is the deployment target of a Linux
+  consumer and is still empty for want of a named machine. macOS having production status does not
+  fill it, and an `orbstack` number still cannot.
 
 ### Minimum kernel
 
