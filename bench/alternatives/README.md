@@ -15,19 +15,24 @@ Every row carries three things beside its medians, and a row cannot be quoted wi
 - **spread percent**: the fastest run minus the slowest, over the median. A row at or above 10
   carries `**RUNS DISAGREE**` and decides nothing. The experiment that set this is below: three
   alternating rounds of two shapes of one unchanged server disagreed about which was faster.
-- **load low /100** and **load span /100**: the machine's one-minute load average while the runs were
-  taken, in hundredths, as the lowest reading and how far it moved. A span at or above 100, one whole
-  point of load, carries `**LOAD MOVED**`.
+- **other work peak /100** and **other work mean /100**: how busy the machine was in a quarter-second
+  pause before and after every run, while the harness ran nothing, in hundredths of one core: the
+  fullest pause of the series, and the mean over its pauses. With the candidate's process exited and
+  the runner asleep, every busy tick in a pause is someone else's. A peak at or above 50, half a core,
+  carries `**OTHER WORK**`.
 - **verdict**: both marks when both apply.
 
 The two marks mean different things and need different answers. A wide spread means re-take the row.
-A moved load means the machine was not the same machine throughout, so wait for a quiet one and
-re-take everything. Added on 2026-09-21, because four attempts on 2026-09-20 were spoiled by other
-work arriving and only the spread said so: on the last one the load average climbed from 4.40 to
-10.27 during the run, and reading 13 marked rows was the only way to find out.
+Other work means another job ran on the machine, so wait for a quiet one and re-take everything.
+Added on 2026-09-21 as a load-average window, because four attempts on 2026-09-20 were spoiled by
+other work arriving and only the spread said so: on the last one the load average climbed from 4.40
+to 10.27 during the run, and reading 13 marked rows was the only way to find out. Replaced by the
+CPU-time reading on 2026-09-22, because the load average counted the harness's own processes and
+lagged behind a candidate's spike; the section on that day's comparison says what it did.
 
-A row whose load columns say `unknown` was taken on a host that reports no load average. It is not a
-quiet row; it is a row with no evidence either way.
+A row whose other-work columns say `unknown` was taken on a host that reports no busy time. It is not
+a quiet row; it is a row with no evidence either way. Rows printed before 2026-09-22 carry the load
+columns they were printed with.
 
 ## The pins
 
@@ -773,7 +778,15 @@ by about 1.3 on their own, and more at 64 connections. The threshold of one poin
 harness's own load from a job arriving. The timer run shows the other side: the `std.Io.Threaded`
 candidate's 4,096 threads took the average to 327, and the cross-core rows taken two minutes later
 carry a "load low" of 301 from an average still decaying on an idle machine. What the mark should
-read is not decided here. The harness could subtract what its own processes add, or read idle CPU
-time instead of the load average; either is a change to `load.zig` for the owner to rule on. Until
-then, a marked row with a small spread was most likely moved by the harness itself, and the load
-columns say by how much.
+read was decided the same day, on the owner's word: `bench/harness/other_work.zig` reads how busy
+the machine is in a quarter-second pause before and after every run, while the harness runs
+nothing, and carries the fullest pause of the series and the mean, in hundredths of one core.
+Nothing of the harness's is in a pause, a candidate's 4,096 threads have exited by then, and
+nothing lags. A first replacement subtracted the harness's own `getrusage` from the busy time
+around the run instead, and read 2.3 cores of other work during a one-second echo run on a desktop
+carrying about one: loopback TCP runs in kernel threads no process is charged for. On this desktop,
+with the Claude app and a terminal open, the pauses read 1.5 to 2.5 cores and `top` agreed: the
+machine was not quiet by this measure either, and every row of a smoke run was marked, which is the
+mark doing its job. The tables above keep the columns they were printed with; a marked row with a
+small spread there was most likely moved by the harness itself, and its load columns say by how
+much.

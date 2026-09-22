@@ -32,7 +32,7 @@ const storm = @import("storm.zig");
 
 const Result = harness.report.Result;
 const Series = harness.series.Series;
-const LoadWindow = harness.load.Window;
+const OtherWork = harness.other_work.Window;
 
 /// Candidates this runner knows. Each is a program that takes a port and listens on it, and each
 /// prints one line when it is ready, which this runner waits for.
@@ -188,9 +188,9 @@ fn one_configuration(
     writer: *std.Io.Writer,
 ) !u16 {
     var counts: [candidates.len]u32 = @splat(0);
-    // The machine's load while each candidate's runs were taken. One window per candidate, and one
+    // The other work on the machine while each candidate's runs were taken. One window per candidate, and one
     // set per configuration, because a row covers one configuration.
-    var loads: [candidates.len]LoadWindow = @splat(.empty);
+    var other_work: [candidates.len]OtherWork = @splat(.empty);
     var port = port_from;
     var round: u32 = 0;
     while (round < options.rounds) : (round += 1) {
@@ -198,9 +198,9 @@ fn one_configuration(
             if (!installed(options, index)) continue;
             port += 1;
             // Around the run, not before the round: a job that arrives part way through a matrix is
-            // what spoiled the 2026-09-20 attempts, and only a sample on each side sees it.
-            loads[index].sample();
-            defer loads[index].sample();
+            // what spoiled the 2026-09-20 attempts, and only a reading on each side sees it.
+            other_work[index].begin_run(init.io);
+            defer other_work[index].end_run(init.io);
             const measured = one_run(init, options, candidate, configuration, port) catch |x| {
                 try writer.print("echo_runner: {s} failed: {t}\n", .{ candidate.name, x });
                 try writer.flush();
@@ -219,7 +219,7 @@ fn one_configuration(
             }
             continue;
         }
-        const series = try Series.init_with_load(taken, loads[index]);
+        const series = try Series.init_with_other_work(taken, other_work[index]);
         try series.render_markdown_row(writer);
         try writer.writeByte('\n');
     }

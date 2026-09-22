@@ -35,7 +35,7 @@ const harness = @import("harness");
 const Result = harness.Result;
 const Series = harness.series.Series;
 const programs = harness.candidates;
-const LoadWindow = harness.load.Window;
+const OtherWork = harness.other_work.Window;
 
 /// One candidate: the name a row carries, the program to start, and the arguments that make it
 /// this candidate rather than another of the same program. The version is not here, because a
@@ -96,9 +96,9 @@ const Options = struct {
 
 var results: [rounds_max * candidates.len]Result = undefined;
 var present: [candidates.len]bool = @splat(false);
-/// The machine's load while each candidate's runs were taken, one window per candidate. `collect`
+/// The other work on the machine while each candidate's runs were taken, one window per candidate. `collect`
 /// empties them: a window belongs to one configuration, as `counts` does.
-var loads: [candidates.len]LoadWindow = @splat(.empty);
+var other_work: [candidates.len]OtherWork = @splat(.empty);
 var path_buffer: [candidates.len][std.fs.max_path_bytes]u8 = undefined;
 var timers_buffer: [configurations_max]u32 = undefined;
 
@@ -137,15 +137,15 @@ fn collect(
     counts: *[candidates.len]u32,
     writer: *std.Io.Writer,
 ) !void {
-    loads = @splat(.empty);
+    other_work = @splat(.empty);
     var round: u32 = 0;
     while (round < options.rounds) : (round += 1) {
         for (candidates, 0..) |candidate, index| {
             if (!present[index]) continue;
             // Around the run, not before the round: a job that arrives part way through a matrix is
-            // what spoiled the 2026-09-20 attempts, and only a sample on each side sees it.
-            loads[index].sample();
-            defer loads[index].sample();
+            // what spoiled the 2026-09-20 attempts, and only a reading on each side sees it.
+            other_work[index].begin_run(init.io);
+            defer other_work[index].end_run(init.io);
             const measured = one_run(init, options, candidate, index, timers) catch |err| {
                 try writer.print("timers_runner: {s} failed at {d} timers: {t}\n", .{
                     candidate.name, timers, err,
@@ -171,7 +171,7 @@ fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
             }
             continue;
         }
-        const series = Series.init_with_load(taken, loads[index]) catch |err| {
+        const series = Series.init_with_other_work(taken, other_work[index]) catch |err| {
             try writer.print("timers_runner: {s} runs are not one series: {t}\n", .{
                 candidate.name, err,
             });

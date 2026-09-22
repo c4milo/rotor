@@ -27,7 +27,7 @@ pub const report = @import("report.zig");
 pub const report_comparison = @import("report_comparison.zig");
 pub const report_parse = @import("report_parse.zig");
 pub const clock = @import("clock.zig");
-pub const load = @import("load.zig");
+pub const other_work = @import("other_work.zig");
 pub const percentile = @import("percentile.zig");
 pub const candidates = @import("candidates.zig");
 pub const text = @import("text.zig");
@@ -49,7 +49,7 @@ test {
     _ = report_parse;
     _ = series;
     _ = clock;
-    _ = load;
+    _ = other_work;
     _ = percentile;
     _ = candidates;
     _ = text;

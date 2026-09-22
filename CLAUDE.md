@@ -265,8 +265,10 @@ runs each with the desktop in use; `bench/results/` holds the runs. Decision 8's
 builds for, and that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 (`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;
 decision 18's offload puts rotor level with libuv's pool on the file rows, where inline is a
-quarter of both; the cross-core row is rotor's loss by four times and is unexplained; and the load
-mark is tripped by the harness's own load. The io_uring comparison waits on the `linux` machine.
+quarter of both; and the cross-core row is rotor's loss by four times and is unexplained. The load
+mark of that day was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
+it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
+io_uring comparison waits on the `linux` machine.
 
 The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
 2026-09-21 and decision 19 records it, amending decision 4. The reason: neither libuv nor libxev
