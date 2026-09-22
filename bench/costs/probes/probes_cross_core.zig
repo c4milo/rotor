@@ -146,9 +146,12 @@ const Awake = struct {
     /// The requests the responder serves before it returns.
     round_trips: u64,
     failed: std.atomic.Value(bool) = .init(false),
+    /// What `pin_current_thread` answered on the far thread, for the note: a row that says two
+    /// cores must say so when it did not get them.
+    placement: std.atomic.Value(u8) = .init(0),
 
     fn respond(awake: *Awake) void {
-        _ = measure.place_current_thread();
+        awake.placement.store(@intFromEnum(measure.pin_current_thread(measure.second_cpu)), .release);
         awake.serve() catch awake.failed.store(true, .release);
     }
 
@@ -172,6 +175,10 @@ const Awake = struct {
 };
 
 fn run_awake(environment: *Environment) Error!Result {
+    // Both threads are pinned where the OS allows it. A spawned thread inherits this thread's
+    // affinity, so two spinners left on one core would each wait for the scheduler to run the
+    // other, and the row would take minutes instead of measuring anything.
+    const near_placement = measure.pin_current_thread(measure.first_cpu);
     const plan = awake_plan;
     var awake: Awake = .{ .round_trips = @as(u64, plan.warmup + plan.samples) * plan.batch / 2 };
     const thread = std.Thread.spawn(.{}, Awake.respond, .{&awake}) catch
@@ -181,14 +188,19 @@ fn run_awake(environment: *Environment) Error!Result {
     thread.join();
     const summary = try sampled;
     if (awake.failed.load(.acquire)) return error.UnexpectedResult;
+    const far_placement: measure.Placement = @enumFromInt(awake.placement.load(.acquire));
+    const note = environment.note(
+        "request and reply through two rings, both threads spinning with no pause instruction;" ++
+            " half a round trip is one message from post to reap; near thread {s}, far thread" ++
+            " {s}. The row means two cores only when both say pinned; the median moves with the" ++
+            " build of this probe, so read it as a range (README.md)",
+        .{ near_placement.text(), far_placement.text() },
+    );
     return .{
         .summary = summary,
         .plan = plan,
         .unit = "messages, two to a round trip",
-        .note = "request and reply through two rings, both threads spinning with no pause" ++
-            " instruction; half a round trip is one message from post to reap; the threads" ++
-            " could not be pinned, so the scheduler chose the two cores; the median moves with" ++
-            " the build of this probe, so read it as a range (README.md)",
+        .note = note,
     };
 }
 

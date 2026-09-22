@@ -42,11 +42,25 @@ Each row has one command, `zig build bench-costs -- --row <id>`:
 | C20 | `probes/probes_syscall.zig` | the monotonic clock |
 | C21 | `probes/probes_cpu.zig` | a thread-local read and compare inside a never-inlined function |
 
-Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring. They go in
-`probes/probes_linux.zig`, which holds an empty list today. `probes/probes.zig` already selects
-that file when the target is Linux, so adding the rows changes no other file. The file exists
-because Zig 0.16 resolves the path of every `@import` on every target: a path to a missing file
-fails the build even in a branch that is never analysed.
+Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring: C7 to C9 are in
+`probes/probes_linux.zig`, C12 and C13 in `probes/probes_linux_file.zig`, and C17 in
+`probes/probes_linux_message.zig`. `probes/probes.zig` selects them when the target is Linux.
+
+### `orbstack`
+
+The probes are built for the Linux gate's target and run in its container, without a cpuset:
+
+```bash
+zig build-exe bench/costs/main.zig -target aarch64-linux-musl -O ReleaseSafe -femit-bin=/tmp/costs
+docker run --rm --security-opt seccomp=unconfined -v /tmp:/t:ro \
+  alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc \
+  sh -c 'cp /t/costs /tmp/c && chmod +x /tmp/c && /tmp/c'
+```
+
+The seccomp option is what the Linux gate uses, because Docker's default profile refuses
+`io_uring_setup`. A `--cpuset-cpus` that leaves out cores 0 and 1 makes every pin below fail, and
+the report then says so on each row; with the pins refused, C19's two spinning threads can share a
+core, and the row then takes minutes.
 
 ## Output
 
@@ -95,8 +109,12 @@ in whole microseconds, so the probes do not use it there.
 
 **Pinning.** macOS on Apple silicon has no hard CPU affinity. Every thread of the probes asks for
 the user-interactive QoS class, which keeps it on performance cores when one is free, and the
-report says that the thread was not pinned. On any other OS the probes pin nothing and say so:
-run them under `taskset`.
+report says that the thread was not pinned. On Linux the rows that name a core pin with
+`sched_setaffinity`: C14 pins its thread to core 0, and C15, C17 and C19 pin their near thread to
+core 0 and their far thread to core 1. A spawned thread inherits its parent's affinity, so a
+two-thread row that pinned only one thread would run both on one core; each of those rows pins
+both and reports both placements. The rows before C14 are not pinned. A row that could not pin
+says so in its method line.
 
 ## What each probe measures, and what it cannot
 
@@ -267,10 +285,10 @@ gap, which is what thread-local addressing adds.
   2 percent of the shortest such row.
 - **Short loops depend on code layout.** C5, C21 and C19 move by a cycle or more with the build.
   Their method lines and the sections above say how to read them.
-- **Linux.** The probes compile for `x86_64-linux` and `aarch64-linux`, and the rows every target
-  has were run once inside a Linux virtual machine on the `mac` machine to check that they work.
-  A virtual machine's numbers never go in the `linux` column (`docs/costs.md`, Machines). No Linux
-  machine has run the probes, and they pin nothing there.
+- **Linux.** The probes compile for `x86_64-linux` and `aarch64-linux`. They filled the
+  `orbstack` column of `docs/costs.md` on 2026-09-22 (`bench/results/`), pinned as above. A virtual
+  machine's numbers never go in the `linux` column (`docs/costs.md`, Machines), and no physical
+  Linux machine has run the probes.
 
 ## Layout
 

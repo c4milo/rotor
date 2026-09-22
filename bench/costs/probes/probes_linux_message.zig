@@ -89,6 +89,9 @@ const Answerer = struct {
     /// and `starting` until one or the other.
     descriptor: std.atomic.Value(linux.fd_t) = .init(starting),
     failed: bool = false,
+    /// What `pin_current_thread` answered on this thread, for the note: a row that says two
+    /// cores must say so when it did not get them.
+    placement: std.atomic.Value(u8) = .init(0),
 
     const starting: linux.fd_t = -1;
     const failed_to_start: linux.fd_t = -2;
@@ -97,6 +100,8 @@ const Answerer = struct {
     const gave_up: u64 = std.math.maxInt(u64) - 1;
 
     fn serve(answerer: *Answerer) void {
+        const placement = measure.pin_current_thread(measure.second_cpu);
+        answerer.placement.store(@intFromEnum(placement), .release);
         answerer.ring = Ring.init(ring_entries) catch {
             answerer.descriptor.store(failed_to_start, .release);
             return;
@@ -149,6 +154,10 @@ const Message = struct {
 };
 
 fn run_message(environment: *Environment) Error!Result {
+    // Both threads are pinned where the OS allows it. A spawned thread inherits this thread's
+    // affinity, so an unpinned far thread after a pinned row shares this core, and the row then
+    // measures a handoff on one core instead of a wake across two.
+    const near_placement = measure.pin_current_thread(measure.first_cpu);
     var near = try Ring.init(ring_entries);
     defer near.deinit();
     var answerer: Answerer = .{ .near_ring = near.io.fd };
@@ -170,13 +179,13 @@ fn run_message(environment: *Environment) Error!Result {
     const measured = try summary;
     if (answerer.failed) return error.UnexpectedResult;
 
-    const placement = measure.settle();
+    const far_placement: measure.Placement = @enumFromInt(answerer.placement.load(.acquire));
     const note = environment.note(
         "a round trip halved: two rings on two threads, each set up as src/uring sets one up," ++
             " posting MSG_RING to the other; DEFER_TASKRUN means the receiver must enter the" ++
             " kernel to see a message, so both sides block and this number includes waking one;" ++
-            " threads {s}",
-        .{placement.text()},
+            " near thread {s}, far thread {s}. The row means two cores only when both say pinned",
+        .{ near_placement.text(), far_placement.text() },
     );
     return .{
         .summary = measured.scaled(1.0 / @as(f64, trips_per_message)),
