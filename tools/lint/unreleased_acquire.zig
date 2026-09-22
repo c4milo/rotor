@@ -57,6 +57,7 @@ pub const config: unreleased_acquire.Config = .{
         .include_directories = &.{"bench"},
     },
     .acquire_prefixes = &acquires,
+    .read_assignments = true,
 };
 
 const Rule = unreleased_acquire.Rule(config);
@@ -123,3 +124,23 @@ test "unreleased-acquire reads bench, and leaves src and tools alone" {
     try expect_findings("src/kqueue/kqueue_sync_socket.zig", leaking, &.{});
     try expect_findings("tools/lint/main.zig", leaking, &.{});
 }
+
+test "unreleased-acquire reads a loop that fills descriptors through a pointer" {
+    // `read_assignments` is what makes this a finding: the acquire binds no name of its own, so
+    // the rule reports the root of the target, `client`. This is the shape a loop uses to fill an
+    // array of descriptors, and `tools/uring_probe_multishot.zig` has it. A subscript target,
+    // `clients[index] = try open_socket(...)`, has no root to follow and the rule says so: it is
+    // invisible either way, which is the limit of what this switch buys.
+    try expect_findings("bench/echo/client.zig",
+        \\pub fn connect_all(clients: []Descriptor) !void {
+        \\    for (clients) |*client| {
+        \\        client.* = try open_socket(.ipv4);
+        \\        try connect_now(client.*, &address);
+        \\    }
+        \\}
+    , &.{client_message});
+}
+
+/// The finding the rule reports for a descriptor assigned through `client`.
+const client_message = "client is acquired here and a statement under it can fail," ++
+    " and no defer releases client";

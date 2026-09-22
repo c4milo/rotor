@@ -7,8 +7,8 @@
         // Developer tooling only, never linked into the library. Lazy, and requested only when
         // rotor is the root build, so a project that depends on rotor never fetches it.
         .pepegrillo = .{
-            .url = "git+https://github.com/c4milo/pepegrillo#4316b905767198fb78528e7cc72fcbb2bf7663fe",
-            .hash = "pepegrillo-0.0.0-axiFUAVjBwDOD6QFo7ICAVM4kCgvOpTD0uQJ7yr8UVws",
+            .url = "git+https://github.com/c4milo/pepegrillo#96bf7b689ac4095c6f4f50647ea80fc224209d5e",
+            .hash = "pepegrillo-0.0.0-axiFUBt3BwDIa-BCDU4SvGyncK3vTguLeI-Qws6eSC7i",
             .lazy = true,
         },
         // The two alternatives below are what the harness measures rotor against, pinned so that
