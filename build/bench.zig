@@ -5,9 +5,9 @@
 //! A measurement is always built ReleaseSafe, the mode rotor ships in, whatever `-Drelease` says:
 //! a Debug number describes nothing a consumer runs.
 //!
-//! The pinned competitors are wired by build/competitors.zig, under their own step.
+//! The pinned alternatives are wired by build/alternatives.zig, under their own step.
 const std = @import("std");
-const competitors = @import("competitors.zig");
+const alternatives = @import("alternatives.zig");
 const modules = @import("modules.zig");
 
 pub const Steps = struct {
@@ -20,7 +20,7 @@ pub const Steps = struct {
     /// rotor_post.zig passed `zig build test` while deliberately broken.
     program_tests: *std.Build.Step,
     /// Milestone 4's gate: the echo workload run end to end against rotor's own server, which
-    /// is the one candidate that needs no pinned competitor. It proves the whole path, from
+    /// is the one candidate that needs no pinned alternative. It proves the whole path, from
     /// starting a server to a row with its spread, and not only that the programs compile.
     echo_smoke: *std.Build.Step,
 };
@@ -57,7 +57,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     const echo = add_echo(b, target, graph);
     compile_all.dependOn(echo);
 
-    competitors.add(b, target);
+    alternatives.add(b, target);
 
     return .{
         .compile = compile_all,
@@ -93,7 +93,7 @@ const tested = [_]Tested{
     },
     .{
         .name = "bench-std-io-timers-tests",
-        .root = "bench/competitors/std_io_timers.zig",
+        .root = "bench/alternatives/std_io_timers.zig",
         .needs_loop = false,
     },
     .{
@@ -137,7 +137,7 @@ fn add_program_tests(
 }
 
 /// The echo servers and the client of the echo workload. Each is its own executable, as
-/// bench/competitors' are, so the runner starts a server, drives it with one client and stops it.
+/// bench/alternatives' are, so the runner starts a server, drives it with one client and stops it.
 /// The backend is the one this host can run, as the conformance suite's is.
 fn add_echo(
     b: *std.Build,
@@ -151,22 +151,22 @@ fn add_echo(
         .target = target,
         .optimize = .ReleaseSafe,
     });
-    // `std_io_echo` is a competitor, and it needs no pinned package: `std.Io` is the compiler's
-    // own. So it is built here and not by build/competitors.zig.
+    // `std_io_echo` is an alternative, and it needs no pinned package: `std.Io` is the compiler's
+    // own. So it is built here and not by build/alternatives.zig.
     const std_io = b.addExecutable(.{
         .name = "std_io_echo",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/competitors/std_io_echo.zig"),
+            .root_source_file = b.path("bench/alternatives/std_io_echo.zig"),
             .target = target,
             .optimize = .ReleaseSafe,
         }),
     });
     step.dependOn(&b.addInstallArtifact(std_io, .{}).step);
 
-    // The same competitor on the timer workload, built here for the same reason. It needs the
+    // The same alternative on the timer workload, built here for the same reason. It needs the
     // harness, because a candidate that measures itself prints the harness's result line.
     const std_io_timers_module = b.createModule(.{
-        .root_source_file = b.path("bench/competitors/std_io_timers.zig"),
+        .root_source_file = b.path("bench/alternatives/std_io_timers.zig"),
         .target = target,
         .optimize = .ReleaseSafe,
     });
@@ -248,7 +248,7 @@ fn add_echo(
     // The cross-core workload: decision 4's main claim, one message at a time. Each candidate
     // measures itself and prints a result line, because a message between two threads of one
     // process has no client outside it. It has its own step, because the runner drives the
-    // pinned competitors too and a caller may want only this one.
+    // pinned alternatives too and a caller may want only this one.
     const crosscore = b.step("bench-crosscore", "Build the cross-core message programs");
     const post = b.createModule(.{
         .root_source_file = b.path("bench/crosscore/rotor_post.zig"),
@@ -294,7 +294,7 @@ fn add_echo(
 
 /// Milestone 4's gate. One short run of the echo workload against rotor's server: three rounds of
 /// a second each, four connections, a small payload. It names rotor alone with `--candidates`, so
-/// it never needs `zig build bench-competitors`, and it fails when a server cannot be started,
+/// it never needs `zig build bench-alternatives`, and it fails when a server cannot be started,
 /// when a candidate stalls, or when too few runs come back to make a row.
 ///
 /// It is short, and it is not a measurement: `zig build test` runs on a machine doing other

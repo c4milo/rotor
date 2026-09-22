@@ -24,8 +24,8 @@ pub const ratio_thousandths = comparison.ratio_thousandths;
 const ns_per_s: u64 = 1_000_000_000;
 
 /// How a run spread its load over its cores. One value, because every run spreads it evenly:
-/// decision 19 withdrew the skewed rows, since no competitor spreads TCP load across cores on
-/// kqueue and `SO_REUSEPORT` cannot aim a skew at a chosen loop on either kernel.
+/// decision 19 withdrew the skewed rows, since neither libuv nor libxev spreads TCP load across
+/// cores on kqueue, and `SO_REUSEPORT` cannot aim a skew at a chosen loop on either kernel.
 ///
 /// The field stays so a published row keeps its column and its key order. A line naming any other
 /// load is refused by `report_parse.zig`, which is the point: a row may not claim a load the

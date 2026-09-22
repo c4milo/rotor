@@ -23,7 +23,7 @@ const harness = @import("harness");
 const Result = harness.Result;
 const now_ns = harness.clock.now_ns;
 
-/// The pinned commit of libxev, which `bench/competitors/README.md` records.
+/// The pinned commit of libxev, which `bench/alternatives/README.md` records.
 const version = "9ce8e8e";
 
 /// Timers armed at once, at most. The same limit rotor_timers and libuv_timers carry.

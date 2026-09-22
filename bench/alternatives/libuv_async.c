@@ -2,7 +2,7 @@
  *
  * Run:  libuv_async [--samples N] [--warmup N] [--cpu N] [--peer-cpu N]
  *
- * It is written the way that is fastest for libuv, as bench/competitors/libuv_echo.c is, so that
+ * It is written the way that is fastest for libuv, as bench/alternatives/libuv_echo.c is, so that
  * no result of the harness comes from this file. `uv_async_send` is the one call libuv offers for
  * waking another loop, and libuv's documentation says it is the only API that is safe to call
  * from a thread that does not own the loop. This uses it the way libuv's own tests do: one
@@ -36,7 +36,7 @@
 #include <sched.h>
 #endif
 
-/* The pinned release of libuv, which bench/competitors/README.md records. */
+/* The pinned release of libuv, which bench/alternatives/README.md records. */
 #define VERSION "v1.52.1"
 
 #define SAMPLES_DEFAULT 20000

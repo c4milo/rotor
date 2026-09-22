@@ -2,7 +2,7 @@
 //! they make together.
 //!
 //! One run is not evidence. The experiment that settled this is in
-//! `bench/competitors/README.md`: three alternating rounds of two shapes of the same server
+//! `bench/alternatives/README.md`: three alternating rounds of two shapes of the same server
 //! disagreed about which was faster, because the spread inside one shape was wider than the gap
 //! between the shapes. A single number from a single run would have reported either shape as the
 //! winner, with equal confidence and no warning.
@@ -39,7 +39,7 @@ pub const runs_min = 3;
 
 /// A spread at or above this many parts per hundred of the median means the runs disagree by more
 /// than a candidate comparison can see through. The threshold is the harness's own rule and not a
-/// measured constant; the experiment in `bench/competitors/README.md` saw 20 parts per hundred
+/// measured constant; the experiment in `bench/alternatives/README.md` saw 20 parts per hundred
 /// between runs of one unchanged program, so a row that wide decides nothing.
 pub const spread_unreliable_percent: u64 = 10;
 
@@ -276,7 +276,7 @@ test "the median is a run that happened, and an outlier does not move it" {
 }
 
 test "a series says when its runs disagree by more than a comparison can see through" {
-    // The three rounds of bench/competitors/README.md, the `two` shape: 78236, 82826, 93952.
+    // The three rounds of bench/alternatives/README.md, the `two` shape: 78236, 82826, 93952.
     const rounds = [_]Result{ measured(78236, 1), measured(82826, 1), measured(93952, 1) };
     const series = try Series.init(&rounds);
     try testing.expectEqual(@as(u64, 82826), series.median_per_second());

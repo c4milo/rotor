@@ -10,7 +10,7 @@
 //!
 //! **Candidates alternate within a round, not across rounds.** Round one runs every candidate,
 //! then round two runs every candidate again. A machine that drifts warmer or busier over the run
-//! hits all of them alike, which is what `bench/competitors/README.md` records as the reason one
+//! hits all of them alike, which is what `bench/alternatives/README.md` records as the reason one
 //! run of one candidate is not evidence.
 //!
 //! Only rotor's `waiting` mode appears here. `uv_async_send` and libxev's `Async` wake a sleeping

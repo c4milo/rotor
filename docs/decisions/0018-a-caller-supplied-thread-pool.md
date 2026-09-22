@@ -32,7 +32,7 @@ is. Random 4 KiB reads, rotor's own p50:
 
 Latency rises with depth while throughput stays flat, which is one server with a queue in front of
 it. At depth 32 the loop is unavailable to every connection it owns for about 2.8 ms.
-`bench/competitors/README.md` holds the full table and the libuv comparison beside it.
+`bench/alternatives/README.md` holds the full table and the libuv comparison beside it.
 
 ### What libxev does, which decision 2 did not weigh
 

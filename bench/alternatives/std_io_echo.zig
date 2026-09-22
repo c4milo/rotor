@@ -54,7 +54,7 @@ const Backend = enum { uring, threaded };
 /// builds for Linux with `threaded` alone.
 ///
 /// The candidate is therefore absent from the comparison on the pinned Zig, which
-/// `docs/decisions/0003-speed-sources.md` names as a competitor. Set this to true when a Zig
+/// `docs/decisions/0003-speed-sources.md` names as an alternative. Set this to true when a Zig
 /// that compiles it is pinned, and the candidate returns with no other change.
 const uring_compiles = false;
 

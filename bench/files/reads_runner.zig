@@ -16,7 +16,7 @@
 //! policy changes nothing there and the row would repeat `rotor-registered` under another name.
 //!
 //! **libuv's io_uring path needs two things, and this runner supplies one of them.**
-//! `bench/competitors/libuv_reads.c` calls `uv_loop_configure(UV_LOOP_USE_IO_URING_SQPOLL)` under
+//! `bench/alternatives/libuv_reads.c` calls `uv_loop_configure(UV_LOOP_USE_IO_URING_SQPOLL)` under
 //! `--backend uring`; libuv also requires `UV_USE_IO_URING` to be a positive number in the
 //! environment, and a kernel of at least 5.10.186. This runner sets that variable for itself, and
 //! children inherit it. Setting it changes nothing for the other candidates: libuv creates the
@@ -137,7 +137,7 @@ pub fn main(init: std.process.Init) !void {
     const found_count = try found(init, options, writer);
     if (found_count == 0) {
         try writer.writeAll("reads_runner: no candidate is installed; " ++
-            "run `zig build bench-echo` and `zig build bench-competitors`\n");
+            "run `zig build bench-echo` and `zig build bench-alternatives`\n");
         try writer.flush();
         return error.NoCandidate;
     }

@@ -2,7 +2,7 @@
 //!
 //! Run:  libxev_async [--samples N] [--warmup N] [--cpu N] [--peer-cpu N]
 //!
-//! It is written the way that is fastest for libxev, as `bench/competitors/libxev_echo.zig` is,
+//! It is written the way that is fastest for libxev, as `bench/alternatives/libxev_echo.zig` is,
 //! so that no result of the harness comes from a candidate written carelessly. `xev.Async` is the
 //! one thing libxev offers for waking another loop, and this uses it the way libxev's own test
 //! does: one `wait` armed with `.rearm`, so a notification never has to arm another.
@@ -21,7 +21,7 @@ const Result = harness.Result;
 const placement = harness.placement;
 const now_ns = harness.clock.now_ns;
 
-/// The pinned commit of libxev, which `bench/competitors/README.md` records.
+/// The pinned commit of libxev, which `bench/alternatives/README.md` records.
 const version = "9ce8e8e";
 
 const samples_default: u32 = 20_000;

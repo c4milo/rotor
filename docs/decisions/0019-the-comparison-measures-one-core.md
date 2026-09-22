@@ -27,9 +27,9 @@ sets `.skewed`: `bench/echo/client.zig` and `bench/echo/storm.zig` both write `.
 unconditionally. `bench/echo/echo_runner.zig` takes `--cores` and defaults it to 0, so every row
 taken so far is a one-core row.
 
-### No competitor spreads TCP load across cores on kqueue
+### Neither libuv nor libxev spreads TCP load across cores on kqueue
 
-Read from the pinned trees on 2026-09-21, and recorded in `bench/competitors/README.md`.
+Read from the pinned trees on 2026-09-21, and recorded in `bench/alternatives/README.md`.
 
 | library | what it offers on kqueue | source |
 |---|---|---|
@@ -61,12 +61,12 @@ the last listener bound — which is the outcome libuv declines to expose.
 
 ### Three consequences
 
-1. **On macOS there is no competitor for an N-core row.** rotor's `listener_per_core` shape is one
+1. **On macOS there is nothing to compare an N-core row against.** rotor's `listener_per_core` shape is one
    libuv refuses on that kernel and libxev does not offer. A row there would set rotor's N loops
-   against a competitor's one, which measures thread count.
+   against an alternative's one, which measures thread count.
 2. **On Linux every candidate could match the shape, and none of them does today.** libuv has
    `UV_TCP_REUSEPORT`, libxev needs a raw `setsockopt` the program makes itself, and `std.Io` already
-   sets it. But `bench/competitors/libuv_echo.c` and `bench/competitors/libxev_echo.zig` take no
+   sets it. But `bench/alternatives/libuv_echo.c` and `bench/alternatives/libxev_echo.zig` take no
    `--loops` and no `--cpu`, so they are single-threaded servers. The same mismatch as on macOS,
    for a different reason.
 3. **The skew decision 4 names cannot be aimed.** That record wants "few connections, long-lived, of
@@ -88,14 +88,14 @@ worth writing down which, because a pool in the wrong place would make a row les
 threads by default (`src/threadpool.c:39`). libxev runs file work on a pool the caller supplies and
 answers `EPERM` when there is none (`src/backend/kqueue.zig:870`). rotor performed the read inline on
 the loop thread, so `--depth 32` was depth 1 in fact, and
-`bench/competitors/README.md` measured the gap: parity at depth 1, and libuv ahead by 3.8 times at
+`bench/alternatives/README.md` measured the gap: parity at depth 1, and libuv ahead by 3.8 times at
 depth 32. `0018-a-caller-supplied-thread-pool.md` closes it, and `bench/files/reads_runner.zig`
 carries a `rotor-offload` candidate.
 
-**A pool does not belong to the echo or storm rows.** Neither competitor uses one for sockets on
+**A pool does not belong to the echo or storm rows.** Neither alternative uses one for sockets on
 kqueue: libuv's pool runs file operations and DNS, libxev's runs file work, and both serve a socket
 from the loop thread. The harness connects to `127.0.0.1` by address, so no candidate resolves a
-name. Giving `rotor_echo` a pool would hand rotor threads that no competitor has on that workload,
+name. Giving `rotor_echo` a pool would hand rotor threads that neither libuv nor libxev has on that workload,
 which is the mirror of the defect this record is about.
 
 So the socket workloads are one loop against one loop, and the file workloads are one pool against
@@ -139,7 +139,7 @@ it as measured.
 **Per-loop ports, with the client aiming traffic at one of them.** The only mechanism that gives a
 skew the harness chooses, and the only one that behaves the same on both kernels, because it touches
 no `SO_REUSEPORT`. Rejected: it is not how a `SO_REUSEPORT` deployment works, so the row would not
-describe a deployment anyone runs, and no competitor can be entered against it on macOS anyway. The
+describe a deployment anyone runs, and neither libuv nor libxev can be entered against it on macOS anyway. The
 row would be rotor against itself.
 
 **Heavy-tailed connection weighting on a shared port**, reported as statistical skew. Closest to the
@@ -148,17 +148,17 @@ every connection lands on one loop and on Linux the split varies per run. The ro
 kernel's choice.
 
 **Payload skew**, some connections at 64 KiB and the rest at 4 KiB. Rejected for the same reason,
-and it moves the buffer-sizing variable that `bench/competitors/README.md` already had to correct
+and it moves the buffer-sizing variable that `bench/alternatives/README.md` already had to correct
 once, when a rotor sized for 8 KiB was entered against candidates holding 64 KiB.
 
 **Give `libuv_echo` and `libxev_echo` a `--loops` option, and keep N-core rows on Linux only.** The
 strongest alternative, and it is not rejected on the merits: it would make the Linux N-core row a
 real comparison, since all four candidates can run a loop per core there. Rejected on scope. It
-means writing multi-loop servers for two competitors, and milestone 4 has not yet published a
+means writing multi-loop servers for two alternatives, and milestone 4 has not yet published a
 one-core row. **Worth reopening** once the one-core rows exist, if the threading claim needs evidence
 of its own.
 
-**Keep the rows and label them honestly**, as rotor's N loops against a competitor's one. Rejected: a
+**Keep the rows and label them honestly**, as rotor's N loops against an alternative's one. Rejected: a
 reader compares the numbers in a table whatever the caption says, and a row that needs a caption to
 avoid misleading is worse than no row.
 
@@ -179,8 +179,8 @@ what changed.
 
 `CLAUDE.md`, milestone 4: the workload list drops "each on 1 core and N cores, even and skewed".
 
-`bench/competitors/README.md` already holds the kqueue finding, under "No competitor spreads TCP load
-across cores on kqueue", and needs no change.
+`bench/alternatives/README.md` already holds the kqueue finding, under "Neither libuv nor libxev
+spreads TCP load across cores on kqueue", and needs no change.
 
 ## How it is checked
 
@@ -203,4 +203,4 @@ across cores on kqueue", and needs no change.
    shape at all.
 3. **When does the Linux-only N-core row come back?** Proposed: when the one-core rows are published
    and the threading claim needs its own evidence. The work is the fourth alternative above, and it
-   is two competitor servers, not a harness change.
+   is two alternative servers, not a harness change.

@@ -4,7 +4,7 @@
 //! It has four threads, matching libuv's default (`src/threadpool.c:39`,
 //! `static uv_thread_t default_threads[4]`). This feeds a row comparing rotor's offload with
 //! libuv's pool. A pool of a different size would measure the sizing instead of the loops;
-//! `bench/competitors/README.md` records a case where that happened with buffers.
+//! `bench/alternatives/README.md` records a case where that happened with buffers.
 //!
 //! Workers block instead of spinning. Four spinning threads would use four cores and slow every
 //! other measurement on the machine. Each worker waits on a `std.Io.Event`, which
@@ -116,7 +116,7 @@ const testing = std.testing;
 
 test "the pool matches libuv's thread count, and its queue holds a full run" {
     // Four matches libuv's default. A different size would measure the sizing instead of the
-    // loops; `bench/competitors/README.md` records a case where that happened with buffers.
+    // loops; `bench/alternatives/README.md` records a case where that happened with buffers.
     try testing.expectEqual(@as(u16, 4), workers);
     try testing.expect(queue_max >= 128);
     try testing.expect(std.math.isPowerOfTwo(queue_max));

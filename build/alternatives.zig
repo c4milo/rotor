@@ -1,31 +1,31 @@
-//! `zig build bench-competitors`: fetch the pinned libuv and libxev, build each from its source,
-//! and install one echo server and one size probe per competitor under zig-out/bin. build.zig
-//! stays short (CLAUDE.md, Layout), so the wiring is in this file. bench/competitors/README.md
+//! `zig build bench-alternatives`: fetch the pinned libuv and libxev, build each from its source,
+//! and install one echo server and one size probe per alternative under zig-out/bin. build.zig
+//! stays short (CLAUDE.md, Layout), so the wiring is in this file. bench/alternatives/README.md
 //! holds the pins.
 //!
-//! Both competitors are lazy packages in build.zig.zon, and Zig fetches a lazy package when the
+//! Both alternatives are lazy packages in build.zig.zon, and Zig fetches a lazy package when the
 //! build script calls `lazyDependency` for it. The build script runs the same way for every step,
 //! and nothing tells it which step was asked for. So this file calls `lazyDependency` only under
-//! the build option `-Dcompetitors`, and `zig build bench-competitors` without that option runs
-//! `zig build bench-competitors -Dcompetitors` as a child process. The result: `zig build test`
-//! never downloads or compiles a competitor, and a project that depends on rotor never reaches
-//! this file at all. bench/competitors/README.md records the experiment, and what Zig does with a
+//! the build option `-Dalternatives`, and `zig build bench-alternatives` without that option runs
+//! `zig build bench-alternatives -Dalternatives` as a child process. The result: `zig build test`
+//! never downloads or compiles an alternative, and a project that depends on rotor never reaches
+//! this file at all. bench/alternatives/README.md records the experiment, and what Zig does with a
 //! package its global cache already holds.
 //!
-//! A competitor is built the way its own users ship it, optimized and with its assertions
+//! A alternative is built the way its own users ship it, optimized and with its assertions
 //! compiled out, so that no result of the harness comes from a handicapped build.
 const std = @import("std");
 
-/// The mode every competitor is built in, which is the mode that favours them. libxev builds its
+/// The mode every alternative is built in, which is the mode that favours them. libxev builds its
 /// own benchmarks ReleaseFast (its build.zig, line 213). Under ReleaseFast Zig compiles C with
 /// NDEBUG defined, which removes libuv's asserts. rotor itself ships ReleaseSafe.
-const competitor_optimize: std.builtin.OptimizeMode = .ReleaseFast;
+const alternative_optimize: std.builtin.OptimizeMode = .ReleaseFast;
 
 /// What `uv_cflags` and the C standard settings of libuv's CMakeLists.txt amount to for clang:
 /// lines 20 to 23 select C11 with GNU extensions, line 168 adds `-fno-strict-aliasing`.
 const libuv_flags = [_][]const u8{ "-std=gnu11", "-fno-strict-aliasing" };
 
-/// The flags of rotor's own C programs under bench/competitors: libuv's, because `uv.h` names
+/// The flags of rotor's own C programs under bench/alternatives: libuv's, because `uv.h` names
 /// POSIX types that glibc hides under a strict `-std=c11`, plus every warning as an error.
 const libuv_program_flags = libuv_flags ++ [_][]const u8{ "-Wall", "-Wextra", "-Werror" };
 
@@ -114,15 +114,15 @@ const LibuvPlatform = struct {
     defines: []const Define,
 };
 
-/// Declares `zig build bench-competitors`. Called only when rotor is the root build.
+/// Declares `zig build bench-alternatives`. Called only when rotor is the root build.
 pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     const requested = b.option(
         bool,
-        "competitors",
-        "Fetch and build the pinned competitors; `zig build bench-competitors` sets it itself",
+        "alternatives",
+        "Fetch and build the pinned alternatives; `zig build bench-alternatives` sets it itself",
     ) orelse false;
     const step = b.step(
-        "bench-competitors",
+        "bench-alternatives",
         "Fetch the pinned libuv and libxev; install their echo servers, size probes and timers",
     );
     if (!requested) {
@@ -149,14 +149,14 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) void {
     step.dependOn(programs.add_zig("libxev_timers", true));
 }
 
-/// `zig build bench-competitors -Dcompetitors`, run from the build root for the same target.
+/// `zig build bench-alternatives -Dalternatives`, run from the build root for the same target.
 fn add_child_build(b: *std.Build, target: std.Build.ResolvedTarget) *std.Build.Step {
     const triple = target.query.zigTriple(b.allocator) catch @panic("OOM");
     const child = b.addSystemCommand(&.{
         b.graph.zig_exe,
         "build",
-        "bench-competitors",
-        "-Dcompetitors",
+        "bench-alternatives",
+        "-Dalternatives",
         b.fmt("-Dtarget={s}", .{triple}),
     });
     child.setCwd(b.path(""));
@@ -184,7 +184,7 @@ fn add_libuv(
     const platform = libuv_platform(target);
     const module = b.createModule(.{
         .target = target,
-        .optimize = competitor_optimize,
+        .optimize = alternative_optimize,
         .link_libc = true,
     });
     module.addIncludePath(libuv.path("include"));
@@ -203,7 +203,7 @@ fn add_libuv(
     return b.addLibrary(.{ .name = "uv", .linkage = .static, .root_module = module });
 }
 
-/// What every program of bench/competitors is built from. A program is one source file named
+/// What every program of bench/alternatives is built from. A program is one source file named
 /// after it, and it is installed under that name.
 const Programs = struct {
     b: *std.Build,
@@ -211,7 +211,7 @@ const Programs = struct {
     libuv: *std.Build.Dependency,
     libxev: *std.Build.Dependency,
 
-    /// bench/competitors/`name`.c, compiled against the pinned libuv's headers and linked against
+    /// bench/alternatives/`name`.c, compiled against the pinned libuv's headers and linked against
     /// `library` when the program calls into libuv.
     fn add_c(
         programs: Programs,
@@ -221,12 +221,12 @@ const Programs = struct {
         const b = programs.b;
         const module = b.createModule(.{
             .target = programs.target,
-            .optimize = competitor_optimize,
+            .optimize = alternative_optimize,
             .link_libc = true,
         });
         module.addIncludePath(programs.libuv.path("include"));
         module.addCSourceFiles(.{
-            .files = &.{b.fmt("bench/competitors/{s}.c", .{name})},
+            .files = &.{b.fmt("bench/alternatives/{s}.c", .{name})},
             .flags = &libuv_program_flags,
         });
         if (library) |linked| module.linkLibrary(linked);
@@ -234,23 +234,23 @@ const Programs = struct {
         return &b.addInstallArtifact(program, .{}).step;
     }
 
-    /// bench/competitors/`name`.zig, which imports the pinned libxev as `xev`.
-    /// bench/competitors/`name`.zig, which imports the pinned libxev as `xev`. `wants_harness`
+    /// bench/alternatives/`name`.zig, which imports the pinned libxev as `xev`.
+    /// bench/alternatives/`name`.zig, which imports the pinned libxev as `xev`. `wants_harness`
     /// adds the harness too, for a program that prints a result line: the line's format belongs
     /// to bench/harness/report.zig, and a candidate that hand-wrote it would be a second copy of
     /// a format only a round-trip test in that file pins.
     fn add_zig(programs: Programs, name: []const u8, wants_harness: bool) *std.Build.Step {
         const b = programs.b;
         const module = b.createModule(.{
-            .root_source_file = b.path(b.fmt("bench/competitors/{s}.zig", .{name})),
+            .root_source_file = b.path(b.fmt("bench/alternatives/{s}.zig", .{name})),
             .target = programs.target,
-            .optimize = competitor_optimize,
+            .optimize = alternative_optimize,
         });
         module.addImport("xev", programs.libxev.module("xev"));
         if (wants_harness) module.addImport("harness", b.createModule(.{
             .root_source_file = b.path("bench/harness/harness.zig"),
             .target = programs.target,
-            .optimize = competitor_optimize,
+            .optimize = alternative_optimize,
         }));
         const program = b.addExecutable(.{ .name = name, .root_module = module });
         return &b.addInstallArtifact(program, .{}).step;

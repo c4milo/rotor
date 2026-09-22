@@ -2,7 +2,7 @@
 //!
 //! Run:  rotor_echo PORT        Stop it by closing every connection, or with SIGTERM.
 //!
-//! It is written the way that is fastest for rotor, as `bench/competitors/libxev_echo.zig` is
+//! It is written the way that is fastest for rotor, as `bench/alternatives/libxev_echo.zig` is
 //! written the way that is fastest for libxev, so that no result of the harness comes from a
 //! candidate written carelessly. That means every source decision 3 claims:
 //!
@@ -105,7 +105,7 @@ var sending: [connections_max]Sending = undefined;
 /// True while the descriptor is one this server accepted.
 var open: [connections_max]bool = undefined;
 
-/// How the server reads (decision 3, and the question `bench/competitors/README.md` names as the
+/// How the server reads (decision 3, and the question `bench/alternatives/README.md` names as the
 /// first thing to settle before any 64 KiB claim).
 ///
 ///   - `group`: one multishot receive per connection from a provided-buffer group. Every
@@ -232,7 +232,7 @@ fn serve(index: u32, listener: core.Descriptor) void {
     }
 }
 
-/// The line the harness waits for before it connects, as it does for the competitors'.
+/// The line the harness waits for before it connects, as it does for the alternatives'.
 fn announce(init: std.process.Init, port: u16, placed: placement.Placement) !void {
     var out_buffer: [160]u8 = undefined;
     var out = std.Io.File.stdout().writer(init.io, &out_buffer);

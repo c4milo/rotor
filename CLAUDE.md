@@ -222,18 +222,18 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   machines, and decision 8's experiment is run and reported.
 - Milestone 4: the harness and the comparison. A candidate is run several times, alternating with
   the others so drift hits them equally, and a row carries the spread beside the median: one run
-  of one candidate is not evidence, and `bench/competitors/README.md` records the experiment that
+  of one candidate is not evidence, and `bench/alternatives/README.md` records the experiment that
   showed it. That file also records what each candidate holds per connection, because a
   comparison that does not match those is measuring the sizing.
   `zig build test-bench-echo` is the gate: the echo workload end to end against rotor's server.
-  `zig build bench-echo` builds the servers and the runner; `zig build bench-competitors` adds
+  `zig build bench-echo` builds the servers and the runner; `zig build bench-alternatives` adds
   the pinned libuv and libxev; `./zig-out/bin/echo_runner` runs the comparison, and
   `--workload storm` runs the accept storm against the same servers. Echo at N connections with
   4 KiB and 64 KiB payloads, sequential and random O_DIRECT reads and writes, timer churn, accept
   storm; **on 1 core**, by the owner's ruling of 2026-09-21; one cross-core message on its own.
   Throughput and p50, p99, p999.
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
-  (`bench/competitors/README.md`), in the same harness, in the same run, the losing runs
+  (`bench/alternatives/README.md`), in the same harness, in the same run, the losing runs
   included.
 
 ## Where the work stands
@@ -263,9 +263,9 @@ decision 8's experiment. No cell is filled yet. The owner made `orbstack` a name
 target, needs a machine of the family stompy builds for, and that machine is not named.
 
 The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
-2026-09-21 and decision 19 records it, amending decision 4. The reason: no competitor spreads TCP
-load across cores on kqueue, and libuv declines the capability there on purpose
-(`bench/competitors/README.md`). `echo_runner` takes no `--cores`, `report.zig`'s `Load` has one
+2026-09-21 and decision 19 records it, amending decision 4. The reason: neither libuv nor libxev
+spreads TCP load across cores on kqueue, and libuv declines the capability there on purpose
+(`bench/alternatives/README.md`). `echo_runner` takes no `--cores`, `report.zig`'s `Load` has one
 value, and `rotor_echo` keeps `--cpu` and `--loops` for a person running it by hand.
 
 **The `mac` machine is busy.** An attempt on 2026-09-20 met a load average of 30 from another

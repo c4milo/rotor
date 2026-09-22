@@ -84,7 +84,7 @@ const memory_bytes = Loop.memory_bytes(options_template);
 /// How a loop waits for its peer's message.
 const Mode = enum {
     /// Blocks until the message comes, so the number includes waking a sleeping receiver. The
-    /// only mode a competitor can be compared against.
+    /// only mode an alternative can be compared against.
     waiting,
     /// Never blocks, so the number is the message alone. It costs a core that does nothing else.
     spinning,
@@ -104,7 +104,7 @@ const Mode = enum {
 
     /// The candidate name a row of this mode carries. Only `waiting` is rotor against another
     /// library; the other two are rotor against itself, and a table must not read as though a
-    /// competitor had been offered the same choice.
+    /// alternative had been offered the same choice.
     fn candidate(mode: Mode) []const u8 {
         return switch (mode) {
             .waiting => "rotor",

@@ -2,7 +2,7 @@
 //! `Completion`, for every backend of the target it was built for. Row 7 of the table in
 //! docs/decisions/0003-speed-sources.md cites these numbers.
 //!
-//! Built by `zig build bench-competitors` against the libxev pinned in build.zig.zon.
+//! Built by `zig build bench-alternatives` against the libxev pinned in build.zig.zon.
 const std = @import("std");
 const builtin = @import("builtin");
 const xev = @import("xev");

@@ -15,7 +15,7 @@
 //! the shape and not a defect.
 //!
 //! The tasks are started with `Group.concurrent` and not `Group.async`, for the reason
-//! `bench/competitors/std_io_echo.zig` gives at its own call: `async` is allowed to run a task on
+//! `bench/alternatives/std_io_echo.zig` gives at its own call: `async` is allowed to run a task on
 //! the calling thread, and a task here never returns until the run is over, so the first timer
 //! would be the only timer. `concurrent` is the call that promises a task runs beside this one.
 //!
@@ -33,7 +33,7 @@
 //!
 //!   - `threaded`: `std.Io.Threaded`, a thread pool with a blocking call per operation.
 //!   - `uring`: `std.Io.Uring`, fibers over io_uring. It does not compile on the pinned Zig, which
-//!     `uring_compiles` and `bench/competitors/README.md` both record.
+//!     `uring_compiles` and `bench/alternatives/README.md` both record.
 //!
 //! It prints the one result line `bench/harness/report.zig` owns, which every candidate of every
 //! workload prints.
@@ -45,7 +45,7 @@ const Io = std.Io;
 const Result = harness.Result;
 const now_ns = harness.clock.now_ns;
 
-/// The pinned Zig, which `bench/competitors/README.md` records. `std.Io` is the compiler's own, so
+/// The pinned Zig, which `bench/alternatives/README.md` records. `std.Io` is the compiler's own, so
 /// the version of this candidate is the compiler's version and nothing is fetched for it.
 const version = "0.16.0";
 
@@ -63,8 +63,8 @@ const per_mille: u64 = 1000;
 
 /// False while `std.Io.Uring` does not compile, which on Zig 0.16.0 is always: `dirOpen` returns
 /// an error its own `Dir.OpenError` does not name, and naming the type is enough to reach it.
-/// `bench/competitors/std_io_echo.zig` prints the compiler's message, and
-/// `bench/competitors/README.md` holds the record of it. Set this to true when a Zig that builds
+/// `bench/alternatives/std_io_echo.zig` prints the compiler's message, and
+/// `bench/alternatives/README.md` holds the record of it. Set this to true when a Zig that builds
 /// it is pinned, and the candidate returns with no other change.
 const uring_compiles = false;
 

@@ -1,8 +1,8 @@
-# Competitors
+# Alternatives
 
 This directory holds what the harness measures rotor against: the pinned version of each
-competitor, one echo server written on each, and one probe that prints the size of each
-competitor's per-operation structure. It also records how every libuv and libxev cell of the table
+alternative, one echo server written on each, and one probe that prints the size of each
+alternative's per-operation structure. It also records how every libuv and libxev cell of the table
 in `docs/decisions/0003-speed-sources.md` was settled. The rule is the project's: a claim is
 measured or read from a source, never recalled.
 
@@ -31,7 +31,7 @@ quiet row; it is a row with no evidence either way.
 
 ## The pins
 
-| competitor | source | pin | package hash in `build.zig.zon` |
+| alternative | source | pin | package hash in `build.zig.zon` |
 |---|---|---|---|
 | libuv | `https://github.com/libuv/libuv` | tag `v1.52.1`, commit `1cfa32ff59c076ffb6ed735bbc8c18361558661f` | `N-V-__8AACwTRQDmmfDj0GPrcObUmVnktArTdpjkEvRZXTx0` |
 | libxev | `https://github.com/mitchellh/libxev` | commit `9ce8e8e6ff89e583258a7f8e7adeeeaeae8611bf` | `libxev-0.0.0-86vtcwIRFADbH4hk-EjROXxlrKIRPQdA41XiTSytYO-F` |
@@ -50,32 +50,32 @@ How each pin was chosen:
 
 Zig checks the package hash against the content it unpacks, so a tag that moved or an archive
 that changed fails the fetch. To move a pin, run `zig fetch --save=<name> <url>`, confirm that
-`.lazy = true` is still set, read the competitor's columns of the table again, and correct the
+`.lazy = true` is still set, read the alternative's columns of the table again, and correct the
 table first.
 
-## How the competitors are built
+## How the alternatives are built
 
 ```bash
-zig build bench-competitors
+zig build bench-alternatives
 ```
 
 The step fetches both packages, compiles them, and installs four programs under `zig-out/bin`:
-`libuv_echo`, `libuv_sizes`, `libxev_echo` and `libxev_sizes`. `build/competitors.zig` holds the
+`libuv_echo`, `libuv_sizes`, `libxev_echo` and `libxev_sizes`. `build/alternatives.zig` holds the
 wiring.
 
 - **Nothing else fetches them.** Both packages are lazy, and Zig fetches a lazy package when the
   build script calls `lazyDependency` for it. The build script cannot see which step was asked
-  for, so `build/competitors.zig` calls `lazyDependency` only under the option `-Dcompetitors`,
-  and the step runs `zig build bench-competitors -Dcompetitors` as a child process. Checked by
+  for, so `build/alternatives.zig` calls `lazyDependency` only under the option `-Dalternatives`,
+  and the step runs `zig build bench-alternatives -Dalternatives` as a child process. Checked by
   moving both packages out of `zig-pkg/` and building with an empty global cache:
-  `zig build test` passed and fetched neither, and `zig build bench-competitors` then fetched
+  `zig build test` passed and fetched neither, and `zig build bench-alternatives` then fetched
   both. A project that depends on rotor returns from `build.zig` before it reaches this wiring.
 - **A package the global cache already holds is a different case.** Zig 0.16 unpacks it into
   `zig-pkg/` on any step, lazy or not. That reads the local cache and not the network: with the
   network blocked, `zig build test` still passed and unpacked both. It compiles nothing, because
-  no step that `zig build test` runs depends on a competitor.
+  no step that `zig build test` runs depends on an alternative.
 - **`zig build test` does not compile these programs**, because compiling them needs the
-  competitors. Run `zig build bench-competitors` after a Zig bump or a pin bump.
+  alternatives. Run `zig build bench-alternatives` after a Zig bump or a pin bump.
 - **libuv ships no `build.zig`.** Zig's C compiler builds it as a static library from the source
   lists of its `CMakeLists.txt`: `uv_sources` (lines 175 to 187), the Unix list (237 to 255),
   and the macOS (283 to 312) or Linux (283, 284, 327 to 334) additions, with the definitions of
@@ -217,7 +217,7 @@ that function: naming the type is enough, because every arm of a switch is analy
 run-time flag says. So `std_io_echo` keeps the arm behind `uring_compiles`, which is false, and
 the program builds for Linux with `threaded` alone.
 
-`docs/decisions/0003-speed-sources.md` names `std.Io.Uring` as a competitor, and it cannot be
+`docs/decisions/0003-speed-sources.md` names `std.Io.Uring` as an alternative, and it cannot be
 one on this compiler. Set `uring_compiles` to true when a Zig that builds it is pinned; nothing
 else changes.
 
@@ -352,7 +352,7 @@ available. Nothing above has been re-taken.
 ### `std.Io` is the fourth candidate, and its shape is the row
 
 `std.Io` offers no timer. It offers `sleep`, and a task that sleeps. So N timers written against
-the interface is N tasks, and `bench/competitors/std_io_timers.zig` writes it that way because
+the interface is N tasks, and `bench/alternatives/std_io_timers.zig` writes it that way because
 nothing else the interface offers arms a timer. Under `std.Io.Threaded` a sleeping task holds the
 worker thread it runs on, because `sleep` there is `clock_nanosleep` on that thread. So **N timers
 is N threads**.
@@ -391,10 +391,10 @@ it and skips it on any other host.
 ## The cross-core message, and one way its candidates are not measured alike
 
 `crosscore_runner` compares one cross-core message: rotor's `post`, libuv's `uv_async_send` and
-libxev's `xev.Async`. All three block between messages, because neither competitor offers anything
+libxev's `xev.Async`. All three block between messages, because neither alternative offers anything
 else. There is no libuv or libxev call that polls for a notification without sleeping, so rotor is
 compared in its `waiting` mode alone; `bench/crosscore/rotor_post.zig` keeps rotor's two other
-modes and names them in the candidate column, so no table reads as though a competitor had been
+modes and names them in the candidate column, so no table reads as though an alternative had been
 offered the same choice.
 
 **The percentiles are not computed the same way in all three.** rotor and libxev record into
@@ -504,7 +504,7 @@ The source says an I/O call allocates nothing: it is a blocking syscall on the c
 (`Io/Threaded.zig:12604`). The allocator serves one call per task that `async` or `concurrent`
 starts (`Io/Threaded.zig:676`).
 
-## No competitor spreads TCP load across cores on kqueue
+## Neither libuv nor libxev spreads TCP load across cores on kqueue
 
 Read on 2026-09-21, from the pinned trees, when issue 1 asked how libuv and libxev produce a
 loop-per-core server on kqueue. The answer is that neither does, and libuv declines the capability

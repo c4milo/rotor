@@ -28,7 +28,7 @@ Two things are wrong with it, and the second is the one that matters.
 
 The measured lateness of rotor's timers therefore includes rotor's re-arm, and libuv's does not:
 `uv_timer_start` takes a repeat and re-arms inside the loop. The comparison in
-`bench/competitors/README.md` charges rotor for something the API forces on it.
+`bench/alternatives/README.md` charges rotor for something the API forces on it.
 
 ## Decision
 

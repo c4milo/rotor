@@ -159,7 +159,7 @@ The harness measures every workload skewed as well as even, and reports the skew
 they are bad. They will be: a shared queue with stealing beats shared-nothing under skew, and
 the numbers should say by how much.
 
-**Withdrawn on 2026-09-21 by decision 19.** No competitor spreads TCP load across cores on kqueue,
+**Withdrawn on 2026-09-21 by decision 19.** Neither libuv nor libxev spreads TCP load across cores on kqueue,
 so there is nothing to compare a skewed row against, and `SO_REUSEPORT` cannot aim the skew at a
 chosen loop on either kernel. This claim is argued and not measured, and no document may present it
 as measured.

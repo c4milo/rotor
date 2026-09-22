@@ -10,16 +10,16 @@
 //! 2 of every candidate, and so on, rather than all the rounds of one candidate and then the
 //! next. A machine that speeds up or slows down during the run then moves every candidate
 //! together, instead of moving whichever candidate held the machine while it drifted. The
-//! experiment that made this necessary is in `bench/competitors/README.md`: three rounds of two
+//! experiment that made this necessary is in `bench/alternatives/README.md`: three rounds of two
 //! shapes of one unchanged server disagreed about which was faster.
 //!
 //! A candidate whose server is not installed is skipped and named, because `libuv_echo` and
-//! `libxev_echo` come from `zig build bench-competitors`, which fetches and builds two libraries
+//! `libxev_echo` come from `zig build bench-alternatives`, which fetches and builds two libraries
 //! and is not part of `zig build test`.
 //!
 //! **Every candidate runs one loop, unpinned.** Decision 19 withdrew the core sweep and the skewed
-//! rows: no competitor spreads TCP load across cores on kqueue, so an N-core row would set rotor's
-//! loops against a competitor's one and measure the thread count. `rotor_echo` still takes `--cpu`
+//! rows: neither libuv nor libxev spreads TCP load across cores on kqueue, so an N-core row would set rotor's
+//! loops against an alternative's one and measure the thread count. `rotor_echo` still takes `--cpu`
 //! and `--loops` for a person running it by hand; this runner passes neither.
 //!
 //! Every row carries the count of its runs and their spread, and `harness.series` marks a row
@@ -48,7 +48,7 @@ const Candidate = struct {
     /// picks a buffer from a pool, so its buffer is a choice; libuv, libxev and `std.Io` each
     /// hold 64 KiB per connection and have nothing to set. A comparison of a rotor sized for
     /// 8 KiB against candidates holding 64 KiB measured the sizing and not the loops: the
-    /// 64 KiB rows halved, and `bench/competitors/README.md` records it.
+    /// 64 KiB rows halved, and `bench/alternatives/README.md` records it.
     takes_buffer_bytes: bool = false,
 };
 
@@ -114,7 +114,7 @@ const Options = struct {
     seconds: u64 = seconds_default,
     warmup_seconds: u64 = warmup_seconds_default,
     /// When set, only the candidates named here run. `zig build test`'s smoke run names rotor
-    /// alone, so the gate needs no pinned competitor.
+    /// alone, so the gate needs no pinned alternative.
     only: []const u8 = "",
     port_base: u16 = port_first_default,
     workload: Workload = .echo,
@@ -254,8 +254,8 @@ fn one_run(
         used += 2;
     }
     // No `--cpu` and no `--loops`. Every candidate runs one loop, unpinned, because decision 19
-    // withdrew the core sweep: no competitor spreads TCP load across cores on kqueue, so an N-core
-    // row would compare rotor's loops against a competitor's one. `rotor_echo` still takes both
+    // withdrew the core sweep: neither libuv nor libxev spreads TCP load across cores on kqueue, so an N-core
+    // row would compare rotor's loops against an alternative's one. `rotor_echo` still takes both
     // options for a person running it by hand.
     const argv = argv_buffer[0..used];
 

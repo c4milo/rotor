@@ -9,7 +9,7 @@ measurement. Each claim names the harness result that confirms or kills it.
 
 "Faster than libuv, libxev and std.Io" is a hope until each source of speed is named, costed,
 and compared with what the others already do. This record lists seven sources. For each it
-gives the cost removed, the arithmetic, the test, and which competitor already has it.
+gives the cost removed, the arithmetic, the test, and which alternative already has it.
 
 ## What the others do
 
@@ -23,8 +23,8 @@ table name the file and line that settles each. The pins:
   release tag. This commit builds with Zig 0.16.0.
 - `std.Io`: the Zig 0.16.0 sources on the development machine.
 
-`zig build bench-competitors` builds both libraries from these pins, and
-`bench/competitors/README.md` records how each cell was settled. The libuv and libxev columns were
+`zig build bench-alternatives` builds both libraries from these pins, and
+`bench/alternatives/README.md` records how each cell was settled. The libuv and libxev columns were
 first written from memory. Reading the sources left five of their fourteen cells as they were,
 added detail to four, and corrected five: libuv's rows 3 and 7, and libxev's rows 3, 4 and 7. It
 also corrected row 5 of `std.Io.Threaded`. When a pin moves, the columns are read again before any
@@ -251,4 +251,4 @@ is made of small ones.
 1. Is CPU per operation, and the throughput per core that follows from it, the right headline,
    given that the arithmetic rules out a latency headline?
 2. Answered on 2026-09-19: the libuv and libxev columns are verified against the pinned sources
-   above, and five cells changed. `bench/competitors/README.md` holds the pins.
+   above, and five cells changed. `bench/alternatives/README.md` holds the pins.

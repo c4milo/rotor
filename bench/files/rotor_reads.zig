@@ -6,7 +6,7 @@
 //!                        [--file-bytes N] [--file-policy blocking|offload]
 //!
 //! The name says reads because that is what it measured first, and three decision records and
-//! `bench/competitors/README.md` refer to it. `--transfer write` runs the other direction.
+//! `bench/alternatives/README.md` refer to it. `--transfer write` runs the other direction.
 //!
 //! **A write run never touches the path it is given.** It appends `write_suffix` and creates that
 //! file. A read changes nothing; a write overwrites whole blocks, so it may not overwrite a file

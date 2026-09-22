@@ -2,10 +2,10 @@
  * in docs/decisions/0003-speed-sources.md cites: the per-operation requests `uv_write_t` and
  * `uv_fs_t`, and the per-connection handle `uv_tcp_t`.
  *
- * Built by `zig build bench-competitors` against the libuv pinned in build.zig.zon. It calls
+ * Built by `zig build bench-alternatives` against the libuv pinned in build.zig.zon. It calls
  * nothing in libuv, so it needs the headers alone and links no library.
  *
- * bench/competitors/README.md records what it printed on each target, and the Linux numbers there
+ * bench/alternatives/README.md records what it printed on each target, and the Linux numbers there
  * were read from a cross-compile's assembly, because a Linux binary does not run on the
  * development machine. Running this on the `linux` machine is what confirms them. */
 #include <stdalign.h>

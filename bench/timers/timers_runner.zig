@@ -14,20 +14,20 @@
 //! throughput column and the percentile columns have to be read together.
 //!
 //! **libuv timers are whole milliseconds.** `uv_timer_start` takes its timeout in milliseconds, so
-//! `bench/competitors/libuv_timers.c` refuses a period it cannot state exactly, and this runner's
+//! `bench/alternatives/libuv_timers.c` refuses a period it cannot state exactly, and this runner's
 //! default period is one it can. A period under 1,000 microseconds compares rotor against a libuv
 //! that was asked for something else, so the runner refuses it too rather than printing a row that
 //! looks like a comparison.
 //!
 //! **`std.Io` has no timer, and that is why its row is here.** It has `sleep`, and a task that
 //! sleeps, so N timers is N tasks; under `std.Io.Threaded` a sleeping task holds the worker thread
-//! it runs on, so N timers is N threads. `bench/competitors/std_io_timers.zig` writes it that way
+//! it runs on, so N timers is N threads. `bench/alternatives/std_io_timers.zig` writes it that way
 //! because nothing else the interface offers arms a timer, and this row is what the shape costs.
 //!
 //! **A candidate here is a program and its arguments, not a program.** Two candidates share
 //! `std_io_timers`, which takes `--backend`, the way `bench/files/reads_runner.zig` has two
 //! candidates per program. `std.Io.Uring` is Linux-only, and it does not compile on the pinned Zig
-//! at all, which `bench/competitors/README.md` records.
+//! at all, which `bench/alternatives/README.md` records.
 const std = @import("std");
 const builtin = @import("builtin");
 const harness = @import("harness");
@@ -113,7 +113,7 @@ pub fn main(init: std.process.Init) !void {
     const installed = try found(init, options, writer);
     if (installed == 0) {
         try writer.writeAll("timers_runner: no candidate is installed; " ++
-            "run `zig build bench-echo` and `zig build bench-competitors`\n");
+            "run `zig build bench-echo` and `zig build bench-alternatives`\n");
         try writer.flush();
         return error.NoCandidate;
     }
@@ -298,9 +298,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     }
 }
 
-/// Refuses a period the competitors cannot state exactly. libuv and libxev both take their
+/// Refuses a period the alternatives cannot state exactly. libuv and libxev both take their
 /// timeout as whole milliseconds, so a period under one, or one that is not a whole number of
-/// them, would compare rotor against a competitor that was asked for something else. It is a
+/// them, would compare rotor against an alternative that was asked for something else. It is a
 /// function of its own so a test can reach it: the check was inside `parse` first, and deleting
 /// it there failed no test.
 fn check_period(period_us: u64) !void {

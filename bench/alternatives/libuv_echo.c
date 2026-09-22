@@ -4,7 +4,7 @@
  *
  * It is written the way that is fastest for libuv, so that no result of the harness comes from
  * this file. What "fastest" means was an open question, so this program answers it: it holds both
- * candidate shapes and `--buffers` picks one, and bench/competitors/README.md records which won
+ * candidate shapes and `--buffers` picks one, and bench/alternatives/README.md records which won
  * and by how much.
  *
  *   - `one`: one buffer per connection. The echo write borrows it, so reading has to stop until

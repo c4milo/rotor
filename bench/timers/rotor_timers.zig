@@ -136,7 +136,7 @@ const output_buffer_bytes = 1024;
 /// The result line, built field by field rather than by `Result.init`, because that takes a
 /// histogram and this workload keeps its samples exactly. Every candidate of this workload sorts
 /// an array, so all of them are exact and none is quantised. The cross-core workload could not do
-/// that, and `bench/competitors/README.md` records what it cost there.
+/// that, and `bench/alternatives/README.md` records what it cost there.
 fn report(init: std.process.Init, options: Options, churn: *Churn, span_ns: u64) !void {
     const samples = lateness_ns[0..churn.taken];
     std.mem.sort(u64, samples, {}, std.sort.asc(u64));

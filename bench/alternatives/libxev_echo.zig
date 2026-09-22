@@ -12,13 +12,13 @@
 //! for as long as it is open. That is what rotor's source 2, provided buffers, removes
 //! (docs/decisions/0003-speed-sources.md).
 //!
-//! Built by `zig build bench-competitors` against the libxev pinned in build.zig.zon.
+//! Built by `zig build bench-alternatives` against the libxev pinned in build.zig.zon.
 const std = @import("std");
 const xev = @import("xev");
 
-/// The bytes one read may return: the same size bench/competitors/libuv_echo.c reads with.
+/// The bytes one read may return: the same size bench/alternatives/libuv_echo.c reads with.
 const read_bytes_max = 64 * 1024;
-/// The backlog passed to listen(2): the same as bench/competitors/libuv_echo.c.
+/// The backlog passed to listen(2): the same as bench/alternatives/libuv_echo.c.
 const listen_backlog = 1024;
 /// The submission queue entries libxev's io_uring backend is asked for; kqueue ignores it.
 const loop_entries = 4096;
