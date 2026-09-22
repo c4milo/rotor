@@ -3,8 +3,12 @@
 //!
 //! On macOS the facts come from `sysctl`. The cache sizes are printed per core kind, because
 //! `hw.l1dcachesize` and `hw.l2cachesize` answer for the efficiency cores and the probes run on
-//! the performance cores. On any other OS this file prints what `uname` knows and says what it
-//! did not read.
+//! the performance cores.
+//!
+//! On Linux they come from `/proc`, which matters where the CPU is not the same twice: a hosted
+//! runner gives whichever processor its pool had, so a run that did not name its own CPU could not
+//! be read later at all. On any other OS this file prints what `uname` knows and says what it did
+//! not read.
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
@@ -30,6 +34,7 @@ comptime {
 pub fn print(writer: *Writer) Writer.Error!void {
     switch (builtin.os.tag) {
         .macos => try print_macos(writer),
+        .linux => try print_linux(writer),
         else => try print_uname(writer),
     }
     try writer.print("zig: {s}, {s}\n", .{ builtin.zig_version_string, @tagName(builtin.mode) });
@@ -65,13 +70,77 @@ fn print_macos(writer: *Writer) Writer.Error!void {
     });
 }
 
+/// The bytes of `/proc/cpuinfo` and `/proc/meminfo` read. The model name is in the first
+/// processor's block and `MemTotal` is the first line of the second file, so the head of each is
+/// enough and a machine with many processors needs no more.
+const proc_bytes_max = 4096;
+
+fn print_linux(writer: *Writer) Writer.Error!void {
+    var buffer: [proc_bytes_max]u8 = undefined;
+    // `model name` is what x86-64 answers, which is the architecture rotor's deployment target
+    // is. aarch64 has no such field and answers `CPU implementer` instead, a number.
+    const model = proc_field("/proc/cpuinfo", "model name", &buffer) orelse
+        proc_field("/proc/cpuinfo", "CPU implementer", &buffer);
+    try writer.print("machine: {s}, ", .{model orelse "a CPU that names itself in neither" ++
+        " `model name` nor `CPU implementer`"});
+    try print_count(writer, std.Thread.getCpuCount() catch null);
+    try writer.writeAll(" processors, ");
+    var second: [proc_bytes_max]u8 = undefined;
+    const total = proc_field("/proc/meminfo", "MemTotal", &second);
+    try print_size(writer, kibibytes_of(total));
+    try writer.writeByte('\n');
+    try print_os(writer);
+}
+
+/// The text after the first `name:` of `path`, trimmed. Null when the file or the field is not
+/// there: this prints what it read and never guesses.
+fn proc_field(path: [*:0]const u8, name: []const u8, buffer: []u8) ?[]const u8 {
+    const contents = read_proc(path, buffer) orelse return null;
+    var lines = std.mem.splitScalar(u8, contents, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, name)) continue;
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        return std.mem.trim(u8, line[colon + 1 ..], " \t");
+    }
+    return null;
+}
+
+/// The head of a `/proc` file, through the system calls directly: Zig 0.16's `std.fs` opens a
+/// file through an `Io`, and these probes take no imports at all.
+fn read_proc(path: [*:0]const u8, buffer: []u8) ?[]const u8 {
+    if (comptime builtin.os.tag != .linux) return null;
+    const linux = std.os.linux;
+    const flags: linux.O = .{ .ACCMODE = .RDONLY, .CLOEXEC = true };
+    const opened = linux.openat(linux.AT.FDCWD, path, flags, 0);
+    if (linux.errno(opened) != .SUCCESS) return null;
+    const descriptor: i32 = @intCast(opened);
+    defer _ = linux.close(descriptor);
+    const count = linux.read(descriptor, buffer.ptr, buffer.len);
+    if (linux.errno(count) != .SUCCESS) return null;
+    return buffer[0..count];
+}
+
+/// `MemTotal` is printed as a number of kibibytes and a unit: "16384000 kB".
+fn kibibytes_of(field: ?[]const u8) ?u64 {
+    const text = field orelse return null;
+    const end = std.mem.indexOfScalar(u8, text, ' ') orelse text.len;
+    const count = std.fmt.parseInt(u64, text[0..end], 10) catch return null;
+    return std.math.mul(u64, count, 1 << 10) catch null;
+}
+
 fn print_uname(writer: *Writer) Writer.Error!void {
     const uts = posix.uname();
     try writer.print("machine: {s}; the CPU model, the core count and the memory are not" ++
         " read on this OS, record them by hand\n", .{std.mem.sliceTo(&uts.machine, 0)});
-    try writer.print("os: {s} {s}\n", .{
+    try print_os(writer);
+}
+
+fn print_os(writer: *Writer) Writer.Error!void {
+    const uts = posix.uname();
+    try writer.print("os: {s} {s}, {s}\n", .{
         std.mem.sliceTo(&uts.sysname, 0),
         std.mem.sliceTo(&uts.release, 0),
+        std.mem.sliceTo(&uts.machine, 0),
     });
 }
 
