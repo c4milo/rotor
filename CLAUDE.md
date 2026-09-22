@@ -141,13 +141,18 @@ measured against `zig build halt-check`.
   `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
-  nothing; `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;
-  nothing imports `bench`. `conformance` imports `core` and the
-  backend under test, which the build hands it as its `backend` import, so one suite tests every
-  backend (decision 10). `core`, `uring` and `kqueue` exist today. `bench/` sits outside `src/` and outside the graph; `build/bench.zig`
-  wires it.
+  nothing; `uring`, `kqueue` and `epoll` import `core`; `adapter` imports `core` and one backend;
+  nothing imports `bench`. `conformance` imports `core` and the backend under test, which the build
+  hands it as its `backend` import, so one suite tests every backend (decision 10). `core`, `uring`,
+  `kqueue` and `epoll` exist today, the last of them part-built (decision 20). `bench/` sits outside
+  `src/` and outside the graph; `build/bench.zig` wires it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
+- **A file two backends need, that names no kernel type, lives in `core`.** `kqueue` and `epoll` are
+  both readiness backends, so the waiters table, the mailbox rings, the errno map and the offload's
+  ring carving are `core`'s and each backend re-exports what a caller reaches. A file whose calls
+  take a `*Loop`, or that names the target's own kernel types, stays in the backend: `core` would
+  have to be generic over the loop to hold it.
 - Tests belong in the file they test.
 - `tools/` is developer tooling, run by `zig build lint` and never linked into the library. Its
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds
@@ -268,6 +273,14 @@ the simulator.
 Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass one conformance suite: `uring` under
 Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate pass. Registered
 descriptors and provided buffers are built, and no speed claim is made for either yet.
+
+The `epoll` backend of decision 20 is **part-built**, as of 2026-09-22: its queue, its loop's state
+and lifecycle, its buffer groups, its offload and eleven halt scenarios. Reap, perform, cancel,
+tick, the datagram path, the registered descriptors, `Remote` and the address and sync helpers are
+not there. `epoll.supported` is false until they are, so the conformance suite skips the backend and no
+gate can pass on it by accident; `epoll.zig`'s header lists what is built and what is not. No speed
+claim will be made for it: it exists so rotor runs where io_uring is refused, and the comparison
+gains no row.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
 has code for it, except decision 13, which is proposed and waits on the owner, and decision 17,

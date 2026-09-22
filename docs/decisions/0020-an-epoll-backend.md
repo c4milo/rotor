@@ -68,6 +68,27 @@ epoll reports readiness, so this backend is decision 12's design with three orga
 Everything in the right column that says "the same" is code this backend takes from `core` or
 mirrors from `src/kqueue/`, which is why the estimate in decision 2 was too high.
 
+**What became `core`'s rather than being copied**, on 2026-09-22 as the build reached each one. A
+file moved when it names no kernel type, because both readiness backends then need the same code and
+two copies drift:
+
+| file | was | why it moved |
+|---|---|---|
+| `core/waiters.zig` | `src/kqueue/kqueue_waiters.zig` | open addressing over the caller's memory, no kernel type |
+| `core/mailbox.zig` | `src/kqueue/kqueue_mailbox.zig` | neither kernel has `msg_ring`, so both cross in user space |
+| `core/errno.zig` | `src/kqueue/kqueue_errno.zig` | both backends make their own calls; the map matches by name |
+| `core.offload.init_rings` | `kqueue_offload.zig` | the same rings out of the same caller memory |
+
+Each backend re-exports what a caller reaches, so `src/rotor.zig` is untouched. Two kinds of file
+stayed put: one whose calls take a `*Loop`, because `core` would have to be generic over it
+(`epoll_buffers.zig` is `kqueue_buffers.zig` copied for that reason), and one that names the target's
+own kernel types (the sync helpers, the address helpers, `perform`). The threaded mailbox tests also
+stayed in `src/kqueue/`: they need a deadline, and `core` reads no clock.
+
+Moving `core.offload.init_rings` found a gap rather than just saving lines. Nothing had ever handed
+it memory that was 64-byte aligned and not 128-byte aligned, so the skip forward it exists for had
+never run, and aligning the rings to 64 passed every test. It has a test now.
+
 **The one real loss against kqueue is registration.** kqueue carries up to 256 changes in the call
 that waits; epoll needs one `epoll_ctl` per change and has no way to batch without io_uring, which
 is the thing that is missing. libuv batches them through an io_uring ring when one exists
