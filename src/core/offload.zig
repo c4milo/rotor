@@ -18,9 +18,12 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
+const layout = @import("layout.zig");
+const mailbox_module = @import("mailbox.zig");
 const operation = @import("operation.zig");
 
 const Descriptor = operation.Descriptor;
+const Mailbox = mailbox_module.Mailbox;
 
 /// What a loop does with `read`, `write` and `fdatasync` on a backend that cannot perform them
 /// without blocking (decision 18). The default refuses, because the complaint that record answers
@@ -111,4 +114,72 @@ test "the offloadable operations are the three that block, and no others" {
     try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
     try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));
     try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
+}
+
+/// A `Mailbox` is aligned to 128 and `layout.Layout` carves to 64, which is why the registry
+/// carries the same constant: the caller's memory is aligned to 64 like every other memory rotor
+/// takes, and `init_rings` skips forward to the first address a ring can sit at.
+const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
+
+/// The bytes the offload's rings need for `workers`, to be passed as `Loop.Options.offload_memory`.
+///
+/// The rings are the one part of a loop the caller's threads write, so the caller owns their
+/// memory, as the application owns the registry's (decision 12, point 6). A loop with no offload
+/// asks for none of it.
+///
+/// It is here rather than in a backend because every readiness backend carves the same rings out of
+/// the same memory; each one re-exports it so a caller reaches it as `offload_memory_bytes`.
+pub fn memory_bytes(workers: u16) usize {
+    if (workers == 0) return 0;
+    assert(workers <= constants.offload_workers_max);
+    return alignment_slack_bytes + @as(usize, workers) * @sizeOf(Mailbox);
+}
+
+/// Carves `workers` empty rings out of `memory` and returns them.
+pub fn init_rings(memory: []align(layout.memory_alignment) u8, workers: u16) []Mailbox {
+    if (workers == 0) return &.{};
+    assert(memory.len >= memory_bytes(workers));
+    const base = @intFromPtr(memory.ptr);
+    const skipped = std.mem.alignForward(usize, base, @alignOf(Mailbox)) - base;
+    assert(skipped <= alignment_slack_bytes);
+    const rings: [*]Mailbox = @ptrCast(@alignCast(memory.ptr + skipped));
+    assert(@intFromPtr(rings) % @alignOf(Mailbox) == 0);
+    const taken = rings[0..workers];
+    for (taken) |*ring| ring.init();
+    return taken;
+}
+
+/// Workers of the alignment test: two rings are enough to prove where the second one lands.
+const test_workers = 2;
+
+test "init_rings skips forward to a ring's own alignment, from memory that is only 64 aligned" {
+    // The caller's memory is aligned to 64, like every memory rotor takes, and a `Mailbox` needs
+    // 128. Memory that is already 128 aligned hides the skip, so this test hands it a base that is
+    // 64 aligned and not 128 aligned, which is the case `alignment_slack_bytes` exists for.
+    const workers = test_workers;
+    var backing: [memory_bytes(workers) + layout.memory_alignment]u8 align(@alignOf(Mailbox)) =
+        undefined;
+    const offset = layout.memory_alignment;
+    const memory: []align(layout.memory_alignment) u8 = @alignCast(backing[offset..]);
+    try testing.expect(@intFromPtr(memory.ptr) % @alignOf(Mailbox) != 0);
+    try testing.expect(memory.len >= memory_bytes(workers));
+
+    const rings = init_rings(memory, workers);
+    try testing.expectEqual(@as(usize, workers), rings.len);
+    try testing.expectEqual(@as(usize, 0), @intFromPtr(rings.ptr) % @alignOf(Mailbox));
+    // Every ring sits inside the memory the caller handed in, so the skip did not run past its end.
+    const first = @intFromPtr(rings.ptr);
+    const last_end = first + workers * @sizeOf(Mailbox);
+    try testing.expect(first >= @intFromPtr(memory.ptr));
+    try testing.expect(last_end <= @intFromPtr(memory.ptr) + memory.len);
+    for (rings) |*ring| try testing.expect(ring.is_empty());
+}
+
+test "memory_bytes counts the slack a 64 aligned base can cost, and none for no workers" {
+    try testing.expectEqual(@as(usize, 0), memory_bytes(0));
+    try testing.expectEqual(@as(usize, 0), init_rings(&.{}, 0).len);
+    // The slack is what a base 64 short of 128 costs, so the rings fit wherever the base sits.
+    const slack = @alignOf(Mailbox) - layout.memory_alignment;
+    try testing.expectEqual(slack + @sizeOf(Mailbox), memory_bytes(1));
+    try testing.expectEqual(slack + test_workers * @sizeOf(Mailbox), memory_bytes(test_workers));
 }

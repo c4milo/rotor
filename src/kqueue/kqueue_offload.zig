@@ -50,38 +50,11 @@ const messages_per_drain = 32;
 /// not wait (`kqueue_tick.zig`). `drain_mailboxes` makes the same trade for the same reason.
 const drain_rounds_max = core.constants.mailbox_messages / messages_per_drain;
 
-/// A `Mailbox` is aligned to 128 and `core.layout.Layout` carves to 64, which is why the registry
-/// carries the same constant: the caller's memory is aligned to 64 like every other memory rotor
-/// takes, and `init_rings` skips forward to the first address a ring can sit at.
-const alignment_slack_bytes: usize = @alignOf(Mailbox) - core.layout.memory_alignment;
-
-/// The bytes the offload's rings need for `workers`, to be passed as `Options.offload_memory`.
-///
-/// The rings are the one part of a loop the caller's threads write, so the caller owns their
-/// memory, as the application owns the registry's (decision 12, point 6). A loop with no offload
-/// asks for none of it.
-pub fn memory_bytes(workers: u16) usize {
-    if (workers == 0) return 0;
-    assert(workers <= core.constants.offload_workers_max);
-    return alignment_slack_bytes + @as(usize, workers) * @sizeOf(Mailbox);
-}
-
-/// Carves `workers` empty rings out of `memory` and returns them.
-pub fn init_rings(
-    memory: []align(core.layout.memory_alignment) u8,
-    workers: u16,
-) []Mailbox {
-    if (workers == 0) return &.{};
-    assert(memory.len >= memory_bytes(workers));
-    const base = @intFromPtr(memory.ptr);
-    const skipped = std.mem.alignForward(usize, base, @alignOf(Mailbox)) - base;
-    assert(skipped <= alignment_slack_bytes);
-    const rings: [*]Mailbox = @ptrCast(@alignCast(memory.ptr + skipped));
-    assert(@intFromPtr(rings) % @alignOf(Mailbox) == 0);
-    const taken = rings[0..workers];
-    for (taken) |*ring| ring.init();
-    return taken;
-}
+/// The rings are `core`'s: every readiness backend carves the same ones out of the caller's memory
+/// (`core/offload.zig`). They are re-exported here because `src/rotor.zig` reaches them through the
+/// backend's `offload_module`.
+pub const memory_bytes = core.offload.memory_bytes;
+pub const init_rings = core.offload.init_rings;
 
 /// The `Work.Code` an operation maps to, or null when it is not one an offload is handed.
 pub fn code_of(code: core.Operation.Code) ?Work.Code {
