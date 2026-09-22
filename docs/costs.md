@@ -28,7 +28,7 @@ cannot carry. The `linux` column is empty, because that machine is not named.
 |---|---|---|---|---|---|---|---|
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
 | `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine; the guest reports CPU implementer `0x61`, Apple's | 10, as the guest reports them | 15.66 GiB (`MemTotal` 16,425,400 kB), plus a 16 GiB `zram0` swap | Linux 7.0.14-orbstack-00380-ga7e0a2dc9535, aarch64 | virtio: `vda` 415 MiB, `vdb` 460 GiB, `vdc` 1 GiB, each backed by a file on the `mac` machine's APFS | 2026-09-20 |
-| `github` | x86-64 cross-check, io_uring backend | Intel Xeon Platinum 8370C at 2.80 GHz, as this run's `/proc/cpuinfo` named it; a later run gets whichever the pool has | 4 virtual | 15.61 GiB (`MemTotal` 16,372,436 kB) | Linux 6.17.0-1022-azure, x86_64 | an Azure cloud volume, not an NVMe | 2026-09-22 |
+| `github` | x86-64 cross-check, io_uring backend | Intel Xeon Platinum 8573C, as this run's `/proc/cpuinfo` named it; the run that first filled this column got a 8370C, which is why a column is replaced whole | 4 virtual | 15.61 GiB (`MemTotal` 16,372,436 kB) | Linux 6.17.0-1022-azure, x86_64 | an Azure cloud volume, not an NVMe | 2026-09-22 |
 | `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
@@ -109,29 +109,33 @@ file may be filled from a machine of another architecture, however convenient it
 
 | id | operation | prior (ns) | prior source | `mac` measured (ns) | `orbstack` measured (ns) | `github` measured (ns) | `linux` measured (ns) |
 |---|---|---|---|---|---|---|---|
-| C1 | L1 cache reference | 0.5 | Abseil | 0.93 (1.32) | 0.93 (1.44) | 1.43 (1.63) | |
-| C2 | L2 cache reference | 3 | Abseil | 5.43 (8.54) | 6.78 (14.4) | 23.4 (24.7) | |
-| C3 | main memory reference, a last-level cache miss | 50 | Abseil | 128 (199) | 185 (327) | 93.8 (109) | |
-| C4 | branch mispredict | 5 | Abseil | 5.77 (8.34) | 5.78 (9.32) | 7.09 (8.56) | |
-| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | 1.50 (2.39) | 1.53 (2.45) | 1.15 (1.51) | |
-| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | 112 (133) | 88.9 (160) | 98.6 (139) | |
-| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | 193 (389) | 202 (251) | |
-| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | 51.6 (81.1) | 54.8 (67.4) | |
-| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | 11.7 (14.3) | 8.06 (11.3) | |
+| C1 | L1 cache reference | 0.5 | Abseil | 0.93 (1.32) | 0.93 (1.44) | 1.67 (1.96) | |
+| C2 | L2 cache reference | 3 | Abseil | 5.43 (8.54) | 6.78 (14.4) | 5.39 (31.1) | |
+| C3 | main memory reference, a last-level cache miss | 50 | Abseil | 128 (199) | 185 (327) | 120 (135) | |
+| C4 | branch mispredict | 5 | Abseil | 5.77 (8.34) | 5.78 (9.32) | 8.34 (10.1) | |
+| C5 | indirect call through a function pointer, predicted | 1 to 2 | recalled | 1.50 (2.39) | 1.53 (2.45) | 1.34 (1.71) | |
+| C6 | smallest syscall round trip, `getppid` | 100 to 500 | recalled | 112 (133) | 88.9 (160) | 124 (171) | |
+| C7 | `io_uring_enter`, 1 NOP submitted and its completion reaped, no wait | 300 to 1,000 | recalled | not applicable | 193 (389) | 300 (567) | |
+| C8 | one more NOP in a batch of 32, submission side, per entry | 20 to 60 | recalled | not applicable | 51.6 (81.1) | 56.3 (71.4) | |
+| C9 | one more completion in a reap of 32, per entry | 5 to 20 | recalled | not applicable | 11.7 (14.3) | 5.09 (7.81) | |
 | C10 | `kevent` round trip, 1 change submitted and 1 event returned | 500 to 2,000 | recalled | 294 (379) | not applicable | not applicable | not applicable |
 | C11 | one more change in a `kevent` changelist of 32, per change | 50 to 200 | recalled | 45.7 (65.0) | not applicable | not applicable | not applicable |
 | C12 | 4 KiB O_DIRECT NVMe read, queue depth 1, submit to completion | 20,000 | Abseil | not applicable | not applicable | not applicable | |
 | C13 | 4 KiB O_DIRECT NVMe read, queue depth 32, per operation | no prior | none | not applicable | not applicable | not applicable | |
-| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | 5,772 (15,958) | |
-| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | 8,363 (20,259) | |
-| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | 4,902 (6,832) | |
-| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | 8,926 (9,743) | |
+| C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | 5,209 (6,882) | |
+| C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | 7,403 (21,452) | |
+| C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | 4,320 (4,594) | |
+| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | 8,724 (9,253) | |
 | C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | 18,125 (46,750) | not applicable | not applicable | not applicable |
-| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | 35.4 (49.4) | |
-| C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | 16.3 (26.6) | |
-| C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.43 (1.89) | |
-| C22 | `send` plus `recv` of 64 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | | |
-| C23 | copy 64 KiB from one buffer to another | no prior | none | | | | |
+| C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | 36.0 (38.0) | |
+| C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | 22.4 (28.7) | |
+| C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.00 (1.85) | |
+| C22 | `send` plus `recv` of 64 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | 11,204 (21,257) | |
+| C23 | copy 64 KiB from one buffer to another | no prior | none | | | 1,587 (2,032) | |
+
+C22 and C23 have a `github` cell and no other. Both were added after the `mac` and `orbstack` runs
+of that day, and this machine has not been idle since: rule 1 stands, so their two cells stay empty
+until a quiet run fills them.
 
 Rows C22 and C23 exist because of a question the echo comparison could not answer on 2026-09-22:
 rotor leads libuv and libxev at 4 KiB and trails libxev at 64 KiB, and nothing here said how much
@@ -159,8 +163,11 @@ three serial runs, and `bench/results/` holds all three as they were printed:
   (`bench/results/costs-orbstack-2026-09-22.md`, and `bench/costs/README.md` for the command).
   C12 and C13 are excluded here, as the Machines section says.
 
-- `github`: the `costs` job of `.github/workflows/ci.yml`, started by hand, one run
-  (`bench/results/costs-github-2026-09-22.md`). One run and not three: the runner is not the same
+- `github`: the `costs` job of `.github/workflows/ci.yml`, started by hand on commit `fc89a70`, run
+  35781510952, one run (`bench/results/costs-github-2026-09-22.md`). It replaced the whole column,
+  because the pool gave it an Intel Xeon Platinum 8573C where the first run of that day had a 8370C.
+  C7 moved from 202 to 300 ns and C2 from 23.4 to 5.39 ns, which is the reason a column here is
+  never patched cell by cell. One run and not three: the runner is not the same
   machine twice, so a spread across runs would mix processors. What that column may carry is above.
 
 Where the three runs disagreed by more than a few percent, the cell is one run and the range is
