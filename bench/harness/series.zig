@@ -12,15 +12,22 @@
 //! anything. `render_markdown_row` prints the spread beside the median, always, so a reader
 //! cannot take a number without seeing how firm it is.
 //!
+//! A row also carries the machine's load while the runs were taken, and a second mark when that
+//! load moved. A wide spread says the runs disagreed; it does not say why. The load window says
+//! whether other work arrived part way through, which `load.zig` records is what spoiled four
+//! attempts on 2026-09-20.
+//!
 //! Nothing here allocates. A series holds its runs in a fixed array, and a caller that wants more
 //! than `runs_max` is refused rather than silently given a summary of some of them.
 const std = @import("std");
 const assert = std.debug.assert;
 const Writer = std.Io.Writer;
+const load_module = @import("load.zig");
 const report = @import("report.zig");
 const text = @import("text.zig");
 
 const Result = report.Result;
+const LoadWindow = load_module.Window;
 
 /// Runs one series holds. A comparison that repeats a candidate more than this many times is
 /// measuring something this file was not built for.
@@ -48,9 +55,18 @@ pub const SeriesError = error{
 pub const Series = struct {
     /// The runs, oldest first, all of one workload, candidate and configuration.
     runs: []const Result,
+    /// The machine's load while these runs were taken. Empty when the caller sampled none, and a
+    /// row then carries no load rather than claiming a quiet machine.
+    load: LoadWindow = .empty,
 
     /// Fails when the runs are too few, too many, or not of one thing.
     pub fn init(runs: []const Result) SeriesError!Series {
+        return init_with_load(runs, .empty);
+    }
+
+    /// The same, with the load the caller sampled around the runs. A runner uses this one; `init`
+    /// is for a caller that has no load to offer, such as a test.
+    pub fn init_with_load(runs: []const Result, window: LoadWindow) SeriesError!Series {
         if (runs.len < runs_min or runs.len > runs_max) return error.RunCountOutOfRange;
         const first = runs[0];
         for (runs[1..]) |run| {
@@ -58,7 +74,13 @@ pub const Series = struct {
             if (!std.mem.eql(u8, run.candidate, first.candidate)) return error.RunsDisagree;
             if (!run.configuration.equals(first.configuration)) return error.RunsDisagree;
         }
-        return .{ .runs = runs };
+        return .{ .runs = runs, .load = window };
+    }
+
+    /// True when this row cannot be trusted for either reason: the runs disagree, or the machine's
+    /// load moved while they were taken.
+    pub fn suspect(series: Series) bool {
+        return series.unreliable() or series.load.moved();
     }
 
     /// The middle run's throughput. The median and not the mean, because one run that hit a
@@ -129,7 +151,7 @@ pub const Series = struct {
         try text.markdown_cell(writer, first.candidate);
         try writer.writeAll(" | ");
         try text.markdown_cell(writer, first.candidate_version);
-        try writer.print(" | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | {s} |", .{
+        try writer.print(" | {d} | {d} | {d} | {t} | {d} | {d} | {d} | {d} | {d} | ", .{
             first.configuration.cores,
             first.configuration.connections,
             first.configuration.payload_bytes,
@@ -139,8 +161,25 @@ pub const Series = struct {
             series.median_p50_ns(),
             series.median_p99_ns(),
             series.spread_percent(),
-            if (series.unreliable()) unreliable_mark else "",
         });
+        try series.render_load(writer);
+        try writer.writeAll(" | ");
+        try series.render_verdict(writer);
+        try writer.writeAll(" |");
+    }
+
+    /// The load cells: the lowest reading and how far it moved, both in hundredths. A host that
+    /// reports no load prints `unknown` twice, as `machine.zig` does for a field it could not read.
+    fn render_load(series: Series, writer: *Writer) Writer.Error!void {
+        if (!series.load.known()) return writer.writeAll(load_unknown ++ " | " ++ load_unknown);
+        try writer.print("{d} | {d}", .{ series.load.lowest, series.load.span() });
+    }
+
+    /// Both marks, because a row can fail both ways and a reader needs to know which.
+    fn render_verdict(series: Series, writer: *Writer) Writer.Error!void {
+        if (series.unreliable()) try writer.writeAll(unreliable_mark);
+        if (series.unreliable() and series.load.moved()) try writer.writeByte(' ');
+        if (series.load.moved()) try writer.writeAll(load_moved_mark);
     }
 };
 
@@ -152,10 +191,19 @@ const latency_p999 = "p999_ns";
 /// report_comparison's loss mark is, so a reader who skims cannot miss it.
 pub const unreliable_mark = "**RUNS DISAGREE**";
 
+/// The mark on a row whose machine did not stay still. It is a separate mark from the spread's: a
+/// row can have a tight spread and still have been taken while the machine changed under it, and a
+/// reader who sees only one mark would draw the wrong conclusion about which to re-take.
+pub const load_moved_mark = "**LOAD MOVED**";
+
+/// What a load cell prints when the host reports no load average.
+const load_unknown = "unknown";
+
 pub const markdown_header =
     "| workload | candidate | version | cores | connections | payload bytes | load " ++
-    "| runs | median per second | median p50 ns | median p99 ns | spread percent | verdict |\n" ++
-    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---|\n";
+    "| runs | median per second | median p50 ns | median p99 ns | spread percent " ++
+    "| load low /100 | load span /100 | verdict |\n" ++
+    "|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|\n";
 
 /// Sorts `values` in place and returns the middle one. An even count takes the lower of the two
 /// middle values, so the answer is always a run that happened.
@@ -262,4 +310,83 @@ test "a row prints the spread beside the median, and marks the rows that decide 
     var steady_writer = Writer.fixed(&second);
     try (try Series.init(&steady)).render_markdown_row(&steady_writer);
     try testing.expect(std.mem.indexOf(u8, steady_writer.buffered(), unreliable_mark) == null);
+}
+
+test "a row carries the load it was taken under, and is marked when that load moved" {
+    // A tight spread on a machine that changed under the run. Without the load mark this row reads
+    // as firm evidence, which is the failure the 2026-09-21 change exists to stop.
+    const steady = [_]Result{ measured(1000, 1), measured(1010, 1), measured(1020, 1) };
+    var window: LoadWindow = .empty;
+    window.add(440);
+    window.add(1027);
+
+    const series = try Series.init_with_load(&steady, window);
+    try testing.expect(!series.unreliable());
+    try testing.expect(series.load.moved());
+    try testing.expect(series.suspect());
+
+    var buffer: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try series.render_markdown_row(&writer);
+    const row = writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, row, load_moved_mark) != null);
+    try testing.expect(std.mem.indexOf(u8, row, unreliable_mark) == null);
+    // The lowest reading and the span, both in hundredths.
+    try testing.expect(std.mem.indexOf(u8, row, "| 440 | 587 |") != null);
+}
+
+test "a quiet machine leaves no mark, and an unsampled one claims no load" {
+    const steady = [_]Result{ measured(1000, 1), measured(1010, 1), measured(1020, 1) };
+
+    var quiet: LoadWindow = .empty;
+    quiet.add(120);
+    quiet.add(130);
+    const calm = try Series.init_with_load(&steady, quiet);
+    try testing.expect(!calm.suspect());
+
+    var buffer: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try calm.render_markdown_row(&writer);
+    try testing.expect(std.mem.indexOf(u8, writer.buffered(), load_moved_mark) == null);
+    try testing.expect(std.mem.indexOf(u8, writer.buffered(), "| 120 | 10 |") != null);
+
+    // A host that reports no load prints `unknown` and claims nothing.
+    var second: [512]u8 = undefined;
+    var unknown_writer = std.Io.Writer.fixed(&second);
+    try (try Series.init(&steady)).render_markdown_row(&unknown_writer);
+    const row = unknown_writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, row, "unknown | unknown") != null);
+    try testing.expect(std.mem.indexOf(u8, row, load_moved_mark) == null);
+}
+
+test "both marks appear when a row fails both ways" {
+    // A wide spread and a moving machine. A reader needs both, because re-taking the run fixes one
+    // and waiting for a quiet machine fixes the other.
+    const rounds = [_]Result{ measured(78236, 1), measured(82826, 1), measured(93952, 1) };
+    var window: LoadWindow = .empty;
+    window.add(400);
+    window.add(1400);
+
+    const series = try Series.init_with_load(&rounds, window);
+    var buffer: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try series.render_markdown_row(&writer);
+    const row = writer.buffered();
+    try testing.expect(std.mem.indexOf(u8, row, unreliable_mark) != null);
+    try testing.expect(std.mem.indexOf(u8, row, load_moved_mark) != null);
+}
+
+test "the header names a column for every cell a row prints" {
+    // A row with one cell more or less than the header is a table that renders wrong on GitHub, and
+    // the two are written out separately, so only a count holds them together.
+    const steady = [_]Result{ measured(1000, 1), measured(1010, 1), measured(1020, 1) };
+    var buffer: [512]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    try (try Series.init(&steady)).render_markdown_row(&writer);
+
+    const first_line = markdown_header[0..std.mem.indexOfScalar(u8, markdown_header, '\n').?];
+    try testing.expectEqual(
+        std.mem.count(u8, first_line, "|"),
+        std.mem.count(u8, writer.buffered(), "|"),
+    );
 }

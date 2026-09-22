@@ -32,6 +32,7 @@ const storm = @import("storm.zig");
 
 const Result = harness.report.Result;
 const Series = harness.series.Series;
+const LoadWindow = harness.load.Window;
 
 /// Candidates this runner knows. Each is a program that takes a port and listens on it, and each
 /// prints one line when it is ready, which this runner waits for.
@@ -187,12 +188,19 @@ fn one_configuration(
     writer: *std.Io.Writer,
 ) !u16 {
     var counts: [candidates.len]u32 = @splat(0);
+    // The machine's load while each candidate's runs were taken. One window per candidate, and one
+    // set per configuration, because a row covers one configuration.
+    var loads: [candidates.len]LoadWindow = @splat(.empty);
     var port = port_from;
     var round: u32 = 0;
     while (round < options.rounds) : (round += 1) {
         for (candidates, 0..) |candidate, index| {
             if (!installed(options, index)) continue;
             port += 1;
+            // Around the run, not before the round: a job that arrives part way through a matrix is
+            // what spoiled the 2026-09-20 attempts, and only a sample on each side sees it.
+            loads[index].sample();
+            defer loads[index].sample();
             const measured = one_run(init, options, candidate, configuration, port) catch |x| {
                 try writer.print("echo_runner: {s} failed: {t}\n", .{ candidate.name, x });
                 try writer.flush();
@@ -211,7 +219,7 @@ fn one_configuration(
             }
             continue;
         }
-        const series = try Series.init(taken);
+        const series = try Series.init_with_load(taken, loads[index]);
         try series.render_markdown_row(writer);
         try writer.writeByte('\n');
     }

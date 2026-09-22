@@ -8,6 +8,27 @@ measured or read from a source, never recalled.
 
 Everything here was done on 2026-09-19 on the `mac` machine of `docs/costs.md`, with Zig 0.16.0.
 
+## How to read a row
+
+Every row carries three things beside its medians, and a row cannot be quoted without them.
+
+- **spread percent**: the fastest run minus the slowest, over the median. A row at or above 10
+  carries `**RUNS DISAGREE**` and decides nothing. The experiment that set this is below: three
+  alternating rounds of two shapes of one unchanged server disagreed about which was faster.
+- **load low /100** and **load span /100**: the machine's one-minute load average while the runs were
+  taken, in hundredths, as the lowest reading and how far it moved. A span at or above 100, one whole
+  point of load, carries `**LOAD MOVED**`.
+- **verdict**: both marks when both apply.
+
+The two marks mean different things and need different answers. A wide spread means re-take the row.
+A moved load means the machine was not the same machine throughout, so wait for a quiet one and
+re-take everything. Added on 2026-09-21, because four attempts on 2026-09-20 were spoiled by other
+work arriving and only the spread said so: on the last one the load average climbed from 4.40 to
+10.27 during the run, and reading 13 marked rows was the only way to find out.
+
+A row whose load columns say `unknown` was taken on a host that reports no load average. It is not a
+quiet row; it is a row with no evidence either way.
+
 ## The pins
 
 | competitor | source | pin | package hash in `build.zig.zon` |
