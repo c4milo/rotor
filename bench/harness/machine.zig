@@ -6,6 +6,9 @@
 //! Every string sits in a fixed buffer inside the struct. A field the operating system did not
 //! report stays empty or 0 and prints as `unknown`: the record never guesses.
 //!
+//! A block device's write cache is `machine_block.zig`: a durable write row cannot be read
+//! without it, and it is the one field here that describes a drive rather than the machine.
+//!
 //! `render_markdown` prints a row of the Machines table of docs/costs.md. That table also names
 //! what no operating system call reports, such as the role of the machine, so the caller passes
 //! those cells in as `Labels`. `render_json_line` prints the whole record, the Zig version and the
@@ -15,6 +18,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const Writer = std.Io.Writer;
 const text = @import("text.zig");
+const block = @import("machine_block.zig");
 const proc = @import("machine_proc.zig");
 const Text = text.Text;
 
@@ -67,6 +71,9 @@ pub const Machine = struct {
     cores_performance: u32 = 0,
     cores_efficiency: u32 = 0,
     cache_line_bytes: u32 = 0,
+    /// Each NVMe device's write-cache setting, as `nvme0n1 write back`, separated by `; `. Empty on
+    /// a host that does not report one, which includes every macOS: there is no sysctl for it.
+    nvme_write_cache: Text = .{},
     optimize_mode: std.builtin.OptimizeMode = .Debug,
 
     /// Reads the machine this process runs on. It cannot fail: what the operating system does
@@ -168,6 +175,7 @@ pub const Machine = struct {
         try json_text(writer, "kernel_name", &machine.kernel_name);
         try json_text(writer, "kernel_version", &machine.kernel_version);
         try json_text(writer, "zig_version", &machine.zig_version);
+        try json_text(writer, "nvme_write_cache", &machine.nvme_write_cache);
         try writer.print(",\"optimize_mode\":\"{t}\"}}\n", .{machine.optimize_mode});
     }
 };
@@ -237,6 +245,7 @@ fn collect_linux(machine: *Machine, io: std.Io) void {
     machine.cores_physical = cpu.cores_physical();
     machine.cache_line_bytes = cpu.cache_line_bytes;
     if (machine.cache_line_bytes == 0) machine.cache_line_bytes = read_count(io, coherency_path);
+    block.read_write_caches(io, &machine.nvme_write_cache);
 
     var memory: proc.MemInfo = .{};
     feed_file(io, "/proc/meminfo", &memory);
@@ -373,6 +382,9 @@ test "the JSON line holds every field, the Zig version and the optimize mode inc
         "\"cores_efficiency\":2,\"memory_bytes\":34359738368,\"cache_line_bytes\":128," ++
         "\"os_name\":\"macOS\",\"os_version\":\"26.6.2\",\"kernel_name\":\"Darwin\"," ++
         "\"kernel_version\":\"25.6.0\",\"zig_version\":\"0.16.0\"," ++
+        // Empty on macOS: there is no sysctl for a drive's write cache, and the record never
+        // guesses. On Linux it names each NVMe device and its setting.
+        "\"nvme_write_cache\":\"\"," ++
         "\"optimize_mode\":\"ReleaseSafe\"}\n", writer.buffered());
 
     var short: [16]u8 = undefined;

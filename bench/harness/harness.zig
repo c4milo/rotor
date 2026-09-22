@@ -19,6 +19,7 @@
 pub const histogram = @import("histogram.zig");
 pub const series = @import("series.zig");
 pub const machine = @import("machine.zig");
+pub const machine_block = @import("machine_block.zig");
 pub const machine_proc = @import("machine_proc.zig");
 pub const report = @import("report.zig");
 pub const report_comparison = @import("report_comparison.zig");
@@ -38,6 +39,7 @@ pub const Placement = placement.Placement;
 test {
     _ = histogram;
     _ = machine;
+    _ = machine_block;
     _ = machine_proc;
     _ = report;
     _ = report_comparison;
