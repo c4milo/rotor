@@ -454,6 +454,34 @@ fill leaves unwritten, so sampling it is enough, and it costs one read rather th
 each of the hundred-odd program starts a sweep makes. `--file-bytes` must now be a whole number of
 blocks, which O_DIRECT needed anyway.
 
+## What the inline file call costs, isolated by the offload
+
+Asked on 2026-09-22: why is rotor's unsynced write slower than libuv's? The offload built the same
+day answers it, because it is the only variable that moves.
+
+Single runs on a `mac` at load average 6 or above, 4 KiB unsynced writes, one second each.
+**Single runs are not evidence** and no absolute number here belongs in a claim; the shape held
+across both depths and is what the question was about:
+
+| depth | rotor inline, registered | rotor inline, plain | rotor offload, 4 threads | libuv pool, 4 threads |
+|---:|---:|---:|---:|---:|
+| 1 | 34,729 /s, p50 15 µs | 33,075 /s, p50 15 µs | 45,316 /s, p50 9 µs | 45,060 /s, p50 8 µs |
+| 4 | 57,422 /s, p50 50 µs | 43,566 /s, p50 52 µs | 62,047 /s, p50 45 µs | 59,964 /s, p50 46 µs |
+
+**rotor with the offload matches libuv, and rotor inline does not.** So the gap is not the loop, not
+the submission path and not registration: it is the `pwrite` running on the loop thread. At depth 1
+there is no parallelism for a pool to exploit, and the pool still wins, because the syscall overlaps
+the loop's own bookkeeping and the caller's re-issue instead of being serialised between them.
+
+That is `0018-a-caller-supplied-thread-pool.md`'s claim, and this is the first time it has been put
+next to a number of any kind.
+
+**One thing here is unexplained.** At depth 4 the registered and plain rotor rows differ by 32 per
+cent, and at depth 1 by 5. On kqueue registration should be close to a no-op: there is no kernel call
+to register a buffer, and the backend only records the slices. Either the depth-4 pair is noise from a
+machine at load 6, or the registered path really does differ on kqueue. **It is not claimed either
+way** and it needs a quiet machine.
+
 ## Why rotor loses the file rows on macOS, and why that says nothing about Linux
 
 Read on 2026-09-20 on a `mac` carrying a load average above 13. **The throughputs are not

@@ -42,6 +42,12 @@ TLS, DNS, Windows and process spawning, as proposed, and also:
 
 - **UDP and Unix sockets.** No consumer needs them yet. colibri's QUIC will want UDP, but
   colibri owns no I/O, so the need arrives with whoever embeds colibri.
+
+  **Amended on 2026-09-20 by `0015-datagrams.md`: UDP is in version one.** The owner asked for
+  datagrams and named colibri's and chapulin's QUIC transport as the consumers, so the need arrived.
+  `receive_from`, `send_to`, a datagram buffer group, multishot receive, GSO, GRO and ECN are built
+  and covered by six conformance scenarios. **Unix sockets are still excluded**, and nothing has
+  asked for them.
 - **The std.Io adapter** (`0001-interface.md`). The core's numbers come first.
 - **An epoll backend.** A Linux host that refuses `io_uring_setup` gets `error.Unsupported`
   from init. That has a real cost: Docker's default seccomp profile refuses io_uring, which is
