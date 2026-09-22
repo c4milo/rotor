@@ -136,6 +136,9 @@ measured against `zig build halt-check`.
 ## Layout
 
 - `build.zig` stays short: build options and the module graph. Helpers belong in `build/`.
+- `src/rotor.zig` is the public module, the only one a dependent package can name. Its `Loop`,
+  `Registry` and `Remote` wrap the host's backend and carry exactly the surface of
+  `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
   nothing; `uring` and `kqueue` import `core`; `adapter` imports `core` and one backend;

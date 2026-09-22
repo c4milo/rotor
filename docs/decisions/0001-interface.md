@@ -110,6 +110,14 @@ A backend is chosen at comptime by the consumer's build, the way stompy's build 
 `obi` as its `io` import. The three backends carry the same surface, and a comptime check in
 each compares its declarations against `core`'s list.
 
+### The public module, 2026-09-22
+
+`src/rotor.zig` is the one module a dependent package can name, and since 2026-09-22 its `Loop`,
+`Registry` and `Remote` are types of that file that wrap the host's backend and carry exactly the
+surface `core/surface.zig` lists, plus their error sets; a test holds each to that count. The
+owner's ruling: rotor supports its public API and no internal one. A backend's other public
+functions serve its own files, the benchmarks and the conformance suite, and stay inside the tree.
+
 ## Alternatives it beat
 
 **Implement the std.Io table directly.** Cost: 109 functions to write and keep current against

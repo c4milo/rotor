@@ -54,6 +54,8 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .{ .name = "core", .module = graph.core },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
+        // The public module picks `uring` on this target, and its tests drive a loop through it.
+        .{ .name = "rotor", .module = graph.rotor },
     };
 
     const stamp = b.addSystemCommand(&.{"touch"});

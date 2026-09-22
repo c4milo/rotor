@@ -27,16 +27,23 @@ way. rotor builds in Debug and ReleaseSafe; its assertions stay on in production
 mode that removes them.
 
 What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, the flags
-`files_block`, `post_bounded` and `supported`, `offload_memory_bytes`, and the types a caller builds
-operations from and reads events with (`Operation`, `Event`, `Handle`, `Address`, `Message`,
-`LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces `constants`, `datagram`,
-`layout`, `offload`, `remote`, `statistics`). Nothing else of the backend is reachable, on purpose.
+`files_block`, `post_bounded` and `supported`, `offload_memory_bytes`, `memory_alignment`, and the
+types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
+`Address`, `Message`, `LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces
+`constants`, `datagram`, `offload`, `statistics`).
+
+There is one API, and it is this one. `Loop`, `Registry` and `Remote` are types of this module that
+carry exactly the surface named in `src/core/surface.zig` and forward to the host's backend; the
+backend's other public functions serve its own files, the benchmarks and the conformance suite,
+which live in rotor's tree, and a dependent package cannot name a backend at all: the build
+registers this module alone. A program that needs what the backends keep for themselves is a program
+inside this tree.
 
 ## A loop
 
 ```zig
 const options: rotor.Loop.Options = .{ .operations = 1024 };
-var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.layout.memory_alignment) = undefined;
+var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
 var loop: rotor.Loop = undefined;
 try loop.init(&memory, options);
 defer loop.deinit();
@@ -47,7 +54,7 @@ defer loop.deinit();
 - `entries` sizes the io_uring submission ring. Left at 0 it is `operations` rounded up to a
   power of two, capped at 32,768; kqueue takes it and sizes nothing by it.
 - `memory_bytes` is a function of the options, and `init` asserts the block is large enough and
-  aligned to `layout.memory_alignment`. The memory is the loop's until `deinit`.
+  aligned to `memory_alignment`. The memory is the loop's until `deinit`.
 - `init` must run on the thread that will own the loop. Every other call on the loop asserts that
   it comes from that thread, and a call from another thread halts the process: it is a programmer
   error, not a condition the loop reports.
@@ -210,7 +217,7 @@ may do to it is post a message:
   `loop_not_found`. On kqueue the mailbox between two loops holds `mailbox_messages` (256);
   on io_uring a full target overflows into kernel memory, and `rotor.post_bounded` says which.
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
-  one id of the registry, and `remote.post(target, message)` returns `remote.PostError` where a
+  one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
   loop's post produces an event: `MailboxFull`, `LoopNotFound`, and on io_uring `SystemResources`,
   `Unanswered` (the kernel took the message and had not answered within a second; it may still
   land) and `Unexpected`. A `Remote` belongs to one thread as a loop does.
