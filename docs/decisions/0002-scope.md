@@ -53,6 +53,12 @@ TLS, DNS, Windows and process spawning, as proposed, and also:
   from init. That has a real cost: Docker's default seccomp profile refuses io_uring, which is
   why stompy's Linux tests run with `seccomp=unconfined`. The alternative is a third backend to
   write, simulate and benchmark, for hosts where rotor's speed sources do not exist anyway.
+
+  **Reversed on 2026-09-22 by `0020-an-epoll-backend.md`: epoll is in version one.** The cost this
+  row named arrived, at cocuyo, whose tests run in a container. Two parts of the estimate above were
+  wrong: there is nothing to simulate since decision 10, and epoll is kqueue's shape rather than a
+  third design. What the row got right stands: epoll has none of decision 3's speed sources, and no
+  speed claim is made for that backend.
 - **Buffered file I/O.** The brief lists O_DIRECT, and stompy uses nothing else. A buffered
   operation that has to wait can also be handed to a kernel worker thread, depending on the
   kernel and the filesystem (recalled), and that is a hidden thread by another name.
