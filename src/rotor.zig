@@ -49,6 +49,14 @@ pub const buffers = backend.buffers;
 /// `Loop.Options.file_policy` and an offload mean anything here (decision 18).
 pub const files_block = backend.files_block;
 
+/// The bytes of memory `Loop.Options.offload_memory` needs for an offload of `workers` threads
+/// (decision 18): the rings the workers answer through. 0 where `files_block` is false, because
+/// that backend takes the option and ignores it.
+pub fn offload_memory_bytes(workers: u16) usize {
+    if (!@hasDecl(backend, "offload_module")) return 0;
+    return backend.offload_module.memory_bytes(workers);
+}
+
 /// Whether a `post` can be refused for lack of room at the target, from a loop or from a
 /// `Remote`: what a caller may assume of `mailbox_full` and `MailboxFull` here (decision 4).
 pub const post_bounded = backend.post_bounded;

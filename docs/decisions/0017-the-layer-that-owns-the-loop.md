@@ -204,7 +204,10 @@ it describes (CLAUDE.md).
 
    **Built on 2026-09-22**, on the owner's instruction, ahead of that consumer. `0004-threading.md`
    records what was settled. The DNS library is being written in its own repository and will take a
-   loop rather than own sockets, so the first caller of `Remote` is still to come.
+   loop rather than own sockets, so the first caller of `Remote` is still to come. The owner named
+   it on 2026-09-22: cocuyo, a resolver in Zig with no I/O of its own. That answers question 4 in
+   favour of a resolver driven by the loop, and `docs/using.md` says what such a library gets from
+   rotor and what it must do to share a loop with the application that owns it.
    `0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes
    on a thread that owns no loop. That also settles the resolver route in question 4: a
    `getaddrinfo` worker uses the same door.

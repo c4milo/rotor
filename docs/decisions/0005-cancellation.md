@@ -136,6 +136,30 @@ Simulator tests for each rule, each proved by a mutation reported `CAUGHT` or `N
 On the real backends, a test cancels a receive on an idle socket and a read that has already
 completed, and checks both outcomes.
 
+## Proposed amendment to rule 3, 2026-09-22: a provided buffer changes hands at the event that names it
+
+Status: proposed, not ruled on. `0017-the-layer-that-owns-the-loop.md` found the gap: rule 3 says the
+buffer belongs to the loop until the final event, and a multishot `receive` from a provided-buffer
+group has no final event while its `more` events flow, yet each of those events hands the caller a
+buffer it must read, and `give_back_buffer` exists for the caller to return it. The code does that;
+the rule does not say so. The amendment writes down what is built:
+
+- Rule 3 covers the buffer an operation names in its `Kind`: a `Buffer` or `ConstBuffer`, the
+  `Address` of a `connect`, the `Outbound` of a `send_to`. From `submit` to the final event that
+  memory is the loop's, and `cancel` changes nothing about that.
+- A provided buffer is the loop's from `provide_buffers` or `provide_datagram_buffers` until an
+  event names it with `flags.buffer` and `buffer_id`. From that event it is the caller's, whether
+  or not the operation that received into it has ended, until the caller passes it to
+  `give_back_buffer`; then it is the loop's again and may be named by any later event. Reading it
+  after `give_back_buffer` is the error rule 3 already forbids.
+- A group whose buffers are all out ends a multishot receive with `buffers_exhausted`, which is
+  that receive's final event. The caller gives buffers back and submits the receive again.
+- The cost is the one 0017 named: a buffer held across ticks is one fewer for the group. What that
+  costs under many slow TLS handshakes is 0017's open question 6 and is not measured.
+
+Nothing here changes code. `src/kqueue/kqueue_buffers.zig` and `src/uring/uring_buffers.zig` already
+behave this way, and the conformance suite's receive scenarios exercise it.
+
 ## Open questions for review
 
 1. Should `cancel` of a stale handle be legal, as proposed, or a programmer error that halts?

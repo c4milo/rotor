@@ -1,0 +1,272 @@
+# Using rotor
+
+This is the guide for a program or a library that drives a rotor loop. It says what the loop
+promises, what it needs from the caller, and where the limits are. The decision records in
+`docs/decisions/` say why; this file says what.
+
+rotor is one Zig module. It allocates nothing: the caller hands every loop its memory at init, and
+every table and queue inside it is bounded by a named limit. A loop belongs to one thread. Every
+operation ends with exactly one final event. Those three rules shape everything below.
+
+## Getting the module
+
+```bash
+zig fetch --save git+https://github.com/c4milo/rotor#<commit>
+```
+
+In `build.zig`:
+
+```zig
+const rotor = b.dependency("rotor", .{ .target = target, .optimize = optimize });
+exe.root_module.addImport("rotor", rotor.module("rotor"));
+```
+
+Then `const rotor = @import("rotor");`. The module picks the backend for the host it is built for:
+io_uring on Linux, kqueue on macOS. Both carry the same surface, so the program is the same either
+way. rotor builds in Debug and ReleaseSafe; its assertions stay on in production, and it offers no
+mode that removes them.
+
+What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, the flags
+`files_block`, `post_bounded` and `supported`, `offload_memory_bytes`, and the types a caller builds
+operations from and reads events with (`Operation`, `Event`, `Handle`, `Address`, `Message`,
+`LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces `constants`, `datagram`,
+`layout`, `offload`, `remote`, `statistics`). Nothing else of the backend is reachable, on purpose.
+
+## A loop
+
+```zig
+const options: rotor.Loop.Options = .{ .operations = 1024, .entries = 256 };
+var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.layout.memory_alignment) = undefined;
+var loop: rotor.Loop = undefined;
+try loop.init(&memory, options);
+defer loop.deinit();
+```
+
+- `operations` is the most operations the loop holds in flight at once, and what sizes its
+  tables: at most `constants.operations_max`, 2^20.
+- `entries` sizes the io_uring submission ring; kqueue takes it and sizes nothing by it.
+- `memory_bytes` is a function of the options, and `init` asserts the block is large enough and
+  aligned to `layout.memory_alignment`. The memory is the loop's until `deinit`.
+- `init` must run on the thread that will own the loop. Every other call on the loop asserts that
+  it comes from that thread, and a call from another thread halts the process: it is a programmer
+  error, not a condition the loop reports.
+- `init` fails with `Unsupported` when the host's kernel lacks what the backend needs (below),
+  with `SystemResources` when a descriptor or memory limit refuses the ring or the kqueue, and
+  with `PermissionDenied` on Linux when `io_uring_setup` is refused.
+- `deinit` requires an empty loop: nothing in flight. `cancel_all` then `drain` gets there.
+
+The other options: `id` and `registry` for a loop that posts to others (below), `sampling` for the
+statistics, and `file_policy`, `offload` and `offload_memory` for files on macOS (below).
+
+## Submit and tick
+
+```zig
+var handles: [2]rotor.Handle = undefined;
+const taken = loop.submit(&.{ operation_a, operation_b }, &handles);
+var events: [64]rotor.Event = undefined;
+const count = try loop.tick(&events, rotor.constants.ns_per_ms);
+```
+
+- `submit` takes a batch of operations, at most `constants.batch_max` (4,096), and returns how
+  many it took. It takes fewer when the table has no room for the rest; the caller submits those
+  again later. `handles` is either empty or one per operation, and receives the handle of each
+  operation taken, which is what `cancel` takes.
+- `tick` makes the loop's one system call, delivers events into `events` and returns how many. With
+  `wait_ns` of 0 it polls and returns at once; otherwise it blocks until an event is ready, a
+  message arrives, or the wait passes, at most `constants.wait_ns_max`, 10 seconds. A tick that
+  already holds events to return does not wait. `tick` fails only when the kernel refuses the call
+  after `interrupt_retries_max` signals, or answers something rotor has no meaning for.
+- Batch first. One `submit` of many operations and one `tick` returning many events is the shape
+  rotor is built for; one operation per call works and costs a system call each.
+
+An `Event` is 16 bytes:
+
+- `user_data`: the value the caller put in the `Operation`. rotor never reads it. For a message
+  posted by another loop, the message's payload.
+- `result`: not negative is a byte count, a new descriptor, or 0; negative is `-@intFromEnum(Code)`,
+  and `event.outcome()` turns it into `Error!u32`. For a message, the tag.
+- `flags.more`: more events of this operation follow and its slot stays claimed. An event without
+  `more` is the operation's final event. `flags.message`: another loop posted this; it belongs to
+  no operation. `flags.buffer` and `flags.buffer_id`: which provided buffer holds this receive's
+  bytes.
+
+The rules every caller relies on (decision 5):
+
+1. Every operation ends with exactly one final event, and its slot is freed by that event and by
+   nothing else. A multishot operation delivers events flagged `more` until its final one.
+2. `cancel(handle)` is a request. The answer is the operation's final event: `Canceled` when
+   nothing was transferred, or the bytes that moved.
+3. From `submit` to the final event, the buffer an operation names belongs to the loop: do not read,
+   write, reuse or free it. This covers the `Address` a `connect` names and the `Outbound` a
+   `send_to` names. Provided buffers change hands differently (below).
+4. `timeout_ns` on an operation is a deadline the loop enforces by cancelling it; the final event
+   then says `Timeout`.
+5. Timers live in the loop and cost no descriptor. `timer{ .after_ns, .repeat_ns }`: one event, or
+   one per period flagged `more` until cancelled, scheduled from the previous deadline and never
+   from the clock.
+6. `close` cancels every operation on that descriptor first, then closes it. Its final event says
+   the descriptor is gone.
+7. `deinit` requires an empty loop.
+
+## The operations
+
+Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registered` (below), and a
+`kind`:
+
+| kind | what it names | result |
+|---|---|---|
+| `accept` | a listener, `multishot` | the accepted socket, one event per connection when multishot |
+| `connect` | a socket and an `*const Address` | 0 |
+| `receive` | a socket and a target: a buffer, or a provided-buffer group; `multishot` with a group | bytes received, 0 at end of stream |
+| `send` | a socket and a buffer | bytes sent; a short send is a result under the buffer's length |
+| `shutdown` | a socket and `how` | 0 |
+| `close` | a descriptor of the process | 0 |
+| `read`, `write` | a file, a buffer and an offset | bytes moved |
+| `fdatasync` | a file | 0 |
+| `timer` | `after_ns`, optional `repeat_ns` | 0 per fire |
+| `post` | a target `LoopId` and a `Message` | 0, or `mailbox_full`, `loop_not_found` |
+| `nop` | nothing | 0 |
+| `receive_from` | a socket and a datagram group | bytes, one event per datagram, until cancelled |
+| `send_to` | a socket, a buffer and an `*const Outbound` | every byte of the buffer, or none |
+
+Descriptors come from `rotor.sync`, which makes the calls a loop does not: `open_socket`,
+`listen(&address, .{ .backlog, .reuse_port })`, `open_datagram(family, bind_to, .{})`,
+`prepare_accepted`, `local_address`, `set_no_delay`, `set_option`, `close_now`, and for files
+`open_file`, `file_size`, `set_file_size`, `sync_directory`. `Address` is rotor's own type,
+IPv4 or IPv6 with a port and a scope id; no kernel type is part of the surface.
+
+## Buffers
+
+Three ways to hand the loop memory for bytes:
+
+- A plain `Buffer` or `ConstBuffer` in the operation. Simplest; rule 3 applies.
+- Registered buffers: `register_buffers(&loop, buffers)` once, before use, at most
+  `registered_buffers_max` (1,024). An operation then names one by index in `Buffer.registered`,
+  and io_uring skips pinning its pages per operation. kqueue accepts the same calls and gains
+  nothing from them.
+- A provided-buffer group: `provide_buffers(&loop, group_id, ring_memory, memory, buffer_bytes)`,
+  with `ring_memory` of `buffers.ring_bytes(count)` bytes aligned to `buffers.ring_alignment` and
+  `memory` of `count × buffer_bytes`. A `receive` with `.target = .{ .group = id }` lets the
+  kernel pick a buffer; the event carries `flags.buffer` and `buffer_id`, and
+  `loop.provided_buffer(group_id, buffer_id)` is its bytes. The buffer is the caller's from that
+  event until `loop.give_back_buffer(group_id, buffer_id)`, whether or not the receive has ended.
+  A group that runs out ends a multishot receive with `buffers_exhausted`: give buffers back and
+  submit it again. At most `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
+
+Registered descriptors work the same way: `register_descriptors(&loop, descriptors)` once, at
+most `registered_descriptors_max` (1,024), and an operation with `descriptor_registered = true`
+names an index instead of a descriptor. A `close` always names a descriptor of the process.
+
+## Datagrams
+
+A datagram group is a provided-buffer group with room in front of every buffer for the peer
+address and the control messages: `provide_datagram_buffers(&loop, group_id, ring_memory,
+memory, buffer_bytes, .{})`. One loop serves one datagram shape. `receive_from` receives into it,
+one event per datagram, and `loop.datagram(buffer, event)` is the only reader of such a buffer:
+it returns a `Delivery` with the peer, the local address when the socket was asked for it, the ECN
+codepoint, the segment size when the kernel coalesced several datagrams into one, and the bytes.
+`send_to` takes an `Outbound`: the destination, the source address, the codepoint, and whether to
+cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmented send with
+`unsupported` (decision 15).
+
+## Files
+
+io_uring performs `read`, `write` and `fdatasync` without a thread. kqueue reports readiness and
+never completes a file operation, so on macOS the loop needs to be told what to do, and
+`rotor.files_block` says which backend this is:
+
+- `file_policy = .refuse`, the default: a file operation ends with `unsupported`. Nobody is quietly
+  slowed.
+- `.blocking`: the loop performs it inline, and the tick stalls for its duration.
+- `.offload`: the loop hands it to the caller's threads. `offload` is an `Offload`: a context, a
+  `submit` function the loop calls with a `Work` the worker runs, and the number of workers, at
+  most `offload_workers_max` (64). `offload_memory` is `rotor.offload_memory_bytes(workers)`
+  bytes of the caller's, because the caller's threads write it. `bench/files/reads_pool.zig` is a
+  pool that does this.
+
+io_uring takes the option and ignores it. A loop that never touches a file needs none of this.
+
+## Threads
+
+A loop belongs to one thread, holds no lock and starts no thread. The one thing another thread
+may do to it is post a message:
+
+- Loops that post to each other share a `Registry`: `Registry.memory_bytes(loops)` bytes of the
+  application's memory, `registry.init(&memory, loops)` once, and each loop gets an `id` below
+  `loops` and the `registry` in its options. `post{ .target, .message }` from one loop arrives in
+  the target's next tick as an event with `flags.message`, `user_data` the payload and `result`
+  the tag (at most `message_tag_max`). The sender's own final event says 0, `mailbox_full` or
+  `loop_not_found`. On kqueue the mailbox between two loops holds `mailbox_messages` (256);
+  on io_uring a full target overflows into kernel memory, and `rotor.post_bounded` says which.
+- A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
+  one id of the registry, and `remote.post(target, message)` returns `remote.PostError` where a
+  loop's post produces an event: `MailboxFull`, `LoopNotFound`, and on io_uring `SystemResources`,
+  `Unanswered` (the kernel took the message and had not answered within a second; it may still
+  land) and `Unexpected`. A `Remote` belongs to one thread as a loop does.
+- The offload's workers answer through rings of their own, not through a `Remote`.
+
+At most `loops_max` (256) loops and remotes share one registry.
+
+## A library that shares a loop
+
+A library such as a resolver takes a `*Loop` from the application and owns no socket, thread or
+loop of its own. What that needs:
+
+- The application owns the loop, calls `tick`, and hands the library the events that are its. An
+  event carries `user_data` and nothing else that names its owner, so the two agree on a
+  convention: a range of `user_data`, or a bit in it, that the library's operations use.
+- The library submits on the loop's thread only. A caller on another thread reaches it through a
+  `Remote` and a message whose tag the library defines.
+- The library's operations in flight count against the loop's `operations`, and its buffers
+  against the loop's groups. The application sizes the loop for both.
+- `timeout_ns` on a `receive_from` and a `timer` per retry are what a query needs; `cancel` with
+  the handle ends either early.
+
+## Statistics
+
+`loop.statistics()` is sampled: one operation in `sample_mask + 1` records its latency into
+power-of-two buckets, per kind, and nothing else is counted (decision 9). Nothing logs on the
+loop's path.
+
+## Limits
+
+Every limit is a named constant in `rotor.constants`, or in a backend's own `constants.zig`:
+
+| limit | value |
+|---|---|
+| operations in flight per loop | `operations_max`, 2^20 |
+| operations per `submit`, events per `tick` | `batch_max`, 4,096 |
+| a tick's wait | `wait_ns_max`, 10 s |
+| a deadline or a timer | `timeout_ns_max`, one day |
+| one transfer | `transfer_bytes_max`, 2,147,479,552 bytes |
+| loops and remotes per registry | `loops_max`, 256 |
+| offload workers | `offload_workers_max`, 64 |
+| registered descriptors, registered buffers | 1,024 each |
+| provided-buffer groups, buffers per group | 16, 32,768 |
+| a message's tag | `message_tag_max`, 0x7fff_f000 |
+| messages queued from one loop to another (kqueue) | `mailbox_messages`, 256 |
+| registrations in, readiness out, per tick (kqueue) | `changes_max`, `readiness_max`, 256 |
+
+## What the kernel must have
+
+- Linux 6.1 or later, with io_uring: `IORING_FEAT_NODROP`, `IORING_FEAT_EXT_ARG`, `MSG_RING`,
+  multishot accept and receive, provided buffer rings, `SINGLE_ISSUER` and `DEFER_TASKRUN`. A
+  kernel or a container that lacks one answers `Unsupported` at `init`; there is no epoll
+  fallback. Docker's default seccomp profile refuses `io_uring_setup`, so a container runs with
+  `seccomp=unconfined`. `tools/uring_probe.zig` names the first thing a kernel lacks.
+- macOS with kqueue. Files need a policy (above). A loop that polls carries its own wake trigger
+  in the `kevent` call, because a poll that finds nothing ready parks the thread for about 12 µs
+  on macOS 26 otherwise (decision 12, point 6).
+
+## Not in version one
+
+TLS (chapulin fills that interface for colibri), DNS (cocuyo), Unix sockets, process spawning,
+Windows, an epoll backend and the `std.Io` adapter. Decision 2 says why, and what would bring each
+in.
+
+## Where the numbers are
+
+`docs/costs.md` holds the measured costs of the operations the design arguments cite, for the
+`mac` and `orbstack` machines. `bench/alternatives/README.md` reads the comparison against libuv,
+libxev and `std.Io`, the losing rows included, and `bench/results/` holds every run as printed.
+No claim is made for Linux hardware: that machine is not named yet.
