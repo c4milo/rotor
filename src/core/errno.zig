@@ -7,8 +7,10 @@
 //! for readiness and is tried again (decision 12, point 1). EINTR means a signal interrupted the
 //! call before it transferred anything: the backend makes the call again.
 //!
-//! The map names `std.posix.E`, the errno of the target the module is built for, and matches by
-//! name, so it compiles and its tests run on every host.
+//! The map matches by name, not by number, so it compiles and its tests run on every host. It takes
+//! the errno as `anytype` for one reason: `epoll` reads `std.os.linux.E`, which is a different
+//! type from `std.posix.E` on a macOS build, and every arm here names a tag both have. `E` below
+//! is the host's, for a caller that wants to name the type.
 const std = @import("std");
 const assert = std.debug.assert;
 const event_module = @import("event.zig");
@@ -16,12 +18,12 @@ const event_module = @import("event.zig");
 pub const E = std.posix.E;
 
 /// True when the call transferred nothing and the backend handles the errno itself.
-pub fn is_handled_by_the_backend(errno: E) bool {
+pub fn is_handled_by_the_backend(errno: anytype) bool {
     return errno == .AGAIN or errno == .INTR or errno == .INPROGRESS;
 }
 
 /// The code a failed call's errno carries.
-pub fn code_of(errno: E) event_module.Code {
+pub fn code_of(errno: anytype) event_module.Code {
     assert(errno != .SUCCESS);
     assert(!is_handled_by_the_backend(errno));
     return switch (errno) {
@@ -88,4 +90,17 @@ test "no errno maps to a code that only the loop itself produces" {
         try testing.expect(code != .mailbox_full and code != .loop_not_found);
         try testing.expect(code != .buffers_exhausted and code != .would_block);
     }
+}
+
+test "the map reads a Linux errno on a macOS build, which is what the epoll backend hands it" {
+    // `std.os.linux.E` is a different type from `std.posix.E` unless the target is Linux, and the
+    // epoll backend names the first. Every arm of the map names a tag both types have, so the same
+    // rows answer the same codes; this test proves that on whatever host runs it.
+    const LinuxE = std.os.linux.E;
+    try testing.expectEqual(event_module.Code.system_resources, code_of(LinuxE.NOMEM));
+    try testing.expectEqual(event_module.Code.connection_reset, code_of(LinuxE.CONNRESET));
+    try testing.expectEqual(event_module.Code.no_space_left, code_of(LinuxE.DQUOT));
+    try testing.expectEqual(event_module.Code.unexpected, code_of(LinuxE.BADF));
+    try testing.expect(is_handled_by_the_backend(LinuxE.AGAIN));
+    try testing.expect(!is_handled_by_the_backend(LinuxE.NOMEM));
 }

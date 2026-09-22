@@ -45,6 +45,13 @@ pub fn add(
     kqueue_run.addArtifactArg(kqueue_scenarios);
     step.dependOn(&kqueue_run.step);
 
+    const epoll_scenarios = scenarios(b, "epoll_scenarios", target, optimize);
+    epoll_scenarios.root_module.addImport("core", graph.core);
+    epoll_scenarios.root_module.addImport("epoll", graph.epoll);
+    const epoll_run = b.addRunArtifact(check);
+    epoll_run.addArtifactArg(epoll_scenarios);
+    step.dependOn(&epoll_run.step);
+
     const canary = scenarios(b, "canary_scenarios", target, optimize);
     const canary_run = b.addRunArtifact(check);
     canary_run.addArtifactArg(canary);
