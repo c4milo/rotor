@@ -93,6 +93,10 @@ pub fn build(b: *std.Build) void {
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         .{ .name = "kqueue", .module = graph.kqueue },
         .{ .name = "conformance-kqueue", .module = graph.conformance_kqueue },
+        .{ .name = "epoll", .module = graph.epoll },
+        // `conformance-epoll` is created in the graph and not compiled here yet: the suite names
+        // `backend.Loop`, and the epoll module has no loop until decision 20's build reaches it.
+        // It joins this list in the commit that adds one, which is what makes the suite run.
     };
     for (unit_test_modules) |entry| {
         const unit_tests = b.addTest(.{ .name = entry.name, .root_module = entry.module });

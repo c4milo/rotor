@@ -31,6 +31,12 @@ pub const Modules = struct {
     kqueue: *std.Build.Module,
     /// The conformance suite with `kqueue` as the backend under test. It skips off macOS.
     conformance_kqueue: *std.Build.Module,
+    /// The second Linux backend, over epoll, for a host that refuses io_uring (decision 20). Its
+    /// pure parts are tested on every host.
+    epoll: *std.Build.Module,
+    /// The conformance suite with `epoll` as the backend under test. It skips off Linux, and unlike
+    /// the `uring` suite it runs under Docker's default seccomp profile, which is the point of it.
+    conformance_epoll: *std.Build.Module,
 };
 
 pub fn add(
@@ -46,6 +52,11 @@ pub fn add(
     conformance_uring.addImport("backend", uring);
     const kqueue = create(b, "src/kqueue/kqueue.zig", target, optimize);
     kqueue.addImport("core", core);
+    const epoll = create(b, "src/epoll/epoll.zig", target, optimize);
+    epoll.addImport("core", core);
+    const conformance_epoll = create(b, "src/conformance/conformance.zig", target, optimize);
+    conformance_epoll.addImport("core", core);
+    conformance_epoll.addImport("backend", epoll);
     const conformance_kqueue = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_kqueue.addImport("core", core);
     conformance_kqueue.addImport("backend", kqueue);
@@ -61,6 +72,8 @@ pub fn add(
         .conformance_uring = conformance_uring,
         .kqueue = kqueue,
         .conformance_kqueue = conformance_kqueue,
+        .epoll = epoll,
+        .conformance_epoll = conformance_epoll,
     };
 }
 

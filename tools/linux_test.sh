@@ -41,9 +41,13 @@ set -euo pipefail
 # Linux. The digest names a multi-platform index, so the same line serves arm64 and amd64.
 # Resolve a new digest with `docker buildx imagetools inspect alpine:3.20`.
 readonly image='alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
-# Docker's default seccomp profile refuses io_uring_setup with EPERM, so every container runs
+# Docker's default seccomp profile refuses io_uring_setup with EPERM, so an io_uring container runs
 # without that profile. Without this option the probe reports the refusal and the run fails.
 readonly security_option='seccomp=unconfined'
+# The one executable that runs under Docker's DEFAULT profile instead. The epoll backend exists for a
+# container nobody relaxed (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests
+# would prove nothing: they must pass in the environment that refuses io_uring.
+readonly confined_test='epoll'
 # The directory `zig build test-linux` installs into, relative to the top of the work tree.
 readonly install_directory='zig-out/linux'
 # The file `zig build test-linux` touches after its last install (build/linux.zig).
@@ -91,9 +95,17 @@ require_fresh_install() {
   fi
 }
 
-# Runs one command in a fresh container with the install directory mounted read-only.
+# Runs one command in a fresh container with the install directory mounted read-only, and with the
+# seccomp profile relaxed so io_uring works.
 in_container() {
   docker run --rm --security-opt "$security_option" \
+    --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
+}
+
+# The same, under Docker's default seccomp profile: no --security-opt at all. This is where
+# io_uring_setup is refused, and where the epoll backend has to work.
+in_default_container() {
+  docker run --rm \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 
@@ -102,9 +114,15 @@ in_container() {
 # expands them and this one does not.
 run() {
   local name="$1"
-  echo "linux_test: $name"
+  local runner='in_container'
+  if [[ "$name" == "$confined_test" ]]; then
+    runner='in_default_container'
+    echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
+  else
+    echo "linux_test: $name"
+  fi
   # shellcheck disable=SC2016
-  if ! in_container sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
+  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
     sh "$mount_point" "$run_directory" "$name"; then
     fail "$name failed; nothing after it was run"
   fi
