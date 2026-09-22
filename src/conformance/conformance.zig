@@ -99,6 +99,7 @@ pub fn unsupported() bool {
 }
 
 test {
+    _ = @import("conformance_cost.zig");
     _ = @import("conformance_loop.zig");
     _ = @import("conformance_offload.zig");
     _ = @import("conformance_tcp.zig");
