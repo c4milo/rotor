@@ -192,7 +192,9 @@ measured against `zig build halt-check`.
   through the registry. A clean run is evidence and not a proof, because a sanitizer reports the
   interleavings that ran. It has its own target and image because the sanitizer's runtime needs a
   dynamic glibc, and it cannot be built on macOS at all. `zig build test` does not run it: it
-  needs Docker.
+  needs Docker. It does require the compile, through `zig build test-race-compile`, because this
+  is the only step that builds the `kqueue` module for Linux, and a Darwin-only socket option
+  reached CI once because nothing in `zig build test` did.
 - Linux benchmarks: `zig build bench-linux` builds the io_uring benchmarks of `bench/uring/` for
   the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
   `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A

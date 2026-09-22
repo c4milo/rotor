@@ -124,7 +124,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(bench_steps.echo_smoke);
 
     linux.add(b, optimize);
-    race.add(b);
+    // The race gate's compile, and not its install: it is the only step that builds the kqueue
+    // module for Linux, and a Darwin-only symbol reached CI once because nothing else did.
+    // Compiling it needs no Docker and costs about three seconds.
+    test_step.dependOn(race.add(b).compile);
     bench_linux.add(b);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));

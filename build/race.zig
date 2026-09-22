@@ -30,7 +30,11 @@ const manifest_name = "tests.manifest";
 /// The file the step touches last, which says when this install finished.
 const stamp_name = ".test-race-stamp";
 
-pub fn add(b: *std.Build) void {
+/// The steps this file adds. `compile` builds the sanitized executables and installs nothing, so
+/// `zig build test` can require the compile without writing to zig-out or needing Docker.
+pub const Steps = struct { compile: *std.Build.Step };
+
+pub fn add(b: *std.Build) Steps {
     const target = race_target(b);
     const graph = modules.add(b, target, .Debug);
 
@@ -45,12 +49,18 @@ pub fn add(b: *std.Build) void {
     stamp.addArg(b.pathJoin(&.{ b.install_path, install_directory, stamp_name }));
     stamp.has_side_effects = true;
 
+    const compile_all = b.step(
+        "test-race-compile",
+        "Compile the ThreadSanitizer executables, and install none of them",
+    );
+
     var manifest: []const u8 = "";
     for (suites) |suite| {
         suite.module.sanitize_thread = true;
         // The sanitizer's runtime is C, and it needs libc linked.
         suite.module.link_libc = true;
         const tests = b.addTest(.{ .name = suite.name, .root_module = suite.module });
+        compile_all.dependOn(&tests.step);
         const installed = b.addInstallArtifact(tests, .{
             .dest_dir = .{ .override = .{ .custom = install_directory } },
         });
@@ -72,6 +82,7 @@ pub fn add(b: *std.Build) void {
         "Build the ThreadSanitizer executables for tools/race_test.sh",
     );
     step.dependOn(&stamp.step);
+    return .{ .compile = compile_all };
 }
 
 /// Linux on the build host's CPU architecture, glibc ABI: ThreadSanitizer's runtime needs it.
