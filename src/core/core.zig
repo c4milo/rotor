@@ -8,6 +8,7 @@ pub const datagram = @import("datagram.zig");
 pub const event = @import("event.zig");
 pub const handle = @import("handle.zig");
 pub const layout = @import("layout.zig");
+pub const offload = @import("offload.zig");
 pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
 pub const shutdown = @import("shutdown.zig");
@@ -38,6 +39,7 @@ test {
     _ = event;
     _ = handle;
     _ = layout;
+    _ = offload;
     _ = operation;
     _ = random;
     _ = shutdown;

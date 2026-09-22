@@ -1,9 +1,15 @@
 # 18. A caller-supplied thread pool for blocking file operations
 
-Status: **accepted** on 2026-09-20. The owner ruled "let's allow a thread pool" after the
-comparison below showed what the kqueue backend costs and what libxev does instead. This record
-amends `0002-scope.md`'s correction "files on macOS" and adds a row to the choice that record
-made. Nothing is built yet, and one thing it needs does not exist.
+Status: **accepted** on 2026-09-20, and **built on 2026-09-21** except the harness row. The owner
+ruled "let's allow a thread pool" after the comparison below showed what the kqueue backend costs
+and what libxev does instead. This record amends `0002-scope.md`'s correction "files on macOS" and
+adds a row to the choice that record made.
+
+What is built: the three policies, the hand-off, the cancel of an offloaded operation, the
+conformance scenarios and the halt scenarios. What is not: the harness row, because measurement is
+deferred (`0003-speed-sources.md`'s rule, and the owner's ruling of 2026-09-20). **No number is
+claimed for the offload.** The owner brought the work forward on 2026-09-21, ahead of open
+question 4's proposed answer, which is recorded there.
 
 ## Context
 
@@ -76,18 +82,41 @@ A caller that wants the stall says so in one word at init, and a caller that say
 rather than slowed. The io_uring backend takes the option and ignores it: the kernel does these
 operations without a thread, and that is the whole point of the backend.
 
-### The thing this needs that does not exist
+### The thing this needs, and what was built instead of `Remote`
 
-An offloaded operation finishes on a thread that owns no loop, and **such a thread cannot reach a
-loop today**. `submit` calls `assert_owner`, which halts a caller that is not the loop's own
-thread. `0004-threading.md` describes a `Remote` for exactly this case, and
-`0017-the-layer-that-owns-the-loop.md` records that no file under `src/` contains it.
+An offloaded operation finishes on a thread that owns no loop, and **such a thread could not reach a
+loop**. `submit` calls `assert_owner`, which halts a caller that is not the loop's own thread.
+`0004-threading.md` describes a `Remote` for exactly this case, and
+`0017-the-layer-that-owns-the-loop.md` records that no file under `src/` contains it. This record's
+first draft concluded from that: build `Remote`, because an offload needs it.
 
-So this record cannot be built before that one is answered. The kqueue backend already has most of
-the machinery: `kqueue_mailbox.zig` carries a `Mailbox` with `push`, `pop_into` and the
-`EVFILT_USER` wake, used today for one loop posting to another. What is missing is a sender that
-is a thread rather than a loop. `0017`'s open question 5 asks whether to build `Remote` or drop
-it; this record answers it: **build it**, because an offload needs it.
+**It did not need `Remote`, and this record's own open question 1 is why.** That question proposes
+the offload's shape as "a context pointer and two function pointers, one to hand work out and one
+the worker calls when it is done". The second of those *is* the sender this needed, and it is
+narrower than `Remote` in three ways: it carries one operation's result rather than any message, it
+is reached through a function pointer rather than a registered handle, and it counts against nothing
+in `loops_max`. So what was built on 2026-09-21 is what this record already described, and
+`Remote` — a handle any thread may post anything through — is still owed to
+`0017-the-layer-that-owns-the-loop.md`'s DNS worker, which is the consumer that should shape it.
+
+The kqueue backend had most of the machinery: `kqueue_mailbox.zig`'s `Mailbox`, with `push`,
+`pop_into` and the `EVFILT_USER` wake, used for one loop posting to another. What was added:
+
+- `src/core/offload.zig`: `FilePolicy`, `Work` and `Offload`, so both backends take the same options.
+- `src/kqueue/kqueue_offload.zig`: one ring per worker, the hand-out, the worker's `run`, and the
+  drain that finishes the slots on the loop thread.
+- `core.constants.offload_workers_max`, which bounds the rings at 64.
+
+**One ring per worker, not one queue shared between them.** `Mailbox` is single-producer, and its
+memory-ordering argument depends on that; a ring each keeps it true and adds no new concurrency
+primitive. libxev instead shares one Vyukov MPSC queue between its pool threads
+(`src/queue_mpsc.zig`), whose own source carries a TODO saying the atomics are unaudited. The cost
+of the choice is memory: a ring is 4,352 bytes, so 64 workers is about 279 KiB, and the caller owns
+that memory because the caller's threads write it.
+
+**A caller must keep its offload running until the loop is drained.** An operation out on a worker
+can only be ended by that worker, so a caller that stops its threads first leaves an operation that
+never ends, and `drain` reports `StillInFlight` rather than hanging.
 
 ## Alternatives it beat
 
@@ -122,13 +151,25 @@ kernels', and hiding it would make a harness row depend on which path ran, which
 
 ## How it is checked
 
-- A conformance scenario per policy, on kqueue: `refuse` ends a file read with `unsupported`,
-  `blocking` completes it, and `offload` completes it on the caller's thread. The suite runs on
-  both backends, so the io_uring arm asserts that the option changes nothing there.
-- A halt scenario for an offload that answers a loop it was not given.
-- The reads workload gains a rotor candidate per policy, so `bench/files/reads_runner.zig` can
-  say what the offload is worth against the inline call and against libuv's four threads. That
-  row is the one that decides whether this was worth building.
+Done on 2026-09-21, except the last:
+
+- **A conformance scenario per policy**, on kqueue: `refuse` ends a file read with `unsupported`,
+  `blocking` completes it, and `offload` completes it on the caller's thread. The suite runs on both
+  backends, so the io_uring arm asserts that the option changes nothing there. Seven scenarios in
+  `src/conformance/conformance_offload.zig`, which also cover the cancel, the same-tick delivery,
+  and that a socket operation's cancel is untouched by the policy.
+- **Halt scenarios** in `tools/halt/kqueue_scenarios.zig`: answering as a worker the loop holds no
+  ring for, the `offload` policy with no offload, an offload with no worker, and one with more
+  workers than the limit.
+- **The race gate cannot see any of this, and that is recorded where it bites.** The offload exists
+  on kqueue alone, so its conformance scenarios run on macOS, where ThreadSanitizer cannot be built.
+  So the ordering is tested twice: once through the real path on macOS
+  (`src/kqueue/kqueue_offload_test.zig`, Darwin only), and once against a bare `Mailbox` and a bare
+  flag in the same file, which compiles for Linux and which `zig build test-race` judges.
+- The reads workload gains a rotor candidate per policy, so `bench/files/reads_runner.zig` can say
+  what the offload is worth against the inline call and against libuv's four threads. That row is
+  the one that decides whether this was worth building, and **it is not taken**: measurement is
+  deferred.
 
 ## Open questions
 
@@ -136,15 +177,20 @@ kernels', and hiding it would make a harness row depend on which path ran, which
    hand work out and one the worker calls when it is done, so rotor names no thread type and no
    pool. The alternative is for rotor to define a queue the caller drains, which moves the
    wake-up problem to the caller and is worth comparing before either is built.
-2. **Does an offloaded operation keep its cancellation semantics?** Decision 5 says every
-   operation ends with exactly one final event. A `pread` already running on a worker cannot be
-   cancelled, so a cancel must mean "end it when it returns" and not "stop it". That is what
-   `0005-cancellation.md` already says for an operation the kernel owns, and it should say so for
-   one a worker owns.
+2. **Does an offloaded operation keep its cancellation semantics?** **Built to the proposed answer
+   on 2026-09-21.** Decision 5 says every operation ends with exactly one final event. A `pread`
+   already running on a worker cannot be cancelled, so a cancel means "end it when it returns" and
+   not "stop it": `kqueue_cancel.zig` records the cancel and leaves the operation to the worker,
+   whose result is what the event carries. That is what `0005-cancellation.md` already says for an
+   operation the kernel owns. A conformance scenario holds a worker, cancels, releases it, and
+   requires exactly one event.
 3. **Does the file policy belong on the loop or on the operation?** Proposed: the loop, once at
    init, because a consumer that wants both shapes can run two loops and decision 4 already says
    a loop belongs to one thread. Per-operation would let one connection stall the loop while
    another does not, which is harder to reason about and no consumer has asked for.
-4. **When is this built?** Milestone 4 is unfinished and unmeasured, and this record's own gate is
-   a harness row. Proposed: after milestone 4 reports, so the offload is measured against numbers
-   that exist rather than against the ones it hopes to beat.
+4. **When is this built?** **Overtaken by the owner on 2026-09-21**, who brought it forward: the
+   comparison's file rows set a rotor with no pool against a libuv with four threads, which measures
+   the pool and not the loops, and milestone 4's own rule is that a comparison matches what each
+   candidate holds. The proposed answer was: after milestone 4 reports, so the offload is measured
+   against numbers that exist rather than against the ones it hopes to beat. That ordering still
+   holds for the *number*: none is claimed here.

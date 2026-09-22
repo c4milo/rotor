@@ -9,6 +9,7 @@ const assert = std.debug.assert;
 const core = @import("core");
 const constants = @import("constants.zig");
 const descriptors_module = @import("kqueue_descriptors.zig");
+const offload_module = @import("kqueue_offload.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const sync = @import("kqueue_sync.zig");
@@ -60,6 +61,9 @@ fn start(loop: *Loop, index: u32, slot: *Slot) void {
         return wait(loop, index, slot, perform.filter_of(slot.code));
     }
     const attempt = perform.attempt(loop, slot);
+    // The caller's offload has it now, and a worker's ring carries the result back (decision 18).
+    // The slot stays the loop's until then, which is decision 5, rule 3 for its buffer.
+    if (attempt.outcome == .offloaded) return offload_module.hand_out(loop, index, slot);
     if (attempt.outcome != .done) return wait(loop, index, slot, attempt.filter());
     assert(attempt.buffer_id == null);
     loop.tables.finish_local(index, attempt.result);

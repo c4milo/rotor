@@ -46,6 +46,11 @@ pub const transfer_bytes_max: u32 = 0x7fff_f000;
 /// The most loops and remotes one process may hold, which bounds a `LoopId` (decision 4).
 pub const loops_max: u16 = 256;
 
+/// The most worker threads a caller's offload may have, which is the mailboxes a loop holds for it
+/// (decision 18). One ring per worker keeps each a single-producer queue, so the hand-back needs no
+/// multi-producer structure and no lock. A caller with more threads than this runs more loops.
+pub const offload_workers_max: u16 = 64;
+
 /// The largest tag a `Message` may carry. io_uring delivers a posted message as a completion
 /// whose 32-bit result is the sender's to choose, and a result in [-4095, -1] is an errno. The
 /// uring backend sets the top bit of the tag, so a message's result is below -4095 and never

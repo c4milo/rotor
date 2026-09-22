@@ -98,7 +98,14 @@ pub fn main(init: std.process.Init) !void {
     const options = try parse(init);
 
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    // The inline policy, which is what this workload has always measured on kqueue: the loop
+    // performs the read itself and stalls for its duration (decision 18). The default refuses, so
+    // a workload that wants the stall now names it.
+    try loop.init(&loop_memory, .{
+        .operations = operations,
+        .entries = entries,
+        .file_policy = .blocking,
+    });
     defer loop.deinit();
 
     const file = try open_and_fill(options);

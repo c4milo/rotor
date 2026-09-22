@@ -12,6 +12,7 @@ const constants = @import("constants.zig");
 const cancel_module = @import("kqueue_cancel.zig");
 const queue_module = @import("kqueue_queue.zig");
 const reap_module = @import("kqueue_reap.zig");
+const offload_module = @import("kqueue_offload.zig");
 const submit_module = @import("kqueue_submit.zig");
 const kqueue = @import("kqueue.zig");
 
@@ -31,6 +32,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
     expire(loop);
+    // Before the finished list is drained, so a result a worker pushed becomes its operation's
+    // final event in this tick and not the next (decision 18).
+    _ = offload_module.drain(loop);
     var produced = tables.drain_finished(events);
     produced += loop.drain_mailboxes(events[produced..]);
 
@@ -43,6 +47,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const ready_count = try ready;
 
     produced += reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
+    // A worker may have answered while this tick waited, and the wake is what ended the wait.
+    if (offload_module.drain(loop) != 0) {
+        produced += tables.drain_finished(events[produced..]);
+    }
     produced += loop.drain_mailboxes(events[produced..]);
     if (produced == 0 and wait != null) {
         // The wait may have ended because a deadline came due.

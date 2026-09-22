@@ -31,6 +31,23 @@ pub const Harness = struct {
         return harness.init_sampling(id, registry, .{});
     }
 
+    /// A loop that performs a file operation inline, which on kqueue a caller must now ask for by
+    /// name (decision 18): the default policy refuses, so that a stall is never invisible. On
+    /// io_uring the option is taken and ignored, and the scenario reads the same thing either way.
+    pub fn init_blocking(
+        harness: *Harness,
+        id: core.LoopId,
+        registry: ?*backend.Registry,
+    ) !void {
+        try harness.loop.init(&harness.memory, .{
+            .operations = operations,
+            .entries = entries,
+            .id = id,
+            .registry = registry,
+            .file_policy = .blocking,
+        });
+    }
+
     /// A loop that samples as `sampling` says, for the scenarios that read its statistics.
     pub fn init_sampling(
         harness: *Harness,
@@ -83,6 +100,7 @@ pub fn unsupported() bool {
 
 test {
     _ = @import("conformance_loop.zig");
+    _ = @import("conformance_offload.zig");
     _ = @import("conformance_tcp.zig");
     _ = @import("conformance_file.zig");
     _ = @import("conformance_post.zig");

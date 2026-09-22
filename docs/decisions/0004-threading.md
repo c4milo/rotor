@@ -206,10 +206,15 @@ is the producer end of a ring pair, and on io_uring it is a small ring created f
 used only to submit `MSG_RING`.
 
 **`Remote` is described here and exists in no file under `src/`**, found on 2026-09-20 and
-recorded by `0017-the-layer-that-owns-the-loop.md`. Until it is built, a thread that owns no loop
-cannot post at all: `submit` calls `assert_owner`, which halts rather than returning an error.
-`0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes on
-exactly such a thread, and that record rules that it is built.
+recorded by `0017-the-layer-that-owns-the-loop.md`. A thread that owns no loop still cannot `post`:
+`submit` calls `assert_owner`, which halts rather than returning an error.
+
+**The offload built on 2026-09-21 is not `Remote` and does not replace it.**
+`0018-a-caller-supplied-thread-pool.md` lets a worker thread hand back the result of one file
+operation, through a function pointer and a ring of its own, and nothing else: it carries no message
+a caller chose, it is reached through no registered handle, and it counts against nothing in
+`loops_max`. So a thread that owns no loop can end an operation the loop gave it, and still cannot
+post. `Remote` remains owed, and `0017`'s DNS worker is the consumer that should shape it.
 
 Everything else is the owner's alone. What the loop does when another thread calls it:
 

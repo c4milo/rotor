@@ -30,7 +30,12 @@ pub const Attempt = struct {
     /// The provided buffer that holds the bytes of a receive from a group.
     buffer_id: ?u16 = null,
 
-    pub const Outcome = enum { done, wait_read, wait_write };
+    pub const Outcome = enum { done, wait_read, wait_write, offloaded };
+
+    /// The operation is the caller's offload's now, and its result arrives on a worker's ring
+    /// (decision 18). Only a file operation under the `offload` policy answers this, and only from
+    /// the flush: a file needs no readiness, so nothing here is reached from the reap.
+    const handed_out: Attempt = .{ .outcome = .offloaded };
 
     fn done(result: i32) Attempt {
         return .{ .outcome = .done, .result = result };
@@ -67,9 +72,9 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
         .receive => attempt_receive(loop, slot),
         .send => attempt_send(slot),
         .shutdown => attempt_shutdown(slot),
-        .read => attempt_file(slot, .read),
-        .write => attempt_file(slot, .write),
-        .fdatasync => attempt_sync(slot),
+        .read => attempt_file(loop, slot, .read),
+        .write => attempt_file(loop, slot, .write),
+        .fdatasync => attempt_sync(loop, slot),
         .nop => Attempt.done(0),
         .receive_from => attempt_receive_from(loop, slot),
         .send_to => attempt_send_to(slot),
@@ -233,8 +238,20 @@ fn attempt_shutdown(slot: *const Slot) Attempt {
 
 const Transfer = enum { read, write };
 
-/// A file transfer runs inline and blocks the loop for its duration (decisions 2 and 12).
-fn attempt_file(slot: *const Slot, transfer: Transfer) Attempt {
+/// What the loop's policy says to do with a file operation (decision 18). `refuse` is the default,
+/// because a stall nobody asked for is the complaint that record answers.
+fn policy_attempt(loop: *const Loop) ?Attempt {
+    return switch (loop.file_policy) {
+        .refuse => Attempt.done(core.event.result_of(.unsupported)),
+        .blocking => null,
+        .offload => Attempt.handed_out,
+    };
+}
+
+/// A file transfer under the `blocking` policy runs inline and blocks the loop for its duration
+/// (decisions 2 and 12). Under `refuse` it never runs, and under `offload` a worker runs it.
+fn attempt_file(loop: *const Loop, slot: *const Slot, transfer: Transfer) Attempt {
+    if (policy_attempt(loop)) |decided| return decided;
     const bytes = slot.bytes();
     const offset: i64 = @intCast(slot.offset);
     var retry: u32 = 0;
@@ -255,7 +272,8 @@ fn attempt_file(slot: *const Slot, transfer: Transfer) Attempt {
 
 /// `F_FULLFSYNC` is what makes the promise of `fdatasync` true on macOS: a plain fsync leaves
 /// the bytes in the drive's cache. A filesystem that does not know it gets a plain fsync.
-fn attempt_sync(slot: *const Slot) Attempt {
+fn attempt_sync(loop: *const Loop, slot: *const Slot) Attempt {
+    if (policy_attempt(loop)) |decided| return decided;
     const full = std.c.fcntl(slot.descriptor, std.c.F.FULLFSYNC, @as(c_int, 0));
     if (full == 0) return Attempt.done(0);
     const rc = std.c.fsync(slot.descriptor);

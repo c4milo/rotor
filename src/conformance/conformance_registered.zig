@@ -45,7 +45,7 @@ fn receive(user_data: u64, buffer: []u8, timeout_ns: u64) Operation {
 test "a file named by its registered index is written, synced and read as by its descriptor" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
-    try harness.init(0, null);
+    try harness.init_blocking(0, null);
     defer harness.deinit();
     const listener = try tcp.Listener.open();
     defer sync.close_now(listener.descriptor);
@@ -98,7 +98,7 @@ const deadline_ns = 20 * core.constants.ns_per_ms;
 test "sockets named by registered index carry bytes, time out, shut down, and accept" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
-    try harness.init(0, null);
+    try harness.init_blocking(0, null);
     defer harness.deinit();
     const listener = try tcp.Listener.open();
     defer sync.close_now(listener.descriptor);
@@ -161,7 +161,7 @@ fn accept_by_index(harness: *Harness, listener: *const tcp.Listener) !void {
 test "register_descriptors refuses a descriptor that is not open, and the loop may register after" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
-    try harness.init(0, null);
+    try harness.init_blocking(0, null);
     defer harness.deinit();
     const open = try sync.open_socket(.ipv4);
     defer sync.close_now(open);

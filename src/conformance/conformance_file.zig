@@ -17,7 +17,7 @@ const file_blocks = 4;
 test "a block written and synced reads back, and a read past the end returns 0" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
-    try harness.init(0, null);
+    try harness.init_blocking(0, null);
     defer harness.deinit();
 
     var path_buffer: [96]u8 = undefined;

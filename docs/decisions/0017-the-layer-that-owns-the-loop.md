@@ -196,6 +196,11 @@ it describes (CLAUDE.md).
    each a way to resolve differently from the rest of the machine. Whichever it is, the answer
    reaches the loop by one of the three routes named in "The gap" above.
 5. **Should `Remote` be built, or should decision 4 drop it?** **Answered on 2026-09-20: built.**
+   Still owed on 2026-09-21: `0018-a-caller-supplied-thread-pool.md` was built that day and needed
+   less than `Remote` — a worker hands back one operation's result through a function pointer and a
+   ring, which is that record's own open question 1 and not a handle any thread may post through. So
+   the reason `Remote` was first wanted has gone, and this record's DNS worker is now its only named
+   consumer. It should shape it.
    `0018-a-caller-supplied-thread-pool.md` needs it, because an offloaded file operation finishes
    on a thread that owns no loop. That also settles the resolver route in question 4: a
    `getaddrinfo` worker uses the same door.

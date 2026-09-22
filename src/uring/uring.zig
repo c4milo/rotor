@@ -27,6 +27,11 @@ pub const testing = @import("uring_testing.zig");
 pub const tick_module = @import("uring_tick.zig");
 
 pub const Registry = registry_module.Registry;
+/// Whether this backend's file operations block the loop thread, which is what decides whether
+/// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation without a thread, so there is nothing to hand out and
+/// `Options.file_policy` is taken and ignored (decision 18).
+pub const files_block = false;
+
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag == .linux;
 
@@ -85,6 +90,16 @@ pub const Loop = struct {
         /// Where loops find each other's rings. Null for a loop that posts to none and that
         /// none posts to.
         registry: ?*Registry = null,
+        /// **Taken and ignored** (decision 18). The kernel performs `read`, `write` and `fdatasync`
+        /// without a thread here, which is the whole point of this backend, so there is nothing to
+        /// hand out and no policy to apply. It is in the options so that a caller's options are the
+        /// same on both backends, as `entries` is on the other one.
+        file_policy: core.offload.FilePolicy = .refuse,
+        /// Taken and ignored, for the same reason as `file_policy`.
+        offload: ?core.offload.Offload = null,
+        /// Taken and ignored, for the same reason as `file_policy`. This backend holds no ring for
+        /// an offload, so it asks for no memory for one.
+        offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
     };
 
     /// The bytes of memory `init` needs for `options`, aligned to `core.layout.memory_alignment`.

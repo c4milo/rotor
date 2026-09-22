@@ -19,6 +19,7 @@ pub const cancel_module = @import("kqueue_cancel.zig");
 pub const descriptors_module = @import("kqueue_descriptors.zig");
 pub const errno = @import("kqueue_errno.zig");
 pub const mailbox = @import("kqueue_mailbox.zig");
+pub const offload_module = @import("kqueue_offload.zig");
 pub const perform = @import("kqueue_perform.zig");
 pub const queue_module = @import("kqueue_queue.zig");
 pub const reap_module = @import("kqueue_reap.zig");
@@ -27,6 +28,11 @@ pub const sync = @import("kqueue_sync.zig");
 pub const testing = @import("kqueue_testing.zig");
 pub const tick_module = @import("kqueue_tick.zig");
 pub const waiters_module = @import("kqueue_waiters.zig");
+
+/// Whether this backend's file operations block the loop thread, which is what decides whether
+/// `Options.file_policy` and an offload mean anything here. kqueue reports readiness and never completes a file operation, so this backend makes the
+/// `pread`, `pwrite` and `fsync` calls itself and they block the loop thread (decision 18).
+pub const files_block = true;
 
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag.isDarwin();
@@ -66,6 +72,19 @@ pub const Loop = struct {
     registry: ?*Registry,
     /// True while the registry says this loop sleeps, so `wake_up` ends it once.
     sleeping: bool,
+    /// What this loop does with a file operation it cannot perform without blocking (decision 18).
+    file_policy: core.offload.FilePolicy,
+    /// The caller's offload, set when `file_policy` is `offload` and null otherwise.
+    offload: ?core.offload.Offload,
+    /// One ring per worker of the offload, which the worker writes and this loop reads. Empty
+    /// unless the policy is `offload`.
+    completions: []mailbox.Mailbox,
+    /// One per slot, filled when an operation is handed out. Empty unless the policy is `offload`.
+    works: []core.offload.Work,
+    /// Set while this loop is inside a blocking `kevent` call, so a worker on another thread knows
+    /// to wake it. It is read by the workers, so it is atomic, where `sleeping` is not
+    /// (decision 18, and decision 12's point 6 for the race it settles).
+    offload_asleep: std.atomic.Value(bool),
     /// The provided-buffer groups `provide_buffers` named, by group id.
     /// The reserve every datagram group of this loop uses (decision 15). One loop serves one
     /// shape, so a receive knows where a datagram starts without a lookup per completion.
@@ -88,7 +107,22 @@ pub const Loop = struct {
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         registry: ?*Registry = null,
+        /// What the loop does with `read`, `write` and `fdatasync`, which this backend cannot
+        /// perform without blocking (decision 18). The uring backend takes it and ignores it.
+        file_policy: core.offload.FilePolicy = .refuse,
+        /// The caller's threads, required when `file_policy` is `offload` and refused otherwise.
+        offload: ?core.offload.Offload = null,
+        /// Memory for the offload's rings, of at least
+        /// `offload_module.memory_bytes(offload.?.workers)`. The caller owns it because its own
+        /// threads write it, as the application owns the registry's.
+        offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
     };
+
+    /// The workers `options` asks the loop to hold rings for: the offload's, or none.
+    fn workers_of(options: Options) u16 {
+        if (options.file_policy != .offload) return 0;
+        return (options.offload orelse return 0).workers;
+    }
 
     /// The bytes of memory `init` needs for `options`, aligned to `core.layout.memory_alignment`.
     pub fn memory_bytes(options: Options) usize {
@@ -97,6 +131,12 @@ pub const Loop = struct {
         _ = layout.add(TimerHeap.Entry, options.operations);
         _ = layout.add(u64, options.operations);
         _ = layout.add(waiters_module.Entry, Waiters.capacity_for(options.operations));
+        // Nothing for an offload the options did not ask for, so a caller that wants none pays no
+        // byte for one (decision 12, point 6 makes the same argument for the registry).
+        // The rings are not here: they are 128-byte aligned, which `Layout` does not carve, and
+        // the caller's threads write them. `offload_module.memory_bytes` sizes those.
+        // `Layout.add` takes at least one entry, so a loop with no offload adds nothing at all.
+        if (workers_of(options) != 0) _ = layout.add(core.offload.Work, options.operations);
         return layout.bytes;
     }
 
@@ -126,7 +166,20 @@ pub const Loop = struct {
         const starts = layout.take(memory, u64, options.operations);
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, waiters_module.Entry, waiting));
+        const workers = workers_of(options);
+        // An `offload` policy without an offload, or one with workers the rings cannot hold, is a
+        // programmer error and not an operational one: it is a mistake at init and nothing can
+        // recover from it later (CLAUDE.md, Conventions).
+        assert((options.file_policy == .offload) == (workers != 0));
+        loop.works = if (workers == 0)
+            &.{}
+        else
+            layout.take(memory, core.offload.Work, options.operations);
         assert(layout.bytes == memory_bytes(options));
+        loop.completions = offload_module.init_rings(options.offload_memory, workers);
+        loop.file_policy = options.file_policy;
+        loop.offload = options.offload;
+        loop.offload_asleep = .init(false);
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
             .sampling = options.sampling,
@@ -265,6 +318,12 @@ pub const Loop = struct {
     /// sleep on that message (decision 12, point 6). Returns the wait to sleep for, or null.
     pub fn settle_to_sleep(loop: *Loop, wait: ?u64) ?u64 {
         const bound = wait orelse return null;
+        // The offload's workers are told the same thing the other loops are told, through a flag of
+        // this loop's own: an offload works without a registry, because its workers own no loop.
+        if (loop.completions.len != 0) {
+            loop.offload_asleep.store(true, .seq_cst);
+            if (offload_module.pending(loop)) return null;
+        }
         const registry = loop.registry orelse return bound;
         registry.begin_sleep(loop.tables.id);
         loop.sleeping = true;
@@ -275,8 +334,9 @@ pub const Loop = struct {
         return bound;
     }
 
-    /// Tells the registry the loop is awake again, when it had said it would sleep.
+    /// Tells the registry, and the offload's workers, that the loop is awake again.
     pub fn wake_up(loop: *Loop) void {
+        if (loop.completions.len != 0) loop.offload_asleep.store(false, .seq_cst);
         if (!loop.sleeping) return;
         loop.registry.?.end_sleep(loop.tables.id);
         loop.sleeping = false;
@@ -303,7 +363,9 @@ test {
     _ = testing;
     _ = tick_module;
     _ = waiters_module;
+    _ = offload_module;
     _ = @import("kqueue_mailbox_test.zig");
+    _ = @import("kqueue_offload_test.zig");
     _ = @import("kqueue_perform_test.zig");
     _ = @import("kqueue_waiters_test.zig");
 }

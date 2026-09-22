@@ -223,8 +223,8 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   `zig build bench-echo` builds the servers and the runner; `zig build bench-competitors` adds
   the pinned libuv and libxev; `./zig-out/bin/echo_runner` runs the comparison, and
   `--workload storm` runs the accept storm against the same servers. Echo at N connections with 4 KiB and 64 KiB
-  payloads, sequential and random O_DIRECT reads, timer churn, accept storm; each on 1 core and
-  N cores, even and skewed; one cross-core message on its own. Throughput and p50, p99, p999.
+  payloads, sequential and random O_DIRECT reads, timer churn, accept storm; **on 1 core**, by the
+  owner's ruling of 2026-09-21; one cross-core message on its own. Throughput and p50, p99, p999.
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
   (`bench/competitors/README.md`), in the same harness, in the same run, the losing runs
   included.
@@ -235,19 +235,30 @@ The owner accepted the decision records for implementation on 2026-09-19 without
 open questions, so the implementation follows the proposed answer to each. Decision 10 dropped
 the simulator.
 
-Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass the same 35-scenario conformance
-suite: `uring` under Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate
-pass. Registered descriptors and provided buffers are built, and no speed claim is made for either
-yet.
+Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass one conformance suite: `uring` under
+Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate pass. Registered
+descriptors and provided buffers are built, and no speed claim is made for either yet.
 
-The implementation is done: every row of decision 2's scope table is built, and every decision
-record has code for it, except decision 13, which is proposed and waits on the owner. The cost probes cover every row of `docs/costs.md` that either machine can
-measure.
+The implementation is done: every row of decision 2's scope table is built, and every decision record
+has code for it, except decision 13, which is proposed and waits on the owner, and decision 17,
+which is proposed and names a component this repository does not hold. The cost probes cover every
+row of `docs/costs.md` that either machine can measure.
 
-Milestone 3 is next: fill `docs/costs.md` from serial runs on a quiet machine, and run decision
-8's experiment. No cell is filled yet. The owner made `orbstack` a named machine on 2026-09-20,
-so its column is filled from probes run on it; the `linux` column is the deployment target, needs
-a machine of the family stompy builds for, and that machine is not named.
+Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it
+ahead of measurement. On kqueue a loop's `file_policy` is `refuse` by default, so **a file operation
+there now needs a policy named at init**: a caller that wants the old inline behaviour asks for
+`blocking`. `Remote` is still not built; the offload needed less, and decisions 4, 17 and 18 all
+record that.
+
+Measurement is next, and deferred: fill `docs/costs.md` from serial runs on a quiet machine, and run
+decision 8's experiment. No cell is filled yet. The owner made `orbstack` a named machine on
+2026-09-20, so its column is filled from probes run on it; the `linux` column is the deployment
+target, needs a machine of the family stompy builds for, and that machine is not named.
+
+The echo comparison measures **1 core only**, on the owner's ruling of 2026-09-21: no competitor
+spreads TCP load across cores on kqueue, and libuv declines the capability there on purpose
+(`bench/competitors/README.md`). Decision 4's "1 core and N cores, even and skewed" is the owner's to
+amend, so the N-core machinery in `bench/echo/` and `report.zig`'s `Load.skewed` stay until it is.
 
 **The `mac` machine is busy.** An attempt on 2026-09-20 met a load average of 30 from another
 project's CBMC run, and was not recorded: `orbstack` runs on this machine's cores, so its numbers
