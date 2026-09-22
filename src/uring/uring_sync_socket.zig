@@ -155,6 +155,82 @@ fn socket_call_error(errno: linux.E) error{ NotSocket, Unexpected } {
     return if (errno == .NOTSOCK) error.NotSocket else error.Unexpected;
 }
 
+/// The errno of a buffer call. This kernel caps a large size rather than refusing it, so ENOBUFS
+/// is not expected here; the arm exists because the surface is one on both backends.
+fn buffer_error(errno: linux.E) BufferError {
+    assert(errno != .SUCCESS);
+    if (errno == .NOBUFS) return error.SizeRefused;
+    return socket_call_error(errno);
+}
+
+/// Which of a socket's two kernel buffers `set_buffer_bytes` sizes.
+pub const SocketBuffer = enum { receive, send };
+
+/// The largest `bytes` this call carries, which is what `setsockopt` takes. It is not a size any
+/// kernel grants: both refuse or cap long before it, each in its own way, which is what the call
+/// answers and `SizeRefused` reports.
+pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
+
+/// What `set_buffer_bytes` answers beyond an option call's own errors.
+pub const BufferError = OptionError || error{
+    /// The kernel would not give a buffer of that size. macOS answers this for a size above its
+    /// limit; Linux caps instead and does not refuse.
+    SizeRefused,
+};
+
+/// Asks the kernel for `bytes` of buffer on this socket, and answers the size it set.
+///
+/// **The answer is not the request, and the two kernels differ in how.** Measured on 2026-09-22:
+///
+/// - Linux doubles what it is asked for, to cover its own bookkeeping, floors it at 2,304 bytes
+///   for a receive buffer and 4,608 for a send buffer, and caps it at `net.core.rmem_max` or
+///   `wmem_max` for a caller without `CAP_NET_ADMIN`. It never refuses: 1 byte becomes 2,304 and
+///   2 GiB became 15,000,000 on the kernel of that day.
+/// - macOS grants exactly what it is asked for, 1 byte included, up to its own limit, which was
+///   8 MiB on the machine measured. Above that it does one of two things, and which one depends on
+///   the size the socket already has: from a small buffer it capped a 2 GiB request to 8 MiB, and
+///   from 8 MiB it refused the same request with ENOBUFS. That refusal is `SizeRefused`, and it is
+///   why this call has an error of its own.
+///
+/// So a caller reads the answer, as it reads back the port `local_address` reports for port 0.
+///
+/// A datagram receiver under load is what this is for: a socket whose receive buffer is too small
+/// drops what arrives while the loop is elsewhere, and no operation reports that.
+pub fn set_buffer_bytes(
+    descriptor: Descriptor,
+    which: SocketBuffer,
+    bytes: u32,
+) BufferError!u32 {
+    assert(descriptor >= 0);
+    assert(bytes >= 1);
+    assert(bytes <= socket_buffer_bytes_max);
+    const name: u32 = switch (which) {
+        .receive => linux.SO.RCVBUF,
+        .send => linux.SO.SNDBUF,
+    };
+    const wanted: c_int = @intCast(bytes);
+    const set = linux.setsockopt(
+        descriptor,
+        linux.SOL.SOCKET,
+        name,
+        std.mem.asBytes(&wanted),
+        @sizeOf(c_int),
+    );
+    if (linux.errno(set) != .SUCCESS) return buffer_error(linux.errno(set));
+    var value: c_int = 0;
+    var len: linux.socklen_t = @sizeOf(c_int);
+    const read = linux.getsockopt(
+        descriptor,
+        linux.SOL.SOCKET,
+        name,
+        std.mem.asBytes(&value),
+        &len,
+    );
+    if (linux.errno(read) != .SUCCESS) return buffer_error(linux.errno(read));
+    assert(value >= 0);
+    return @intCast(value);
+}
+
 /// Options a datagram socket is opened with (decision 15).
 pub const DatagramOptions = struct {
     /// Report the address each datagram was sent to, so a server on a wildcard address can
@@ -344,4 +420,56 @@ test "a datagram socket closes on exec and a bound one has taken a port" {
     defer close_now(unbound);
     _ = try open_flags(unbound);
     try testing.expectEqual(@as(u16, 0), (try local_address(unbound)).port);
+}
+
+test "a socket's buffer is set to what the kernel allows, and read back in the same call" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const socket = try open_socket(.ipv4);
+    defer close_now(socket);
+
+    // **What the call answers is what the kernel has**, which a raw read finds, and on this kernel
+    // it is never the request: 512 KiB became 1 MiB on 2026-09-22, because Linux stores twice what
+    // it is asked for. A call that handed the request back would fail here.
+    const large = try set_buffer_bytes(socket, .receive, 512 << 10);
+    try testing.expectEqual(large, try read_buffer_bytes(socket, .receive));
+    try testing.expect(large > 512 << 10);
+
+    // A larger request cannot answer smaller, and this kernel floors a small one: 1 byte became
+    // 2,304 for a receive buffer and 4,608 for a send buffer that day.
+    const small = try set_buffer_bytes(socket, .receive, 32 << 10);
+    try testing.expect(small <= large);
+    try testing.expect(try set_buffer_bytes(socket, .receive, 1) > 1);
+    _ = try set_buffer_bytes(socket, .receive, 512 << 10);
+
+    // The receive and the send buffer are two settings, read without going through the call under
+    // test: one that named a single option would show both the same.
+    const sending = try set_buffer_bytes(socket, .send, 64 << 10);
+    try testing.expectEqual(sending, try read_buffer_bytes(socket, .send));
+    try testing.expectEqual(large, try read_buffer_bytes(socket, .receive));
+    try testing.expect(large != sending);
+
+    // This kernel caps a size above its limit and does not refuse it, where macOS refuses.
+    try testing.expect(try set_buffer_bytes(socket, .receive, socket_buffer_bytes_max) <
+        socket_buffer_bytes_max);
+
+    // A descriptor that is not open is refused. `probe_descriptor` closes what it opened, so the
+    // kernel answers EBADF and not ENOTSOCK, which is `Unexpected`: a caller that reaches this has
+    // a descriptor of its own it did not keep.
+    const closed = try probe_descriptor();
+    try testing.expectError(error.Unexpected, set_buffer_bytes(closed, .receive, 32 << 10));
+}
+
+/// Reads a socket buffer's size straight from the kernel, so a test can check what
+/// `set_buffer_bytes` reports without calling it again.
+fn read_buffer_bytes(descriptor: Descriptor, which: SocketBuffer) !u32 {
+    const name: u32 = switch (which) {
+        .receive => linux.SO.RCVBUF,
+        .send => linux.SO.SNDBUF,
+    };
+    var value: c_int = -1;
+    var len: linux.socklen_t = @sizeOf(c_int);
+    const rc = linux.getsockopt(descriptor, linux.SOL.SOCKET, name, std.mem.asBytes(&value), &len);
+    try testing.expectEqual(E.SUCCESS, linux.errno(rc));
+    try testing.expect(value >= 0);
+    return @intCast(value);
 }

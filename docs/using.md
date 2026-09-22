@@ -147,9 +147,22 @@ Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registe
 
 Descriptors come from `rotor.sync`, which makes the calls a loop does not: `open_socket`,
 `listen(&address, .{ .backlog, .reuse_port })`, `open_datagram(family, bind_to, .{})`,
-`local_address`, `set_no_delay`, `set_option`, `close_now`, and for files
+`local_address`, `set_no_delay`, `set_option`, `set_buffer_bytes`, `close_now`, and for files
 `open_file`, `file_size`, `set_file_size`, `sync_directory`. `Address` is rotor's own type,
 IPv4 or IPv6 with a port and a scope id; no kernel type is part of the surface.
+
+### Socket buffer sizes
+
+`sync.set_buffer_bytes(descriptor, .receive, bytes)` asks the kernel for that much buffer on the
+socket and **returns the size it actually set**, because the answer is rarely the request: Linux
+stores twice what it is asked for and caps it at `net.core.rmem_max` for a caller without
+`CAP_NET_ADMIN`, and macOS does neither. `.send` sizes the other one. `sync.socket_buffer_bytes_max`
+is the largest request, which is what `setsockopt` carries.
+
+A datagram receiver under load is what it is for. A UDP socket whose receive buffer is too small
+drops what arrives while the loop is elsewhere, and no operation reports that: the datagram is gone
+before rotor sees it. A resolver or a QUIC stack sizes the buffer at start-up and reads back what it
+got.
 
 ## Buffers
 

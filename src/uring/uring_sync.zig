@@ -21,6 +21,10 @@ pub const listen = socket_calls.listen;
 pub const local_address = socket_calls.local_address;
 pub const set_no_delay = socket_calls.set_no_delay;
 pub const close_now = socket_calls.close_now;
+pub const SocketBuffer = socket_calls.SocketBuffer;
+pub const BufferError = socket_calls.BufferError;
+pub const socket_buffer_bytes_max = socket_calls.socket_buffer_bytes_max;
+pub const set_buffer_bytes = socket_calls.set_buffer_bytes;
 pub const DatagramOptions = socket_calls.DatagramOptions;
 pub const open_datagram = socket_calls.open_datagram;
 
@@ -35,7 +39,7 @@ pub const sync_directory = file_calls.sync_directory;
 
 /// This file's public declarations, which `kqueue_sync.zig` carries too, name for name. Its own
 /// test writes the surface out, and this one holds the count they share.
-const declarations = 20;
+const declarations = 24;
 
 const expect = std.testing.expect;
 
@@ -49,6 +53,10 @@ test "the surface is the one kqueue_sync.zig presents, name for name" {
     try expect(@TypeOf(local_address) == fn (Descriptor) AddressError!Address);
     try expect(@TypeOf(set_no_delay) == fn (Descriptor, bool) OptionError!void);
     try expect(@TypeOf(close_now) == fn (Descriptor) void);
+    const buffer_type = fn (Descriptor, SocketBuffer, u32) BufferError!u32;
+    try expect(@TypeOf(set_buffer_bytes) == buffer_type);
+    try expect(@typeInfo(SocketBuffer).@"enum".fields.len == 2);
+    try expect(socket_buffer_bytes_max == std.math.maxInt(i32));
     const open_datagram_type = fn (Address.Family, ?*const Address, DatagramOptions) ListenError!Descriptor;
     try expect(@TypeOf(open_datagram) == open_datagram_type);
     try expect(@TypeOf(open_file) == fn (Path, OpenOptions) OpenError!Descriptor);
