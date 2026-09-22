@@ -92,6 +92,11 @@ const tested = [_]Tested{
         .needs_loop = false,
     },
     .{
+        .name = "bench-std-io-timers-tests",
+        .root = "bench/competitors/std_io_timers.zig",
+        .needs_loop = false,
+    },
+    .{
         .name = "bench-reads-runner-tests",
         .root = "bench/files/reads_runner.zig",
         .needs_loop = false,
@@ -154,6 +159,20 @@ fn add_echo(
         }),
     });
     step.dependOn(&b.addInstallArtifact(std_io, .{}).step);
+
+    // The same competitor on the timer workload, built here for the same reason. It needs the
+    // harness, because a candidate that measures itself prints the harness's result line.
+    const std_io_timers_module = b.createModule(.{
+        .root_source_file = b.path("bench/competitors/std_io_timers.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    std_io_timers_module.addImport("harness", harness_module);
+    const std_io_timers = b.addExecutable(.{
+        .name = "std_io_timers",
+        .root_module = std_io_timers_module,
+    });
+    step.dependOn(&b.addInstallArtifact(std_io_timers, .{}).step);
 
     // The timer churn workload: one program per candidate, each measuring itself, because a
     // timer has no client to measure it from.

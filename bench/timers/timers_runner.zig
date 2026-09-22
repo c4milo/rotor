@@ -18,18 +18,50 @@
 //! default period is one it can. A period under 1,000 microseconds compares rotor against a libuv
 //! that was asked for something else, so the runner refuses it too rather than printing a row that
 //! looks like a comparison.
+//!
+//! **`std.Io` has no timer, and that is why its row is here.** It has `sleep`, and a task that
+//! sleeps, so N timers is N tasks; under `std.Io.Threaded` a sleeping task holds the worker thread
+//! it runs on, so N timers is N threads. `bench/competitors/std_io_timers.zig` writes it that way
+//! because nothing else the interface offers arms a timer, and this row is what the shape costs.
+//!
+//! **A candidate here is a program and its arguments, not a program.** Two candidates share
+//! `std_io_timers`, which takes `--backend`, the way `bench/files/reads_runner.zig` has two
+//! candidates per program. `std.Io.Uring` is Linux-only, and it does not compile on the pinned Zig
+//! at all, which `bench/competitors/README.md` records.
 const std = @import("std");
+const builtin = @import("builtin");
 const harness = @import("harness");
 
 const Result = harness.Result;
 const Series = harness.series.Series;
 const programs = harness.candidates;
-const Candidate = programs.Candidate;
+
+/// One candidate: the name a row carries, the program to start, and the arguments that make it
+/// this candidate rather than another of the same program. The version is not here, because a
+/// candidate reports its own.
+const Candidate = struct {
+    name: []const u8,
+    program: []const u8,
+    arguments: []const []const u8 = &.{},
+    /// True for a candidate that only exists on Linux. `std.Io.Uring` is the one.
+    linux_only: bool = false,
+};
 
 const candidates = [_]Candidate{
     .{ .name = "rotor", .program = "rotor_timers" },
     .{ .name = "libuv", .program = "libuv_timers" },
     .{ .name = "libxev", .program = "libxev_timers" },
+    .{
+        .name = "std.Io.Threaded",
+        .program = "std_io_timers",
+        .arguments = &.{ "--backend", "threaded" },
+    },
+    .{
+        .name = "std.Io.Uring",
+        .program = "std_io_timers",
+        .arguments = &.{ "--backend", "uring" },
+        .linux_only = true,
+    },
 };
 
 const rounds_default: u32 = 5;
@@ -141,6 +173,10 @@ fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
     }
 }
 
+/// The most arguments one run passes: the program, three name-value pairs, and the candidate's
+/// own. A test holds it at or above what the longest candidate needs.
+const argv_max = 12;
+
 fn one_run(
     init: std.process.Init,
     options: Options,
@@ -152,18 +188,37 @@ fn one_run(
     var period_text: [16]u8 = undefined;
     var seconds_text: [16]u8 = undefined;
 
-    const argv = [_][]const u8{
-        try program_path(options, candidate, index),
-        "--timers",
-        try std.fmt.bufPrint(&timers_text, "{d}", .{timers}),
-        "--period-us",
-        try std.fmt.bufPrint(&period_text, "{d}", .{options.period_us}),
-        "--seconds",
-        try std.fmt.bufPrint(&seconds_text, "{d}", .{options.seconds}),
-    };
+    var argv: [argv_max][]const u8 = undefined;
+    argv[0] = try program_path(options, candidate, index);
+    argv[1] = "--timers";
+    argv[2] = try std.fmt.bufPrint(&timers_text, "{d}", .{timers});
+    argv[3] = "--period-us";
+    argv[4] = try std.fmt.bufPrint(&period_text, "{d}", .{options.period_us});
+    argv[5] = "--seconds";
+    argv[6] = try std.fmt.bufPrint(&seconds_text, "{d}", .{options.seconds});
+    const used = try append_arguments(&argv, 7, candidate.arguments);
 
     // The arena outlives the run, and the result's strings point into the bytes it holds.
-    return try programs.run_once(init.io, init.arena.allocator(), &argv);
+    return try programs.run_once(init.io, init.arena.allocator(), argv[0..used]);
+}
+
+/// Writes `extra` into `argv` after the `used` entries already there, and returns how many
+/// entries the run passes. It is a function of its own so a test can reach it: a candidate whose
+/// arguments were dropped would run another candidate's configuration and print another
+/// candidate's name, which no other check here would notice.
+fn append_arguments(
+    argv: *[argv_max][]const u8,
+    used: usize,
+    extra: []const []const u8,
+) !usize {
+    std.debug.assert(used <= argv_max);
+    var count = used;
+    for (extra) |argument| {
+        if (count == argv_max) return error.TooManyArguments;
+        argv[count] = argument;
+        count += 1;
+    }
+    return count;
 }
 
 fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u8 {
@@ -171,11 +226,22 @@ fn program_path(options: Options, candidate: Candidate, index: usize) ![]const u
     return try programs.program_path(&path_buffer[index], options.directory, candidate.program);
 }
 
+/// True when this host can run a candidate at all. `std.Io.Uring` exists on Linux alone, and a
+/// row for it on any other host would name a candidate that never ran. The host is a parameter so
+/// a test reaches both answers on either machine.
+fn runnable(candidate: Candidate, os_tag: std.Target.Os.Tag) bool {
+    return !candidate.linux_only or os_tag == .linux;
+}
+
 fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 {
     var count: u32 = 0;
     for (candidates, 0..) |candidate, index| {
-        if (!programs.wanted(options.only, candidate.name)) {
-            present[index] = false;
+        present[index] = false;
+        if (!programs.wanted(options.only, candidate.name)) continue;
+        if (!runnable(candidate, builtin.os.tag)) {
+            try writer.print("timers_runner: {s} runs on Linux alone, skipping it\n", .{
+                candidate.name,
+            });
             continue;
         }
         const path = try program_path(options, candidate, index);
@@ -284,15 +350,69 @@ test "a timer list is read, and an empty or oversized one is refused" {
     try testing.expectError(error.TooManyValues, parse_list("16,256", &small));
 }
 
-test "every candidate has a distinct name and a distinct program" {
+test "every candidate has a distinct name, and its arguments come in pairs" {
     for (candidates, 0..) |candidate, index| {
         try testing.expect(candidate.name.len >= 1);
         try testing.expect(candidate.program.len >= 1);
+        try testing.expectEqual(@as(usize, 0), candidate.arguments.len % 2);
         for (candidates[index + 1 ..]) |other| {
             try testing.expect(!std.mem.eql(u8, candidate.name, other.name));
-            try testing.expect(!std.mem.eql(u8, candidate.program, other.program));
         }
     }
+}
+
+test "the two std.Io candidates share one program and differ only in the backend" {
+    // `std.Io` is an interface, and the two are implementations of it. They have to be two
+    // candidates and not two runs of one, or a `Series` would average them into a number that
+    // describes neither.
+    const threaded = candidates[3];
+    const uring = candidates[4];
+    try testing.expectEqualStrings("std.Io.Threaded", threaded.name);
+    try testing.expectEqualStrings("std.Io.Uring", uring.name);
+    try testing.expectEqualStrings(threaded.program, uring.program);
+    try testing.expectEqualStrings("--backend", threaded.arguments[0]);
+    try testing.expectEqualStrings("threaded", threaded.arguments[1]);
+    try testing.expectEqualStrings("--backend", uring.arguments[0]);
+    try testing.expectEqualStrings("uring", uring.arguments[1]);
+}
+
+test "only std.Io.Uring is Linux-only, and off Linux it is not runnable" {
+    for (candidates) |candidate| {
+        const is_uring = std.mem.eql(u8, candidate.name, "std.Io.Uring");
+        try testing.expectEqual(is_uring, candidate.linux_only);
+        // Both answers, on whichever host this test runs on.
+        try testing.expectEqual(!is_uring, runnable(candidate, .macos));
+        try testing.expect(runnable(candidate, .linux));
+    }
+}
+
+test "a candidate's own arguments are appended, and a full buffer is an error" {
+    var argv: [argv_max][]const u8 = undefined;
+    argv[0] = "std_io_timers";
+
+    try testing.expectEqual(@as(usize, 1), try append_arguments(&argv, 1, &.{}));
+    try testing.expectEqual(
+        @as(usize, 3),
+        try append_arguments(&argv, 1, &.{ "--backend", "threaded" }),
+    );
+    try testing.expectEqualStrings("--backend", argv[1]);
+    try testing.expectEqualStrings("threaded", argv[2]);
+
+    try testing.expectError(
+        error.TooManyArguments,
+        append_arguments(&argv, argv_max, &.{"--backend"}),
+    );
+    try testing.expectError(
+        error.TooManyArguments,
+        append_arguments(&argv, argv_max - 1, &.{ "--backend", "threaded" }),
+    );
+}
+
+test "one run's arguments fit the buffer, with the longest candidate's own" {
+    var longest: usize = 0;
+    for (candidates) |candidate| longest = @max(longest, candidate.arguments.len);
+    // 7 fixed: the program and three name-value pairs.
+    try testing.expect(7 + longest <= argv_max);
 }
 
 test "the default period is one libuv can state, and the default sweep is not empty" {

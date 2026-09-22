@@ -323,9 +323,49 @@ The median lateness is rotor's by 20, 22 and 41 percent, in that order, which is
 consistent across all three. The tail is not rotor's at the two larger loads, and that is the
 kind of mixed result a single run is least able to settle.
 
-What this needs next: the runner drives echo and the storm, and not this, because a timer program
-measures itself and prints a line instead of being driven. Giving the runner that shape is what
-turns these into rows with a spread.
+`bench/timers/timers_runner.zig` now drives this workload: it starts each candidate's program
+once per round, alternating the candidates within a round, and reads the result line each one
+printed. So these single runs are superseded by rows with a spread as soon as a quiet machine is
+available. Nothing above has been re-taken.
+
+### `std.Io` is the fourth candidate, and its shape is the row
+
+`std.Io` offers no timer. It offers `sleep`, and a task that sleeps. So N timers written against
+the interface is N tasks, and `bench/competitors/std_io_timers.zig` writes it that way because
+nothing else the interface offers arms a timer. Under `std.Io.Threaded` a sleeping task holds the
+worker thread it runs on, because `sleep` there is `clock_nanosleep` on that thread. So **N timers
+is N threads**.
+
+What each candidate holds per armed timer, which is this file's rule applied to a workload with no
+connections:
+
+| candidate | per armed timer |
+|---|---|
+| rotor | one 64-byte slot of the loop's memory |
+| libuv | one `uv_timer_t`, caller-owned |
+| libxev | one `xev.Timer` and one `xev.Completion`, caller-owned |
+| `std.Io.Threaded` | one OS thread with a default thread stack, plus one `Group.Task` |
+
+The thread count is checked and not assumed. On the `mac` machine, a 512-timer run reported 513
+threads while it ran, which is 512 workers and the main thread:
+
+```bash
+./zig-out/bin/std_io_timers --timers 512 --period-us 1000 --seconds 4 >/dev/null &
+ps -M $! | wc -l
+```
+
+**That is a count of threads and not a measurement.** No throughput or lateness number for this
+candidate is recorded anywhere yet, and the run above was made on a machine doing other work.
+
+A host that refuses the threads fails the run: `Group.concurrent` answers
+`error.ConcurrencyUnavailable`, and the program turns that into `error.ThreadPerTimerRefused` and
+exits non-zero rather than arming fewer timers than its row would claim. The runner then names the
+candidate and the count, and prints no row for it. A missing row at a large count is the same
+finding stated more sharply.
+
+`std.Io.Uring` is a candidate of this workload too, and it is absent for the reason this file's own
+section gives: it does not compile on the pinned Zig. It is Linux-only besides, so the runner names
+it and skips it on any other host.
 
 ## The cross-core message, and one way its candidates are not measured alike
 
