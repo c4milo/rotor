@@ -87,6 +87,13 @@ pub const Queue = struct {
     }
 };
 
+/// The change a polling tick adds to its own changelist: a trigger of this loop's wake event, so
+/// the `kevent` call that follows finds one event ready and returns at once
+/// (`kqueue_tick.zig`, `arm_poll`).
+pub fn poll_trigger() Kevent {
+    return user_event(0, std.c.NOTE.TRIGGER);
+}
+
 fn user_event(flags: u16, fflags: u32) Kevent {
     return .{
         .ident = constants.wake_identifier,

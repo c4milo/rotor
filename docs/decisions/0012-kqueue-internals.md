@@ -93,6 +93,18 @@ Decision 4 settled the shape. The details:
 These rings are the one place in rotor where two threads touch the same memory. They are tested
 with two real threads under load, not only by the conformance suite's single message.
 
+**Amended on 2026-09-22: a polling tick carries the loop's own wake trigger.** On macOS 26.6.2 a
+`kevent` that finds nothing ready parks the thread through the scheduler even with a zero timeout:
+12 µs, measured on the `mac` machine, against 444 ns for a call that finds one event ready. `poll()`
+on the kqueue descriptor costs 7.8 µs, and `kevent64` with `KEVENT_FLAG_IMMEDIATE` is refused with
+`EINVAL` there. A tick polls when its caller gave it no wait, when it already holds finished work or
+a message, or when a timer is due, and every such tick paid the park. So `kqueue_tick.zig` adds a
+`NOTE_TRIGGER` of the loop's own `EVFILT_USER` event to the changelist of a polling tick: the kernel
+applies it, finds the wake event ready and returns in the same call, and the reap drops the wake
+event as it always did. A changelist already at `changes_max` triggers with a call of its own.
+Measured on the cross-core workload (`bench/alternatives/README.md`): one message from post to reap
+went from 6,015 ns to 2,007 ns, and an empty polling tick from 12.5 µs to 358 ns.
+
 ## 7. Timers, deadlines, cancellation
 
 As in `uring`, from `core`: the heap orders every deadline, the nearest one bounds the `kevent`

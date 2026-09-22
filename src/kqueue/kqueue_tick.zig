@@ -39,6 +39,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     produced += loop.drain_mailboxes(events[produced..]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
+    if (wait == null) arm_poll(loop);
     const room = @min(events.len - produced, constants.readiness_max);
     const changes = loop.changes[0..loop.changes_used];
     const ready = loop.queue.exchange(changes, loop.readiness[0..room], wait);
@@ -60,6 +61,22 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     }
     assert(produced <= events.len);
     return produced;
+}
+
+/// A poll carries the loop's own wake trigger in its changelist. On macOS a `kevent` that finds
+/// nothing ready parks the thread through the scheduler even with a zero timeout: 12 µs, against
+/// 444 ns when one event is ready, measured on 2026-09-22 on macOS 26.6.2
+/// (`bench/alternatives/README.md`, the cross-core message). The kernel applies the trigger, finds
+/// the wake event ready, and returns in the same call; the reap drops the wake event, which names
+/// no operation. A changelist that is already full triggers with a call of its own, which costs
+/// the rare tick that registers `changes_max` descriptors while polling one more system call.
+fn arm_poll(loop: *Loop) void {
+    if (loop.changes_used < constants.changes_max) {
+        loop.changes[loop.changes_used] = queue_module.poll_trigger();
+        loop.changes_used += 1;
+    } else {
+        queue_module.Queue.wake(loop.queue.descriptor);
+    }
 }
 
 /// Finishes every timer that is due, and ends every operation whose deadline passed with
@@ -84,4 +101,29 @@ fn clock_ns() u64 {
     const seconds: u64 = @intCast(now.sec);
     const nanoseconds: u64 = @intCast(now.nsec);
     return seconds * core.constants.ns_per_s + nanoseconds;
+}
+
+const testing = std.testing;
+const builtin = @import("builtin");
+
+test "a poll returns at once, and five hundred of them stay far under the kernel's park" {
+    // On macOS a `kevent` with nothing ready and a zero timeout parks the thread for about 12 µs
+    // (2026-09-22, macOS 26.6.2); with the trigger a poll is under a microsecond. Five hundred
+    // polls are about 6 ms parked and under half a millisecond with the trigger. The bound sits
+    // between, with room on both sides, so a build without `arm_poll` fails here.
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const polls = 500;
+    const bound_ns = 3 * core.constants.ns_per_ms;
+    const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 0 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+    const before = @import("kqueue_testing.zig").monotonic_ns();
+    for (0..polls) |_| try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+    const elapsed_ns = @import("kqueue_testing.zig").monotonic_ns() - before;
+    try testing.expect(elapsed_ns < bound_ns);
+    // The trigger left nothing behind: the changelist is empty for the next tick.
+    try testing.expectEqual(@as(u32, 0), loop.changes_used);
 }

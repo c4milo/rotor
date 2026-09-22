@@ -712,7 +712,9 @@ and 540 against 917 µs, as the single runs also showed; libxev's is under rotor
 fires per second, and a one-minute load average of 327 while it ran. That load is the candidate's
 own, and it is what the marks on this table and on the next record.
 
-### The cross-core message: rotor is four times slower than libuv here
+### The cross-core message: a 12 µs kernel park, found and removed
+
+The first run of the day (`bench/results/crosscore-mac-2026-09-22.md`):
 
 | candidate | messages per second | p50 ns | p99 ns | spread |
 |---|---:|---:|---:|---:|
@@ -720,16 +722,32 @@ own, and it is what the marks on this table and on the next record.
 | libuv | 619,348 | 1,500 | 5,500 | 15 |
 | libxev | 481,064 | 2,007 | 7,007 | 16 |
 
-One message from post to reap, the receiver blocked between messages. rotor's is 6.0 µs against
-libuv's 1.5 and libxev's 2.0. The two alternatives' rows are marked, with spreads of 15 and 16, and
-all three ran while the load average was still decaying from the timer run's 327, although that
-process had exited. The section above records that the three do not carry the same thing: rotor
-moves a 16-byte message through a bounded ring and wakes the receiver's kqueue with `EVFILT_USER`;
-the alternatives wake the loop and carry nothing. That explains part of the gap and not four times
-of it. C18 in `docs/costs.md`, the same ring and wake with no loop around them, measured 18 to 25
-µs on this machine the same day, and `bench/crosscore/rotor_post.zig`'s `waiting` mode is that
-path. How the alternatives wake a loop in 1.5 µs on macOS has not been read from their source, and
-this row is the first to re-take and to explain.
+rotor's message cost four times libuv's, and the payload asymmetry recorded above could not
+explain four times. What did: rotor's `spinning` mode, which never blocks, read the same 6,015 ns,
+so the cost was not the wake; a bare two-kqueue `EVFILT_USER` ping-pong with no loop on either side
+read 1,500 ns, libuv's number, and libuv's macOS wake is `EVFILT_USER` too (`src/unix/async.c:235`
+in the pinned tree); and an empty rotor tick with no wait read 12.5 µs. The cause is the kernel: on
+macOS 26.6.2 a `kevent` that finds nothing ready parks the thread through the scheduler even with a
+zero timeout, 12 µs measured, while a call that finds one event ready returns in 444 ns. `poll()` on
+the kqueue costs 7.8 µs, and `kevent64` with `KEVENT_FLAG_IMMEDIATE` is refused with `EINVAL`.
+rotor's tick polled that way whenever it already held an event to return, which in a ping-pong is
+every post's own completion, and on every tick in `spinning`. libuv never polls in a ping-pong.
+
+Since 2026-09-22 (decision 12, point 6, amended) a polling tick carries a trigger of its own wake
+event in its changelist, so the kernel always finds one event ready. Re-taken the same day, five
+rounds (`bench/results/crosscore-mac-2026-09-22-after.md`):
+
+| candidate | messages per second | p50 ns | p99 ns | spread |
+|---|---:|---:|---:|---:|
+| rotor, `waiting` | 384,127 | 2,007 | 8,031 | 14 |
+| libuv | 518,732 | 1,500 | 6,000 | 4 |
+| libxev | 434,027 | 2,007 | 8,031 | 8 |
+
+rotor's message is 2,007 ns, level with libxev and 1.3 times libuv's, carrying the payload the
+alternatives do not; rotor's row is marked, at a spread of 14. `rotor_post`'s other modes went from
+6,015 ns to 501 ns, and an empty tick from 12.5 µs to 358 ns. The echo rows did not move outside
+their spread: an echo server's tick mostly blocks, and the park was paid only by a tick that already
+held work.
 
 ### File rows: the offload puts rotor level with libuv's pool
 
