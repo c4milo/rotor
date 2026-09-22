@@ -1,4 +1,5 @@
-//! Rows C1, C2 and C3: one load from L1, from L2, and from main memory.
+//! Rows C1, C2 and C3: one load from L1, from L2, and from main memory. Row C23: one copy of
+//! 64 KiB, which is what a payload of that size costs to move through the CPU once.
 //!
 //! The three rows are one loop over three working sets. The loop follows a chain of nodes:
 //! `current = current.next`. Every load's address is the value the load before it returned, so
@@ -79,7 +80,70 @@ pub const probes = [_]measure.Probe{
         .operation = "main memory reference, a last-level cache miss",
         .run = run_memory,
     },
+    .{ .row = 23, .operation = "copy 64 KiB from one buffer to another", .run = run_copy },
 };
+
+/// C23's block: the large payload of the echo comparison. A `send` copies a block this size into
+/// the kernel and a `recv` copies one out, so the row bounds what those two copies can cost.
+const copy_block_bytes = 64 * kib;
+
+/// Both blocks together are 128 KiB, which sits inside the L2 of either machine, so the copy is
+/// read and written warm. That makes the row a lower bound on a kernel copy of the same size: the
+/// kernel also touches socket buffer pages and page tables this probe never goes near.
+const copy_plan: Plan = .{ .warmup = 64, .samples = 2000, .batch = 16 };
+
+/// The length every copy uses, read through a volatile pointer so the compiler cannot prove that
+/// two copies move the same bytes and fold them into one. A plain loop of identical `@memcpy`
+/// reported 62.5 ns for 64 KiB on the `mac` machine, which is over a terabyte a second: that was
+/// the optimiser, not the memory. `copy_floor_ns` now refuses such a number outright.
+var copy_bytes: u32 = copy_block_bytes;
+
+const Copy = struct {
+    source: []const u8,
+    destination: []u8,
+
+    pub fn run_batch(copy: *Copy, copies: u32) Error!void {
+        var remaining = copies;
+        while (remaining != 0) : (remaining -= 1) {
+            const bytes = @as(*volatile u32, &copy_bytes).*;
+            if (bytes > copy.source.len) return error.UnexpectedResult;
+            @memcpy(copy.destination[0..bytes], copy.source[0..bytes]);
+            std.mem.doNotOptimizeAway(copy.destination[bytes - 1]);
+        }
+    }
+};
+
+/// The fastest a copy of `copy_block_bytes` could be and still have happened: 500 GB/s, which asks
+/// half a terabyte a second of reads and as much of writes. A median under this means the copies
+/// were folded, so the row fails rather than reporting the optimiser.
+const copy_floor_ns = @as(f64, copy_block_bytes) / 500.0;
+
+fn run_copy(environment: *Environment) Error!Result {
+    const source = environment.arena[0..copy_block_bytes];
+    const destination = environment.arena[copy_block_bytes..][0..copy_block_bytes];
+    @memset(source, copy_byte);
+    var copy: Copy = .{ .source = source, .destination = destination };
+    const plan = copy_plan;
+    const summary = try measure.sample(Copy, &copy, plan, environment.values[0]);
+    // A copy the optimiser removed would measure nothing. Reading the last byte back proves one
+    // copy ran, and the floor proves they all did: the batch cannot beat the memory itself.
+    if (destination[copy_block_bytes - 1] != copy_byte) return error.UnexpectedResult;
+    if (summary.median_ns < copy_floor_ns) return error.UnexpectedResult;
+    return .{
+        .summary = summary,
+        .plan = plan,
+        .unit = "copies",
+        .note = environment.note(
+            "@memcpy of {d} bytes between two buffers that stay the same, so both are warm: this" ++
+                " is a lower bound on the copy a send or a recv of this size makes, which also" ++
+                " touches socket buffer pages and page tables",
+            .{copy_block_bytes},
+        ),
+    };
+}
+
+/// The byte C23 fills its source with, so a copy that did not happen is visible.
+const copy_byte = 0xa5;
 
 /// What this OS does about large pages, for C3's note.
 const large_page_text = switch (builtin.os.tag) {

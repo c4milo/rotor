@@ -114,3 +114,29 @@ pub fn recv(fd: fd_t, buffer: []u8, flags: u32) Error!usize {
 pub fn shutdown(fd: fd_t) void {
     _ = system.shutdown(fd, posix.SHUT.RDWR);
 }
+
+/// Which kernel buffer of a socket `set_buffer_bytes` and `buffer_bytes` name.
+pub const SocketBuffer = enum(u32) {
+    receive = posix.SO.RCVBUF,
+    send = posix.SO.SNDBUF,
+};
+
+/// Asks for `bytes` of kernel buffer. The kernel is free to give less or more, so a caller that
+/// depends on the size reads `buffer_bytes` back rather than trusting this.
+pub fn set_buffer_bytes(fd: fd_t, which: SocketBuffer, bytes: u32) Error!void {
+    const wanted: c_int = @intCast(bytes);
+    const option = std.mem.asBytes(&wanted);
+    posix.setsockopt(fd, posix.SOL.SOCKET, @intFromEnum(which), option) catch
+        return error.SystemCallFailed;
+}
+
+/// The bytes of kernel buffer this socket has. Linux reports twice what it was asked for, because
+/// it counts its own bookkeeping in the number; macOS reports what it granted.
+pub fn buffer_bytes(fd: fd_t, which: SocketBuffer) Error!u32 {
+    var granted: c_int = 0;
+    var len: posix.socklen_t = @sizeOf(c_int);
+    const rc = system.getsockopt(fd, posix.SOL.SOCKET, @intFromEnum(which), @ptrCast(&granted), &len);
+    try check(rc);
+    if (granted < 0) return error.UnexpectedResult;
+    return @intCast(granted);
+}

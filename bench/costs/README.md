@@ -41,6 +41,8 @@ Each row has one command, `zig build bench-costs -- --row <id>`:
 | C19 | `probes/probes_cross_core.zig` | ring message to a thread that spins on the ring |
 | C20 | `probes/probes_syscall.zig` | the monotonic clock |
 | C21 | `probes/probes_cpu.zig` | a thread-local read and compare inside a never-inlined function |
+| C22 | `probes/probes_socket.zig` | `send` and `recv` of 64 KiB with the data already there |
+| C23 | `probes/probes_memory.zig` | `@memcpy` of 64 KiB between two warm buffers |
 
 Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring: C7 to C9 are in
 `probes/probes_linux.zig`, C12 and C13 in `probes/probes_linux_file.zig`, and C17 in
@@ -221,6 +223,27 @@ alone.
   loopback segment: the kernel queues it for an input thread of its own. Every leg of C14 then
   wakes a thread, which would explain why C14 and C15 measure alike. It also means the timed
   `recv` of C16 can find the socket locked by that thread.
+
+### C22: send and recv of 64 KiB
+
+C16's large twin, and the same design: a whole block already sits in the receiving end's buffer
+before the clock starts, so the timed pair never waits for data. Two things differ. It asks both
+ends for 512 KiB of kernel buffer and refuses to report a number unless the receiving end reads
+back as at least two blocks, because one block waits while the timed `send` adds another and a
+smaller buffer would make the row a measure of waiting for room. It also takes 4,000 samples where
+C16 takes 10,000, since each one moves sixteen times the bytes.
+
+### C23: one copy of 64 KiB
+
+`@memcpy` between two buffers carved from the arena, both reused every time, so the copy runs warm.
+The row is a lower bound on the copy a `send` or a `recv` of that size makes: the kernel's copy also
+touches socket buffer pages and page tables this probe never goes near.
+
+The length is read through a volatile pointer every iteration, so the compiler cannot prove two
+copies move the same bytes and fold them into one. It did exactly that at first, reporting 62.5 ns
+for 64 KiB on the `mac` machine, which is over a terabyte a second. The probe now also refuses a
+median under 131 ns, which is 500 GB/s and faster than the memory can be, so a folded copy fails
+the row instead of filling it.
 
 ### C18, C19: one cross-core message
 

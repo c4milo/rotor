@@ -130,6 +130,14 @@ file may be filled from a machine of another architecture, however convenient it
 | C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | 35.4 (49.4) | |
 | C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | 16.3 (26.6) | |
 | C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.43 (1.89) | |
+| C22 | `send` plus `recv` of 64 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | | |
+| C23 | copy 64 KiB from one buffer to another | no prior | none | | | | |
+
+Rows C22 and C23 exist because of a question the echo comparison could not answer on 2026-09-22:
+rotor leads libuv and libxev at 4 KiB and trails libxev at 64 KiB, and nothing here said how much
+of a 64 KiB echo is the kernel's own work. C16 measures the same pair of calls at 4 KiB, so C22 is
+its large twin, and C23 bounds the copy inside it. The two rows are the estimate that has to come
+before any argument about a large payload, zero-copy send among them.
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.

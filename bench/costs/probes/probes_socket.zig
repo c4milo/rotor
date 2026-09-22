@@ -1,4 +1,4 @@
-//! Rows C14, C15 and C16: loopback TCP, the unit every echo workload pays in.
+//! Rows C14, C15, C16 and C22: loopback TCP, the unit every echo workload pays in.
 //!
 //! All three use one connected pair of TCP sockets on 127.0.0.1 with TCP_NODELAY set, and
 //! blocking calls. Every operation is timed alone, so the p99 is the p99 of single operations.
@@ -10,6 +10,10 @@
 //!   - C16: `send` and then `recv` of 4 KiB. Before the clock starts, the far end already holds
 //!     one whole block from the send before, so the timed `recv` never waits: the row is the two
 //!     system calls and their two copies.
+//!   - C22: the same two calls at 64 KiB, which is the large payload of the echo comparison. It
+//!     sizes both ends' kernel buffers first and refuses to report a number unless the receiving
+//!     end holds two whole blocks, because one block waits while the timed `send` adds another:
+//!     a smaller buffer would make the row a measure of waiting for room.
 //!
 //! What they cannot show. Neither thread is pinned, so "one core" and "two cores" in the row
 //! names are what the scheduler chose. On macOS, as recalled from the XNU sources and not
@@ -44,6 +48,12 @@ pub const probes = [_]measure.Probe{
             " the two syscalls alone",
         .run = run_transfer,
     },
+    .{
+        .row = 22,
+        .operation = "send plus recv of 64 KiB on a connected loopback socket," ++
+            " the two syscalls alone",
+        .run = run_large_transfer,
+    },
 };
 
 /// Every operation is timed alone. A round trip lasts over ten microseconds, so 10,000 of them
@@ -51,11 +61,22 @@ pub const probes = [_]measure.Probe{
 const round_trip_plan: Plan = .{ .warmup = 500, .samples = 10000, .batch = 1 };
 const transfer_plan: Plan = .{ .warmup = 500, .samples = 10000, .batch = 1 };
 
+/// C22 moves sixteen times the bytes per operation, so fewer samples keep the row near a second.
+const large_transfer_plan: Plan = .{ .warmup = 200, .samples = 4000, .batch = 1 };
+
 /// The byte that travels in C14 and C15.
 const payload_byte = 0x5a;
 
 /// The bytes C16 moves per call.
 const block_bytes = 4096;
+
+/// The bytes C22 moves per call: the large payload of the echo comparison, so the row says what
+/// the kernel alone charges for one echo of that size.
+const large_block_bytes = 64 * 1024;
+
+/// The kernel buffer C22 asks each end for. Two blocks must fit, and this asks for eight, because
+/// a kernel is free to give less than it is asked for.
+const large_buffer_bytes = 8 * large_block_bytes;
 
 /// Sends one byte on `from` and receives it on `to`.
 fn move_byte(from: sys.fd_t, to: sys.fd_t, byte: *[1]u8) Error!void {
@@ -173,37 +194,39 @@ fn run_two_threads(environment: *Environment) Error!Result {
 
 // Row C16.
 
-const Transfer = struct {
-    pair: sys.Pair,
-    block: [block_bytes]u8 = @splat(payload_byte),
-    sink: [block_bytes]u8 = undefined,
+fn Transfer(comptime bytes: u32) type {
+    return struct {
+        pair: sys.Pair,
+        block: [bytes]u8 = @splat(payload_byte),
+        sink: [bytes]u8 = undefined,
 
-    /// Not timed. Blocks until a whole block sits in the far end's receive buffer, and leaves it
-    /// there, so the timed `recv` finds its data without waiting.
-    pub fn prepare(transfer: *Transfer) Error!void {
-        const flags = posix.MSG.PEEK | posix.MSG.WAITALL;
-        const waiting = try sys.recv(transfer.pair.far, &transfer.sink, flags);
-        if (waiting != block_bytes) return error.UnexpectedResult;
-    }
+        /// Not timed. Blocks until a whole block sits in the far end's receive buffer, and leaves
+        /// it there, so the timed `recv` finds its data without waiting.
+        pub fn prepare(transfer: *@This()) Error!void {
+            const flags = posix.MSG.PEEK | posix.MSG.WAITALL;
+            const waiting = try sys.recv(transfer.pair.far, &transfer.sink, flags);
+            if (waiting != bytes) return error.UnexpectedResult;
+        }
 
-    pub fn run_batch(transfer: *Transfer, transfers: u32) Error!void {
-        // `prepare` guarantees one block, so only one transfer per batch is free of waiting.
-        assert(transfers == 1);
-        const sent = try sys.send(transfer.pair.near, &transfer.block);
-        const received = try sys.recv(transfer.pair.far, &transfer.sink, 0);
-        if (sent != block_bytes) return error.UnexpectedResult;
-        if (received != block_bytes) return error.UnexpectedResult;
-    }
-};
+        pub fn run_batch(transfer: *@This(), transfers: u32) Error!void {
+            // `prepare` guarantees one block, so only one transfer per batch is free of waiting.
+            assert(transfers == 1);
+            const sent = try sys.send(transfer.pair.near, &transfer.block);
+            const received = try sys.recv(transfer.pair.far, &transfer.sink, 0);
+            if (sent != bytes) return error.UnexpectedResult;
+            if (received != bytes) return error.UnexpectedResult;
+        }
+    };
+}
 
 fn run_transfer(environment: *Environment) Error!Result {
     const pair = try sys.tcp_pair();
     defer pair.deinit();
-    var transfer: Transfer = .{ .pair = pair };
+    var transfer: Transfer(block_bytes) = .{ .pair = pair };
     // The block that is always one send ahead of the timed recv.
     if (try sys.send(pair.near, &transfer.block) != block_bytes) return error.UnexpectedResult;
     const plan = transfer_plan;
-    const summary = try measure.sample(Transfer, &transfer, plan, environment.values[0]);
+    const summary = try measure.sample(Transfer(block_bytes), &transfer, plan, environment.values[0]);
     if (transfer.sink[block_bytes - 1] != payload_byte) return error.UnexpectedResult;
     return .{
         .summary = summary,
@@ -212,5 +235,46 @@ fn run_transfer(environment: *Environment) Error!Result {
         .note = "one send and one recv of 4,096 bytes, both from the measuring thread; the" ++
             " block the recv returns had fully arrived before the clock started, so the" ++
             " number is two system calls and two copies, not a wait",
+    };
+}
+
+// Row C22.
+
+/// Asks both ends for `large_buffer_bytes` and answers what the receiving end got. Linux reports
+/// twice what it granted, because it counts its own bookkeeping; either way the number read back
+/// is the one the check below uses, never the number asked for.
+fn widen_buffers(pair: sys.Pair) Error!u32 {
+    try sys.set_buffer_bytes(pair.near, .send, large_buffer_bytes);
+    try sys.set_buffer_bytes(pair.far, .receive, large_buffer_bytes);
+    return sys.buffer_bytes(pair.far, .receive);
+}
+
+fn run_large_transfer(environment: *Environment) Error!Result {
+    const Large = Transfer(large_block_bytes);
+    const pair = try sys.tcp_pair();
+    defer pair.deinit();
+    const granted = try widen_buffers(pair);
+    // One block waits while the timed send adds another, so both must fit or the row measures a
+    // wait for room instead of two calls.
+    if (granted < 2 * large_block_bytes) return error.UnexpectedResult;
+    var transfer: Large = .{ .pair = pair };
+    // The block that is always one send ahead of the timed recv.
+    if (try sys.send(pair.near, &transfer.block) != large_block_bytes) {
+        return error.UnexpectedResult;
+    }
+    const plan = large_transfer_plan;
+    const summary = try measure.sample(Large, &transfer, plan, environment.values[0]);
+    if (transfer.sink[large_block_bytes - 1] != payload_byte) return error.UnexpectedResult;
+    return .{
+        .summary = summary,
+        .plan = plan,
+        .unit = "send and recv pairs",
+        .note = environment.note(
+            "one send and one recv of {d} bytes, both from the measuring thread; the block the" ++
+                " recv returns had fully arrived before the clock started and the receiving end's" ++
+                " buffer reads back as {d} bytes, so the number is two system calls and two" ++
+                " copies of this size, not a wait",
+            .{ large_block_bytes, granted },
+        ),
     };
 }
