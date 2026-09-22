@@ -483,6 +483,45 @@ The source says an I/O call allocates nothing: it is a blocking syscall on the c
 (`Io/Threaded.zig:12604`). The allocator serves one call per task that `async` or `concurrent`
 starts (`Io/Threaded.zig:676`).
 
+## No competitor spreads TCP load across cores on kqueue
+
+Read on 2026-09-21, from the pinned trees, when issue 1 asked how libuv and libxev produce a
+loop-per-core server on kqueue. The answer is that neither does, and libuv declines the capability
+on purpose.
+
+| library | what it offers on kqueue | source |
+|---|---|---|
+| libuv | nothing. `uv_tcp_bind` with `UV_TCP_REUSEPORT` returns `UV_ENOTSUP` on macOS | `src/unix/core.c:2143`, `src/unix/tcp.c:170` |
+| libxev | nothing. `xev.TCP.bind` sets `SO_REUSEADDR` and no more | `src/watcher/tcp.zig:88` |
+| `std.Io.Threaded` | sets `SO_REUSEPORT` on every platform that defines it, macOS included | `Io/Threaded.zig:11688` |
+
+`uv__sock_reuseport` has three branches: `SO_REUSEPORT_LB` on FreeBSD 12 and later,
+`SO_REUSEPORT` on Linux, AIX 7.2.5, DragonFlyBSD 3.6 and Solaris 11.4, and `return UV_ENOTSUP` for
+everything else. macOS is in the last one, and libuv's own comment gives the reason: a
+`SO_REUSEPORT` without load balancing has semantics that "are completely different, therefore we
+shouldn't enable it, but fail this operation". `docs/src/tcp.rst:159` says the same in the public
+documentation, and the flag arrived in v1.49.0.
+
+libuv's one sanctioned route to several cores on macOS is the model Node.js uses: one loop accepts,
+then passes the accepted handle to another **process** through a pipe, with `uv_write2`'s
+`send_handle` (`docs/src/stream.rst:190`). That is a different program, not a loop per core inside
+one process.
+
+libxev's `ThreadPool` is not a counter-example. It runs blocking file work, and a file operation
+fails with `error.ThreadPoolRequired` when the caller gave the loop no pool
+(`src/backend/kqueue.zig:870`); it moves no socket between loops. No libxev example or benchmark
+runs a loop per core.
+
+`std.Io.Threaded` is the one candidate that sets the option on macOS. It sets it whenever
+`reuse_address` is set, on any platform that defines `SO.REUSEPORT`. On macOS that is the
+behaviour `src/conformance/conformance_reuse_port.zig` measured as 0, 0, 0, 32 — every connection
+to the last listener bound — which is the outcome libuv refuses to expose.
+
+**What this settled.** The owner ruled on 2026-09-21 that the echo comparison measures 1 core only,
+and that decision 4's "How it is checked" clause is theirs to amend. Until that amendment lands,
+no N-core or skewed row is built. Rows C17, C18 and C19 are unaffected: `bench/crosscore/` measures
+the cross-core message on its own, as decision 4 says.
+
 ## What this means for rotor's claims
 
 Weaker than the record assumed:
