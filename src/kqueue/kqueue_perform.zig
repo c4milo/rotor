@@ -13,7 +13,6 @@ const core = @import("core");
 const datagram = @import("kqueue_datagram.zig");
 const constants = @import("constants.zig");
 const address_module = @import("kqueue_address.zig");
-const buffers_module = @import("kqueue_buffers.zig");
 const sync = @import("kqueue_sync.zig");
 const socket_calls = @import("kqueue_sync_socket.zig");
 const kqueue = @import("kqueue.zig");

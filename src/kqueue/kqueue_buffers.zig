@@ -25,7 +25,6 @@ pub const RegisterError = error{ SystemResources, Unexpected };
 /// the same on both because a caller writes one handler for both (decision 1).
 pub const ProvideError = error{ Unsupported, SystemResources, Unexpected };
 
-/// The alignment of the memory a group's bookkeeping sits in.
 /// The alignment of a group's memory: what io_uring's buffer ring needs, kept on both backends so
 /// one declaration in a caller's code serves both.
 pub const group_alignment = constants.buffer_ring_alignment;
@@ -89,8 +88,6 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
     loop.buffers_registered = true;
 }
 
-/// Makes `buffers`, cut into pieces of `buffer_bytes`, group `group_id` of this loop, with every
-/// buffer free. Both memories stay the loop's until `deinit`.
 /// The bytes a group of `count` buffers of `buffer_bytes` needs: the bookkeeping, then the
 /// buffers, so buffer 0 starts `ring_bytes(count)` bytes in.
 pub fn group_bytes(count: u16, buffer_bytes: u32) usize {

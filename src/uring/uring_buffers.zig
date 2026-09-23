@@ -20,7 +20,6 @@ const uring = @import("uring.zig");
 
 const Loop = uring.Loop;
 
-/// The alignment of the memory a group's ring sits in.
 /// The alignment of a group's memory: what the kernel's buffer ring needs, and it sits at the
 /// front of the memory.
 pub const group_alignment = constants.buffer_ring_alignment;

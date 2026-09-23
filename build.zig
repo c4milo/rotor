@@ -146,9 +146,6 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(fmt_step);
 }
 
-/// `zig build test-<name>`: the tests of one module, or of the tools, with nothing else in the
-/// graph. `zig build test` is the check that must pass; these steps are the inner loop of a
-/// mutation, which is run against the narrowest target that can catch it.
 /// The macOS probe (decision 15). Unlike the io_uring probe it needs no container, because the
 /// kernel it asks about is the one running the build, so `zig build test` runs it on a Mac and
 /// skips it everywhere else.
@@ -162,6 +159,9 @@ fn add_macos_probe(b: *std.Build, pepegrillo: *std.Build.Module) *std.Build.Step
     return step;
 }
 
+/// `zig build test-<name>`: the tests of one module, or of the tools, with nothing else in the
+/// graph. `zig build test` is the check that must pass; these steps are the inner loop of a
+/// mutation, which is run against the narrowest target that can catch it.
 fn add_narrow_test_step(b: *std.Build, name: []const u8) *std.Build.Step {
     return b.step(
         b.fmt("test-{s}", .{name}),

@@ -44,7 +44,6 @@ const timers_max = 16384;
 const samples_max = 1 << 17;
 
 const ns_per_us: u64 = 1000;
-const ns_per_ms: u64 = 1_000_000;
 const us_per_ms: u64 = 1000;
 
 const Options = struct {
