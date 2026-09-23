@@ -84,6 +84,17 @@ pub fn code_of(errno: E, context: Context) Code {
         // A send, a receive or a shutdown on a socket that is not connected (send(2), recv(2),
         // shutdown(2)).
         .NOTCONN => .not_connected,
+        // A `send_to` that names no peer, on a datagram socket that is not connected, so the
+        // socket has no address to send to (`udp_sendmsg` in net/ipv4/udp.c, `udpv6_sendmsg` in
+        // net/ipv6/udp.c).
+        .DESTADDRREQ => .not_connected,
+        // A datagram longer than UDP or the route can carry, of which nothing was sent.
+        // `udp_sendmsg` refuses one longer than 0xFFFF bytes before it reads the address
+        // (net/ipv4/udp.c). `__ip_append_data` refuses one longer than the route's MTU when the
+        // socket does not fragment, which `IP_PMTUDISC_DO` asks for (net/ipv4/ip_output.c), and
+        // `__ip6_append_data` makes the same check for IPv6 (net/ipv6/ip6_output.c). A QUIC stack
+        // answers it by lowering its packet size (decision 15).
+        .MSGSIZE => .message_too_long,
         // A connect found no route to the peer's network (ENETUNREACH, connect(2)) or to the
         // peer (EHOSTUNREACH, ip(7)). An accept can fail with each of the four, because Linux
         // hands it the pending network error of the new socket (accept(2)). Recalled: a local
@@ -200,6 +211,8 @@ const rows = [_]Row{
     .{ .errno = .TIMEDOUT, .code = .connection_timed_out },
     .{ .errno = .PIPE, .code = .broken_pipe },
     .{ .errno = .NOTCONN, .code = .not_connected },
+    .{ .errno = .DESTADDRREQ, .code = .not_connected },
+    .{ .errno = .MSGSIZE, .code = .message_too_long },
     .{ .errno = .NETUNREACH, .code = .network_unreachable },
     .{ .errno = .HOSTUNREACH, .code = .network_unreachable },
     .{ .errno = .NETDOWN, .code = .network_unreachable },
@@ -235,9 +248,9 @@ test "every arm of the map yields its code, and an arm that reads the context ob
     }
 }
 
-test "the map names 20 errnos for every operation and 4 more for a post, and no other" {
+test "the map names 22 errnos for every operation and 5 more for a post, and no other" {
     const contexts = [_]Context{ .{}, group, post };
-    const named = [_]u32{ 20, 20, 25 };
+    const named = [_]u32{ 22, 22, 27 };
     for (contexts, named) |context, expected| {
         var count: u32 = 0;
         for (1..4096) |number| {

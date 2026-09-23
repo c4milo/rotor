@@ -299,3 +299,31 @@ test "a segmented send is carried where the kernel segments and refused where it
         try testing.expectError(error.Unsupported, events[0].outcome());
     }
 }
+
+/// One byte more than the 16-bit length field of a UDP header can state.
+const oversized: [std.math.maxInt(u16) + 1]u8 = @splat('o');
+
+test "a datagram longer than UDP can carry ends with message_too_long" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+
+    const pair = try Pair.open();
+    defer pair.close();
+    var out: Outbound = .{
+        .peer = pair.address,
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    try harness.submit(&.{send_to(1, pair.sender, &oversized, &out)}, &.{});
+    var events: [1]Event = undefined;
+    try harness.collect(&events);
+
+    // Both kernels refuse the send with EMSGSIZE and send nothing: Linux any UDP datagram longer
+    // than 0xFFFF bytes, macOS one longer than `net.inet.udp.maxdgram`, which is 9216 on `mac`.
+    // The uring backend's map had no arm for EMSGSIZE and answered `unexpected`.
+    try testing.expectError(error.MessageTooLong, events[0].outcome());
+}
