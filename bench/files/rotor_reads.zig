@@ -45,7 +45,6 @@
 //! row and a random row are not the same measurement and must never share a `Series`. The
 //! candidate's name carries whether buffers were registered, for the same reason.
 const std = @import("std");
-const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
@@ -57,6 +56,7 @@ const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
 const percentile = harness.percentile;
+const now_ns = harness.clock.now_ns;
 const Transfer = setup_module.Transfer;
 const Pattern = setup_module.Pattern;
 const Options = setup_module.Options;
@@ -399,17 +399,6 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     var out = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     try result.render_json_line(&out.interface);
     try out.interface.flush();
-}
-
-fn now_ns() u64 {
-    var value: if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.timespec = undefined;
-    if (builtin.os.tag == .linux) {
-        std.debug.assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
-    } else {
-        std.debug.assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
-    }
-    const seconds: u64 = @intCast(value.sec);
-    return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
 }
 
 test {

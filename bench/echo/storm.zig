@@ -31,10 +31,10 @@
 //! candidates together must stay inside the ephemeral range, which is what `ports_per_run`
 //! records.
 const std = @import("std");
-const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const harness = @import("harness");
+const now_ns = harness.clock.now_ns;
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -240,17 +240,6 @@ fn finish(storm: *Storm, index: u32, completed: bool) !bool {
         storm.completed += 1;
     }
     return false;
-}
-
-fn now_ns() u64 {
-    var value: if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.timespec = undefined;
-    if (builtin.os.tag == .linux) {
-        std.debug.assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
-    } else {
-        std.debug.assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
-    }
-    const seconds: u64 = @intCast(value.sec);
-    return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
 }
 
 const testing = std.testing;

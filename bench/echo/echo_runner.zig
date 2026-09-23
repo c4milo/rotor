@@ -153,7 +153,7 @@ fn one_configuration(
     var round: u32 = 0;
     while (round < options.rounds) : (round += 1) {
         for (candidates, 0..) |candidate, index| {
-            if (!installed(options, index)) continue;
+            if (!installed(index)) continue;
             port += 1;
             // Around the run, not before the round: a job that arrives part way through a matrix is
             // what spoiled the 2026-09-20 attempts, and only a reading on each side sees it.
@@ -170,7 +170,7 @@ fn one_configuration(
     }
 
     var built: [candidates.len]?Series = @splat(null);
-    try build_series(options, &counts, &other_work, &built, writer, rowless);
+    try build_series(&counts, &other_work, &built, writer, rowless);
     try render_rows(options, &built, writer, recorded, regressed);
     try writer.flush();
     return port;
@@ -180,7 +180,6 @@ fn one_configuration(
 /// before any row is written, because a verdict needs rotor's throughput from this same run and
 /// rotor is not always the first candidate the table walks.
 fn build_series(
-    options: Options,
     counts: *const [candidates.len]u32,
     other_work: *const [candidates.len]OtherWork,
     built: *[candidates.len]?Series,
@@ -190,7 +189,7 @@ fn build_series(
     for (candidates, 0..) |candidate, index| {
         const taken = setup.results[index * rounds_max ..][0..counts[index]];
         if (taken.len < harness.series.runs_min) {
-            if (installed(options, index)) {
+            if (installed(index)) {
                 try writer.print("echo_runner: {s} has too few runs\n", .{candidate.name});
                 rowless.* += 1;
             }

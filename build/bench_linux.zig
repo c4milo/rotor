@@ -38,24 +38,36 @@ pub fn add(b: *std.Build) void {
         step.dependOn(&install.step);
         if (variant.optimize == .ReleaseSafe) {
             step.dependOn(add_post(b, target, graph));
-            step.dependOn(add_datagram(b, target, graph));
-            step.dependOn(add_program(b, target, graph, "rotor_reads", "bench/files/rotor_reads.zig"));
-            // The echo programs too, so the placement path that only Linux can take is run.
-            step.dependOn(add_echo_program(b, target, graph, "rotor_echo"));
-            step.dependOn(add_echo_program(b, target, graph, "echo_client"));
+            const harness = b.createModule(.{
+                .root_source_file = b.path("bench/harness/harness.zig"),
+                .target = target,
+                .optimize = .ReleaseSafe,
+            });
+            for (programs) |program| {
+                step.dependOn(add_program(b, target, graph, harness, program.name, program.root));
+            }
         }
     }
 }
 
-/// One cross-core message on its own (row C17), in the mode rotor ships in.
-/// The datagram round-trip workload on io_uring. It is `bench/datagram/rotor_datagram.zig`
-/// built for the container, because the path decision 15 added is the io_uring one and a macOS
-/// number says nothing about it (decision 2: macOS is a development platform).
+/// The programs built for the container that take the io_uring backend as `backend`, beside the
+/// harness.
+const programs = [_]struct { name: []const u8, root: []const u8 }{
+    // The datagram round-trip workload on io_uring: the path decision 15 added is the io_uring
+    // one, and a macOS number says nothing about it.
+    .{ .name = "rotor_datagram", .root = "bench/datagram/rotor_datagram.zig" },
+    .{ .name = "rotor_reads", .root = "bench/files/rotor_reads.zig" },
+    // The echo programs too, so the placement path that only Linux can take is run.
+    .{ .name = "rotor_echo", .root = "bench/echo/rotor_echo.zig" },
+    .{ .name = "echo_client", .root = "bench/echo/echo_client.zig" },
+};
+
 /// One bench program built for the container, given the backend as its `backend` import.
 fn add_program(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     graph: modules.Modules,
+    harness: *std.Build.Module,
     name: []const u8,
     root: []const u8,
 ) *std.Build.Step {
@@ -69,66 +81,14 @@ fn add_program(
     });
     program.root_module.addImport("core", graph.core);
     program.root_module.addImport("backend", graph.uring);
-    program.root_module.addImport("harness", b.createModule(.{
-        .root_source_file = b.path("bench/harness/harness.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    }));
+    program.root_module.addImport("harness", harness);
     const install = b.addInstallArtifact(program, .{
         .dest_dir = .{ .override = .{ .custom = install_directory } },
     });
     return &install.step;
 }
 
-/// An echo program, which needs the harness beside the backend.
-fn add_echo_program(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    graph: modules.Modules,
-    name: []const u8,
-) *std.Build.Step {
-    const program = b.addExecutable(.{
-        .name = name,
-        .root_module = b.createModule(.{
-            .root_source_file = b.path(b.fmt("bench/echo/{s}.zig", .{name})),
-            .target = target,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    program.root_module.addImport("core", graph.core);
-    program.root_module.addImport("backend", graph.uring);
-    program.root_module.addImport("harness", b.createModule(.{
-        .root_source_file = b.path("bench/harness/harness.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    }));
-    const install = b.addInstallArtifact(program, .{
-        .dest_dir = .{ .override = .{ .custom = install_directory } },
-    });
-    return &install.step;
-}
-
-fn add_datagram(
-    b: *std.Build,
-    target: std.Build.ResolvedTarget,
-    graph: modules.Modules,
-) *std.Build.Step {
-    const datagram = b.addExecutable(.{
-        .name = "rotor_datagram",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/datagram/rotor_datagram.zig"),
-            .target = target,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    datagram.root_module.addImport("core", graph.core);
-    datagram.root_module.addImport("backend", graph.uring);
-    const install = b.addInstallArtifact(datagram, .{
-        .dest_dir = .{ .override = .{ .custom = install_directory } },
-    });
-    return &install.step;
-}
-
+/// One cross-core message on its own (row C17), in the mode rotor ships in.
 fn add_post(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

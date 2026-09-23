@@ -35,6 +35,11 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
             .optimize = .ReleaseSafe,
         }),
     });
+    costs.root_module.addImport("harness", b.createModule(.{
+        .root_source_file = b.path("bench/harness/harness.zig"),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    }));
     const run_costs = b.addRunArtifact(costs);
     if (b.args) |arguments| run_costs.addArgs(arguments);
     const costs_step = b.step("bench-costs", "Run the cost probes that fill docs/costs.md");
@@ -271,6 +276,7 @@ fn add_echo(
     });
     datagram.addImport("core", graph.core);
     datagram.addImport("backend", backend);
+    datagram.addImport("harness", harness_module);
     const datagram_program = b.addExecutable(.{
         .name = "rotor_datagram",
         .root_module = datagram,

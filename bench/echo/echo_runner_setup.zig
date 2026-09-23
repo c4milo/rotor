@@ -228,25 +228,14 @@ pub var payloads_buffer: [configurations_max]u32 = undefined;
 var path_buffer: [candidates.len][std.fs.max_path_bytes]u8 = undefined;
 
 pub fn program_path(options: Options, candidate: Candidate, slot: usize) ![]const u8 {
-    const buffer = &path_buffer[slot];
-    return std.fmt.bufPrint(buffer, "{s}/{s}", .{ options.directory, candidate.program });
+    return harness.candidates.program_path(&path_buffer[slot], options.directory, candidate.program);
 }
 
+/// Which candidates `found` marked to run: wanted, able to run here, and on disk.
 var present_candidates: [candidates.len]bool = @splat(false);
 
-pub fn installed(options: Options, index: usize) bool {
-    if (!present_candidates[index]) return false;
-    return wanted(options, candidates[index].name);
-}
-
-/// True when `--candidates` was not given, or names this candidate.
-pub fn wanted(options: Options, name: []const u8) bool {
-    if (options.only.len == 0) return true;
-    var pieces = std.mem.splitScalar(u8, options.only, ',');
-    while (pieces.next()) |piece| {
-        if (std.mem.eql(u8, piece, name)) return true;
-    }
-    return false;
+pub fn installed(index: usize) bool {
+    return present_candidates[index];
 }
 
 /// Why this candidate does not run `workload`, or null when it runs it. Both reasons print the
@@ -263,7 +252,7 @@ pub fn unavailable(candidate: Candidate, workload: Workload) ?[]const u8 {
 pub fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !u32 {
     var count: u32 = 0;
     for (candidates, 0..) |candidate, index| {
-        if (!wanted(options, candidate.name)) {
+        if (!harness.candidates.wanted(options.only, candidate.name)) {
             present_candidates[index] = false;
             continue;
         }
@@ -280,16 +269,14 @@ pub fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !
             continue;
         }
         const path = try program_path(options, candidate, index);
-        const file = std.Io.Dir.cwd().openFile(init.io, path, .{}) catch {
-            present_candidates[index] = false;
+        present_candidates[index] = harness.candidates.installed(init.io, path);
+        if (!present_candidates[index]) {
             try writer.print(
                 "echo_runner: {s} is not installed at {s}, skipping it\n",
                 .{ candidate.name, path },
             );
             continue;
-        };
-        file.close(init.io);
-        present_candidates[index] = true;
+        }
         count += 1;
     }
     return count;

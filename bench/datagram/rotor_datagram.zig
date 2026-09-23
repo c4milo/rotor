@@ -27,9 +27,11 @@
 //! **No number from this program is a claim.** `docs/costs.md` names no Linux machine yet, so a
 //! run here guides work and nothing else (CLAUDE.md, performance discipline).
 const std = @import("std");
-const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
+const harness = @import("harness");
+const now_ns = harness.clock.now_ns;
+const percentile = harness.percentile;
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -262,32 +264,12 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
             state.options.bytes,
             state.round_trips,
             span_ns,
-            percentile(samples, 500),
-            percentile(samples, 990),
-            percentile(samples, 999),
+            percentile.nearest_rank(samples, percentile.p50),
+            percentile.nearest_rank(samples, percentile.p99),
+            percentile.nearest_rank(samples, percentile.p999),
         },
     );
     try out.interface.flush();
-}
-
-const per_mille = 1000;
-
-fn percentile(samples: []const u64, parts_per_thousand: u64) u64 {
-    if (samples.len == 0) return 0;
-    const rank = (samples.len * parts_per_thousand + per_mille - 1) / per_mille;
-    const index = @min(@max(rank, 1) - 1, samples.len - 1);
-    return samples[index];
-}
-
-fn now_ns() u64 {
-    var value: if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.timespec = undefined;
-    if (builtin.os.tag == .linux) {
-        std.debug.assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
-    } else {
-        std.debug.assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
-    }
-    const seconds: u64 = @intCast(value.sec);
-    return seconds * core.constants.ns_per_s + @as(u64, @intCast(value.nsec));
 }
 
 fn parse(init: std.process.Init) !Options {

@@ -3,14 +3,12 @@
 //! threads: a scheduler is free to put a client and a server on one core, or on two, and to
 //! change its mind mid-run.
 //!
-//! This is `bench/costs/measure.zig`'s placement, lifted so the echo and datagram programs share
-//! one definition with the cost probes. A row measured here and a row of `docs/costs.md` then
-//! mean the same thing by "one core".
+//! The echo and datagram programs and the cost probes share this one definition, so a row measured
+//! here and a row of `docs/costs.md` mean the same thing by "one core".
 //!
 //! **Linux pins; macOS cannot.** Apple silicon has no hard affinity — `thread_policy_set`'s
 //! affinity tags are a hint the scheduler may ignore — so a run there reports `pin_refused` and
-//! the row says so rather than claiming a placement it does not have. That is decision 2's
-//! "macOS is a development platform" again, in the one place it would otherwise be invisible.
+//! the row says so rather than claiming a placement it does not have.
 const std = @import("std");
 const builtin = @import("builtin");
 
@@ -31,8 +29,17 @@ pub const Placement = enum {
         return placement == .pinned;
     }
 
+    /// What a report prints for the placement: the cost probes quote it in each row's method line.
     pub fn text(placement: Placement) []const u8 {
-        return @tagName(placement);
+        return switch (placement) {
+            .qos_user_interactive => "thread not pinned (macOS on Apple silicon has no hard" ++
+                " affinity), QoS class user-interactive requested",
+            .qos_refused => "thread not pinned, and the user-interactive QoS class was refused",
+            .scheduler_default => "thread not pinned: this probe pins nothing on this OS, run it" ++
+                " under taskset",
+            .pinned => "thread pinned to one core with sched_setaffinity",
+            .pin_refused => "thread not pinned: sched_setaffinity was refused",
+        };
     }
 };
 
