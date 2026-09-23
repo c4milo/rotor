@@ -40,6 +40,10 @@
 # whatever happened. Left on, a system-wide tracepoint costs every process on the machine.
 set -u
 BIN=${BIN:-/b}
+# Each run's files go in a directory of its own. A fixed name in /tmp failed on the GitHub runner:
+# a file the unprivileged CPU script had left there could not be opened by root, so the client
+# never ran and every row read zero.
+WORK=$(mktemp -d)
 T=/sys/kernel/tracing
 mount -t tracefs nodev "$T" 2>/dev/null
 EVENTS="raw_syscalls/sys_enter io_uring/io_uring_submit_req io_uring/io_uring_poll_arm \
@@ -65,7 +69,7 @@ restore() {
   echo 1 > "$T/tracing_on"
 }
 
-trap restore EXIT INT TERM
+trap 'restore; rm -rf "$WORK"' EXIT INT TERM
 reset
 echo "$BUFFER_KB" > "$T/buffer_size_kb"
 
@@ -117,7 +121,7 @@ row() {
         payload, label, echoes, overruns, per(counted["enter"]), per(requests), per(arms),
         per(workers), per(counted["read"]), per(counted["write"]), per(counted["ctl"]),
         per(counted["wait"]), per(counted["other"]), detail
-    }' /tmp/events.txt
+    }' "$WORK/events.txt"
 }
 
 # measure LABEL PAYLOAD PROGRAM [ARGS...]
@@ -133,17 +137,17 @@ measure() {
     echo "comm == \"$program\"" > "$T/events/$e/filter"
     echo 1 > "$T/events/$e/enable"
   done
-  cat "$T/trace_pipe" > /tmp/events.txt &
+  cat "$T/trace_pipe" > "$WORK/events.txt" &
   reader=$!
   echo 1 > "$T/tracing_on"
   "$BIN/echo_client" "$PORT" --connections "$CONNECTIONS" --payload "$payload" \
-    --seconds "$SECONDS_PER_RUN" --warmup 0 > /tmp/client.json 2>&1
+    --seconds "$SECONDS_PER_RUN" --warmup 0 > "$WORK/client.json" 2>&1
   echo 0 > "$T/tracing_on"
   sleep 1
   kill "$reader" 2>/dev/null
   wait "$reader" 2>/dev/null
   overruns=$(cat "$T"/per_cpu/cpu*/stats | awk '/^overrun/ { total += $2 } END { print total + 0 }')
-  echoes=$(grep -o '"operations":[0-9]*' /tmp/client.json | head -1 | cut -d: -f2)
+  echoes=$(grep -o '"operations":[0-9]*' "$WORK/client.json" | head -1 | cut -d: -f2)
   reset
   row "$label" "$payload" "${echoes:-0}" "$overruns"
   kill "$server" 2>/dev/null

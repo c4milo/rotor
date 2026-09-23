@@ -28,6 +28,10 @@
 # and the script turns every event off and restores the buffer's default size when it exits.
 set -u
 BIN=${BIN:-/b}
+# Each run's files go in a directory of its own. A fixed name in /tmp failed on the GitHub runner:
+# a file the unprivileged CPU script had left there could not be opened by root, so the client
+# never ran and every row read zero.
+WORK=$(mktemp -d)
 T=/sys/kernel/tracing
 mount -t tracefs nodev "$T" 2>/dev/null
 SECONDS_PER_RUN=${SECONDS_PER_RUN:-4}
@@ -53,7 +57,7 @@ restore() {
   echo 1 > "$T/tracing_on"
 }
 
-trap restore EXIT INT TERM
+trap 'restore; rm -rf "$WORK"' EXIT INT TERM
 reset
 echo "$BUFFER_KB" > "$T/buffer_size_kb"
 
@@ -97,7 +101,7 @@ row() {
       printf "| %s | %s | %s | %d | %d | %d | %.2f | %d | %d | %d | %d | %d | %d |\n", payload,
         connections, group, echoes, most_first, waits, total / waits, at(0.5), at(0.99),
         at(0.999), most, empty + 0, overruns
-    }' /tmp/events.txt
+    }' "$WORK/events.txt"
 }
 
 # measure PAYLOAD CONNECTIONS GROUP_BUFFERS
@@ -116,17 +120,17 @@ measure() {
   echo "comm == \"$PROGRAM\"" > "$T/events/io_uring/io_uring_complete/filter"
   echo 1 > "$T/events/raw_syscalls/sys_enter/enable"
   echo 1 > "$T/events/io_uring/io_uring_complete/enable"
-  cat "$T/trace_pipe" > /tmp/events.txt &
+  cat "$T/trace_pipe" > "$WORK/events.txt" &
   reader=$!
   echo 1 > "$T/tracing_on"
   "$BIN/echo_client" "$PORT" --connections "$connections" --payload "$payload" \
-    --seconds "$SECONDS_PER_RUN" --warmup 0 > /tmp/client.json 2>&1
+    --seconds "$SECONDS_PER_RUN" --warmup 0 > "$WORK/client.json" 2>&1
   echo 0 > "$T/tracing_on"
   sleep 1
   kill "$reader" 2>/dev/null
   wait "$reader" 2>/dev/null
   overruns=$(cat "$T"/per_cpu/cpu*/stats | awk '/^overrun/ { total += $2 } END { print total + 0 }')
-  echoes=$(grep -o '"operations":[0-9]*' /tmp/client.json | head -1 | cut -d: -f2)
+  echoes=$(grep -o '"operations":[0-9]*' "$WORK/client.json" | head -1 | cut -d: -f2)
   reset
   row "$payload" "$connections" "$group" "${echoes:-0}" "$overruns"
   kill "$server" 2>/dev/null

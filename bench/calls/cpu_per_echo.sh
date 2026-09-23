@@ -27,6 +27,11 @@
 #     BIN=zig-out/bin sh bench/calls/cpu_per_echo.sh
 set -u
 BIN=${BIN:-/b}
+# Each run's files go in a directory of its own. A fixed name in /tmp failed on the GitHub runner:
+# a file the unprivileged CPU script had left there could not be opened by root, so the client
+# never ran and every row read zero.
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
 CONNECTIONS=${CONNECTIONS:-16}
 SECONDS_PER_RUN=${SECONDS_PER_RUN:-3}
 PORT=33000
@@ -45,19 +50,19 @@ measure() {
   read -r ran_before waited_before switched_before < "/proc/$server/schedstat"
   set -- $(cut -d' ' -f14,15 "/proc/$server/stat")
   user_before=$1; system_before=$2
-  times > /tmp/times.before
+  times > "$WORK/times.before"
   "$BIN/echo_client" "$PORT" --connections "$CONNECTIONS" --payload "$payload" \
-    --seconds "$SECONDS_PER_RUN" --warmup 0 > /tmp/client.json 2>&1
-  times > /tmp/times.after
+    --seconds "$SECONDS_PER_RUN" --warmup 0 > "$WORK/client.json" 2>&1
+  times > "$WORK/times.after"
   read -r ran_after waited_after switched_after < "/proc/$server/schedstat"
   set -- $(cut -d' ' -f14,15 "/proc/$server/stat")
   user_after=$1; system_after=$2
-  echoes=$(grep -o '"operations":[0-9]*' /tmp/client.json | head -1 | cut -d: -f2)
+  echoes=$(grep -o '"operations":[0-9]*' "$WORK/client.json" | head -1 | cut -d: -f2)
   awk -v label="$label" -v payload="$payload" -v echoes="${echoes:-0}" \
     -v ran=$((ran_after - ran_before)) -v switched=$((switched_after - switched_before)) \
     -v user=$((user_after - user_before)) -v kernel=$((system_after - system_before)) \
     -v seconds="$SECONDS_PER_RUN" \
-    -v client="$(awk -f /tmp/children.awk /tmp/times.before /tmp/times.after)" 'BEGIN {
+    -v client="$(awk -f "$WORK/children.awk" "$WORK/times.before" "$WORK/times.after")" 'BEGIN {
       if (echoes == 0) { printf "| %s | %s | no echoes | | | | | |\n", payload, label; exit }
       ticks = user + kernel
       split(client, times, " ")
@@ -73,7 +78,7 @@ measure() {
 # The second line of `times` holds the children's user and system time, as "0m1.250s 0m0.300s".
 # This prints their sum in seconds, once per file it reads. `times` runs outside `$(...)`, because
 # a subshell's children are its own and it has none.
-cat > /tmp/children.awk <<'EOF'
+cat > "$WORK/children.awk" <<'EOF'
 FNR == 2 {
   total = 0
   for (i = 1; i <= 2; i++) {
