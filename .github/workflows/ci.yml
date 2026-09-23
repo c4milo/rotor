@@ -1,6 +1,6 @@
 # What runs on every push to main and every pull request.
 #
-# Three gates, the same three a developer runs by hand:
+# Four gates, the same four a developer runs by hand:
 #
 #   - `macos`: `zig build test`, which is the lint, every module's unit tests, the kqueue
 #     conformance suite, the halt check, the tools' tests, the bench compile, the hook check and
@@ -9,6 +9,7 @@
 #     `tools/linux_test.sh` pins by digest, with `seccomp=unconfined` because Docker's default
 #     profile refuses `io_uring_setup`.
 #   - `race`: the same suites under ThreadSanitizer, which needs Docker and a dynamic glibc.
+#   - `proofs`: `zig build proofs`, the Lean proofs of the timer heap and the timer lifecycle.
 #
 # **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
 # both the macOS and the Linux job bound the loop's own work: a poll, a timer fire and a submit.
@@ -116,6 +117,38 @@ jobs:
         run: zig build test-race
       - name: Run them
         run: bash tools/race_test.sh
+
+  # The Lean proofs in proofs/. Lean is downloaded from its GitHub release and checked against the
+  # SHA-256 GitHub publishes for the asset, as Zig is checked against the release index's.
+  proofs:
+    name: Lean proofs
+    runs-on: ubuntu-24.04
+    env:
+      LEAN_VERSION: "4.34.0"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: Install Lean
+        run: |
+          set -euo pipefail
+          name="lean-${LEAN_VERSION}-linux"
+          url="https://github.com/leanprover/lean4/releases/download/v${LEAN_VERSION}/${name}.tar.zst"
+          sha="caaa98356098c85dc0fcbbd28e1ec66f39eb6551829972b752ff20e1286b646b"
+          curl -fsSL "$url" -o lean.tar.zst
+          echo "$sha  lean.tar.zst" | sha256sum -c -
+          tar --use-compress-program=unzstd -xf lean.tar.zst
+          echo "$PWD/${name}/bin" >> "$GITHUB_PATH"
+      - run: lean --version
+      - name: Check the proofs
+        run: zig build proofs
 
   # Started by hand, because it takes minutes and answers a question rather than guarding a
   # change. The runner is x86-64 Linux, which is the architecture rotor's deployment target is and
