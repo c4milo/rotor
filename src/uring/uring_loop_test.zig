@@ -100,11 +100,17 @@ test "a timer does not fire before its delay" {
     var fixture: Fixture = undefined;
     try fixture.init(.{ .operations = operations, .entries = 8 });
     defer fixture.loop.deinit();
-    _ = fixture.loop.submit(&.{timer(1, 20 * core.constants.ns_per_ms)}, &.{});
+    const delay_ns = 20 * core.constants.ns_per_ms;
+    _ = fixture.loop.submit(&.{timer(1, delay_ns)}, &.{});
     var events: [1]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, 0));
-    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, core.constants.ns_per_ms));
-    try fixture.collect(&events);
+    // The first tick arms the timer from a clock reading it takes after this one. A busy machine
+    // can hold this process off the processor past the deadline, and then a short tick hands the
+    // timer over on time. So the test reads the clock and does not assume the short ticks are early.
+    const armed_ns = monotonic_ns();
+    var produced = try fixture.loop.tick(&events, 0);
+    if (produced == 0) produced = try fixture.loop.tick(&events, core.constants.ns_per_ms);
+    if (produced == 0) try fixture.collect(&events);
+    try testing.expect(monotonic_ns() - armed_ns >= delay_ns);
     try testing.expectEqual(@as(u64, 1), events[0].user_data);
 }
 

@@ -54,13 +54,22 @@ test "a timer does not fire before its delay, and a waiting tick wakes for it an
     const delay_ns = 20 * ms;
     try harness.submit(&.{timer(1, delay_ns)}, &.{});
     var events: [1]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, ms));
-    // The wait asked for is a second. The tick must come back for the deadline, long before.
-    const before = backend.testing.monotonic_ns();
-    try testing.expectEqual(@as(u32, 1), try harness.loop.tick(&events, core.constants.ns_per_s));
-    const waited = backend.testing.monotonic_ns() - before;
-    try testing.expect(waited < core.constants.ns_per_s / 2);
+    // The first tick arms the timer from a clock reading it takes after this one, so the deadline
+    // is at least `delay_ns` after `armed_ns`. The two short ticks are usually early. A busy
+    // machine can hold this process off the processor past the deadline, and then a short tick
+    // hands the timer over on time. So the test reads the clock and does not assume they are early.
+    const armed_ns = backend.testing.monotonic_ns();
+    var produced = try harness.loop.tick(&events, 0);
+    if (produced == 0) produced = try harness.loop.tick(&events, ms);
+    if (produced == 0) {
+        // The wait asked for is a second. The tick must come back for the deadline, long before.
+        const before = backend.testing.monotonic_ns();
+        produced = try harness.loop.tick(&events, core.constants.ns_per_s);
+        const waited = backend.testing.monotonic_ns() - before;
+        try testing.expect(waited < core.constants.ns_per_s / 2);
+    }
+    try testing.expect(backend.testing.monotonic_ns() - armed_ns >= delay_ns);
+    try testing.expectEqual(@as(u32, 1), produced);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 }
 
