@@ -6,10 +6,8 @@
  * count in flight never changes and the loop's timer structure is worked continuously.
  *
  * It prints the result line every candidate of every workload prints, which
- * bench/harness/report.zig owns. In this workload the percentiles carry LATENESS and not latency:
- * how far past its deadline each timer fired. The field order there is the format and the parser
- * refuses anything else, so a change to `render_json_line` has to be made here too; the runner
- * reports a parse failure by name, which is what catches it.
+ * bench/harness/report.zig owns, through `bench_print_result` in libuv_bench.h. In this workload
+ * the percentiles carry LATENESS and not latency: how far past its deadline each timer fired.
  *
  * **libuv has a repeating timer, and `--mode repeating` is it.** `uv_timer_start`'s fourth
  * argument is a repeat, and after the callback libuv re-arms the handle itself
@@ -35,15 +33,14 @@
 #include <time.h>
 #include <uv.h>
 
+#include "libuv_bench.h"
+
 #define TIMERS_MAX 16384
 #define SAMPLES_MAX (1 << 17)
 #define NS_PER_US 1000ull
 #define NS_PER_MS 1000000ull
 #define NS_PER_S 1000000000ull
 #define US_PER_MS 1000ull
-/* Parts a percentile's rank is counted in: ten thousand, as bench/harness/percentile.zig counts,
- * because p9999 has no whole number of parts per thousand. */
-#define PER_TEN_THOUSAND 10000ull
 
 static uv_timer_t timers[TIMERS_MAX];
 /* When each armed timer is due. */
@@ -58,25 +55,18 @@ static unsigned in_flight;
 /* True when libuv re-arms every timer itself, which is `--mode repeating`. */
 static int repeating = 0;
 
-static uint64_t now_ns(void)
-{
-    struct timespec value;
-    clock_gettime(CLOCK_MONOTONIC, &value);
-    return (uint64_t)value.tv_sec * NS_PER_S + (uint64_t)value.tv_nsec;
-}
-
 static void arm(uv_timer_t *handle)
 {
     size_t index = (size_t)(handle - timers);
     uint64_t period_ms = period_ns / NS_PER_MS;
-    due_ns[index] = now_ns() + period_ns;
+    due_ns[index] = bench_now_ns() + period_ns;
     uv_timer_start(handle, (uv_timer_cb)handle->data, period_ms, repeating ? period_ms : 0);
 }
 
 static void on_timer(uv_timer_t *handle)
 {
     size_t index = (size_t)(handle - timers);
-    uint64_t at_ns = now_ns();
+    uint64_t at_ns = bench_now_ns();
     fired++;
     if (samples_taken < SAMPLES_MAX) {
         /* A timer that fired early would give a negative, which this reads as zero, as
@@ -97,33 +87,6 @@ static void on_timer(uv_timer_t *handle)
         return;
     }
     arm(handle);
-}
-
-static int compare_u64(const void *left, const void *right)
-{
-    uint64_t a = *(const uint64_t *)left;
-    uint64_t b = *(const uint64_t *)right;
-    if (a < b) {
-        return -1;
-    }
-    return a > b ? 1 : 0;
-}
-
-/* The nearest-rank percentile of sorted samples, in parts per ten thousand, as rotor_timers takes
- * it through bench/harness/percentile.zig, so the two report one definition. */
-static uint64_t percentile(uint64_t parts)
-{
-    if (samples_taken == 0) {
-        return 0;
-    }
-    uint64_t rank = ((uint64_t)samples_taken * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
-    if (rank == 0) {
-        rank = 1;
-    }
-    if (rank > samples_taken) {
-        rank = samples_taken;
-    }
-    return lateness_ns[rank - 1];
 }
 
 static int parse_number(const char *text, uint64_t *out)
@@ -185,7 +148,7 @@ int main(int argc, char **argv)
 
     period_ns = period_us * NS_PER_US;
     uv_loop_t *loop = uv_default_loop();
-    uint64_t started_ns = now_ns();
+    uint64_t started_ns = bench_now_ns();
     deadline_ns = started_ns + seconds * NS_PER_S;
     in_flight = (unsigned)wanted_timers;
 
@@ -198,26 +161,18 @@ int main(int argc, char **argv)
     }
 
     uv_run(loop, UV_RUN_DEFAULT);
-    uint64_t span_ns = now_ns() - started_ns;
+    uint64_t span_ns = bench_now_ns() - started_ns;
 
-    qsort(lateness_ns, samples_taken, sizeof(lateness_ns[0]), compare_u64);
-    if (span_ns < 1) span_ns = 1;
-    unsigned long long per_second = (unsigned long long)fired * NS_PER_S / span_ns;
-
-    printf("{\"workload\":\"timer-churn\",\"candidate\":\"%s\",\"version\":\"%s\"",
-           repeating ? "libuv (repeating)" : "libuv",
-           uv_version_string());
-    printf(",\"cores\":0,\"connections\":%llu,\"payload_bytes\":0,\"load\":\"even\"",
-           (unsigned long long)wanted_timers);
-    printf(",\"duration_ns\":%llu,\"operations\":%llu",
-           (unsigned long long)span_ns, (unsigned long long)fired);
-    printf(",\"operations_per_second\":%llu", per_second);
-    printf(",\"p50_ns\":%llu", (unsigned long long)percentile(5000));
-    printf(",\"p99_ns\":%llu", (unsigned long long)percentile(9900));
-    printf(",\"p999_ns\":%llu", (unsigned long long)percentile(9990));
-    printf(",\"p9999_ns\":%llu", (unsigned long long)percentile(9999));
-    /* 0, as every program of this workload prints: only the echo runner measures memory. */
-    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
-    fflush(stdout);
+    const struct bench_result result = {
+        .workload = "timer-churn",
+        .candidate = repeating ? "libuv (repeating)" : "libuv",
+        .version = uv_version_string(),
+        .cores = 0,
+        .connections = wanted_timers,
+        .payload_bytes = 0,
+        .duration_ns = span_ns,
+        .operations = fired,
+    };
+    bench_print_result(&result, lateness_ns, samples_taken);
     return 0;
 }

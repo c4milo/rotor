@@ -17,10 +17,9 @@
  *
  * A round trip is two messages, so one message is half of it, which is what the samples hold.
  *
- * THE RESULT LINE. This program prints the JSON object bench/harness/report.zig writes, by hand,
- * because a C program cannot import that file. The field order there is the format, and the
- * parser refuses anything else, so a change to `render_json_line` has to be made here too. The
- * runner reports a parse failure by name, which is what catches it. */
+ * THE RESULT LINE. It prints the JSON object bench/harness/report.zig writes, through
+ * `bench_print_result` in libuv_bench.h, which the three libuv programs share. A change to
+ * `render_json_line` is made there too; the runner reports a parse failure by name. */
 #include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
@@ -30,6 +29,8 @@
 #include <string.h>
 #include <time.h>
 #include <uv.h>
+
+#include "libuv_bench.h"
 
 #ifdef __linux__
 /* `_GNU_SOURCE` is on the command line (build/alternatives.zig): defining it here would come
@@ -51,16 +52,6 @@
 /* Loops this program runs: the measuring one and its peer. */
 #define LOOPS 2
 
-#define NS_PER_S 1000000000ULL
-
-/* Percentiles the report carries, in parts per ten thousand, as bench/harness/percentile.zig counts
- * them: p9999 has no whole number of parts per thousand. */
-#define P50 5000
-#define P99 9900
-#define P999 9990
-#define P9999 9999
-#define PER_TEN_THOUSAND 10000
-
 static uv_loop_t loop_first;
 static uv_loop_t loop_second;
 static uv_async_t async_first;  /* the measuring side waits on this one */
@@ -79,12 +70,6 @@ static volatile int peer_failure = 0;
  * measuring something else. This mirrors bench/harness/placement.zig. */
 static bool pinned_first = false;
 static bool pinned_second = false;
-
-static uint64_t now_ns(void) {
-    struct timespec value;
-    clock_gettime(CLOCK_MONOTONIC, &value);
-    return (uint64_t)value.tv_sec * NS_PER_S + (uint64_t)value.tv_nsec;
-}
 
 /* Pins the calling thread to `cpu`. Returns true only for a pin that took. Apple silicon has no
  * hard affinity, so this always returns false there, and the row then says 0 cores. */
@@ -152,40 +137,19 @@ static void *serve(void *argument) {
     return NULL;
 }
 
-static int compare_u64(const void *left, const void *right) {
-    uint64_t a = *(const uint64_t *)left;
-    uint64_t b = *(const uint64_t *)right;
-    if (a < b) return -1;
-    return a > b ? 1 : 0;
-}
-
-/* The value at `parts` of a sorted array, by the rank bench/harness/histogram.zig
- * uses: the first value at or above the rank, and never past the end. */
-static uint64_t percentile(const uint64_t *sorted, uint32_t count, uint32_t parts) {
-    uint64_t rank = ((uint64_t)count * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
-    if (rank < 1) rank = 1;
-    if (rank > count) rank = count;
-    return sorted[rank - 1];
-}
-
-/* The JSON object bench/harness/report.zig writes, field for field and in its order. */
+/* The result line, through the printer the three libuv programs share. */
 static void report(uint32_t samples, uint64_t span_ns) {
-    qsort(samples_ns, samples, sizeof(samples_ns[0]), compare_u64);
-    uint64_t operations = (uint64_t)samples * MESSAGES_PER_ROUND_TRIP;
-    if (span_ns < 1) span_ns = 1;
-    uint64_t per_second = operations * NS_PER_S / span_ns;
-    unsigned cores = (pinned_first && pinned_second) ? LOOPS : 0;
-
-    printf("{\"workload\":\"cross-core\",\"candidate\":\"libuv\",\"version\":\"" VERSION "\"");
-    printf(",\"cores\":%u,\"connections\":1,\"payload_bytes\":0,\"load\":\"even\"", cores);
-    printf(",\"duration_ns\":%" PRIu64 ",\"operations\":%" PRIu64, span_ns, operations);
-    printf(",\"operations_per_second\":%" PRIu64, per_second);
-    printf(",\"p50_ns\":%" PRIu64, percentile(samples_ns, samples, P50));
-    printf(",\"p99_ns\":%" PRIu64, percentile(samples_ns, samples, P99));
-    printf(",\"p999_ns\":%" PRIu64, percentile(samples_ns, samples, P999));
-    printf(",\"p9999_ns\":%" PRIu64, percentile(samples_ns, samples, P9999));
-    /* 0, as every program of this workload prints: only the echo runner measures memory. */
-    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
+    const struct bench_result result = {
+        .workload = "cross-core",
+        .candidate = "libuv",
+        .version = VERSION,
+        .cores = (pinned_first && pinned_second) ? LOOPS : 0,
+        .connections = 1,
+        .payload_bytes = 0,
+        .duration_ns = span_ns,
+        .operations = (uint64_t)samples * MESSAGES_PER_ROUND_TRIP,
+    };
+    bench_print_result(&result, samples_ns, samples);
 }
 
 struct options {
@@ -249,10 +213,10 @@ int main(int argc, char **argv) {
     uint64_t span_ns = 0;
     uint32_t taken = 0;
     for (uint32_t round = 0; round < options.warmup + options.samples; round++) {
-        uint64_t before = now_ns();
+        uint64_t before = bench_now_ns();
         if (uv_async_send(&async_second) != 0) return 1;
         receive(&loop_first, &woken_first);
-        uint64_t elapsed = now_ns() - before;
+        uint64_t elapsed = bench_now_ns() - before;
         if (round >= options.warmup) {
             samples_ns[taken++] = elapsed / MESSAGES_PER_ROUND_TRIP;
             span_ns += elapsed;

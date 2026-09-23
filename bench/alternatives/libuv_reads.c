@@ -40,18 +40,13 @@
 #include <unistd.h>
 #include <uv.h>
 
+#include "libuv_bench.h"
+
 #define VERSION "v1.52.1"
 
 #define DEPTH_MAX 128
 #define SAMPLES_MAX (1 << 17)
 #define NS_PER_S 1000000000ULL
-/* Percentiles in parts per ten thousand, as bench/harness/percentile.zig counts them: p9999 has no
- * whole number of parts per thousand. */
-#define PER_TEN_THOUSAND 10000ULL
-#define P50 5000ULL
-#define P99 9900ULL
-#define P999 9990ULL
-#define P9999 9999ULL
 
 /* The seed bench/files/rotor_reads.zig draws its offsets from. Zig writes it 0x5eed_da7a; C has
  * no digit separator, so the same value is spelled without one here. */
@@ -119,12 +114,6 @@ static uv_file file_handle;
 static uv_loop_t *loop_handle;
 static struct options run_options;
 
-static uint64_t now_ns(void) {
-    struct timespec value;
-    clock_gettime(CLOCK_MONOTONIC, &value);
-    return (uint64_t)value.tv_sec * NS_PER_S + (uint64_t)value.tv_nsec;
-}
-
 /* The offset of the next read, in bytes, aligned by construction. */
 static uint64_t next_offset(void) {
     uint64_t block;
@@ -147,7 +136,7 @@ static int issue(struct slot *slot) {
     if (stopping) return 0;
     uv_fs_req_cleanup(&slot->request);
     slot->buffer = uv_buf_init(slot->bytes, run_options.block_bytes);
-    slot->started_ns = now_ns();
+    slot->started_ns = bench_now_ns();
     slot->request.data = slot;
     if (run_options.transfer == TRANSFER_WRITE) {
         return uv_fs_write(loop_handle, &slot->request, file_handle, &slot->buffer, 1,
@@ -194,56 +183,37 @@ static void on_sync(uv_fs_t *request) {
 
 /* Records one completed operation and starts the next. */
 static void finish(struct slot *slot) {
-    uint64_t at_ns = now_ns();
+    uint64_t at_ns = bench_now_ns();
     reads++;
     if (taken < SAMPLES_MAX) latency_ns[taken++] = at_ns - slot->started_ns;
     if (at_ns >= deadline_ns) stopping = true;
     if (issue(slot) != 0) stopping = true;
 }
 
-static int compare_u64(const void *left, const void *right) {
-    uint64_t a = *(const uint64_t *)left;
-    uint64_t b = *(const uint64_t *)right;
-    if (a < b) return -1;
-    return a > b ? 1 : 0;
-}
-
-static uint64_t percentile(uint32_t count, uint64_t parts) {
-    if (count == 0) return 0;
-    uint64_t rank = ((uint64_t)count * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
-    if (rank < 1) rank = 1;
-    if (rank > count) rank = count;
-    return latency_ns[rank - 1];
-}
-
-/* The JSON object bench/harness/report.zig writes, field for field and in its order.
- * `connections` carries the queue depth and `payload_bytes` the block size, because those are
- * what this workload's rows vary; the workload's name says which is which. */
+/* The result line, through the printer the three libuv programs share. `connections` carries
+ * the queue depth and `payload_bytes` the block size, because those are what this workload's rows
+ * vary; the workload's name says which is which. */
 static void report(uint64_t span_ns, bool on_uring) {
-    qsort(latency_ns, taken, sizeof(latency_ns[0]), compare_u64);
-    if (span_ns < 1) span_ns = 1;
-    uint64_t per_second = reads * NS_PER_S / span_ns;
-    const char *name = on_uring ? "libuv (io_uring)" : "libuv (thread pool)";
-
     /* A durable write is its own workload: it measures the drive's flush as well as the loop, and a
      * row of one must never join a series of the other. rotor_reads names them the same way. */
     const char *direction = "read";
     if (run_options.transfer == TRANSFER_WRITE) {
         direction = run_options.sync ? "durable" : "write";
     }
-    printf("{\"workload\":\"file-%s-%s\",\"candidate\":\"%s\",\"version\":\"" VERSION "\"",
-           direction, run_options.pattern == PATTERN_SEQ ? "seq" : "random", name);
-    printf(",\"cores\":0,\"connections\":%u,\"payload_bytes\":%u,\"load\":\"even\"",
-           run_options.depth, run_options.block_bytes);
-    printf(",\"duration_ns\":%" PRIu64 ",\"operations\":%" PRIu64, span_ns, reads);
-    printf(",\"operations_per_second\":%" PRIu64, per_second);
-    printf(",\"p50_ns\":%" PRIu64, percentile(taken, P50));
-    printf(",\"p99_ns\":%" PRIu64, percentile(taken, P99));
-    printf(",\"p999_ns\":%" PRIu64, percentile(taken, P999));
-    printf(",\"p9999_ns\":%" PRIu64, percentile(taken, P9999));
-    /* 0, as every program of this workload prints: only the echo runner measures memory. */
-    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
-    fflush(stdout);
+    char workload[32];
+    snprintf(workload, sizeof(workload), "file-%s-%s", direction,
+             run_options.pattern == PATTERN_SEQ ? "seq" : "random");
+    const struct bench_result result = {
+        .workload = workload,
+        .candidate = on_uring ? "libuv (io_uring)" : "libuv (thread pool)",
+        .version = VERSION,
+        .cores = 0,
+        .connections = run_options.depth,
+        .payload_bytes = run_options.block_bytes,
+        .duration_ns = span_ns,
+        .operations = reads,
+    };
+    bench_print_result(&result, latency_ns, taken);
 }
 
 /* True when the file's last block already holds FILL_BYTE, so the fill can be skipped. The last
@@ -448,14 +418,14 @@ int main(int argc, char **argv) {
         slots[index].bytes = (char *)bytes;
     }
 
-    uint64_t started_ns = now_ns();
+    uint64_t started_ns = bench_now_ns();
     deadline_ns = started_ns + run_options.seconds * NS_PER_S;
     for (uint32_t index = 0; index < run_options.depth; index++) {
         if (issue(&slots[index]) != 0) return 1;
     }
 
     uv_run(&loop, UV_RUN_DEFAULT);
-    uint64_t span_ns = now_ns() - started_ns;
+    uint64_t span_ns = bench_now_ns() - started_ns;
 
     for (uint32_t index = 0; index < run_options.depth; index++) {
         uv_fs_req_cleanup(&slots[index].request);
