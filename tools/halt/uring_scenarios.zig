@@ -1,6 +1,29 @@
 //! Halt scenarios for the `uring` module: the assertions a caller's mistake can reach. Each runs
-//! on a loop with tables and no ring, because every one of them halts before the loop would
-//! enter the kernel, so the check runs on every host.
+//! with no ring, because every one of them halts before anything would enter the kernel, so the
+//! check runs on every host.
+//!
+//! A scenario proves an assertion only if the scenario returns once that assertion is deleted. So,
+//! with the assertion deleted, the path after the violating statement must make no Linux system
+//! call. The halt check runs on macOS. On arm64 a Linux system call puts its number in x8, macOS
+//! reads the number from x16, and so macOS runs whatever call x16 happens to name. A scenario whose
+//! assertion was deleted could then die for that reason, and the check would count a halt.
+//!
+//! This rule changes two scenarios:
+//!
+//! - `tick` from another thread is left out. With the owner check deleted, `tick` reads the clock
+//!   next. On 2026-09-22 macOS ran `writev` in place of `clock_gettime`, nothing wrote the time,
+//!   and the scenario died on the assertion that reads it. The check is `core.Tables.assert_owner`:
+//!   `submit` from another thread proves it here, and kqueue's `tick` from another thread proves it
+//!   through a tick.
+//! - The scenario for a group that is not aligned calls `buffers.assert_aligned` directly. It used
+//!   to call `provide_buffers`, which calls `io_uring_register` after the check. With the check
+//!   deleted, on 2026-09-22 macOS ran `chown` in its place, which failed, and the scenario
+//!   returned; another value in x16 could have halted it.
+//!
+//! No scenario proves that uring's own `tick` and `provide_buffers` make these checks. That needs a
+//! halt check run under Linux. With its assertion deleted, no scenario here makes a Linux system
+//! call: `submit`, `assert_empty`, `assert_aligned` and the registry make none, and each remote
+//! `post` answers `LoopNotFound` from the registry before it reaches the ring.
 const std = @import("std");
 const core = @import("core");
 const uring = @import("uring");
@@ -26,18 +49,6 @@ fn submit_from_another_thread() void {
 fn submit_on_this_thread() void {
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &.{});
-}
-
-fn tick_from_another_thread() void {
-    loop.init_tables(&memory, options);
-    const thread = std.Thread.spawn(.{}, tick_on_this_thread, .{}) catch return;
-    thread.join();
-}
-
-fn tick_on_this_thread() void {
-    var events: [1]core.Event = undefined;
-    scenario.reached_violation();
-    _ = loop.tick(&events, 0) catch {};
 }
 
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
@@ -146,14 +157,14 @@ const group_scenario_bytes =
 const group_scenario_slack = group_scenario_bytes + 2 * group_scenario_alignment;
 var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = undefined;
 
-/// A group whose memory is one byte past `group_alignment`, which io_uring's buffer ring requires.
-/// The kernel answers EINVAL for it, and that arrived as one nameless `Unexpected` until 2026-09-22,
-/// which cost a consumer a day; the assertion names it before the loop enters the kernel at all.
+/// A group whose memory is one `io_uring_buf` past `group_alignment`, which io_uring's buffer ring
+/// requires. The kernel answers EINVAL for it, and that arrived as one nameless `Unexpected` until
+/// 2026-09-22, which cost a consumer a day. That consumer's memory passed every cast and failed only
+/// in the kernel, and this offset has the same shape.
 ///
-/// The offset is one `io_uring_buf`, not one byte, and that is the whole point: the ring is read
-/// through a `*io_uring_buf`, so a one-byte offset trips that cast's own check and would prove
-/// nothing about this assertion. A caller's memory that is 8-byte aligned and not 64 KiB aligned
-/// passes every cast and only the kernel objects, which is the shape the consumer hit.
+/// The scenario calls `buffers.assert_aligned` itself, the check `provide_buffers` makes. With that
+/// check deleted, `provide_buffers` would call `io_uring_register` next, which on macOS runs some
+/// other call (this file's header).
 ///
 /// The address is aligned forward first and spoiled after, rather than taken from the array as
 /// declared: macOS does not always give a static the alignment it asks for, and this check runs on
@@ -161,7 +172,6 @@ var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = und
 /// refuses the cast at the call site while a caller built without checks does not; rotor's
 /// assertions stay on either way (CLAUDE.md non-negotiable 1).
 fn provide_a_group_that_is_not_aligned() void {
-    loop.init_tables(&memory, options);
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
     const misaligned = blk: {
         @setRuntimeSafety(false);
@@ -170,17 +180,11 @@ fn provide_a_group_that_is_not_aligned() void {
         break :blk start[0..group_scenario_bytes];
     };
     scenario.reached_violation();
-    loop.provide_buffers(
-        0,
-        misaligned,
-        group_scenario_buffers,
-        group_scenario_buffer_bytes,
-    ) catch {};
+    uring.buffers.assert_aligned(misaligned);
 }
 
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
-    .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,
