@@ -103,6 +103,7 @@ const tested = [_]Tested{
     },
     .{ .name = "bench-reads-pool-tests", .root = "bench/files/reads_pool.zig", .needs_loop = true },
     .{ .name = "bench-storm-tests", .root = "bench/echo/storm.zig", .needs_loop = true },
+    .{ .name = "bench-rotor-echo-tests", .root = "bench/echo/rotor_echo.zig", .needs_loop = true },
     .{ .name = "bench-rotor-reads-tests", .root = "bench/files/rotor_reads.zig", .needs_loop = true },
     .{
         .name = "bench-rotor-timers-tests",

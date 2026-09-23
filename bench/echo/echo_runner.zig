@@ -113,20 +113,7 @@ fn read_baseline(
     return baseline.parse(baseline_text[0..read], into);
 }
 
-const Configuration = struct { connections: u32, payload_bytes: u32 };
-
-/// The smallest and largest buffer `rotor_echo` takes. Named here because the runner asks for
-/// one, and asking for a buffer the server refuses fails the run: the gate did exactly that with
-/// a 1 KiB payload.
-const buffer_bytes_min: u32 = 2048;
-const buffer_bytes_max: u32 = 64 * 1024;
-
-/// The buffer a candidate is given for `payload_bytes`: the payload where it can be, so a whole
-/// message costs one send, and the nearest the server accepts otherwise.
-fn buffer_bytes_for(payload_bytes: u32) u32 {
-    const whole = std.math.ceilPowerOfTwoAssert(u32, payload_bytes);
-    return std.math.clamp(whole, buffer_bytes_min, buffer_bytes_max);
-}
+const Configuration = setup.Configuration;
 
 /// One configuration: every candidate, `rounds` times, alternating.
 fn one_configuration(
@@ -275,29 +262,9 @@ fn one_run(
     configuration: Configuration,
     port: u16,
 ) !Result {
-    var port_text: [8]u8 = undefined;
-    const port_written = try std.fmt.bufPrint(&port_text, "{d}", .{port});
-    var argv_buffer: [10][]const u8 = undefined;
-    argv_buffer[0] = try program_path(options, candidate, 0);
-    argv_buffer[1] = port_written;
-    var used: usize = 2;
-    for (candidate.arguments) |argument| {
-        argv_buffer[used] = argument;
-        used += 1;
-    }
-    var buffer_text: [16]u8 = undefined;
-    if (candidate.takes_buffer_bytes) {
-        argv_buffer[used] = "--buffer-bytes";
-        argv_buffer[used + 1] = try std.fmt.bufPrint(&buffer_text, "{d}", .{
-            buffer_bytes_for(configuration.payload_bytes),
-        });
-        used += 2;
-    }
-    // No `--cpu` and no `--loops`. Every candidate runs one loop, unpinned, because decision 19
-    // withdrew the core sweep: neither libuv nor libxev spreads TCP load across cores on kqueue, so an N-core
-    // row would compare rotor's loops against an alternative's one. `rotor_echo` still takes both
-    // options for a person running it by hand.
-    const argv = argv_buffer[0..used];
+    var command: setup.ServerCommand = undefined;
+    const program = try program_path(options, candidate, 0);
+    const argv = try command.fill(program, candidate, configuration, port);
 
     var child = try std.process.spawn(init.io, .{
         .argv = argv,

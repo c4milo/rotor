@@ -290,17 +290,34 @@ No request of any candidate went to an `io-wq` worker thread.
 - **libuv on Linux batches its `epoll_ctl` through io_uring**, two `EPOLL_CTL` requests per echo,
   and reads and writes with plain system calls. `docs/decisions/0003-speed-sources.md` cites the
   code; this is the first count of it.
-- **On `orbstack`, the group shape runs at about half the rate of everything else**, with the
+- **On `orbstack`, the group shape ran at about half the rate of everything else**, with the
   fewest calls (`bench/results/echo-orbstack-2026-09-22.md`): 207,382 echoes per second at 4 KiB
-  against 467,655 for rotor's accumulate shape, and 46,712 at 64 KiB against 89,466; median
-  latency at 4 KiB is 79 µs against 24 µs. The machine was busy and most rows spread past the
-  harness's threshold, but not by a factor of two. On `github` the two rotor shapes are level at
-  both payloads. A shape that does less kernel work in more time is waiting for something, and what
-  it waits for is not known. The two shapes differ in two things at once, the multishot receive and
-  the provided-buffer group, so the next experiment is a third shape of `rotor_echo`: a one-shot
-  receive from the group, which keeps the group and drops the multishot. Run on both machines, it
-  says which of the two costs the time, and whether the machine or the kernel (7.0.14 on `orbstack`,
-  6.17 on `github`) is what differs.
+  against 467,655 for rotor's accumulate shape, and 46,712 at 64 KiB against 89,466.
+
+**Why: the group was the whole 64 MiB pool, and io_uring cycles through all of it.** Found the same
+day. With one connection the three shapes were level; with 16, the group shape's latency grew as a
+saturated server's does, and its server spent 22.04 µs of CPU per 64 KiB echo against 9.17 µs for
+the accumulate shape, 99.6 percent of it in the kernel (`bench/results/cpu-orbstack-2026-09-22.md`).
+Fewer calls costing more each pointed at the memory the kernel copies into. The kernel takes a
+provided buffer from the head of the ring and the loop returns it at the tail, so a group of N
+buffers is used in order, and every echo lands in the buffer used longest ago: with 512 buffers of
+64 KiB, memory cold in cache and TLB. libxev and the accumulate shape reuse one buffer per
+connection, 1 MiB in total. The same server with 32 buffers spent 7.54 µs per 64 KiB echo, below
+both, and 1.75 µs per 4 KiB echo against 1.97 and 2.23. The cost set in between 2 and 8 MiB of group
+on this machine; whether cache or TLB reach sets that bound was not separated. kqueue and epoll keep
+the free buffers of a group in a stack and reuse the one returned last, so their groups do not have
+this cost at any size. Why `github` showed the two shapes level was not checked: its server spends
+about five times as long per echo, which leaves room for either a client that limits the run or a
+larger cache.
+
+**The fix is in the bench: `rotor_echo` takes `--group-buffers`, and the runner gives it two buffers
+per connection, never fewer than 32**, as the other candidates hold a buffer per connection. With
+it, rotor leads every clean row at 16 connections and at 64 connections with 4 KiB:
+480,515 echoes per second at 16 connections and 4 KiB, and 84,406 at 64 KiB
+(`bench/results/echo-sized-pool-orbstack-2026-09-22.md`). The library is unchanged. A group sized
+to the buffers in flight is the caller's choice, and `docs/using.md` says so. Keeping io_uring's
+ring short and refilling it from a stack of recently returned buffers would make any group size
+warm, and would change `uring_buffers.zig`, so it waits for a ruling.
 
 ## Two bugs in rotor_echo, and which rows they touched
 

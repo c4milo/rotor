@@ -37,7 +37,95 @@ pub const Candidate = struct {
     /// 8 KiB against candidates holding 64 KiB measured the sizing and not the loops: the
     /// 64 KiB rows halved, and `bench/alternatives/README.md` records it.
     takes_buffer_bytes: bool = false,
+    /// True when the server takes `--group-buffers`, which the runner sets from the connections
+    /// with `group_buffers_for`. rotor's group shape draws from a pool, and on io_uring the pool's
+    /// size is what it cycles through: the whole 64 MiB made every echo land in cold memory, and
+    /// halved the shape's rate on `orbstack` (`bench/alternatives/README.md`). The other candidates
+    /// hold a buffer per connection, so the pool is sized per connection too.
+    takes_group_buffers: bool = false,
 };
+
+/// One configuration of a comparison: how many connections, and how large a message.
+pub const Configuration = struct { connections: u32, payload_bytes: u32 };
+
+/// The smallest and largest buffer `rotor_echo` takes. Named here because the runner asks for
+/// one, and asking for a buffer the server refuses fails the run: the gate did exactly that with
+/// a 1 KiB payload.
+const buffer_bytes_min: u32 = 2048;
+const buffer_bytes_max: u32 = 64 * 1024;
+
+/// The buffer a candidate is given for `payload_bytes`: the payload where it can be, so a whole
+/// message costs one send, and the nearest the server accepts otherwise.
+pub fn buffer_bytes_for(payload_bytes: u32) u32 {
+    const whole = std.math.ceilPowerOfTwoAssert(u32, payload_bytes);
+    return std.math.clamp(whole, buffer_bytes_min, buffer_bytes_max);
+}
+
+/// The most arguments a server is started with: the program, the port, a candidate's own two, and
+/// two pairs the runner sets.
+const server_arguments_max = 10;
+
+/// A server's command line, with the numbers it prints held beside it so they live as long as it.
+///
+/// No `--cpu` and no `--loops`. Every candidate runs one loop, unpinned, because decision 19
+/// withdrew the core sweep: neither libuv nor libxev spreads TCP load across cores on kqueue, so
+/// an N-core row would compare rotor's loops against an alternative's one. `rotor_echo` still
+/// takes both options for a person running it by hand.
+pub const ServerCommand = struct {
+    argv: [server_arguments_max][]const u8,
+    port_text: [8]u8,
+    buffer_text: [16]u8,
+    group_text: [16]u8,
+
+    /// The command line of `candidate`'s server at `program`, on `port`, for `configuration`.
+    pub fn fill(
+        command: *ServerCommand,
+        program: []const u8,
+        candidate: Candidate,
+        configuration: Configuration,
+        port: u16,
+    ) ![]const []const u8 {
+        std.debug.assert(candidate.arguments.len + 6 <= server_arguments_max);
+        command.argv[0] = program;
+        command.argv[1] = try std.fmt.bufPrint(&command.port_text, "{d}", .{port});
+        var used: usize = 2;
+        for (candidate.arguments) |argument| {
+            command.argv[used] = argument;
+            used += 1;
+        }
+        if (candidate.takes_buffer_bytes) {
+            command.argv[used] = "--buffer-bytes";
+            command.argv[used + 1] = try std.fmt.bufPrint(&command.buffer_text, "{d}", .{
+                buffer_bytes_for(configuration.payload_bytes),
+            });
+            used += 2;
+        }
+        if (candidate.takes_group_buffers) {
+            command.argv[used] = "--group-buffers";
+            command.argv[used + 1] = try std.fmt.bufPrint(&command.group_text, "{d}", .{
+                group_buffers_for(configuration.connections),
+            });
+            used += 2;
+        }
+        return command.argv[0..used];
+    }
+};
+
+/// Buffers per connection in rotor's group: a message TCP delivers in two pieces holds two buffers
+/// until both sends complete, and a connection has one message in flight.
+pub const group_buffers_per_connection: u32 = 2;
+
+/// The fewest buffers a group is given, so a run with a handful of connections still has room for
+/// a burst. At 64 KiB they are 2 MiB, which stayed warm on `orbstack`.
+pub const group_buffers_min: u32 = 32;
+
+/// The buffers rotor's group gets for `connections`: two per connection, rounded up to the power of
+/// two a buffer ring's size must be, and never fewer than `group_buffers_min`.
+pub fn group_buffers_for(connections: u32) u32 {
+    std.debug.assert(connections >= 1);
+    const needed = @max(connections * group_buffers_per_connection, group_buffers_min);
+    return std.math.ceilPowerOfTwoAssert(u32, needed);
+}
 
 pub const candidates = [_]Candidate{
     .{
@@ -45,6 +133,7 @@ pub const candidates = [_]Candidate{
         .program = "rotor_echo",
         .version = "this tree",
         .takes_buffer_bytes = true,
+        .takes_group_buffers = true,
     },
     // rotor's second shape, which `rotor_echo.zig` calls the experiment: a receive into this
     // connection's own buffer, re-armed until a whole message has arrived, then one send. The
@@ -224,6 +313,37 @@ test "the accumulate shape runs echo and not the storm, and the default shape ru
     const default_shape = candidate_named("rotor") orelse return error.NoCandidate;
     try testing.expect(unavailable(default_shape, .echo) == null);
     try testing.expect(unavailable(default_shape, .storm) == null);
+}
+
+test "rotor's group is sized per connection, a power of two, and never below its floor" {
+    try testing.expectEqual(@as(u32, 32), group_buffers_for(1));
+    try testing.expectEqual(@as(u32, 32), group_buffers_for(16));
+    try testing.expectEqual(@as(u32, 128), group_buffers_for(64));
+    try testing.expectEqual(@as(u32, 512), group_buffers_for(256));
+    // Not a power of two after doubling: rounded up, never down, so no connection goes short.
+    try testing.expectEqual(@as(u32, 64), group_buffers_for(17));
+    // Only the group shape draws from the group; the accumulate shape holds its own buffers.
+    const group_shape = candidate_named("rotor") orelse return error.NoCandidate;
+    try testing.expect(group_shape.takes_group_buffers);
+    const accumulate = candidate_named("rotor (accumulate)") orelse return error.NoCandidate;
+    try testing.expect(!accumulate.takes_group_buffers);
+}
+
+test "rotor's server is started with its group sized by the connections, and libxev's is not" {
+    const configuration: Configuration = .{ .connections = 64, .payload_bytes = 65536 };
+    var command: ServerCommand = undefined;
+    const group_shape = candidate_named("rotor") orelse return error.NoCandidate;
+    const rotor_argv = try command.fill("rotor_echo", group_shape, configuration, 31001);
+    const expected = [_][]const u8{
+        "rotor_echo", "31001", "--buffer-bytes", "65536", "--group-buffers", "128",
+    };
+    try testing.expectEqual(expected.len, rotor_argv.len);
+    for (expected, rotor_argv) |want, got| try testing.expectEqualStrings(want, got);
+
+    const libxev = candidate_named("libxev") orelse return error.NoCandidate;
+    const libxev_argv = try command.fill("libxev_echo", libxev, configuration, 31002);
+    try testing.expectEqual(@as(usize, 2), libxev_argv.len);
+    try testing.expectEqualStrings("31002", libxev_argv[1]);
 }
 
 test "a candidate blocked outright is blocked in every workload" {

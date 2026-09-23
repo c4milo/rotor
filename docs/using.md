@@ -210,6 +210,17 @@ Three ways to hand the loop memory for bytes:
   there and fails on Linux. That asymmetry is why the assertion on the io_uring side is worth having:
   it is where a caller who trusted the declaration finds out.
 
+  **Size a group to the buffers in flight, not to the memory you can spare.** On io_uring the kernel
+  takes buffers from the head of the group's ring and `give_back_buffer` returns them at the tail,
+  so a group of `count` buffers is used in order and every receive lands in the buffer returned
+  longest ago. A large group is therefore a large working set, and every receive writes into memory
+  that is cold in cache and TLB. A 64 MiB group of 64 KiB buffers cost 22 µs of kernel time per
+  echo on the `orbstack` machine, and 32 buffers cost 7.5
+  (`bench/results/cpu-orbstack-2026-09-22.md`). A connection holds a buffer from its receive's event
+  until the caller gives it back, so two per connection is enough for an echo, and a group that
+  runs out ends the receive with `buffers_exhausted` rather than losing bytes. On kqueue and epoll
+  the loop reuses the buffer returned last, so the size costs only memory there.
+
 Registered descriptors work the same way: `register_descriptors(&loop, descriptors)` once, at
 most `registered_descriptors_max` (1,024), and an operation with `descriptor_registered = true`
 names an index instead of a descriptor. A `close` always names a descriptor of the process.

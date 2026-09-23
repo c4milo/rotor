@@ -16,6 +16,15 @@
 //! A connection therefore costs one send entry per message and nothing else. The receive side is
 //! free after the first submission, which is what a multishot receive is for.
 //!
+//! **The group's size is its working set on io_uring.** The kernel hands buffers out in ring order,
+//! so a group of N buffers cycles through all N, and every echo lands in the buffer used longest
+//! ago. With the whole 64 MiB pool as the group, that buffer is cold in cache and TLB, and on
+//! `orbstack` the server spent 22.04 µs of kernel time per 64 KiB echo against 7.54 µs with 32
+//! buffers (`bench/results/cpu-orbstack-2026-09-22.md`). `--group-buffers` sets the count, and the
+//! runner sizes it by the connections, as the other candidates hold a buffer per connection. kqueue
+//! and epoll keep the free buffers in a stack and reuse the one returned last, so there the count
+//! costs nothing.
+//!
 //! It also sets `TCP_NODELAY` on every accepted connection, which is not a rotor source at all:
 //! it is what the other candidates set, and a comparison whose candidates disagree about Nagle
 //! measures Nagle. The first version of this file left it off while libuv and libxev set it.
@@ -164,21 +173,33 @@ fn share_bytes() usize {
     return (group_bytes / loops) & ~(@as(usize, group_alignment) - 1);
 }
 
-/// Buffers one loop's group holds: the largest power of two whose group, bookkeeping included,
-/// fits its share of the pool.
-fn buffers_of() u16 {
+/// Buffers one loop's group holds: `--group-buffers` when given, and otherwise the largest power of
+/// two whose group, bookkeeping included, fits its share of the pool.
+fn buffers_of() !u16 {
     const per_buffer = buffer_bytes + backend.buffers.ring_bytes(1);
     const fit = @min(share_bytes() / per_buffer, core.constants.buffers_per_group_max);
-    const count = std.math.floorPowerOfTwo(u16, @intCast(fit));
+    const most = std.math.floorPowerOfTwo(u16, @intCast(fit));
+    const count = try group_buffers_from(group_buffers_wanted, most);
     std.debug.assert(backend.buffers.group_bytes(count, buffer_bytes) <= share_bytes());
     return count;
+}
+
+/// The count a group gets: `most` when nothing was asked for, and otherwise what was asked for,
+/// which must be a power of two, as a buffer ring's size is, and no more than `most`. A count too
+/// large is refused rather than cut down, so a run never measures a group it did not ask for.
+fn group_buffers_from(wanted: ?u16, most: u16) !u16 {
+    std.debug.assert(std.math.isPowerOfTwo(most));
+    const asked = wanted orelse return most;
+    if (asked == 0 or !std.math.isPowerOfTwo(asked)) return error.GroupBuffersNotPowerOfTwo;
+    if (asked > most) return error.GroupBuffersBeyondPool;
+    return asked;
 }
 
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);
     open = @splat(false);
     accumulated = @splat(0);
-    group_buffers = buffers_of();
+    group_buffers = try buffers_of();
 
     // One listener per loop, all bound before any of them serves, so a client that connects on
     // the ready line cannot reach a port only half the loops are listening on.
@@ -266,6 +287,9 @@ fn parse(init: std.process.Init) !u16 {
     return port;
 }
 
+/// The count `--group-buffers` asked for, or null for as many as the pool holds.
+var group_buffers_wanted: ?u16 = null;
+
 /// One `--name value` pair. Split from `parse` so each stays inside the complexity limit.
 fn apply(name: []const u8, value: []const u8) !void {
     if (std.mem.eql(u8, name, "--cpu")) {
@@ -277,6 +301,8 @@ fn apply(name: []const u8, value: []const u8) !void {
         if (loops == 0 or loops > loops_max) return error.LoopsOutOfRange;
     } else if (std.mem.eql(u8, name, "--buffer-bytes")) {
         try set_buffer_bytes(try std.fmt.parseInt(u32, value, 10));
+    } else if (std.mem.eql(u8, name, "--group-buffers")) {
+        group_buffers_wanted = try std.fmt.parseInt(u16, value, 10);
     } else {
         return error.UnknownArgument;
     }
@@ -440,6 +466,17 @@ fn close(loop: *Loop, descriptor: core.Descriptor) void {
         .user_data = user_data_of(.close, descriptor),
         .kind = .{ .close = .{ .descriptor = descriptor } },
     });
+}
+
+test "a group gets the count asked for, or the most the pool holds, and nothing else" {
+    const most = 512;
+    try std.testing.expectEqual(@as(u16, most), try group_buffers_from(null, most));
+    try std.testing.expectEqual(@as(u16, 32), try group_buffers_from(32, most));
+    try std.testing.expectEqual(@as(u16, most), try group_buffers_from(most, most));
+    try std.testing.expectEqual(@as(u16, 1), try group_buffers_from(1, most));
+    try std.testing.expectError(error.GroupBuffersBeyondPool, group_buffers_from(most * 2, most));
+    try std.testing.expectError(error.GroupBuffersNotPowerOfTwo, group_buffers_from(48, most));
+    try std.testing.expectError(error.GroupBuffersNotPowerOfTwo, group_buffers_from(0, most));
 }
 
 comptime {
