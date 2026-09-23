@@ -55,7 +55,7 @@ comptime {
 }
 
 /// The modules that talk to a kernel and so may read its clock.
-const kernel_backend_directories = [_][]const u8{ "src/uring", "src/kqueue" };
+const kernel_backend_directories = [_][]const u8{ "src/uring", "src/kqueue", "src/epoll" };
 
 const reason = "core reads no clock and draws from core.random alone";
 
@@ -124,5 +124,8 @@ test "determinism reads core and not the kernel backends" {
     try testing.expect(config.scope.applies("src/core/random.zig"));
     try testing.expect(!config.scope.applies("src/uring/uring.zig"));
     try testing.expect(!config.scope.applies("src/kqueue/kqueue.zig"));
+    try testing.expect(!config.scope.applies("src/epoll/epoll_tick.zig"));
+    // The public module is in scope: it chooses a backend and reads no clock of its own.
+    try testing.expect(config.scope.applies("src/rotor/rotor_loop.zig"));
     try testing.expect(!config.scope.applies("bench/echo.zig"));
 }
