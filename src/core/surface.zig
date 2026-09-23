@@ -1,5 +1,5 @@
-//! The surface every backend carries (decision 1): `uring` and `kqueue` each export a `Loop` with
-//! the declarations named here, so a consumer's build swaps one for the other, or for a
+//! The surface every backend carries (decision 1): `uring`, `kqueue` and `epoll` each export a
+//! `Loop` with the declarations named here, so a consumer's build swaps one for another, or for a
 //! deterministic twin of its own (decision 10), without a changed line. `check` runs at comptime
 //! in each backend's root, so a backend that drops or misspells a declaration fails to compile on
 //! every host, whichever kernel it needs.

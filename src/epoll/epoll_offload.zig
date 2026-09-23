@@ -68,7 +68,7 @@ pub fn code_of(code: core.Operation.Code) ?Work.Code {
 /// `submitted` only by being handed out, so the policy and the operation's code decide this.
 ///
 /// The cancel path uses it to avoid treating such a slot as one waiting for readiness. A file is
-/// registered with no epoll interest, so `perform.interest_of` has no answer for one.
+/// registered with no epoll interest, so `perform.filter_of` has no answer for one.
 pub fn on_a_worker(loop: *const Loop, slot: *const Slot) bool {
     if (loop.file_policy != .offload) return false;
     return code_of(slot.code) != null;

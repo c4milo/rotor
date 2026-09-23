@@ -3,8 +3,9 @@
 //! leaves its descriptor's list and ends with `canceled`, or with `timeout` when the loop asked.
 //! The event is still handed over by the next tick, never by `cancel`.
 //!
-//! This is `kqueue_cancel.zig`, and like it, a cancel that leaves nobody waiting in a direction
-//! takes that direction out of the kernel's registration at once, with one `epoll_ctl`. Left in
+//! This mirrors `kqueue_cancel.zig`, with one difference: a cancel that leaves nobody waiting in a
+//! direction takes that direction out of the kernel's registration at once, with one `epoll_ctl`,
+//! where kqueue leaves a one-shot filter to fire. Left in
 //! place, a level-triggered registration would report the descriptor the next time it became ready,
 //! and end a wait early for nobody: the conformance suite's multishot accept caught exactly that on
 //! 2026-09-22, with a connection that arrived after the accept was cancelled. Cancels are rare, so

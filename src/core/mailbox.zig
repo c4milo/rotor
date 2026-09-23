@@ -35,8 +35,8 @@
 //!   consumer that sees the new `tail` also sees the message bytes written before it. Both are
 //!   `.seq_cst`, which is stronger, for the handshake.
 //!
-//! The sleep handshake. A consumer that blocks in `kevent` needs the producer of the next message
-//! to wake it, and a wake costs the producer a `kevent` call, so it should pay only when the
+//! The sleep handshake. A consumer that blocks in the kernel needs the producer of the next
+//! message to wake it, and a wake costs the producer a system call, so it should pay only when the
 //! consumer sleeps. The consumer stores `sleeping` (`begin_sleep`), then loads every inbound
 //! `tail` (`is_empty` or `pop_into`), and blocks only when every ring was empty. The producer
 //! stores `tail` (`push`), then loads `sleeping` (`must_wake`), and wakes the consumer when it is
@@ -52,13 +52,13 @@
 //!   in the ring, its receiver blocks, and nobody is obliged to wake it. That lost wake is the
 //!   bug. On AArch64 the orderings are different instructions, seen in Zig 0.16's output: a
 //!   `.seq_cst` load is LDAR, an `.acquire` load is LDAPR, and a plain load is LDR. On an Apple
-//!   M1 Pro the handshake test of `core/mailbox_test.zig` loses a wake when any one of the
-//!   four is weakened to a different instruction. A `.release` store of `tail` is the
+//!   M1 Pro the handshake test of `kqueue/kqueue_mailbox_test.zig` loses a wake when any one of
+//!   the four is weakened to a different instruction. A `.release` store of `tail` is the
 //!   instruction a `.seq_cst` store is, STLR, so there the argument is the only evidence.
 //! - `end_sleep` stores `sleeping` with `.seq_cst` too, so every access to the flag has a place
 //!   in the one order and the argument needs no case for a weaker store. A producer that still
 //!   sees the flag set wakes a consumer that is awake: wasted, harmless. It runs once per
-//!   blocking `kevent` call, so its cost is lost in the system call.
+//!   blocking call into the kernel, so its cost is lost in the system call.
 //! - `begin_sleep` first loads the flag with `.unordered` to assert it is clear. The loop is the
 //!   flag's only writer, so the load returns the loop's last store.
 //! - `clear` swaps a descriptor with `.release` and `get` loads it with `.acquire`, as the
@@ -159,8 +159,9 @@ pub const Mailbox = extern struct {
 /// flag around every blocking tick, and that store never dirties the line of another loop's
 /// entry.
 const Entry = extern struct {
-    /// The loop's kqueue descriptor, or `descriptor_none`. Written by the loop, at init and at
-    /// deinit. Read by the loops that post to it.
+    /// The descriptor that wakes the loop, or `descriptor_none`: its kqueue on kqueue, its
+    /// eventfd on epoll. Written by the loop, at init and at deinit. Read by the loops that post
+    /// to it.
     queue: std.atomic.Value(Descriptor) align(constants.mailbox_index_alignment),
     /// True from `begin_sleep` to `end_sleep`. Written by the loop. Read by the loops that post
     /// to it.
@@ -184,7 +185,7 @@ comptime {
     assert(slot_mask & constants.mailbox_messages == 0);
 }
 
-/// The loops of one process: their mailboxes, their kqueue descriptors, and whether each
+/// The loops of one process: their mailboxes, the descriptors that wake them, and whether each
 /// sleeps. One per process, owned by the application, which hands it to every loop at init.
 /// `init` runs before any loop starts, and the two slices never change afterwards, so every
 /// thread may read them. Two slices: 32 bytes aligned to 8 on a 64-bit target.
@@ -243,9 +244,9 @@ pub const Registry = struct {
         return @intCast(registry.entries.len);
     }
 
-    /// A loop publishes its kqueue descriptor at init. The id must be free: two loops with one
-    /// id is a programmer error. `.acq_rel`: the claim carries the previous holder's ring stores
-    /// to this loop, which is about to read those rings (the header says why).
+    /// A loop publishes the descriptor that wakes it at init. The id must be free: two loops with
+    /// one id is a programmer error. `.acq_rel`: the claim carries the previous holder's ring
+    /// stores to this loop, which is about to read those rings (the header says why).
     pub fn set(registry: *Registry, id: LoopId, queue: Descriptor) void {
         assert(id < registry.entries.len);
         assert(queue >= 0);
@@ -271,7 +272,7 @@ pub const Registry = struct {
         assert(previous != descriptor_none);
     }
 
-    /// The kqueue descriptor of loop `id`, or a negative value when it has none.
+    /// The descriptor that wakes loop `id`, or a negative value when it has none.
     pub fn get(registry: *const Registry, id: LoopId) Descriptor {
         assert(id < registry.entries.len);
         return registry.entries[id].queue.load(.acquire);
@@ -285,7 +286,7 @@ pub const Registry = struct {
         return &registry.mailboxes[@as(usize, receiver) * count + sender];
     }
 
-    /// Consumer: call right before blocking in `kevent`. After it returns, the consumer MUST
+    /// Consumer: call right before blocking in the kernel. After it returns, the consumer MUST
     /// check its inbound mailboxes once more, and must not block when any holds a message. A
     /// loop that begins a sleep twice forgot `end_sleep`, and every post to it would then pay
     /// for a wake: a programmer error.
@@ -296,15 +297,15 @@ pub const Registry = struct {
         sleeping.store(true, .seq_cst);
     }
 
-    /// Consumer: call after `kevent` returns, or when the check after `begin_sleep` found a
-    /// message. Harmless for a loop that is not marked asleep.
+    /// Consumer: call after the blocking call returns, or when the check after `begin_sleep` found
+    /// a message. Harmless for a loop that is not marked asleep.
     pub fn end_sleep(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
         registry.entries[id].sleeping.store(false, .seq_cst);
     }
 
     /// Producer: call after a successful `push`. True when the receiver is, or may be, asleep,
-    /// and the producer must then trigger the receiver's kqueue.
+    /// and the producer must then wake it through the descriptor `get` returns.
     pub fn must_wake(registry: *const Registry, id: LoopId) bool {
         assert(id < registry.entries.len);
         return registry.entries[id].sleeping.load(.seq_cst);

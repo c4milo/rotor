@@ -1,4 +1,4 @@
-//! What both backends' `Remote` share: the errors `init` and `post` return, and the rules a
+//! What every backend's `Remote` shares: the errors `init` and `post` return, and the rules a
 //! `Remote` keeps (decision 4, "What another thread may do"). A `Remote` is what a thread that
 //! owns no loop holds so it can post a message to a loop.
 //!
@@ -15,7 +15,7 @@
 //! and it counts against `constants.loops_max` as decision 4 says, but it publishes no queue. A
 //! loop that posts to a remote's id is answered `loop_not_found`, as for any id that runs no loop.
 //!
-//! A `Remote` belongs to one thread, as a loop does. Both backends record the thread at `init`
+//! A `Remote` belongs to one thread, as a loop does. Every backend records the thread at `init`
 //! and halt a `post` or `deinit` from another thread, with the compare `core/tables.zig` makes
 //! for a loop.
 const std = @import("std");

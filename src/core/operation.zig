@@ -325,9 +325,7 @@ pub const Operation = struct {
         assert(registered == null);
     }
 
-    /// A datagram receive takes the same targets a stream receive does, and the same rule that
-    /// only a group may be multishot. Its buffer holds the prefix in front of the datagram, so a
-    /// buffer that cannot hold one byte past the prefix is a caller's mistake.
+    /// A datagram receive names an open socket and a buffer group below `buffer_groups_max`.
     fn assert_receive_from(kind: ReceiveFrom) void {
         assert(kind.socket >= 0);
         assert(kind.group < constants.buffer_groups_max);

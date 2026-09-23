@@ -1,5 +1,5 @@
 //! `drain`: what a caller that is shutting down runs after `cancel_all` (decision 5, rule 7).
-//! Both backends' `drain` call it with the named bounds of `constants.zig`, so the bound is one
+//! Every backend's `drain` calls it with the named bounds of `constants.zig`, so the bound is one
 //! piece of code, and a test reaches it with a loop that never empties, in no time.
 const std = @import("std");
 const assert = std.debug.assert;

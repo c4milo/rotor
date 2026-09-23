@@ -1,7 +1,7 @@
-//! `Tables`: what a loop holds and does whatever kernel it runs on. Both backends embed one, so
+//! `Tables`: what a loop holds and does whatever kernel it runs on. Every backend embeds one, so
 //! a slot is claimed, a deadline fires, a cancel is asked for and a final event is handed over
-//! by the same code on io_uring and on kqueue (decisions 5 and 11). What differs between them is
-//! what happens to an operation the kernel holds, and that stays in the backend.
+//! by the same code on io_uring, kqueue and epoll (decisions 5 and 11). What differs between them
+//! is what happens to an operation the kernel holds, and that stays in the backend.
 //!
 //! A loop belongs to the thread that initialised it (decision 4). `assert_owner` compares the
 //! address of a thread-local byte against the one `init` recorded: one thread-local address and
