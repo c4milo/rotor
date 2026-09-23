@@ -292,7 +292,10 @@ submits.
   workloads.
 - A simulator test posts between simulated loops under one seed and replays it byte for byte.
 - Mutation: removing the ownership compare in `tick` must be `CAUGHT` by a test that calls
-  `tick` from a second thread and expects the halt.
+  `tick` from a second thread and expects the halt. **Met on 2026-09-22 on every backend:**
+  kqueue's scenario runs in `zig build halt-check`, and uring's and epoll's run in the Linux gate,
+  because on a Mac a Linux system call runs some other call. On kqueue and epoll the offload's
+  `drain` had to stop checking the owner, because its check halted the same tick.
 
 ## Open questions for review
 

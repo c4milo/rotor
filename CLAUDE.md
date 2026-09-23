@@ -82,7 +82,10 @@ narrowest target that can catch it: `zig build test-<module>`.
 An assertion is a check too. A Zig test cannot expect a panic in its own process, so an assertion
 a caller's mistake can reach gets a scenario under `tools/halt/`, which `zig build halt-check`
 runs in a child process that must die by a signal. A mutation that deletes such an assertion is
-measured against `zig build halt-check`.
+measured against `zig build halt-check`. A scenario proves its assertion only if it returns once
+the assertion is deleted. When the path after the assertion makes a Linux system call, a Mac runs
+some other call in its place, so the scenario goes in a `tools/halt/*_linux_scenarios.zig` file,
+and its mutation is measured against the Linux gate.
 
 ## Conventions
 
@@ -194,7 +197,10 @@ measured against `zig build halt-check`.
   `rotor`, the public module's tests, runs both ways, because the module chooses io_uring or epoll
   by what the kernel allows, and each run takes the other branch. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
-  the kernel lacks. `zig build test` does not run it: it needs Docker.
+  the kernel lacks. Last, the script runs the halt check, built for Linux, on the scenarios a Mac
+  cannot prove (`tools/halt/*_linux_scenarios.zig`) and on the canary: uring's with
+  `seccomp=unconfined`, epoll's under the default profile. `zig build test` does not run it: it
+  needs Docker.
 - Race gate: `zig build test-race && bash tools/race_test.sh`. It builds the `kqueue`,
   `conformance-uring` and `conformance-epoll` test executables with ThreadSanitizer for Linux with
   glibc into `zig-out/race/`, and the script runs them in Docker. Those are the suites that start a
@@ -212,7 +218,8 @@ measured against `zig build halt-check`.
   other; the owner named it a machine on 2026-09-20, and that file says what the column may and
   may not carry.
 - Halt check: `zig build halt-check` — every scenario of `tools/halt/` must reach its violating
-  statement and die by a signal, and the canary's scenarios must not.
+  statement and die by a signal, and the canary's scenarios must not. The Linux gate runs the
+  `*_linux_scenarios.zig` files instead.
 - Format: `zig build fmt`.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
   request. Four jobs, each the command a developer runs by hand: `zig build test` on macOS, the

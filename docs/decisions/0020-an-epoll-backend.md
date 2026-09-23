@@ -170,7 +170,8 @@ Four things outside this backend, each fixed or recorded where it belongs:
   and it holds on every backend.
 - **A Linux system call on a Mac runs some other call.** macOS reads the call number from another
   register, so `zig build halt-check` cannot prove an epoll assertion whose path, once the assertion
-  is deleted, reaches one (`tools/halt/epoll_scenarios.zig`).
+  is deleted, reaches one (`tools/halt/epoll_scenarios.zig`). Since 2026-09-22 the Linux gate runs
+  a halt check of its own for such scenarios (`tools/halt/epoll_linux_scenarios.zig`).
 
 ## Open questions
 
