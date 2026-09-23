@@ -22,10 +22,7 @@ pub const Group = core.buffer_group.Group;
 /// caller's mistake halts on every backend.
 pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
     loop.tables.assert_owner();
-    assert(buffers.len >= 1);
-    assert(buffers.len <= core.constants.registered_buffers_max);
-    assert(!loop.buffers_registered);
-    loop.buffers_registered = true;
+    loop.tables.note_buffers(buffers.len);
 }
 
 /// Makes group `group_id` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,

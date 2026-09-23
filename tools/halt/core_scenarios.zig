@@ -149,6 +149,35 @@ fn register_descriptors_twice() void {
     tables.note_descriptors(registered_count);
 }
 
+/// Buffer 2 of a loop that registered 2 buffers. Until 2026-09-23 nothing checked the index: kqueue
+/// and epoll ignored it, and io_uring handed the kernel an index it did not hold.
+fn name_a_registered_buffer_the_loop_lacks() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, .{});
+    tables.note_buffers(registered_count);
+    var bytes: [16]u8 = undefined;
+    const read = [_]core.Operation{core.Operation.read(1, 3, &bytes, 0)};
+    var named = read;
+    named[0].kind.read.buffer.registered = registered_count;
+    scenario.reached_violation();
+    _ = tables.submit(&named, &.{});
+}
+
+fn register_buffers_twice() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, .{});
+    tables.note_buffers(registered_count);
+    scenario.reached_violation();
+    tables.note_buffers(registered_count);
+}
+
+fn register_no_buffers() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, .{});
+    scenario.reached_violation();
+    tables.note_buffers(0);
+}
+
 /// The plain send opcode takes no registered buffer, so naming one is refused rather than
 /// ignored. Before the assertion existed the index was stored in the slot and read by nobody.
 fn name_a_registered_buffer_in_a_send() void {
@@ -422,6 +451,12 @@ const scenarios = [_]scenario.Scenario{
         .run = name_a_registered_descriptor_the_loop_lacks,
     },
     .{ .name = "tables: register descriptors twice", .run = register_descriptors_twice },
+    .{
+        .name = "tables: name a registered buffer the loop lacks",
+        .run = name_a_registered_buffer_the_loop_lacks,
+    },
+    .{ .name = "tables: register buffers twice", .run = register_buffers_twice },
+    .{ .name = "tables: register no buffers", .run = register_no_buffers },
     .{
         .name = "statistics: sample with a mask that is not a run of bits",
         .run = sample_with_a_mask_that_is_not_a_run_of_bits,

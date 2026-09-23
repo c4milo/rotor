@@ -95,7 +95,6 @@ pub const Loop = struct {
     /// shape, so a receive knows where a datagram starts without a lookup per completion.
     datagram_group: core.datagram.GroupOptions,
     groups: [core.constants.buffer_groups_max]buffers.Group,
-    buffers_registered: bool,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
     /// says how many hold one.
     descriptors: [core.constants.registered_descriptors_max]core.Descriptor,
@@ -192,7 +191,6 @@ pub const Loop = struct {
         loop.sleeping = false;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};
-        loop.buffers_registered = false;
     }
 
     /// Every operation must have had its final event (decision 5, rule 7).

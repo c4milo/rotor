@@ -57,7 +57,7 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
     loop.assert_owner();
     assert(buffers.len >= 1);
     assert(buffers.len <= core.constants.registered_buffers_max);
-    assert(!loop.buffers_registered);
+    assert(loop.tables.buffers_registered == 0);
     var vectors: [core.constants.registered_buffers_max]std.posix.iovec = undefined;
     for (buffers, vectors[0..buffers.len]) |buffer, *vector| {
         assert(buffer.len >= 1);
@@ -67,7 +67,7 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
         error.SystemResources, error.UserFdQuotaExceeded => error.SystemResources,
         else => error.Unexpected,
     };
-    loop.buffers_registered = true;
+    loop.tables.note_buffers(buffers.len);
 }
 
 /// Makes group `group_id` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,

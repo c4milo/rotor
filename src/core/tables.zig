@@ -67,6 +67,8 @@ pub const Tables = struct {
     owner: usize,
     /// Descriptors the loop registered: 0 until `note_descriptors`.
     descriptors_registered: u32,
+    /// Buffers the loop registered: 0 until `note_buffers`.
+    buffers_registered: u16,
     id: LoopId,
 
     pub const Options = struct {
@@ -95,6 +97,7 @@ pub const Tables = struct {
         tables.operation_sequence = 0;
         tables.owner = thread_identity();
         tables.descriptors_registered = 0;
+        tables.buffers_registered = 0;
         tables.id = options.id;
     }
 
@@ -105,6 +108,15 @@ pub const Tables = struct {
         assert(count >= 1);
         assert(count <= constants.registered_descriptors_max);
         tables.descriptors_registered = @intCast(count);
+    }
+
+    /// Records that the backend registered `count` buffers: once per loop, before an operation
+    /// names one (decision 3, source 1).
+    pub fn note_buffers(tables: *Tables, count: usize) void {
+        assert(tables.buffers_registered == 0);
+        assert(count >= 1);
+        assert(count <= constants.registered_buffers_max);
+        tables.buffers_registered = @intCast(count);
     }
 
     /// Halts when another thread calls into the loop: a call from the wrong thread is a
@@ -153,6 +165,9 @@ pub const Tables = struct {
             const index = tables.table.claim() orelse break;
             const slot = tables.table.at(index);
             slot.fill(operation);
+            // A buffer the loop never registered: kqueue and epoll would ignore the index and
+            // io_uring would hand the kernel a bad one, so the mistake halts on every backend.
+            if (slot.flags.buffer_registered) assert(slot.buffer_index < tables.buffers_registered);
             const sequence = tables.operation_sequence +% taken;
             tables.statistics.submitted(sequence, index, slot, tables.now_ns);
             // A loop that posts to itself would wait on an event only its own tick can produce.

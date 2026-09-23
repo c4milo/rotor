@@ -109,7 +109,6 @@ pub const Loop = struct {
     registry: ?*Registry,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
-    buffers_registered: bool,
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -205,7 +204,6 @@ pub const Loop = struct {
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
         loop.registry = options.registry;
         loop.groups = @splat(buffers.Group.none);
-        loop.buffers_registered = false;
     }
 
     /// Every operation must have had its final event (decision 5, rule 7).

@@ -75,7 +75,7 @@ test "init_tables leaves an empty loop that owns this thread and holds no group"
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
     try testing.expectEqual(@as(usize, 0), loop.completions.len);
     try testing.expectEqual(@as(usize, 0), loop.works.len);
-    try testing.expect(!loop.buffers_registered);
+    try testing.expectEqual(@as(u16, 0), loop.tables.buffers_registered);
     try testing.expect(!loop.sleeping);
     try testing.expect(loop.registry == null);
     try testing.expect(loop.offload == null);
