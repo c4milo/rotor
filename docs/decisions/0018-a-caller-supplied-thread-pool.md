@@ -168,7 +168,10 @@ Done on 2026-09-21, except the last:
   and that a socket operation's cancel is untouched by the policy.
 - **Halt scenarios** in `tools/halt/kqueue_scenarios.zig`: answering as a worker the loop holds no
   ring for, the `offload` policy with no offload, an offload with no worker, and one with more
-  workers than the limit.
+  workers than the limit. **Amended on 2026-09-22:** the worker scenario halts on the bounds check
+  of the ring lookup in `run`, which comes before the system call. An `assert` of the worker index
+  stood there first, and no halt scenario could prove it, because the bounds check halted as well.
+  The scenario cannot show that the lookup comes first either, so a comment in `run` says so.
 - **The race gate cannot see any of this, and that is recorded where it bites.** The offload exists
   on kqueue alone, so its conformance scenarios run on macOS, where ThreadSanitizer cannot be built.
   So the ordering is tested twice: once through the real path on macOS

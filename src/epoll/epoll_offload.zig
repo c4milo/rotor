@@ -111,10 +111,14 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
 /// (decision 18).
 fn run(work: *Work, worker: u16) void {
     const loop: *Loop = @ptrCast(@alignCast(work.owner));
-    assert(worker < loop.completions.len);
+    // The ring is looked up before the system call, and the order matters. A worker index the loop
+    // holds no ring for then halts on this index's bounds check before the call runs, so a worker
+    // that names a ring it was never given writes nothing. rotor builds only in Debug and
+    // ReleaseSafe, where the bounds check is on. An `assert` of the index stood here until
+    // 2026-09-22; no halt scenario could prove it, because this bounds check halts as well.
+    const ring = &loop.completions[worker];
     const result = perform(work);
 
-    const ring = &loop.completions[worker];
     // The ring holds `mailbox_messages` per worker. A caller that hands one worker more operations
     // than that without letting the loop run has overrun it, and dropping the message would owe an
     // operation a final event it never gets (decision 5, rule 1). So the push must succeed.

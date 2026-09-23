@@ -99,10 +99,10 @@ fn capture(context: ?*anyopaque, work: *core.offload.Work) void {
 }
 
 /// A descriptor no process has open. `Operation.assert_valid` refuses a negative one, so the read
-/// below needs a real number, and the assertions under test all fire before the system call is
-/// made. It is deliberately high rather than 0: if a mutation deleted the assertion under test,
-/// this answers `EBADF` at once, where a `pread` of descriptor 0 could block on standard input and
-/// hang the check instead of reporting that it did not halt.
+/// below needs a real number, and the check under test fires before the system call is made. It is
+/// deliberately high rather than 0: if a mutation moved that check after the call, this answers
+/// `EBADF` at once, where a `pread` of descriptor 0 could block on standard input and hang the
+/// check instead of reporting that it did not halt.
 const closed_descriptor: core.Descriptor = 4096;
 
 var read_buffer: [64]u8 = undefined;
@@ -127,7 +127,9 @@ fn hand_out_one() *core.offload.Work {
 }
 
 /// A worker index the loop holds no ring for. With one worker there is one ring, index 0, so a
-/// caller that answers as worker 1 is answering a loop that never gave it a ring.
+/// caller that answers as worker 1 is answering a loop that never gave it a ring. `run` halts on
+/// the bounds check of its ring lookup, which comes before the system call. This scenario cannot
+/// show that order: with the lookup moved after the call, it still halts, one system call later.
 fn answer_as_a_worker_the_loop_has_no_ring_for() void {
     const work = hand_out_one();
     scenario.reached_violation();

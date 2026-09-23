@@ -2,21 +2,15 @@
 //! on a loop with tables and no epoll instance, because every one of them halts before the loop
 //! would enter the kernel, so the check runs on every host, macOS included.
 //!
-//! This is `kqueue_scenarios.zig` less two of its scenarios, and the reason is where the check runs.
+//! This is `kqueue_scenarios.zig` less one of its scenarios, and the reason is where the check runs.
 //! `zig build halt-check` runs on the developer's Mac, and a scenario proves an assertion only if,
 //! with that assertion deleted, the scenario returns. On a Mac a Linux system call does not fail
 //! cleanly: macOS reads the call number from another register, so it runs some other call of its
 //! own. A scenario whose path after the violating statement reaches a Linux call could then die, or
 //! not, for that reason, and a deleted assertion could pass for a halt. So every scenario here halts
-//! on a path that makes no Linux call, and two of kqueue's are left out:
-//!
-//! - `tick` from another thread. With the owner check gone, the next statement reads the clock.
-//!   `epoll_linux_scenarios.zig` has this scenario, and the Linux gate runs it on a real epoll
-//!   instance.
-//! - An offload worker the loop has no ring for. With the bound gone, the worker makes its `pread`.
-//!   No scenario on any host proves this bound. With it gone, the worker indexes its ring next,
-//!   and the bounds check on that index halts the scenario. On 2026-09-22 kqueue's copy of this
-//!   scenario still halted with the bound deleted.
+//! on a path that makes no Linux call, and one of kqueue's is left out: `tick` from another thread.
+//! With the owner check gone, the next statement reads the clock. `epoll_linux_scenarios.zig` has
+//! this scenario, and the Linux gate runs it on a real epoll instance.
 const std = @import("std");
 const core = @import("core");
 const epoll = @import("epoll");
@@ -77,8 +71,8 @@ fn submit_more_handles_than_operations() void {
     _ = loop.submit(&one_timer, &handles);
 }
 
-// The offload's assertions (decision 18). Each is a mistake only the caller can make at init, and
-// each halts before the loop would enter the kernel, so these run on every host like the rest.
+// The offload's assertions (decision 18). Each is a mistake only the caller can make, and each
+// halts before the loop would enter the kernel, so these run on every host like the rest.
 
 /// One worker, so ring 0 is the only ring there is.
 const offload_workers: u16 = 1;
@@ -101,11 +95,51 @@ var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 /// the scenario would halt for the wrong reason: deleting the bound it tests would still halt.
 var ample_ring_memory: [1 << 20]u8 align(alignment) = undefined;
 
-/// The offload's hand-off. Nothing calls it: every offload scenario here halts in `init_tables`,
-/// before an operation could be handed out.
+/// The work the loop handed out, kept so a scenario can answer with it.
+var captured: ?*core.offload.Work = null;
+
 fn capture(context: ?*anyopaque, work: *core.offload.Work) void {
     _ = context;
-    _ = work;
+    captured = work;
+}
+
+/// A descriptor no process has open. `Operation.assert_valid` refuses a negative one, so the read
+/// below needs a real number, and the check under test fires before the system call is made. It is
+/// deliberately high rather than 0: if a mutation moved that check after the call, this answers
+/// `EBADF` at once, where a `pread` of descriptor 0 could block on standard input and hang the
+/// check instead of reporting that it did not halt.
+const closed_descriptor: core.Descriptor = 4096;
+
+var read_buffer: [64]u8 = undefined;
+
+const one_read = [_]core.Operation{
+    .{ .user_data = 1, .kind = .{ .read = .{
+        .file = closed_descriptor,
+        .buffer = .{ .bytes = &read_buffer },
+        .offset = 0,
+    } } },
+};
+
+/// Hands one file read to the offload without entering the kernel: under the `offload` policy the
+/// flush calls the caller's `submit` and makes no system call.
+fn hand_out_one() *core.offload.Work {
+    var options_with_rings = offload_options;
+    options_with_rings.offload_memory = &ring_memory;
+    loop.init_tables(&offload_memory, options_with_rings);
+    _ = loop.submit(&one_read, &.{});
+    epoll.submit_module.flush(&loop);
+    return captured.?;
+}
+
+/// A worker index the loop holds no ring for. With one worker there is one ring, index 0, so a
+/// caller that answers as worker 1 is answering a loop that never gave it a ring. `run` halts on
+/// the bounds check of its ring lookup, before the `pread`, so this path makes no Linux call. This
+/// scenario cannot show that order: with the lookup moved after the call, it still halts, one
+/// system call later.
+fn answer_as_a_worker_the_loop_has_no_ring_for() void {
+    const work = hand_out_one();
+    scenario.reached_violation();
+    work.run(work, offload_workers);
 }
 
 /// The `offload` policy with no offload: nothing would ever answer, so every file operation would
@@ -276,6 +310,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "loop: submit with more handles than operations",
         .run = submit_more_handles_than_operations,
+    },
+    .{
+        .name = "offload: answer as a worker the loop has no ring for",
+        .run = answer_as_a_worker_the_loop_has_no_ring_for,
     },
     .{
         .name = "offload: choose the offload policy without an offload",
