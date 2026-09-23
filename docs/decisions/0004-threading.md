@@ -296,6 +296,12 @@ submits.
   kqueue's scenario runs in `zig build halt-check`, and uring's and epoll's run in the Linux gate,
   because on a Mac a Linux system call runs some other call. On kqueue and epoll the offload's
   `drain` had to stop checking the owner, because its check halted the same tick.
+- The same mutation for every other entry point that checks the owner. `submit`, `tick` and a
+  remote's `post` had a scenario; `cancel`, `cancel_all`, `deinit`, `register_buffers`,
+  `register_descriptors`, `provide_buffers`, `give_back_buffer` and a remote's `deinit` had none,
+  so deleting any of their checks went unnoticed. **Met on 2026-09-23 on every backend.** Each
+  scenario is in `tools/halt/`, in the Linux gate's files where the path after the check makes a
+  Linux system call.
 
 ## Open questions for review
 

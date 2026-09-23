@@ -1,9 +1,11 @@
 //! Halt scenarios for the `kqueue` module: the assertions a caller's mistake can reach. Each runs
 //! on a loop with tables and no kqueue, because every one of them halts before the loop would
-//! enter the kernel, so the check runs on every host.
+//! enter the kernel, so the check runs on every host. The owner checks, one per entry point, are in
+//! `kqueue_scenarios_owner.zig`.
 const std = @import("std");
 const core = @import("core");
 const kqueue = @import("kqueue");
+const owner = @import("kqueue_scenarios_owner.zig");
 const scenario = @import("scenario.zig");
 
 const Loop = kqueue.Loop;
@@ -16,29 +18,6 @@ var loop: Loop = undefined;
 const one_timer = [_]core.Operation{
     .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
 };
-
-fn submit_from_another_thread() void {
-    loop.init_tables(&memory, options);
-    const thread = std.Thread.spawn(.{}, submit_on_this_thread, .{}) catch return;
-    thread.join();
-}
-
-fn submit_on_this_thread() void {
-    scenario.reached_violation();
-    _ = loop.submit(&one_timer, &.{});
-}
-
-fn tick_from_another_thread() void {
-    loop.init_tables(&memory, options);
-    const thread = std.Thread.spawn(.{}, tick_on_this_thread, .{}) catch return;
-    thread.join();
-}
-
-fn tick_on_this_thread() void {
-    var events: [1]core.Event = undefined;
-    scenario.reached_violation();
-    _ = loop.tick(&events, 0) catch {};
-}
 
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
 /// for `deinit` to close, and a halt inside the ring's own close would pass for the wrong reason.
@@ -207,19 +186,6 @@ fn post_from_a_remote_to_itself() void {
     _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A remote used from a thread that did not create it: two producers on one ring.
-fn post_from_a_remote_on_another_thread() void {
-    remote_registry.init(&remote_registry_memory, remote_ids);
-    remote_one.init(&remote_registry, 1) catch return;
-    const thread = std.Thread.spawn(.{}, post_through_remote_one, .{}) catch return;
-    thread.join();
-}
-
-fn post_through_remote_one() void {
-    scenario.reached_violation();
-    _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
-}
-
 /// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
@@ -239,7 +205,7 @@ const group_scenario_slack = group_scenario_bytes + 2 * group_scenario_alignment
 var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = undefined;
 
 /// A group whose memory is one byte past the alignment the call requires, which on this backend is
-/// u16: the free list is read through a .
+/// u16: the free list is read through a `[*]u16`.
 ///
 /// The address is aligned forward first and spoiled after, rather than taken from the array as
 /// declared. This platform does not always give a static the alignment it asks for: a
@@ -267,9 +233,54 @@ fn provide_a_group_that_is_not_aligned() void {
     ) catch {};
 }
 
+/// The group's memory, aligned forward at run time for the reason the scenario above gives.
+fn aligned_group_memory() []align(group_scenario_alignment) u8 {
+    const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
+    const start: [*]align(group_scenario_alignment) u8 = @ptrFromInt(base);
+    return start[0..group_scenario_bytes];
+}
+
+fn provide_the_group() kqueue.buffers.ProvideError!void {
+    return loop.provide_buffers(
+        0,
+        aligned_group_memory(),
+        group_scenario_buffers,
+        group_scenario_buffer_bytes,
+    );
+}
+
+/// Aligned memory, so the group is made, and then the same group id again: the second call would
+/// leave the first group's buffers with the caller and no way to give them back.
+fn provide_one_group_id_twice() void {
+    loop.init_tables(&memory, options);
+    provide_the_group() catch return;
+    scenario.reached_violation();
+    provide_the_group() catch {};
+}
+
+/// The buffers are registered once per loop. A second call would replace what the first recorded
+/// while the kernel still held the first set, on the backend where registering means something.
+fn register_buffers_twice() void {
+    loop.init_tables(&memory, options);
+    var block: [64]u8 = undefined;
+    const registered = [_][]u8{&block};
+    loop.register_buffers(&registered) catch return;
+    scenario.reached_violation();
+    loop.register_buffers(&registered) catch {};
+}
+
+/// A buffer id the group does not have: giving it back would put a buffer past the group's memory
+/// on the free list. One buffer is taken out first, as a receive would take it, so the free list has
+/// room and the id check is the only assertion this call can reach.
+fn give_back_a_buffer_the_group_does_not_hold() void {
+    loop.init_tables(&memory, options);
+    provide_the_group() catch return;
+    _ = loop.groups[0].take() orelse return;
+    scenario.reached_violation();
+    loop.give_back_buffer(0, group_scenario_buffers);
+}
+
 const scenarios = [_]scenario.Scenario{
-    .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
-    .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,
@@ -295,16 +306,18 @@ const scenarios = [_]scenario.Scenario{
     .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
     .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
     .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
-    .{
-        .name = "remote: post from a remote on another thread",
-        .run = post_from_a_remote_on_another_thread,
-    },
     .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
     .{
         .name = "buffers: provide a group that is not aligned",
         .run = provide_a_group_that_is_not_aligned,
     },
-};
+    .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
+    .{ .name = "buffers: register the buffers twice", .run = register_buffers_twice },
+    .{
+        .name = "buffers: give back a buffer the group does not hold",
+        .run = give_back_a_buffer_the_group_does_not_hold,
+    },
+} ++ owner.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

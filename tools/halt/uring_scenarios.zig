@@ -8,8 +8,8 @@
 //! reads the number from x16, and so macOS runs whatever call x16 happens to name. A scenario whose
 //! assertion was deleted could then die for that reason, and the check would count a halt.
 //!
-//! Two scenarios break this rule, so they are in `uring_linux_scenarios.zig`, which the Linux gate
-//! runs on a real ring:
+//! A scenario that breaks this rule is in `uring_linux_scenarios.zig`, which the Linux gate runs on
+//! a real ring. The first two moved there on 2026-09-22, and they show why:
 //!
 //! - `tick` from another thread. With the owner check deleted, `tick` reads the clock next. On
 //!   2026-09-22 macOS ran `writev` in place of `clock_gettime`, nothing wrote the time, and the
@@ -18,9 +18,13 @@
 //!   `io_uring_register` next. On 2026-09-22 macOS ran `chown` in its place, which failed, and the
 //!   scenario returned; another value in x16 could have halted it.
 //!
-//! With its assertion deleted, no scenario here makes a Linux system call: `submit`, `assert_empty`
-//! and the registry make none, and each remote `post` answers `LoopNotFound` from the registry
-//! before it reaches the ring.
+//! The owner checks of `deinit`, `register_buffers`, `register_descriptors`, `provide_buffers`,
+//! `give_back_buffer` and a remote's `deinit` are there as well: each needs a ring to be set up, or
+//! enters the kernel once its check is deleted.
+//!
+//! With its assertion deleted, no scenario here makes a Linux system call: `submit`, `cancel`,
+//! `cancel_all`, `assert_empty` and the registry make none, and each remote `post` answers
+//! `LoopNotFound` from the registry before it reaches the ring.
 const std = @import("std");
 const core = @import("core");
 const uring = @import("uring");
@@ -46,6 +50,34 @@ fn submit_from_another_thread() void {
 fn submit_on_this_thread() void {
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &.{});
+}
+
+/// The handle names a timer still queued, so with the owner check deleted the cancel marks it and
+/// returns: the next flush would end it before the kernel saw it.
+var timer_handle: [1]core.Handle = undefined;
+
+fn cancel_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    _ = loop.submit(&one_timer, &timer_handle);
+    const thread = std.Thread.spawn(.{}, cancel_on_this_thread, .{}) catch return;
+    thread.join();
+}
+
+fn cancel_on_this_thread() void {
+    scenario.reached_violation();
+    loop.cancel(timer_handle[0]);
+}
+
+fn cancel_every_operation_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    _ = loop.submit(&one_timer, &.{});
+    const thread = std.Thread.spawn(.{}, cancel_every_operation_on_this_thread, .{}) catch return;
+    thread.join();
+}
+
+fn cancel_every_operation_on_this_thread() void {
+    scenario.reached_violation();
+    loop.cancel_all();
 }
 
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
@@ -145,7 +177,12 @@ fn post_a_tag_above_the_limit() void {
 }
 
 const scenarios = [_]scenario.Scenario{
-    .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
+    .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
+    .{ .name = "owner: cancel from another thread", .run = cancel_from_another_thread },
+    .{
+        .name = "owner: cancel every operation from another thread",
+        .run = cancel_every_operation_from_another_thread,
+    },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,
@@ -159,7 +196,7 @@ const scenarios = [_]scenario.Scenario{
     .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
     .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
     .{
-        .name = "remote: post from a remote on another thread",
+        .name = "owner: post from a remote on another thread",
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },

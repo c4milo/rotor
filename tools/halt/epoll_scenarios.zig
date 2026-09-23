@@ -2,18 +2,19 @@
 //! on a loop with tables and no epoll instance, because every one of them halts before the loop
 //! would enter the kernel, so the check runs on every host, macOS included.
 //!
-//! This is `kqueue_scenarios.zig` less one of its scenarios, and the reason is where the check runs.
-//! `zig build halt-check` runs on the developer's Mac, and a scenario proves an assertion only if,
-//! with that assertion deleted, the scenario returns. On a Mac a Linux system call does not fail
+//! This is `kqueue_scenarios.zig` less some of its owner checks, and the reason is where the check
+//! runs. `zig build halt-check` runs on the developer's Mac, and a scenario proves an assertion only
+//! if, with that assertion deleted, the scenario returns. On a Mac a Linux system call does not fail
 //! cleanly: macOS reads the call number from another register, so it runs some other call of its
 //! own. A scenario whose path after the violating statement reaches a Linux call could then die, or
 //! not, for that reason, and a deleted assertion could pass for a halt. So every scenario here halts
-//! on a path that makes no Linux call, and one of kqueue's is left out: `tick` from another thread.
-//! With the owner check gone, the next statement reads the clock. `epoll_linux_scenarios.zig` has
-//! this scenario, and the Linux gate runs it on a real epoll instance.
+//! on a path that makes no Linux call. The owner checks are in `epoll_scenarios_owner.zig`, and the
+//! two whose path reaches a Linux call are in `epoll_linux_scenarios.zig`, which the Linux gate runs
+//! on a real epoll instance.
 const std = @import("std");
 const core = @import("core");
 const epoll = @import("epoll");
+const owner = @import("epoll_scenarios_owner.zig");
 const scenario = @import("scenario.zig");
 
 const Loop = epoll.Loop;
@@ -26,19 +27,6 @@ var loop: Loop = undefined;
 const one_timer = [_]core.Operation{
     .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
 };
-
-/// A loop belongs to the thread that initialised it (decision 4), so a `submit` from another
-/// thread halts on `assert_owner` before it touches the table.
-fn submit_from_another_thread() void {
-    loop.init_tables(&memory, options);
-    const thread = std.Thread.spawn(.{}, submit_on_this_thread, .{}) catch return;
-    thread.join();
-}
-
-fn submit_on_this_thread() void {
-    scenario.reached_violation();
-    _ = loop.submit(&one_timer, &.{});
-}
 
 /// Decision 5, rule 7: every operation must have had its final event before the loop ends. The
 /// scenario calls the check itself rather than `deinit`, because this loop has no epoll instance
@@ -225,7 +213,11 @@ fn register_buffers_twice() void {
     loop.register_buffers(&registered) catch {};
 }
 
-/// A buffer id the group does not hold: giving one back would grow the free stack past the count.
+/// A buffer id the group does not have: giving it back would put a buffer past the group's memory
+/// on the free list. One buffer is taken out first, as a receive would take it, so the free list has
+/// room and the id check is the only assertion this call can reach. Until 2026-09-23 every buffer
+/// was still free here, so the free list's own check halted too, and deleting the id check was not
+/// caught.
 fn give_back_a_buffer_the_group_does_not_hold() void {
     loop.init_tables(&memory, options);
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
@@ -234,6 +226,7 @@ fn give_back_a_buffer_the_group_does_not_hold() void {
         break :blk start[0..group_scenario_bytes];
     };
     loop.provide_buffers(0, aligned, group_buffers, group_buffer_bytes) catch return;
+    _ = loop.groups[0].take() orelse return;
     scenario.reached_violation();
     loop.give_back_buffer(0, group_buffers);
 }
@@ -279,19 +272,6 @@ fn post_from_a_remote_to_itself() void {
     _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A remote used from a thread that did not create it: two producers on one ring.
-fn post_from_a_remote_on_another_thread() void {
-    remote_registry.init(&remote_registry_memory, remote_ids);
-    remote_one.init(&remote_registry, 1) catch return;
-    const thread = std.Thread.spawn(.{}, post_through_remote_one, .{}) catch return;
-    thread.join();
-}
-
-fn post_through_remote_one() void {
-    scenario.reached_violation();
-    _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
-}
-
 /// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
@@ -301,7 +281,6 @@ fn post_a_tag_above_the_limit() void {
 }
 
 const scenarios = [_]scenario.Scenario{
-    .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,
@@ -337,12 +316,8 @@ const scenarios = [_]scenario.Scenario{
     .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
     .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
     .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
-    .{
-        .name = "remote: post from a remote on another thread",
-        .run = post_from_a_remote_on_another_thread,
-    },
     .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
-};
+} ++ owner.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

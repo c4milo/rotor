@@ -4,9 +4,10 @@
 //!
 //! A scenario proves an assertion only if the scenario returns once that assertion is deleted. Each
 //! scenario here runs on a loop with a real ring (`Loop.init`), and each assertion under test comes
-//! right before an io_uring call. With the assertion deleted, the loop makes the call, the kernel
-//! refuses it, the loop returns the error, and the scenario returns. On a Mac the same call runs
-//! some other system call (`uring_scenarios.zig`), and that is why these scenarios are here.
+//! before an io_uring call or a call that closes the ring. With the assertion deleted, the loop
+//! makes the call; the kernel either refuses it, and the loop returns the error, or performs it, and
+//! the call returns. Either way the scenario returns. On a Mac the same call runs some other system
+//! call (`uring_scenarios.zig`), and that is why these scenarios are here.
 const std = @import("std");
 const core = @import("core");
 const uring = @import("uring");
@@ -37,6 +38,53 @@ fn tick_on_this_thread() void {
     var events: [1]core.Event = undefined;
     scenario.reached_violation();
     _ = loop.tick(&events, tick_wait_ns) catch {};
+}
+
+/// Runs `call` on a second thread and waits for it. A scenario whose thread cannot start returns
+/// without the marker, and the check counts that as a failure.
+fn on_another_thread(comptime call: fn () void) void {
+    const thread = std.Thread.spawn(.{}, call, .{}) catch return;
+    thread.join();
+}
+
+/// The loop is empty, so with the owner check deleted `deinit` closes the ring from the second
+/// thread, which the kernel allows, and returns.
+fn end_a_loop_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    on_another_thread(end_the_loop_on_this_thread);
+}
+
+fn end_the_loop_on_this_thread() void {
+    scenario.reached_violation();
+    loop.deinit();
+}
+
+var registered_block: [64]u8 = undefined;
+
+fn register_the_buffers_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    on_another_thread(register_the_buffers_on_this_thread);
+}
+
+fn register_the_buffers_on_this_thread() void {
+    const registered = [_][]u8{&registered_block};
+    scenario.reached_violation();
+    loop.register_buffers(&registered) catch {};
+}
+
+/// Standard output, which is open, so whatever the kernel answers is about the thread and not about
+/// the descriptor.
+const open_descriptor: core.Descriptor = 1;
+
+fn register_descriptors_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    on_another_thread(register_descriptors_on_this_thread);
+}
+
+fn register_descriptors_on_this_thread() void {
+    const descriptors = [_]core.Descriptor{open_descriptor};
+    scenario.reached_violation();
+    loop.register_descriptors(&descriptors) catch {};
 }
 
 /// Memory for one small group, with two alignments of slack: the scenario aligns a pointer forward
@@ -71,12 +119,103 @@ fn provide_a_group_that_is_not_aligned() void {
     loop.provide_buffers(0, misaligned, group_buffers, group_buffer_bytes) catch {};
 }
 
+/// The group's memory, aligned forward at run time, as the scenario above aligns it.
+fn aligned_group_memory() []align(group_alignment) u8 {
+    const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
+    const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
+    return start[0..group_scenario_bytes];
+}
+
+fn provide_a_group_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    on_another_thread(provide_a_group_on_this_thread);
+}
+
+fn provide_a_group_on_this_thread() void {
+    scenario.reached_violation();
+    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+}
+
+/// The main thread provides the group. With the owner check deleted, the second thread writes one
+/// entry to the group's ring, which is memory the process shares with the kernel, and makes no
+/// system call.
+fn give_back_a_buffer_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
+    on_another_thread(give_back_a_buffer_on_this_thread);
+}
+
+fn give_back_a_buffer_on_this_thread() void {
+    scenario.reached_violation();
+    loop.give_back_buffer(0, 0);
+}
+
+/// The same group id twice. With the check deleted, `provide_buffers` asks the kernel for a second
+/// ring under the same id and returns what it answers, and the scenario returns.
+fn provide_one_group_id_twice() void {
+    loop.init(&memory, options) catch return;
+    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
+    scenario.reached_violation();
+    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+}
+
+/// The buffers twice. With the check deleted, `register_buffers` asks the kernel to register them
+/// again and returns what it answers, and the scenario returns.
+fn register_the_buffers_twice() void {
+    loop.init(&memory, options) catch return;
+    const registered = [_][]u8{&registered_block};
+    loop.register_buffers(&registered) catch return;
+    scenario.reached_violation();
+    loop.register_buffers(&registered) catch {};
+}
+
+/// A registry of two ids: the remote claims id 1.
+const remote_ids: u16 = 2;
+const remote_registry_bytes = uring.Registry.memory_bytes(remote_ids);
+var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
+    undefined;
+var remote_registry: uring.Registry = undefined;
+var remote: uring.Remote = undefined;
+
+/// With the owner check deleted, `deinit` gives the id back and closes the remote's ring from the
+/// second thread, which the kernel allows, and returns.
+fn end_a_remote_from_another_thread() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote.init(&remote_registry, 1) catch return;
+    on_another_thread(end_the_remote_on_this_thread);
+}
+
+fn end_the_remote_on_this_thread() void {
+    scenario.reached_violation();
+    remote.deinit();
+}
+
 const scenarios = [_]scenario.Scenario{
-    .{ .name = "loop: tick from another thread", .run = tick_from_another_thread },
+    .{ .name = "owner: tick from another thread", .run = tick_from_another_thread },
     .{
         .name = "buffers: provide a group that is not aligned",
         .run = provide_a_group_that_is_not_aligned,
     },
+    .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
+    .{ .name = "buffers: register the buffers twice", .run = register_the_buffers_twice },
+    .{ .name = "owner: end a loop from another thread", .run = end_a_loop_from_another_thread },
+    .{
+        .name = "owner: register the buffers from another thread",
+        .run = register_the_buffers_from_another_thread,
+    },
+    .{
+        .name = "owner: register descriptors from another thread",
+        .run = register_descriptors_from_another_thread,
+    },
+    .{
+        .name = "owner: provide a group from another thread",
+        .run = provide_a_group_from_another_thread,
+    },
+    .{
+        .name = "owner: give back a buffer from another thread",
+        .run = give_back_a_buffer_from_another_thread,
+    },
+    .{ .name = "owner: end a remote from another thread", .run = end_a_remote_from_another_thread },
 };
 
 pub fn main(init: std.process.Init) !void {
