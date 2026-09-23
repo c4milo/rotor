@@ -14,6 +14,13 @@ const core = @import("core");
 const close_now = @import("kqueue_sync_socket.zig").close_now;
 
 const Descriptor = core.Descriptor;
+
+// The types are `core/sync.zig`'s, which every backend's calls take and return.
+pub const OpenError = core.sync.OpenError;
+pub const FileSizeError = core.sync.FileSizeError;
+pub const SyncDirectoryError = core.sync.SyncDirectoryError;
+pub const OpenOptions = core.sync.OpenOptions;
+
 const E = posix.E;
 
 /// The permission bits of a file `open_file` creates: its owner reads and writes it, everyone
@@ -36,33 +43,6 @@ const allocate_contiguous: c_uint = 0x2;
 const allocate_all: c_uint = 0x4;
 /// F_PEOFPOSMODE: reserve from the physical end of the file, which takes an offset of 0.
 const from_physical_end: c_int = 3;
-
-/// `open(2)` refused, or `fcntl(F_NOCACHE)` did, which is `DirectIoUnsupported`. The kernel
-/// keeps F_NOCACHE as a flag of the open file and asks no filesystem, so it refuses only a path
-/// that opens something that is no file, as `/dev/fd/N` does when descriptor N is a socket.
-pub const OpenError = error{
-    FileNotFound,
-    PathAlreadyExists,
-    AccessDenied,
-    DirectIoUnsupported,
-    Unexpected,
-};
-
-/// `NoSpaceLeft`: the disk refused to reserve the file's blocks. `Unsupported`: the filesystem,
-/// or this kind of file, has no F_PREALLOCATE.
-pub const FileSizeError = error{ NoSpaceLeft, Unsupported, Unexpected };
-
-/// The directory's `open(2)` refused, or its `fsync(2)` did, which is `Unexpected`.
-pub const SyncDirectoryError = error{ FileNotFound, AccessDenied, NotDirectory, Unexpected };
-
-pub const OpenOptions = struct {
-    /// Create the file, refusing a path that exists.
-    create: bool,
-    /// F_NOCACHE, the nearest macOS has to O_DIRECT: transfers bypass the buffer cache when
-    /// every buffer, offset and length is aligned to the device's logical block (decision 6),
-    /// and the kernel copies through the cache when one is not.
-    direct: bool,
-};
 
 /// O_RDWR and O_CLOEXEC; O_CREAT and O_EXCL when `create`; then fcntl(F_NOCACHE) when `direct`,
 /// closing the file again if that is refused. Never O_DSYNC: durability is an explicit fdatasync.

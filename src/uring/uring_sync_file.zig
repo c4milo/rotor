@@ -13,36 +13,19 @@ const core = @import("core");
 const socket_calls = @import("uring_sync_socket.zig");
 
 const Descriptor = core.Descriptor;
+
+// The types are `core/sync.zig`'s, which every backend's calls take and return.
+pub const OpenError = core.sync.OpenError;
+pub const FileSizeError = core.sync.FileSizeError;
+pub const SyncDirectoryError = core.sync.SyncDirectoryError;
+pub const OpenOptions = core.sync.OpenOptions;
+
 const close_now = socket_calls.close_now;
 const descriptor_of = socket_calls.descriptor_of;
 
 /// The permission bits of a file `open_file` creates: its owner reads and writes it, everyone
 /// else reads it. The process's umask narrows them.
 const file_mode: linux.mode_t = 0o644;
-
-/// `open(2)` refused. `DirectIoUnsupported`: the filesystem does not carry O_DIRECT.
-pub const OpenError = error{
-    FileNotFound,
-    PathAlreadyExists,
-    AccessDenied,
-    DirectIoUnsupported,
-    Unexpected,
-};
-
-/// `NoSpaceLeft`: the disk refused to reserve the file's extents. `Unsupported`: the filesystem,
-/// or this kind of file, has no `fallocate(2)`.
-pub const FileSizeError = error{ NoSpaceLeft, Unsupported, Unexpected };
-
-/// The directory's `open(2)` refused, or its `fsync(2)` did, which is `Unexpected`.
-pub const SyncDirectoryError = error{ FileNotFound, AccessDenied, NotDirectory, Unexpected };
-
-pub const OpenOptions = struct {
-    /// Create the file, refusing a path that exists.
-    create: bool,
-    /// O_DIRECT: transfers bypass the page cache, and every buffer, offset and length must be
-    /// aligned to the device's logical block (decision 6).
-    direct: bool,
-};
 
 /// O_RDWR and O_CLOEXEC; O_DIRECT when `direct` (EINVAL then means error.DirectIoUnsupported);
 /// O_CREAT and O_EXCL when `create`. Never O_DSYNC: durability is an explicit fdatasync.

@@ -17,28 +17,22 @@ const kqueue_address = @import("kqueue_address.zig");
 
 const Address = core.Address;
 const Descriptor = core.Descriptor;
+
+// The types are `core/sync.zig`'s, which every backend's calls take and return.
+pub const SocketError = core.sync.SocketError;
+pub const ListenError = core.sync.ListenError;
+pub const AddressError = core.sync.AddressError;
+pub const OptionError = core.sync.OptionError;
+pub const ListenOptions = core.sync.ListenOptions;
+pub const SocketBuffer = core.sync.SocketBuffer;
+pub const socket_buffer_bytes_max = core.sync.socket_buffer_bytes_max;
+pub const BufferError = core.sync.BufferError;
+// macOS carries every `DatagramOptions` option a QUIC stack needs. The IPv6 names sit behind
+// `__APPLE_USE_RFC_3542` in the SDK, which gates the header and not the kernel, so
+// `kqueue_datagram.zig` names them by their numbers. A refusal costs the caller that answer.
+pub const DatagramOptions = core.sync.DatagramOptions;
+
 const E = posix.E;
-
-/// `socket(2)` refused. `AddressFamilyUnsupported`: the host carries no stack for the family.
-/// `DescriptorLimit` is EMFILE or ENFILE, and `SystemResources` is ENOMEM or ENOBUFS, as in
-/// `core.Code`.
-pub const SocketError = error{
-    AddressFamilyUnsupported,
-    DescriptorLimit,
-    SystemResources,
-    Unexpected,
-};
-
-/// `bind(2)` or `listen(2)` refused. `AddressInUse`: another socket listens on the address, and
-/// one of the two did not ask for `reuse_port`. `AddressNotAvailable`: no interface of this host
-/// has the address. `AccessDenied`: only a privileged process may bind the port.
-pub const ListenError = SocketError || error{ AddressInUse, AddressNotAvailable, AccessDenied };
-
-/// `getsockname(2)` refused, or the socket's family is one rotor does not carry.
-pub const AddressError = error{ NotSocket, AddressFamilyUnsupported, Unexpected };
-
-/// `setsockopt(2)` refused, or `fcntl(2)` did, which is `Unexpected`.
-pub const OptionError = error{ NotSocket, Unexpected };
 
 /// A TCP socket of `family` with the three settings of `prepare_accepted`: it does not block,
 /// it closes on exec, and a send to a closed peer answers EPIPE and raises no SIGPIPE.
@@ -69,14 +63,6 @@ pub fn prepare_accepted(descriptor: Descriptor) OptionError!void {
     try set_flags(descriptor, c.F.SETFL, @bitCast(nonblocking));
     try set_flags(descriptor, c.F.SETFD, c.FD_CLOEXEC);
 }
-
-pub const ListenOptions = struct {
-    /// Connections the kernel queues for `accept`, at least 1, capped at `kern.ipc.somaxconn`.
-    backlog: u31,
-    /// SO_REUSEPORT: several listeners bind one address (decision 4, `listener_per_core`).
-    /// Decision 4 recalls that macOS does not spread connections across them.
-    reuse_port: bool,
-};
 
 /// socket with its three settings, SO_REUSEADDR, SO_REUSEPORT when asked, bind, listen.
 /// SO_REUSEADDR lets a restarted server bind its port while connections of the last run still
@@ -192,21 +178,6 @@ fn buffer_error(errno: E) BufferError {
     return socket_call_error(errno);
 }
 
-/// Which of a socket's two kernel buffers `set_buffer_bytes` sizes.
-pub const SocketBuffer = enum { receive, send };
-
-/// The largest `bytes` this call carries, which is what `setsockopt` takes. It is not a size any
-/// kernel grants: both refuse or cap long before it, each in its own way, which is what the call
-/// answers and `SizeRefused` reports.
-pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
-
-/// What `set_buffer_bytes` answers beyond an option call's own errors.
-pub const BufferError = OptionError || error{
-    /// The kernel would not give a buffer of that size. macOS answers this for a size above its
-    /// limit; Linux caps instead and does not refuse.
-    SizeRefused,
-};
-
 /// Asks the kernel for `bytes` of buffer on this socket, and answers the size it set.
 ///
 /// **The answer is not the request, and the two kernels differ in how.** Measured on 2026-09-22:
@@ -247,18 +218,6 @@ pub fn set_buffer_bytes(
     assert(value >= 0);
     return @intCast(value);
 }
-
-/// Options a datagram socket is opened with (decision 15). macOS carries every one a QUIC stack
-/// needs; the IPv6 names sit behind `__APPLE_USE_RFC_3542` in the SDK, which gates the header and
-/// not the kernel, so they are named by their numbers in `kqueue_datagram.zig`. A refusal costs the
-/// caller that answer and nothing else.
-///
-/// The same shape `uring_sync_socket` offers, because the conformance suite calls `backend.sync`
-/// on whichever backend it was given.
-pub const DatagramOptions = struct {
-    control: bool = true,
-    dont_fragment: bool = true,
-};
 
 /// A UDP socket of `family`, closed on exec, bound to `address` when one is given.
 pub fn open_datagram(

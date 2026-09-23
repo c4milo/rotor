@@ -127,10 +127,7 @@ const linux_sync = struct {
     pub fn listen(address: *const Address, options: ListenOptions) ListenError!Descriptor {
         return switch (loop_module.chosen()) {
             .uring => uring.sync.listen(address, options),
-            .epoll => epoll.sync.listen(address, .{
-                .backlog = options.backlog,
-                .reuse_port = options.reuse_port,
-            }),
+            .epoll => epoll.sync.listen(address, options),
         };
     }
 
@@ -143,10 +140,7 @@ const linux_sync = struct {
     ) ListenError!Descriptor {
         return switch (loop_module.chosen()) {
             .uring => uring.sync.open_datagram(family, bind_to, options),
-            .epoll => epoll.sync.open_datagram(family, bind_to, .{
-                .control = options.control,
-                .dont_fragment = options.dont_fragment,
-            }),
+            .epoll => epoll.sync.open_datagram(family, bind_to, options),
         };
     }
 };

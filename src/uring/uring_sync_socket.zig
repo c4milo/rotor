@@ -19,26 +19,16 @@ const uring_address = @import("uring_address.zig");
 const Address = core.Address;
 const Descriptor = core.Descriptor;
 
-/// `socket(2)` refused. `AddressFamilyUnsupported`: the host carries no stack for the family, as
-/// with IPv6 switched off. `DescriptorLimit` is EMFILE or ENFILE, and `SystemResources` is ENOMEM
-/// or ENOBUFS, as in `core.Code`.
-pub const SocketError = error{
-    AddressFamilyUnsupported,
-    DescriptorLimit,
-    SystemResources,
-    Unexpected,
-};
-
-/// `bind(2)` or `listen(2)` refused. `AddressInUse`: another socket listens on the address, and
-/// one of the two did not ask for `reuse_port`. `AddressNotAvailable`: no interface of this host
-/// has the address. `AccessDenied`: only a privileged process may bind the port.
-pub const ListenError = SocketError || error{ AddressInUse, AddressNotAvailable, AccessDenied };
-
-/// `getsockname(2)` refused, or the socket's family is one rotor does not carry.
-pub const AddressError = error{ NotSocket, AddressFamilyUnsupported, Unexpected };
-
-/// `setsockopt(2)` refused.
-pub const OptionError = error{ NotSocket, Unexpected };
+// The types are `core/sync.zig`'s, which every backend's calls take and return.
+pub const SocketError = core.sync.SocketError;
+pub const ListenError = core.sync.ListenError;
+pub const AddressError = core.sync.AddressError;
+pub const OptionError = core.sync.OptionError;
+pub const ListenOptions = core.sync.ListenOptions;
+pub const SocketBuffer = core.sync.SocketBuffer;
+pub const socket_buffer_bytes_max = core.sync.socket_buffer_bytes_max;
+pub const BufferError = core.sync.BufferError;
+pub const DatagramOptions = core.sync.DatagramOptions;
 
 /// A TCP socket of `family`, closed on exec. It blocks: the ring does the waiting, so the socket
 /// needs no SOCK_NONBLOCK.
@@ -52,14 +42,6 @@ pub fn open_socket(family: Address.Family) SocketError!Descriptor {
     if (errno != .SUCCESS) return socket_error(errno);
     return descriptor_of(rc);
 }
-
-pub const ListenOptions = struct {
-    /// Connections the kernel queues for `accept`, at least 1, capped at `net.core.somaxconn`.
-    backlog: u31,
-    /// SO_REUSEPORT: several listeners bind one address, and the kernel picks one for each
-    /// connection by a hash of the connection's addresses (decision 4, `listener_per_core`).
-    reuse_port: bool,
-};
 
 /// socket, SO_REUSEADDR, SO_REUSEPORT when asked, bind, listen. SO_REUSEADDR lets a restarted
 /// server bind its port while connections of the last run still sit in TIME_WAIT. Closes the
@@ -163,21 +145,6 @@ fn buffer_error(errno: linux.E) BufferError {
     return socket_call_error(errno);
 }
 
-/// Which of a socket's two kernel buffers `set_buffer_bytes` sizes.
-pub const SocketBuffer = enum { receive, send };
-
-/// The largest `bytes` this call carries, which is what `setsockopt` takes. It is not a size any
-/// kernel grants: both refuse or cap long before it, each in its own way, which is what the call
-/// answers and `SizeRefused` reports.
-pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
-
-/// What `set_buffer_bytes` answers beyond an option call's own errors.
-pub const BufferError = OptionError || error{
-    /// The kernel would not give a buffer of that size. macOS answers this for a size above its
-    /// limit; Linux caps instead and does not refuse.
-    SizeRefused,
-};
-
 /// Asks the kernel for `bytes` of buffer on this socket, and answers the size it set.
 ///
 /// **The answer is not the request, and the two kernels differ in how.** Measured on 2026-09-22:
@@ -230,16 +197,6 @@ pub fn set_buffer_bytes(
     assert(value >= 0);
     return @intCast(value);
 }
-
-/// Options a datagram socket is opened with (decision 15).
-pub const DatagramOptions = struct {
-    /// Report the address each datagram was sent to, so a server on a wildcard address can
-    /// answer from it, and report the codepoint each carried.
-    control: bool = true,
-    /// Do not fragment: path MTU discovery needs it, and without it an oversized datagram is cut
-    /// up instead of reported.
-    dont_fragment: bool = true,
-};
 
 /// A UDP socket of `family`, closed on exec, bound to `address` when one is given. A port of 0
 /// takes one the kernel chooses, which `local_address` reports. Closes the socket again on any

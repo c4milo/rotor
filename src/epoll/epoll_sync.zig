@@ -37,39 +37,9 @@ pub const file_size = file_calls.file_size;
 pub const set_file_size = file_calls.set_file_size;
 pub const sync_directory = file_calls.sync_directory;
 
-/// This file's public declarations, which `uring_sync.zig` and `kqueue_sync.zig` carry too, name
-/// for name. Its own test writes the surface out, and this one holds the count they share.
-const declarations = 24;
-
-const expect = std.testing.expect;
-
-test "the surface is the one uring_sync.zig and kqueue_sync.zig present, name for name" {
-    const Address = core.Address;
-    const Descriptor = core.Descriptor;
-    const Path = [*:0]const u8;
-    try expect(@typeInfo(@This()).@"struct".decls.len == declarations);
-    try expect(@TypeOf(open_socket) == fn (Address.Family) SocketError!Descriptor);
-    try expect(@TypeOf(listen) == fn (*const Address, ListenOptions) ListenError!Descriptor);
-    try expect(@TypeOf(local_address) == fn (Descriptor) AddressError!Address);
-    try expect(@TypeOf(set_no_delay) == fn (Descriptor, bool) OptionError!void);
-    try expect(@TypeOf(close_now) == fn (Descriptor) void);
-    const buffer_type = fn (Descriptor, SocketBuffer, u32) BufferError!u32;
-    try expect(@TypeOf(set_buffer_bytes) == buffer_type);
-    try expect(@typeInfo(SocketBuffer).@"enum".fields.len == 2);
-    try expect(socket_buffer_bytes_max == std.math.maxInt(i32));
-    const Bind = ?*const Address;
-    const open_datagram_type = fn (Address.Family, Bind, DatagramOptions) ListenError!Descriptor;
-    try expect(@TypeOf(open_datagram) == open_datagram_type);
-    try expect(@TypeOf(open_file) == fn (Path, OpenOptions) OpenError!Descriptor);
-    try expect(@TypeOf(file_size) == fn (Descriptor) FileSizeError!u64);
-    try expect(@TypeOf(set_file_size) == fn (Descriptor, u64) FileSizeError!void);
-    try expect(@TypeOf(sync_directory) == fn (Path) SyncDirectoryError!void);
-    try expect(@typeInfo(ListenOptions).@"struct".fields.len == 2);
-    try expect(@FieldType(ListenOptions, "backlog") == u31);
-    try expect(@FieldType(ListenOptions, "reuse_port") == bool);
-    try expect(@typeInfo(OpenOptions).@"struct".fields.len == 2);
-    try expect(@FieldType(OpenOptions, "create") == bool);
-    try expect(@FieldType(OpenOptions, "direct") == bool);
+// Every backend's `sync` carries the surface `core/sync.zig` writes out, and this holds it there.
+comptime {
+    core.sync.check(@This());
 }
 
 test {

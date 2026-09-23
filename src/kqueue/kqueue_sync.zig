@@ -42,61 +42,9 @@ pub const file_size = file_calls.file_size;
 pub const set_file_size = file_calls.set_file_size;
 pub const sync_directory = file_calls.sync_directory;
 
-/// The public declarations of `uring_sync.zig`, name for name. The module graph keeps `uring` out
-/// of this module's reach, so the tests below write its surface out.
-const declarations = 24;
-
-const expect = std.testing.expect;
-
-test "the surface is the one uring_sync.zig presents, name for name" {
-    const Address = core.Address;
-    const Descriptor = core.Descriptor;
-    const Path = [*:0]const u8;
-    try expect(@typeInfo(@This()).@"struct".decls.len == declarations);
-    try expect(@TypeOf(open_socket) == fn (Address.Family) SocketError!Descriptor);
-    try expect(@TypeOf(listen) == fn (*const Address, ListenOptions) ListenError!Descriptor);
-    try expect(@TypeOf(local_address) == fn (Descriptor) AddressError!Address);
-    try expect(@TypeOf(set_no_delay) == fn (Descriptor, bool) OptionError!void);
-    try expect(@TypeOf(close_now) == fn (Descriptor) void);
-    const buffer_type = fn (Descriptor, SocketBuffer, u32) BufferError!u32;
-    try expect(@TypeOf(set_buffer_bytes) == buffer_type);
-    try expect(@typeInfo(SocketBuffer).@"enum".fields.len == 2);
-    try expect(socket_buffer_bytes_max == std.math.maxInt(i32));
-    const open_datagram_type = fn (Address.Family, ?*const Address, DatagramOptions) ListenError!Descriptor;
-    try expect(@TypeOf(open_datagram) == open_datagram_type);
-    try expect(@TypeOf(open_file) == fn (Path, OpenOptions) OpenError!Descriptor);
-    try expect(@TypeOf(file_size) == fn (Descriptor) FileSizeError!u64);
-    try expect(@TypeOf(set_file_size) == fn (Descriptor, u64) FileSizeError!void);
-    try expect(@TypeOf(sync_directory) == fn (Path) SyncDirectoryError!void);
-    try expect(@typeInfo(ListenOptions).@"struct".fields.len == 2);
-    try expect(@FieldType(ListenOptions, "backlog") == u31);
-    try expect(@FieldType(ListenOptions, "reuse_port") == bool);
-    try expect(@typeInfo(OpenOptions).@"struct".fields.len == 2);
-    try expect(@FieldType(OpenOptions, "create") == bool);
-    try expect(@FieldType(OpenOptions, "direct") == bool);
-}
-
-test "every error set has the members of its twin, the ones macOS never produces included" {
-    try expect(SocketError == error{
-        AddressFamilyUnsupported,
-        DescriptorLimit,
-        SystemResources,
-        Unexpected,
-    });
-    const listen_refusals = error{ AddressInUse, AddressNotAvailable, AccessDenied };
-    try expect(ListenError == SocketError || listen_refusals);
-    try expect(AddressError == error{ NotSocket, AddressFamilyUnsupported, Unexpected });
-    try expect(OptionError == error{ NotSocket, Unexpected });
-    try expect(OpenError == error{
-        FileNotFound,
-        PathAlreadyExists,
-        AccessDenied,
-        DirectIoUnsupported,
-        Unexpected,
-    });
-    try expect(FileSizeError == error{ NoSpaceLeft, Unsupported, Unexpected });
-    const directory_refusals = error{ FileNotFound, AccessDenied, NotDirectory, Unexpected };
-    try expect(SyncDirectoryError == directory_refusals);
+// Every backend's `sync` carries the surface `core/sync.zig` writes out, and this holds it there.
+comptime {
+    core.sync.check(@This());
 }
 
 test {

@@ -88,7 +88,9 @@ stayed in `src/kqueue/`: they need a deadline, and `core` reads no clock.
 On 2026-09-23 a simplification pass moved three more pieces that take no `*Loop` out of both
 readiness backends: the post of a message (`core.remote.send`), the drain of an offload's rings
 (`core.offload.drain` and `pending`), and the buffer group with its layout and errors
-(`core/buffer_group.zig`). `epoll_buffers.zig` keeps only the three calls that take a `*Loop`.
+(`core/buffer_group.zig`). `epoll_buffers.zig` keeps only the three calls that take a `*Loop`. The
+same pass moved the types of the sync calls of all three backends to `core/sync.zig`; the calls
+stay where they are, because they name the kernel's types.
 
 Moving `core.offload.init_rings` found a gap rather than just saving lines. Nothing had ever handed
 it memory that was 64-byte aligned and not 128-byte aligned, so the skip forward it exists for had

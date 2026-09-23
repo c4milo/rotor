@@ -113,6 +113,11 @@ pub const buffer_ring_alignment = 64 * 1024;
 /// ring, so every backend asks a caller for the same amount. `uring_buffers.zig` asserts the size.
 pub const buffer_ring_entry_bytes = 16;
 
+/// The largest size `sync.set_buffer_bytes` carries for a socket buffer, which is what
+/// `setsockopt` takes. It is not a size any kernel grants: each refuses or caps long before it, in
+/// its own way, which is what the call answers and `SizeRefused` reports.
+pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
+
 /// The largest errno Linux returns, so the most negative result an operation can have.
 const errno_max: u32 = 4095;
 

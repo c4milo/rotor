@@ -23,6 +23,7 @@ pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
 pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
+pub const sync = @import("sync.zig");
 pub const tables = @import("tables.zig");
 pub const timer_heap = @import("timer_heap.zig");
 pub const waiters = @import("waiters.zig");
@@ -61,6 +62,7 @@ test {
     _ = statistics;
     _ = @import("statistics_test.zig");
     _ = surface;
+    _ = sync;
     _ = tables;
     _ = @import("tables_test.zig");
     _ = timer_heap;
