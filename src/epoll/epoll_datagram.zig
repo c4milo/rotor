@@ -92,7 +92,7 @@ pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOpt
             .SUCCESS => {},
             .INTR => continue,
             .AGAIN => return Answer.not_ready,
-            else => |errno| return Answer.refused(code_of(errno)),
+            else => |errno| return Answer.refused(core.errno.datagram_code_of(errno)),
         }
         // The head the uring backend gets from the kernel, written here from what `recvmsg`
         // reported: the bytes of each part it used, and its flags, `MSG_TRUNC` among them.
@@ -133,20 +133,10 @@ pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Out
             .SUCCESS => return Answer.done(@intCast(rc)),
             .INTR => continue,
             .AGAIN => return Answer.not_ready,
-            else => |errno| return Answer.refused(code_of(errno)),
+            else => |errno| return Answer.refused(core.errno.datagram_code_of(errno)),
         }
     }
     return Answer.refused(.would_block);
-}
-
-/// EMSGSIZE has its own code, because a QUIC stack answers it by lowering its packet size. The
-/// rest are what `core/errno.zig` says for any call, so they are asked of it.
-fn code_of(errno: linux.E) core.Code {
-    return switch (errno) {
-        .MSGSIZE => .message_too_long,
-        .DESTADDRREQ => .not_connected,
-        else => core.errno.code_of(errno),
-    };
 }
 
 /// Writes the control messages for `out`, and returns the bytes used, or null when they do not
@@ -388,11 +378,23 @@ test "a control block that claims more than it holds stops the walk" {
     try testing.expectEqual(@as(u16, 0), from.segment_bytes);
 }
 
-test "a refusal a datagram can meet has its own code, and the rest are the shared map's" {
-    try testing.expectEqual(core.Code.message_too_long, code_of(.MSGSIZE));
-    try testing.expectEqual(core.Code.not_connected, code_of(.DESTADDRREQ));
-    try testing.expectEqual(core.Code.connection_refused, code_of(.CONNREFUSED));
-    try testing.expectEqual(core.Code.network_unreachable, code_of(.HOSTUNREACH));
-    try testing.expectEqual(core.Code.system_resources, code_of(.NOBUFS));
-    try testing.expectEqual(core.Code.unexpected, code_of(.BADF));
+/// One byte more than the 16-bit length field of a UDP header can state.
+const oversized: [std.math.maxInt(u16) + 1]u8 = @splat(0);
+
+test "a datagram longer than UDP can carry ends with message_too_long" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    // Linux refuses the send with EMSGSIZE before it copies a byte. `core.errno.code_of` has no arm
+    // for EMSGSIZE, so this fails if the send stops asking the datagram map.
+    const socket = try socket_calls.open_datagram(.ipv4, null, .{});
+    defer socket_calls.close_now(socket);
+    const out: Outbound = .{
+        .peer = Address.ipv4(.{ 127, 0, 0, 1 }, 9),
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    const answer = send_from(socket, &oversized, &out);
+    try testing.expect(!answer.would_block);
+    try testing.expectEqual(core.event.result_of(.message_too_long), answer.result);
 }

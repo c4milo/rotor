@@ -46,6 +46,18 @@ pub fn code_of(errno: anytype) event_module.Code {
     };
 }
 
+/// The code a failed `recvmsg` or `sendmsg` on a datagram socket carries. Two errnos have a
+/// datagram meaning of their own: EMSGSIZE has its own code, because a QUIC stack answers it by
+/// lowering its packet size, and EDESTADDRREQ is a send with no peer on a socket that has none.
+/// Every other errno means what it means for any call, so `code_of` answers it.
+pub fn datagram_code_of(errno: anytype) event_module.Code {
+    return switch (errno) {
+        .MSGSIZE => .message_too_long,
+        .DESTADDRREQ => .not_connected,
+        else => code_of(errno),
+    };
+}
+
 const testing = std.testing;
 
 const Row = struct { errno: E, code: event_module.Code };
@@ -103,4 +115,28 @@ test "the map reads a Linux errno on a macOS build, which is what the epoll back
     try testing.expectEqual(event_module.Code.unexpected, code_of(LinuxE.BADF));
     try testing.expect(is_handled_by_the_backend(LinuxE.AGAIN));
     try testing.expect(!is_handled_by_the_backend(LinuxE.NOMEM));
+}
+
+/// The errnos a datagram call may meet. The first two are the datagram's own; the rest are the
+/// ones the kqueue backend's first map, written apart from `code_of`, answered `unexpected`.
+const datagram_rows = [_]Row{
+    .{ .errno = .MSGSIZE, .code = .message_too_long },
+    .{ .errno = .DESTADDRREQ, .code = .not_connected },
+    .{ .errno = .CONNRESET, .code = .connection_reset },
+    .{ .errno = .PIPE, .code = .broken_pipe },
+    .{ .errno = .TIMEDOUT, .code = .connection_timed_out },
+    .{ .errno = .NETDOWN, .code = .network_unreachable },
+    .{ .errno = .HOSTDOWN, .code = .network_unreachable },
+};
+
+test "a datagram call's errno carries its datagram code, or the code any call's would" {
+    for (datagram_rows) |row| try testing.expectEqual(row.code, datagram_code_of(row.errno));
+    for (rows) |row| try testing.expectEqual(row.code, datagram_code_of(row.errno));
+}
+
+test "the datagram map reads a Linux errno on a macOS build, as the epoll backend hands it" {
+    const LinuxE = std.os.linux.E;
+    try testing.expectEqual(event_module.Code.message_too_long, datagram_code_of(LinuxE.MSGSIZE));
+    try testing.expectEqual(event_module.Code.not_connected, datagram_code_of(LinuxE.DESTADDRREQ));
+    try testing.expectEqual(event_module.Code.broken_pipe, datagram_code_of(LinuxE.PIPE));
 }

@@ -267,6 +267,44 @@ test "a cancelled datagram receive ends with one final event and leaves nothing 
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }
 
+test "a datagram sent on a socket shut for sending ends with broken_pipe" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+
+    const pair = try Pair.open();
+    defer pair.close();
+    // macOS shuts only a connected datagram socket, so the sender connects to the receiver first.
+    try harness.submit(&.{.{ .user_data = 1, .kind = .{ .connect = .{
+        .socket = pair.sender,
+        .address = &pair.address,
+    } } }}, &.{});
+    var events: [1]Event = undefined;
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
+    try harness.submit(&.{.{ .user_data = 2, .kind = .{ .shutdown = .{
+        .socket = pair.sender,
+        .how = .send,
+    } } }}, &.{});
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
+
+    // Every kernel refuses the send with EPIPE. The kqueue backend's first map had no arm for it
+    // and answered `unexpected`. A send names where it goes, so this one names the peer the
+    // socket is connected to: macOS finds the socket shut before it looks at the destination.
+    var out: Outbound = .{
+        .peer = pair.address,
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    try harness.submit(&.{send_to(3, pair.sender, message, &out)}, &.{});
+    try harness.collect(&events);
+    try testing.expectError(error.BrokenPipe, events[0].outcome());
+}
+
 test "a segmented send is carried where the kernel segments and refused where it cannot" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;

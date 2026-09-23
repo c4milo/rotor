@@ -17,6 +17,7 @@ const assert = std.debug.assert;
 const c = std.c;
 const posix = std.posix;
 const core = @import("core");
+const constants = @import("constants.zig");
 const address_module = @import("kqueue_address.zig");
 
 const Address = core.Address;
@@ -75,7 +76,28 @@ pub const Receive = struct {
     /// The bytes received, or the code the kernel refused with.
     result: i32,
     would_block: bool,
+
+    const not_ready: Receive = .{ .result = 0, .would_block = true };
+
+    fn done(result: i32) Receive {
+        return .{ .result = result, .would_block = false };
+    }
+
+    fn refused(code: core.Code) Receive {
+        return done(core.event.result_of(code));
+    }
 };
+
+/// What a `recvmsg` or `sendmsg` that returned -1 comes to, or null when it is to be made again.
+/// EINTR means a signal interrupted the call before it moved a byte, so the caller's loop makes the
+/// call again, and EINTR never reaches `core.errno`, which asserts it does not.
+fn answer_of(errno: posix.E) ?Receive {
+    return switch (errno) {
+        .INTR => null,
+        .AGAIN => Receive.not_ready,
+        else => Receive.refused(core.errno.datagram_code_of(errno)),
+    };
+}
 
 /// Receives one datagram into `buffer`, writing the head, the address and the control block in
 /// front of it exactly as io_uring's multishot `recvmsg` would. Returns the datagram's own bytes,
@@ -98,28 +120,28 @@ pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOpt
     header.control = buffer.ptr + control_start;
     header.controllen = @intCast(options.control_reserve);
 
-    const rc = c.recvmsg(descriptor, &header, 0);
-    if (rc < 0) {
-        const errno = posix.errno(rc);
-        if (errno == .AGAIN) return .{ .result = 0, .would_block = true };
-        return .{ .result = core.event.result_of(code_of(errno)), .would_block = false };
+    var retry: u32 = 0;
+    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+        const rc = c.recvmsg(descriptor, &header, 0);
+        if (rc >= 0) {
+            // The head the uring backend gets from the kernel, written from what `recvmsg` said.
+            const head: *Head = @ptrCast(@alignCast(buffer.ptr));
+            head.* = .{
+                .name_bytes = header.namelen,
+                .control_bytes = @intCast(header.controllen),
+                .payload_bytes = @intCast(rc),
+                .flags = @intCast(@as(u32, @bitCast(header.flags))),
+            };
+            return Receive.done(@intCast(rc));
+        }
+        if (answer_of(posix.errno(rc))) |answer| return answer;
     }
-    // The head the uring backend gets from the kernel, written here from what `recvmsg` reported.
-    const head: *Head = @ptrCast(@alignCast(buffer.ptr));
-    head.* = .{
-        .name_bytes = header.namelen,
-        .control_bytes = @intCast(header.controllen),
-        .payload_bytes = @intCast(rc),
-        .flags = @intCast(@as(u32, @bitCast(header.flags))),
-    };
-    return .{ .result = @intCast(rc), .would_block = false };
+    return Receive.refused(.would_block);
 }
 
 /// Sends one datagram. A segmented send is refused: macOS has no `UDP_SEGMENT` (decision 15).
 pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Outbound) Receive {
-    if (out.segment_bytes != 0) {
-        return .{ .result = core.event.result_of(.unsupported), .would_block = false };
-    }
+    if (out.segment_bytes != 0) return Receive.refused(.unsupported);
     var name: address_module.Storage = undefined;
     var control: [control_bytes_max]u8 align(@alignOf(c.cmsghdr)) = undefined;
     var vector: posix.iovec_const = .{ .base = bytes.ptr, .len = bytes.len };
@@ -130,32 +152,18 @@ pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Out
         header.namelen = address_module.to_kernel(&out.peer, &name);
         header.name = @ptrCast(@alignCast(&name));
     }
-    const written = write_control(&control, out) orelse {
-        return .{ .result = core.event.result_of(.unsupported), .would_block = false };
-    };
+    const written = write_control(&control, out) orelse return Receive.refused(.unsupported);
     if (written != 0) {
         header.control = &control;
         header.controllen = @intCast(written);
     }
-    const rc = c.sendmsg(descriptor, &header, 0);
-    if (rc < 0) {
-        const errno = posix.errno(rc);
-        if (errno == .AGAIN) return .{ .result = 0, .would_block = true };
-        return .{ .result = core.event.result_of(code_of(errno)), .would_block = false };
+    var retry: u32 = 0;
+    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+        const rc = c.sendmsg(descriptor, &header, 0);
+        if (rc >= 0) return Receive.done(@intCast(rc));
+        if (answer_of(posix.errno(rc))) |answer| return answer;
     }
-    return .{ .result = @intCast(rc), .would_block = false };
-}
-
-/// EMSGSIZE has its own code, because a QUIC stack answers it by lowering its packet size.
-fn code_of(errno: posix.E) core.Code {
-    return switch (errno) {
-        .MSGSIZE => .message_too_long,
-        .NOBUFS, .NOMEM => .system_resources,
-        .CONNREFUSED => .connection_refused,
-        .HOSTUNREACH, .NETUNREACH => .network_unreachable,
-        .DESTADDRREQ, .NOTCONN => .not_connected,
-        else => .unexpected,
-    };
+    return Receive.refused(.would_block);
 }
 
 fn write_control(buffer: *[control_bytes_max]u8, out: *const Outbound) ?usize {
@@ -346,10 +354,71 @@ test "the packet info macOS reports names the address the datagram was sent to" 
     try testing.expectEqual(@as(u32, 3), from.local.scope_id);
 }
 
-test "EMSGSIZE has its own code, because a QUIC stack acts on it" {
-    try testing.expectEqual(core.Code.message_too_long, code_of(.MSGSIZE));
-    try testing.expectEqual(core.Code.not_connected, code_of(.DESTADDRREQ));
-    try testing.expectEqual(core.Code.unexpected, code_of(.BADF));
+test "EINTR makes the call again, and EAGAIN waits for readiness" {
+    // A signal cannot be made to land inside a non-blocking call, so the errno is fabricated.
+    try testing.expectEqual(@as(?Receive, null), answer_of(.INTR));
+    try testing.expectEqual(@as(?Receive, Receive.not_ready), answer_of(.AGAIN));
+}
+
+test "a datagram call's errno carries the code core's datagram map gives it" {
+    const Row = struct { errno: posix.E, code: core.Code };
+    // The first two are a datagram's own. The first version of this file had its own map, which
+    // answered `unexpected` to the five after them.
+    const rows = [_]Row{
+        .{ .errno = .MSGSIZE, .code = .message_too_long },
+        .{ .errno = .DESTADDRREQ, .code = .not_connected },
+        .{ .errno = .CONNRESET, .code = .connection_reset },
+        .{ .errno = .PIPE, .code = .broken_pipe },
+        .{ .errno = .TIMEDOUT, .code = .connection_timed_out },
+        .{ .errno = .NETDOWN, .code = .network_unreachable },
+        .{ .errno = .HOSTDOWN, .code = .network_unreachable },
+        .{ .errno = .BADF, .code = .unexpected },
+    };
+    for (rows) |row| {
+        const answer = answer_of(row.errno).?;
+        try testing.expect(!answer.would_block);
+        try testing.expectEqual(core.event.result_of(row.code), answer.result);
+    }
+}
+
+/// How long the test below waits for the kernel to finish a step on loopback.
+const loopback_wait_ms = 2000;
+
+fn wait_until_ready(descriptor: core.Descriptor, events: i16) !void {
+    var polled = [_]c.pollfd{.{ .fd = descriptor, .events = events, .revents = 0 }};
+    try testing.expectEqual(@as(c_int, 1), c.poll(&polled, polled.len, loopback_wait_ms));
+}
+
+test "a receive the kernel refuses with a reset carries connection_reset" {
+    if (!@import("builtin").os.tag.isDarwin()) return error.SkipZigTest;
+    // No datagram receive fails with ECONNRESET on demand. A stream socket whose peer reset the
+    // connection does, and `receive_into` hands whatever `recvmsg` answers to the same map.
+    const sockets = @import("kqueue_sync_socket.zig");
+    const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const listener = try sockets.listen(&loopback, .{ .backlog = 1, .reuse_port = false });
+    defer sockets.close_now(listener);
+    const bound = try sockets.local_address(listener);
+    const client = try sockets.open_socket(.ipv4);
+    defer sockets.close_now(client);
+    var storage: address_module.Storage = undefined;
+    const len = address_module.to_kernel(&bound, &storage);
+    const connected = c.connect(client, @ptrCast(&storage), len);
+    try testing.expect(connected == 0 or posix.errno(connected) == .INPROGRESS);
+    try wait_until_ready(listener, c.POLL.IN);
+    const accepted = c.accept(listener, null, null);
+    try testing.expect(accepted >= 0);
+    // A linger of zero makes close(2) send a reset instead of a FIN.
+    const abort: c.linger = .{ .onoff = 1, .linger = 0 };
+    const set = c.setsockopt(accepted, c.SOL.SOCKET, c.SO.LINGER, &abort, @sizeOf(c.linger));
+    try testing.expectEqual(@as(c_int, 0), set);
+    sockets.close_now(accepted);
+
+    try wait_until_ready(client, c.POLL.IN);
+    const group: GroupOptions = .{};
+    var buffer: [core.datagram.prefix_bytes(group) + 1]u8 align(@alignOf(Head)) = undefined;
+    const answer = receive_into(client, &buffer, group);
+    try testing.expect(!answer.would_block);
+    try testing.expectEqual(core.event.result_of(.connection_reset), answer.result);
 }
 
 /// Opens a datagram socket of `family`, or skips when the host has no stack for it.
