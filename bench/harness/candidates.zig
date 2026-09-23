@@ -12,6 +12,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const report = @import("report.zig");
 const report_parse = @import("report_parse.zig");
+const series = @import("series.zig");
+const OtherWork = @import("other_work.zig").Window;
 const Result = report.Result;
 
 /// One candidate program: the name a row carries and the file to start. The version is not here,
@@ -106,6 +108,35 @@ pub fn wanted(only: []const u8, name: []const u8) bool {
     return false;
 }
 
+/// Writes one candidate's row from its runs, or a line saying why it has none: too few runs, or
+/// runs that are not one series. Returns false when it wrote no row, so a runner can end with an
+/// error once its table is out.
+///
+/// A candidate whose every run failed used to cost a line of output and nothing else. libuv's
+/// timer, cross-core and file-read rows were missing for a day that way on every machine, CI
+/// included: its programs printed a line without `p9999_ns`, which the parser refused.
+pub fn render_row(
+    writer: *std.Io.Writer,
+    runner: []const u8,
+    name: []const u8,
+    runs: []const Result,
+    window: OtherWork,
+) !bool {
+    assert(runner.len >= 1);
+    assert(name.len >= 1);
+    if (runs.len < series.runs_min) {
+        try writer.print("{s}: {s} has too few runs ({d})\n", .{ runner, name, runs.len });
+        return false;
+    }
+    const row = series.Series.init_with_other_work(runs, window) catch |err| {
+        try writer.print("{s}: {s} runs are not one series: {t}\n", .{ runner, name, err });
+        return false;
+    };
+    try row.render_markdown_row(writer);
+    try writer.writeByte('\n');
+    return true;
+}
+
 /// True when a program is on disk at `path`.
 pub fn installed(io: std.Io, path: []const u8) bool {
     assert(path.len >= 1);
@@ -151,6 +182,45 @@ test "an empty only-list names everything, and a list names its members alone" {
     try testing.expect(!wanted("rotorx", "rotor"));
     try testing.expect(!wanted("roto", "rotor"));
     try testing.expect(!wanted("rotor", "rotorx"));
+}
+
+fn measured(candidate: []const u8, operations_per_second: u64) Result {
+    return .{
+        .workload = "timer-churn",
+        .candidate = candidate,
+        .candidate_version = "1.52.1",
+        .configuration = .{ .cores = 0, .connections = 256, .payload_bytes = 0, .load = .even },
+        .duration_ns = std.time.ns_per_s,
+        .operations = operations_per_second,
+        .operations_per_second = operations_per_second,
+        .p50_ns = 1,
+        .p99_ns = 2,
+        .p999_ns = 3,
+        .p9999_ns = 4,
+        .overflow = 0,
+    };
+}
+
+test "a candidate without enough runs of one series gets a line and no row, and says so" {
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    const three = [_]Result{ measured("libuv", 10), measured("libuv", 11), measured("libuv", 12) };
+    try testing.expect(try render_row(&writer, "timers_runner", "libuv", &three, .empty));
+    try testing.expect(std.mem.startsWith(u8, writer.buffered(), "| timer-churn | libuv |"));
+
+    // Every run refused, as libuv's were: the line names the count, and no row is claimed.
+    writer = std.Io.Writer.fixed(&buffer);
+    try testing.expect(!try render_row(&writer, "timers_runner", "libuv", three[0..0], .empty));
+    try testing.expectEqualStrings(
+        "timers_runner: libuv has too few runs (0)\n",
+        writer.buffered(),
+    );
+
+    // Enough runs, but of two candidates: no series, so no row either.
+    const mixed = [_]Result{ measured("libuv", 10), measured("rotor", 11), measured("libuv", 12) };
+    writer = std.Io.Writer.fixed(&buffer);
+    try testing.expect(!try render_row(&writer, "timers_runner", "libuv", &mixed, .empty));
+    try testing.expect(std.mem.indexOf(u8, writer.buffered(), "not one series") != null);
 }
 
 test "a path is the directory and the program, and a full buffer is an error" {

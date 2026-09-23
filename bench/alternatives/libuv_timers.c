@@ -41,7 +41,9 @@
 #define NS_PER_MS 1000000ull
 #define NS_PER_S 1000000000ull
 #define US_PER_MS 1000ull
-#define PER_MILLE 1000ull
+/* Parts a percentile's rank is counted in: ten thousand, as bench/harness/percentile.zig counts,
+ * because p9999 has no whole number of parts per thousand. */
+#define PER_TEN_THOUSAND 10000ull
 
 static uv_timer_t timers[TIMERS_MAX];
 /* When each armed timer is due. */
@@ -107,14 +109,14 @@ static int compare_u64(const void *left, const void *right)
     return a > b ? 1 : 0;
 }
 
-/* The nearest-rank percentile of sorted samples, in parts per thousand, as rotor_timers takes
- * it, so the two report one definition. */
-static uint64_t percentile(uint64_t parts_per_thousand)
+/* The nearest-rank percentile of sorted samples, in parts per ten thousand, as rotor_timers takes
+ * it through bench/harness/percentile.zig, so the two report one definition. */
+static uint64_t percentile(uint64_t parts)
 {
     if (samples_taken == 0) {
         return 0;
     }
-    uint64_t rank = ((uint64_t)samples_taken * parts_per_thousand + PER_MILLE - 1) / PER_MILLE;
+    uint64_t rank = ((uint64_t)samples_taken * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
     if (rank == 0) {
         rank = 1;
     }
@@ -210,9 +212,12 @@ int main(int argc, char **argv)
     printf(",\"duration_ns\":%llu,\"operations\":%llu",
            (unsigned long long)span_ns, (unsigned long long)fired);
     printf(",\"operations_per_second\":%llu", per_second);
-    printf(",\"p50_ns\":%llu", (unsigned long long)percentile(500));
-    printf(",\"p99_ns\":%llu", (unsigned long long)percentile(990));
-    printf(",\"p999_ns\":%llu,\"overflow\":0}\n", (unsigned long long)percentile(999));
+    printf(",\"p50_ns\":%llu", (unsigned long long)percentile(5000));
+    printf(",\"p99_ns\":%llu", (unsigned long long)percentile(9900));
+    printf(",\"p999_ns\":%llu", (unsigned long long)percentile(9990));
+    printf(",\"p9999_ns\":%llu", (unsigned long long)percentile(9999));
+    /* 0, as every program of this workload prints: only the echo runner measures memory. */
+    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
     fflush(stdout);
     return 0;
 }

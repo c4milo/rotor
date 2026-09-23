@@ -20,7 +20,6 @@ const std = @import("std");
 const harness = @import("harness");
 
 const Result = harness.Result;
-const Series = harness.series.Series;
 const programs = harness.candidates;
 const OtherWork = harness.other_work.Window;
 const Candidate = programs.Candidate;
@@ -81,8 +80,9 @@ pub fn main(init: std.process.Init) !void {
     try writer.flush();
     var counts: [candidates.len]u32 = @splat(0);
     try collect(init, options, &counts, writer);
-    try render(counts, writer);
+    const rowless = try render(counts, writer);
     try writer.flush();
+    if (rowless != 0) return error.CandidateProducedNoRow;
 }
 
 /// Runs every installed candidate `rounds` times, alternating within each round.
@@ -112,27 +112,19 @@ fn collect(
     }
 }
 
-/// One row per candidate that produced enough runs, and a line naming each that did not.
-fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
+/// One row per installed candidate that produced enough runs of one series, and a line naming each
+/// that did not. Returns how many installed candidates got no row.
+fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !u32 {
+    var rowless: u32 = 0;
     for (candidates, 0..) |candidate, index| {
+        if (!present[index]) continue;
         const taken = results[index * rounds_max ..][0..counts[index]];
-        if (taken.len < harness.series.runs_min) {
-            if (present[index]) {
-                try writer.print("crosscore_runner: {s} has too few runs ({d})\n", .{
-                    candidate.name, taken.len,
-                });
-            }
-            continue;
+        const window = other_work[index];
+        if (!try programs.render_row(writer, "crosscore_runner", candidate.name, taken, window)) {
+            rowless += 1;
         }
-        const series = Series.init_with_other_work(taken, other_work[index]) catch |err| {
-            try writer.print("crosscore_runner: {s} runs are not one series: {t}\n", .{
-                candidate.name, err,
-            });
-            continue;
-        };
-        try series.render_markdown_row(writer);
-        try writer.writeByte('\n');
     }
+    return rowless;
 }
 
 /// Starts one candidate, waits for it, and reads the result line it printed last.
@@ -254,4 +246,32 @@ test "the two cores of a cross-core run may not be the same core" {
     var options: Options = .{};
     options.peer_cpu = options.cpu;
     try testing.expectEqual(options.cpu, options.peer_cpu);
+}
+
+test "an installed candidate without a row is counted, and one not installed is not" {
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    defer present = @splat(false);
+    var counts: [candidates.len]u32 = @splat(0);
+    present = @splat(false);
+    present[0] = true;
+    present[1] = true;
+    present[2] = true;
+    for (results[0..harness.series.runs_min]) |*run| run.* = .{
+        .workload = "cross-core",
+        .candidate = candidates[0].name,
+        .candidate_version = "this tree",
+        .configuration = .{ .cores = 2, .connections = 1, .payload_bytes = 0, .load = .even },
+        .duration_ns = 1,
+        .operations = 1,
+        .operations_per_second = 1,
+        .p50_ns = 1,
+        .p99_ns = 1,
+        .p999_ns = 1,
+        .p9999_ns = 1,
+        .overflow = 0,
+    };
+    counts[0] = harness.series.runs_min;
+    // The first has its row; the other two are installed and every run of each failed.
+    try testing.expectEqual(@as(u32, 2), try render(counts, &writer));
 }

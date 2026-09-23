@@ -35,7 +35,6 @@ const builtin = @import("builtin");
 const harness = @import("harness");
 
 const Result = harness.Result;
-const Series = harness.series.Series;
 const programs = harness.candidates;
 const OtherWork = harness.other_work.Window;
 
@@ -153,11 +152,13 @@ pub fn main(init: std.process.Init) !void {
 
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
+    var rowless: u32 = 0;
     for (transfers) |transfer| {
         for (syncs_for(transfer)) |sync_choice| {
-            try sweep(init, options, transfer, sync_choice, writer);
+            rowless += try sweep(init, options, transfer, sync_choice, writer);
         }
     }
+    if (rowless != 0) return error.CandidateProducedNoRow;
 }
 
 /// One configuration a row covers: the direction, the pattern and the queue depth.
@@ -179,14 +180,16 @@ pub fn syncs_for(transfer: []const u8) []const []const u8 {
 
 /// Every pattern, block size and depth of one direction and one flush policy, each its own row. It
 /// is a function of its own because the sweep has five dimensions now, and `main` was over the
-/// cognitive-complexity limit with all of them nested in it.
+/// cognitive-complexity limit with all of them nested in it. Returns how many installed candidates
+/// got no row.
 fn sweep(
     init: std.process.Init,
     options: Options,
     transfer: []const u8,
     sync_choice: []const u8,
     writer: *std.Io.Writer,
-) !void {
+) !u32 {
+    var rowless: u32 = 0;
     for (patterns) |pattern| {
         for (options.blocks) |block_bytes| {
             for (options.depths) |depth| {
@@ -198,11 +201,12 @@ fn sweep(
                     .block_bytes = block_bytes,
                     .sync = sync_choice,
                 }, &counts, writer);
-                try render(counts, writer);
+                rowless += try render(counts, writer);
                 try writer.flush();
             }
         }
     }
+    return rowless;
 }
 
 fn collect(
@@ -240,26 +244,19 @@ fn collect(
     }
 }
 
-fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
+/// One row per installed candidate that produced enough runs of one series, and a line naming each
+/// that did not. Returns how many installed candidates got no row.
+fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !u32 {
+    var rowless: u32 = 0;
     for (candidates, 0..) |candidate, index| {
+        if (!present[index]) continue;
         const taken = results[index * rounds_max ..][0..counts[index]];
-        if (taken.len < harness.series.runs_min) {
-            if (present[index]) {
-                try writer.print("reads_runner: {s} has too few runs ({d})\n", .{
-                    candidate.name, taken.len,
-                });
-            }
-            continue;
+        const window = other_work[index];
+        if (!try programs.render_row(writer, "reads_runner", candidate.name, taken, window)) {
+            rowless += 1;
         }
-        const series = Series.init_with_other_work(taken, other_work[index]) catch |err| {
-            try writer.print("reads_runner: {s} runs are not one series: {t}\n", .{
-                candidate.name, err,
-            });
-            continue;
-        };
-        try series.render_markdown_row(writer);
-        try writer.writeByte('\n');
     }
+    return rowless;
 }
 
 /// The most arguments one run passes: the program, the path, six pairs, and the candidate's own.

@@ -45,10 +45,13 @@
 #define DEPTH_MAX 128
 #define SAMPLES_MAX (1 << 17)
 #define NS_PER_S 1000000000ULL
-#define PER_MILLE 1000ULL
-#define P50 500ULL
-#define P99 990ULL
-#define P999 999ULL
+/* Percentiles in parts per ten thousand, as bench/harness/percentile.zig counts them: p9999 has no
+ * whole number of parts per thousand. */
+#define PER_TEN_THOUSAND 10000ULL
+#define P50 5000ULL
+#define P99 9900ULL
+#define P999 9990ULL
+#define P9999 9999ULL
 
 /* The seed bench/files/rotor_reads.zig draws its offsets from. Zig writes it 0x5eed_da7a; C has
  * no digit separator, so the same value is spelled without one here. */
@@ -205,9 +208,9 @@ static int compare_u64(const void *left, const void *right) {
     return a > b ? 1 : 0;
 }
 
-static uint64_t percentile(uint32_t count, uint64_t parts_per_thousand) {
+static uint64_t percentile(uint32_t count, uint64_t parts) {
     if (count == 0) return 0;
-    uint64_t rank = ((uint64_t)count * parts_per_thousand + PER_MILLE - 1) / PER_MILLE;
+    uint64_t rank = ((uint64_t)count * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
     if (rank < 1) rank = 1;
     if (rank > count) rank = count;
     return latency_ns[rank - 1];
@@ -236,7 +239,10 @@ static void report(uint64_t span_ns, bool on_uring) {
     printf(",\"operations_per_second\":%" PRIu64, per_second);
     printf(",\"p50_ns\":%" PRIu64, percentile(taken, P50));
     printf(",\"p99_ns\":%" PRIu64, percentile(taken, P99));
-    printf(",\"p999_ns\":%" PRIu64 ",\"overflow\":0}\n", percentile(taken, P999));
+    printf(",\"p999_ns\":%" PRIu64, percentile(taken, P999));
+    printf(",\"p9999_ns\":%" PRIu64, percentile(taken, P9999));
+    /* 0, as every program of this workload prints: only the echo runner measures memory. */
+    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
     fflush(stdout);
 }
 

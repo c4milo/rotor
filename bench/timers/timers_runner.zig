@@ -33,7 +33,6 @@ const builtin = @import("builtin");
 const harness = @import("harness");
 
 const Result = harness.Result;
-const Series = harness.series.Series;
 const programs = harness.candidates;
 const OtherWork = harness.other_work.Window;
 
@@ -140,12 +139,14 @@ pub fn main(init: std.process.Init) !void {
 
     try writer.writeAll(harness.series.markdown_header);
     try writer.flush();
+    var rowless: u32 = 0;
     for (options.timers) |count| {
         var counts: [candidates.len]u32 = @splat(0);
         try collect(init, options, count, &counts, writer);
-        try render(counts, writer);
+        rowless += try render(counts, writer);
         try writer.flush();
     }
+    if (rowless != 0) return error.CandidateProducedNoRow;
 }
 
 /// Runs every installed candidate `rounds` times at `timers`, alternating within each round so a
@@ -179,27 +180,19 @@ fn collect(
     }
 }
 
-/// One row per candidate that produced enough runs, and a line naming each that did not.
-fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !void {
+/// One row per installed candidate that produced enough runs of one series, and a line naming each
+/// that did not. Returns how many installed candidates got no row.
+fn render(counts: [candidates.len]u32, writer: *std.Io.Writer) !u32 {
+    var rowless: u32 = 0;
     for (candidates, 0..) |candidate, index| {
+        if (!present[index]) continue;
         const taken = results[index * rounds_max ..][0..counts[index]];
-        if (taken.len < harness.series.runs_min) {
-            if (present[index]) {
-                try writer.print("timers_runner: {s} has too few runs ({d})\n", .{
-                    candidate.name, taken.len,
-                });
-            }
-            continue;
+        const window = other_work[index];
+        if (!try programs.render_row(writer, "timers_runner", candidate.name, taken, window)) {
+            rowless += 1;
         }
-        const series = Series.init_with_other_work(taken, other_work[index]) catch |err| {
-            try writer.print("timers_runner: {s} runs are not one series: {t}\n", .{
-                candidate.name, err,
-            });
-            continue;
-        };
-        try series.render_markdown_row(writer);
-        try writer.writeByte('\n');
     }
+    return rowless;
 }
 
 /// The most arguments one run passes: the program, three name-value pairs, and the candidate's
@@ -480,4 +473,16 @@ test "the default period is one libuv can state, and the default sweep is not em
     try testing.expectEqual(@as(u64, 0), options.period_us % period_us_min);
     try testing.expect(options.timers.len >= 1);
     try testing.expect(options.timers.len <= configurations_max);
+}
+
+test "an installed candidate without a row is counted, and one not installed is not" {
+    var buffer: [1024]u8 = undefined;
+    var writer = std.Io.Writer.fixed(&buffer);
+    defer present = @splat(false);
+    const counts: [candidates.len]u32 = @splat(0);
+    present = @splat(false);
+    try testing.expectEqual(@as(u32, 0), try render(counts, &writer));
+    // libuv's rows on 2026-09-22: installed, and every run refused.
+    present[2] = true;
+    try testing.expectEqual(@as(u32, 1), try render(counts, &writer));
 }

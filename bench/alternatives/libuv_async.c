@@ -53,11 +53,13 @@
 
 #define NS_PER_S 1000000000ULL
 
-/* Percentiles the report carries, in parts per thousand. */
-#define P50 500
-#define P99 990
-#define P999 999
-#define PER_MILLE 1000
+/* Percentiles the report carries, in parts per ten thousand, as bench/harness/percentile.zig counts
+ * them: p9999 has no whole number of parts per thousand. */
+#define P50 5000
+#define P99 9900
+#define P999 9990
+#define P9999 9999
+#define PER_TEN_THOUSAND 10000
 
 static uv_loop_t loop_first;
 static uv_loop_t loop_second;
@@ -157,10 +159,10 @@ static int compare_u64(const void *left, const void *right) {
     return a > b ? 1 : 0;
 }
 
-/* The value at `parts_per_thousand` of a sorted array, by the rank bench/harness/histogram.zig
+/* The value at `parts` of a sorted array, by the rank bench/harness/histogram.zig
  * uses: the first value at or above the rank, and never past the end. */
-static uint64_t percentile(const uint64_t *sorted, uint32_t count, uint32_t parts_per_thousand) {
-    uint64_t rank = ((uint64_t)count * parts_per_thousand + PER_MILLE - 1) / PER_MILLE;
+static uint64_t percentile(const uint64_t *sorted, uint32_t count, uint32_t parts) {
+    uint64_t rank = ((uint64_t)count * parts + PER_TEN_THOUSAND - 1) / PER_TEN_THOUSAND;
     if (rank < 1) rank = 1;
     if (rank > count) rank = count;
     return sorted[rank - 1];
@@ -180,7 +182,10 @@ static void report(uint32_t samples, uint64_t span_ns) {
     printf(",\"operations_per_second\":%" PRIu64, per_second);
     printf(",\"p50_ns\":%" PRIu64, percentile(samples_ns, samples, P50));
     printf(",\"p99_ns\":%" PRIu64, percentile(samples_ns, samples, P99));
-    printf(",\"p999_ns\":%" PRIu64 ",\"overflow\":0}\n", percentile(samples_ns, samples, P999));
+    printf(",\"p999_ns\":%" PRIu64, percentile(samples_ns, samples, P999));
+    printf(",\"p9999_ns\":%" PRIu64, percentile(samples_ns, samples, P9999));
+    /* 0, as every program of this workload prints: only the echo runner measures memory. */
+    printf(",\"overflow\":0,\"peak_rss_bytes\":0}\n");
 }
 
 struct options {
