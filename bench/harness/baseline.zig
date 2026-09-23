@@ -5,15 +5,25 @@
 //! Platinum 8370C and then a 8573C, and row C7 of `docs/costs.md` moved from 202 to 300 ns between
 //! them. A baseline of throughputs would have fired on that and called a different machine a
 //! regression. Every candidate of a comparison runs in the same run on the same machine,
-//! alternating, so the ratio between two of them is what survives a machine change.
+//! alternating, so the ratio between two of them survives a change of speed.
+//!
+//! **And it records them per processor, because a ratio does not survive a change of processor.**
+//! Two comparisons on 2026-09-22, one on an AMD EPYC 9V74 and one on an Intel Xeon 6973P-C, put
+//! libuv at 959 and 834 thousandths of rotor at 16 connections and 4 KiB, and libxev at 1,101 and
+//! 1,008 at 64 connections and 64 KiB. Nothing between the two commits touched either server. A
+//! run is therefore held only to the rows taken on its own processor, and a run on a processor the
+//! file does not name is held to nothing: the runner prints its ratios in this format instead.
 //!
 //! A row says: in this workload, at this connection count and payload, this candidate reached at
 //! most `ratio_max` thousandths of rotor's throughput. A fresh run that finds the candidate further
 //! ahead than that, by more than `margin_thousandths`, is a regression in rotor.
 //!
-//! The file is line based so a person can read a diff of it:
+//! The file is line based so a person can read a diff of it. A `processor` line names the processor
+//! the rows under it were taken on, as `Machine.cpu_model` reads it, and every row belongs to the
+//! nearest `processor` line above it:
 //!
 //! ```text
+//! processor AMD EPYC 9V74 80-Core Processor
 //! # workload connections payload candidate ratio_max
 //! echo 16 4096 libuv 1005
 //! echo 16 4096 libxev 900
@@ -21,6 +31,7 @@
 //!
 //! A blank line and a line whose first non-blank character is `#` are ignored. A candidate's name
 //! may hold spaces, so it is the fourth field onward up to the last: `rotor (accumulate)` parses.
+//! A row above every `processor` line belongs to no processor and is refused.
 //!
 //! What it deliberately does not gate:
 //!
@@ -67,27 +78,81 @@ pub const Row = struct {
 };
 
 pub const ParseError = error{
-    /// A line is not four fields and a number.
+    /// A line is not four fields and a number, or a `processor` line names nothing.
     Malformed,
     /// The ratio or a count does not fit the field it belongs to.
     OutOfRange,
-    /// The file holds more rows than `rows_max`.
+    /// One processor's rows are more than `rows_max`.
     TooManyRows,
+    /// A row sits above every `processor` line, so no processor owns it.
+    NoProcessor,
 };
 
-/// Every row of `text`, in the order they appear. The returned rows borrow `text`, so they live
-/// exactly as long as it does. Nothing here allocates: the caller hands over the array.
-pub fn parse(text: []const u8, into: []Row) ParseError![]const Row {
-    var used: usize = 0;
+/// The rows one processor's run is held to.
+pub const Section = struct {
+    /// The rows taken on this processor, in the order they appear.
+    rows: []const Row,
+    /// False when no `processor` line names this processor: the run is then held to nothing.
+    found: bool,
+};
+
+/// The word that opens a processor's rows.
+pub const processor_word = "processor";
+
+/// The rows of `text` taken on `processor`. Every row of the file is read, so a malformed row under
+/// another processor is refused as well. The returned rows borrow `text`, so they live exactly as
+/// long as it does. Nothing here allocates: the caller hands over the array.
+pub fn parse(text: []const u8, processor: []const u8, into: []Row) ParseError!Section {
+    assert(processor.len >= 1);
+    var sections: Sections = .{ .processor = processor, .into = into };
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |raw| {
         const line = std.mem.trim(u8, raw, " \t\r");
         if (line.len == 0 or line[0] == '#') continue;
-        if (used == into.len or used == rows_max) return error.TooManyRows;
-        into[used] = try parse_line(line);
-        used += 1;
+        try sections.take(line);
     }
-    return into[0..used];
+    return .{ .rows = into[0..sections.used], .found = sections.found };
+}
+
+/// What `parse` knows part way through the file.
+const Sections = struct {
+    /// The processor whose rows are kept.
+    processor: []const u8,
+    into: []Row,
+    used: usize = 0,
+    /// The processor the lines being read belong to: the last `processor` line seen.
+    current: ?[]const u8 = null,
+    /// True once a `processor` line has named `processor`.
+    found: bool = false,
+
+    /// One line that is neither blank nor a comment.
+    fn take(sections: *Sections, line: []const u8) ParseError!void {
+        assert(line.len >= 1);
+        if (try processor_of(line)) |named| {
+            sections.current = named;
+            if (std.mem.eql(u8, named, sections.processor)) sections.found = true;
+            return;
+        }
+        const owner = sections.current orelse return error.NoProcessor;
+        const row = try parse_line(line);
+        if (!std.mem.eql(u8, owner, sections.processor)) return;
+        if (sections.used == sections.into.len) return error.TooManyRows;
+        if (sections.used == rows_max) return error.TooManyRows;
+        sections.into[sections.used] = row;
+        sections.used += 1;
+    }
+};
+
+/// The processor a `processor` line names, or null for any other line.
+fn processor_of(line: []const u8) ParseError!?[]const u8 {
+    if (!std.mem.startsWith(u8, line, processor_word)) return null;
+    const rest = line[processor_word.len..];
+    if (rest.len == 0) return error.Malformed;
+    if (rest[0] != ' ' and rest[0] != '\t') return null;
+    // `line` arrived trimmed, so a blank follows the word only when something else follows it.
+    const named = std.mem.trim(u8, rest, " \t");
+    assert(named.len >= 1);
+    return named;
 }
 
 /// One row. The candidate's name is everything between the third field and the last, so a name
@@ -167,6 +232,12 @@ pub fn ratio_thousandths(numerator: u64, denominator: u64) u64 {
 
 const thousand: u64 = 1000;
 
+/// The line that opens `processor`'s rows, which a run writes before the rows it prints.
+pub fn render_processor(writer: *Writer, processor: []const u8) Writer.Error!void {
+    assert(processor.len >= 1);
+    try writer.print("{s} {s}\n", .{ processor_word, processor });
+}
+
 /// Writes the rows of a run in the file's own format, which is how a baseline is taken: run the
 /// comparison, read this, commit it.
 pub fn render_row(
@@ -191,10 +262,20 @@ pub fn render_row(
 const testing = std.testing;
 const report = @import("report.zig");
 
+/// The processor the tests' rows belong to.
+const test_processor = "Test CPU 1";
+const test_head = "processor " ++ test_processor ++ "\n";
+
+/// The rows of `text` for `test_processor`.
+fn parse_test(text: []const u8, into: []Row) ParseError![]const Row {
+    return (try parse(text, test_processor, into)).rows;
+}
+
 test "a baseline parses, ignoring blank lines and comments" {
     var rows: [8]Row = undefined;
-    const parsed = try parse(
+    const parsed = try parse_test(
         \\# workload connections payload candidate ratio_max
+        \\processor Test CPU 1
         \\echo 16 4096 libuv 1005
         \\
         \\  echo 64 65536 libxev 1071
@@ -214,12 +295,63 @@ test "a baseline parses, ignoring blank lines and comments" {
 
 test "a malformed line is refused rather than read as something else" {
     var rows: [8]Row = undefined;
-    try testing.expectError(error.Malformed, parse("echo 16 4096 libuv", &rows));
-    try testing.expectError(error.Malformed, parse("echo", &rows));
-    try testing.expectError(error.OutOfRange, parse("echo 16 4096 libuv nine", &rows));
-    try testing.expectError(error.OutOfRange, parse("echo huge 4096 libuv 1000", &rows));
+    try testing.expectError(error.Malformed, parse_test(test_head ++ "echo 16 4096 libuv", &rows));
+    try testing.expectError(error.Malformed, parse_test(test_head ++ "echo", &rows));
+    try testing.expectError(error.OutOfRange, parse_test(test_head ++ "echo 16 4096 libuv x", &rows));
+    try testing.expectError(error.OutOfRange, parse_test(test_head ++ "echo y 4096 libuv 1", &rows));
     var one: [1]Row = undefined;
-    try testing.expectError(error.TooManyRows, parse("echo 1 1 a 1\necho 2 2 b 2", &one));
+    const two_rows = test_head ++ "echo 1 1 a 1\necho 2 2 b 2";
+    try testing.expectError(error.TooManyRows, parse_test(two_rows, &one));
+}
+
+test "a run is held only to the rows taken on its own processor" {
+    const text =
+        \\processor AMD EPYC 9V74 80-Core Processor
+        \\echo 16 4096 libuv 959
+        \\echo 16 4096 libxev 894
+        \\processor Intel(R) Xeon(R) 6973P-C
+        \\echo 16 4096 libuv 834
+    ;
+    var rows: [8]Row = undefined;
+    const amd = try parse(text, "AMD EPYC 9V74 80-Core Processor", &rows);
+    try testing.expect(amd.found);
+    try testing.expectEqual(@as(usize, 2), amd.rows.len);
+    try testing.expectEqual(@as(u64, 959), amd.rows[0].ratio_max);
+    try testing.expectEqual(@as(u64, 894), amd.rows[1].ratio_max);
+
+    const intel = try parse(text, "Intel(R) Xeon(R) 6973P-C", &rows);
+    try testing.expect(intel.found);
+    try testing.expectEqual(@as(usize, 1), intel.rows.len);
+    try testing.expectEqual(@as(u64, 834), intel.rows[0].ratio_max);
+
+    // A processor the file does not name: nothing to hold the run to, and it says so.
+    const other = try parse(text, "Apple M1 Pro", &rows);
+    try testing.expect(!other.found);
+    try testing.expectEqual(@as(usize, 0), other.rows.len);
+
+    // A name that is part of a recorded one, or holds one, is another processor.
+    try testing.expect(!(try parse(text, "AMD EPYC 9V74", &rows)).found);
+    try testing.expect(!(try parse(text, "Intel(R) Xeon(R) 6973P-C v2", &rows)).found);
+}
+
+test "a row no processor owns, and a processor line naming nothing, are refused" {
+    var rows: [4]Row = undefined;
+    try testing.expectError(error.NoProcessor, parse("echo 16 4096 libuv 959", "cpu", &rows));
+    try testing.expectError(error.Malformed, parse("processor\necho 1 1 a 1", "cpu", &rows));
+    try testing.expectError(error.Malformed, parse("processor  \necho 1 1 a 1", "cpu", &rows));
+    // A malformed row under another processor is refused too, so a file is valid or it is not.
+    const bad_elsewhere = "processor cpu\necho 1 1 a 1\nprocessor other\necho 1 1";
+    try testing.expectError(error.Malformed, parse(bad_elsewhere, "cpu", &rows));
+}
+
+test "a processor line written by render_processor opens a section parse finds" {
+    var buffer: [64]u8 = undefined;
+    var writer: Writer = .fixed(&buffer);
+    try render_processor(&writer, "Intel(R) Xeon(R) 6973P-C");
+    try testing.expectEqualStrings("processor Intel(R) Xeon(R) 6973P-C\n", writer.buffered());
+    var rows: [2]Row = undefined;
+    const section = try parse(writer.buffered(), "Intel(R) Xeon(R) 6973P-C", &rows);
+    try testing.expect(section.found);
 }
 
 test "a ratio is thousandths of rotor, rounded down" {
@@ -243,7 +375,7 @@ fn steady(candidate: []const u8, per_second: u64, storage: []report.Result) !Ser
 test "a candidate further ahead than its row, past the margin, is a regression" {
     var storage: [series_module.runs_min]report.Result = undefined;
     var rows: [4]Row = undefined;
-    const recorded = try parse("echo 16 4096 libuv 1000", &rows);
+    const recorded = try parse_test(test_head ++ "echo 16 4096 libuv 1000", &rows);
 
     // Parity, which is the row itself: within.
     var level = try steady("libuv", 200_000, &storage);
@@ -265,7 +397,7 @@ test "a candidate further ahead than its row, past the margin, is a regression" 
 test "an unrecorded measurement and an idle rotor decide nothing" {
     var storage: [series_module.runs_min]report.Result = undefined;
     var rows: [4]Row = undefined;
-    const recorded = try parse("echo 16 4096 libuv 1000", &rows);
+    const recorded = try parse_test(test_head ++ "echo 16 4096 libuv 1000", &rows);
 
     var other = try steady("libxev", 200_000, &storage);
     try testing.expectEqual(Verdict.unrecorded, judge(recorded, "echo", &other, 200_000));
@@ -285,7 +417,9 @@ test "a row written by render_row parses back to the ratio it recorded" {
     try testing.expectEqualStrings("echo 16 4096 rotor (accumulate) 1250\n", writer.buffered());
 
     var rows: [2]Row = undefined;
-    const parsed = try parse(writer.buffered(), &rows);
+    var text: [160]u8 = undefined;
+    const with_head = try std.fmt.bufPrint(&text, "{s}{s}", .{ test_head, writer.buffered() });
+    const parsed = try parse_test(with_head, &rows);
     try testing.expectEqual(@as(usize, 1), parsed.len);
     try testing.expectEqualStrings("rotor (accumulate)", parsed[0].candidate);
     try testing.expectEqual(@as(u64, 1250), parsed[0].ratio_max);

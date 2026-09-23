@@ -2,16 +2,19 @@
 # measured in one run so a machine change moves every candidate together. `bench/harness/baseline.zig`
 # says why this is ratios and not throughputs, and what it deliberately leaves ungated.
 #
-# Taken on 2026-09-22 from the `comparison` job of .github/workflows/ci.yml, run 35811462374 on
-# commit 86a7ade: a GitHub-hosted ubuntu-24.04 runner, io_uring, one core, three runs per row, every
-# row's spread at or under 3 percent and none flagged. It is the first run with rotor's buffer group
-# sized per connection (`bench/echo/echo_runner_setup.zig`); the run before it, 35788660457, gave
-# rotor the whole pool. `bench/results/echo-sized-pool-github-2026-09-22.md` holds the run.
+# The ratios move with the processor, so each section holds one processor's, and a run is held only
+# to the section of the processor it ran on. A run on a processor not named here is held to nothing,
+# and prints its own `processor` line and rows in this format, ready to add. Retake a section with
+# `--write-baseline yes` and keep the `processor` line and the `echo ...` lines it prints.
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
-# rotor. To retake the whole file, run the comparison with `--write-baseline yes` and keep the
-# `echo ...` lines it prints.
-#
+# rotor. Both sections were taken on 2026-09-22 from the `comparison` job of
+# .github/workflows/ci.yml, on GitHub-hosted ubuntu-24.04 runners, io_uring, one core, three runs
+# per row, every row's spread under 10 percent and none flagged, with rotor's buffer group sized per
+# connection. `bench/results/` holds both runs.
+
+# Run 35811462374, commit 86a7ade.
+processor AMD EPYC 9V74 80-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
 echo 16 4096 rotor (accumulate) 1002
@@ -53,3 +56,48 @@ echo 64 65536 rotor (accumulate) 1003
 echo 64 65536 libuv 978
 echo 64 65536 libxev 1101
 echo 64 65536 std.Io.Threaded 831
+
+# Run 35813656107, commit ba273fd. Its libuv row at 64 connections and 64 KiB is the one that
+# failed the EPYC section, and it is why the file is split by processor.
+processor Intel(R) Xeon(R) 6973P-C
+# workload connections payload candidate ratio
+echo 16 4096 rotor 1000
+echo 16 4096 rotor (accumulate) 961
+echo 16 4096 libuv 834
+echo 16 4096 libxev 751
+echo 16 4096 std.Io.Threaded 563
+echo 16 8192 rotor 1000
+echo 16 8192 rotor (accumulate) 955
+echo 16 8192 libuv 806
+echo 16 8192 libxev 755
+echo 16 8192 std.Io.Threaded 541
+echo 16 16384 rotor 1000
+echo 16 16384 rotor (accumulate) 995
+echo 16 16384 libuv 812
+echo 16 16384 libxev 826
+echo 16 16384 std.Io.Threaded 524
+echo 16 65536 rotor 1000
+echo 16 65536 rotor (accumulate) 984
+echo 16 65536 libuv 954
+echo 16 65536 libxev 890
+echo 16 65536 std.Io.Threaded 624
+echo 64 4096 rotor 1000
+echo 64 4096 rotor (accumulate) 1008
+echo 64 4096 libuv 830
+echo 64 4096 libxev 789
+echo 64 4096 std.Io.Threaded 517
+echo 64 8192 rotor 1000
+echo 64 8192 rotor (accumulate) 970
+echo 64 8192 libuv 802
+echo 64 8192 libxev 828
+echo 64 8192 std.Io.Threaded 492
+echo 64 16384 rotor 1000
+echo 64 16384 rotor (accumulate) 978
+echo 64 16384 libuv 873
+echo 64 16384 libxev 958
+echo 64 16384 std.Io.Threaded 474
+echo 64 65536 rotor 1000
+echo 64 65536 rotor (accumulate) 1006
+echo 64 65536 libuv 1057
+echo 64 65536 libxev 1008
+echo 64 65536 std.Io.Threaded 739

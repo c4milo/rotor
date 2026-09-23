@@ -52,13 +52,19 @@ const baseline = harness.baseline;
 const output_buffer_bytes = 8192;
 
 pub fn main(init: std.process.Init) !void {
-    const options = try parse(init);
+    var options = try parse(init);
     var buffer: [output_buffer_bytes]u8 = undefined;
     var output = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     const writer = &output.interface;
 
+    // A baseline holds one processor's ratios per section, because ratios move with the processor.
+    const machine = harness.Machine.collect(init.io);
+    const processor = machine.cpu_model.slice();
     var baseline_rows: [baseline.rows_max]baseline.Row = undefined;
-    const recorded = try read_baseline(init, options, &baseline_rows);
+    const recorded = try read_baseline(init, options, processor, &baseline_rows, writer);
+    // A run the baseline cannot judge prints its ratios instead, so its processor can be added.
+    if (options.baseline_path != null and !recorded.found) options.write_baseline = true;
+    if (options.write_baseline) try baseline.render_processor(writer, processor);
 
     const present = try found(init, options, writer);
     if (present == 0) {
@@ -80,10 +86,10 @@ pub fn main(init: std.process.Init) !void {
             port = try one_configuration(init, options, .{
                 .connections = connection_count,
                 .payload_bytes = payload_bytes,
-            }, port, writer, &rowless, recorded, &regressed);
+            }, port, writer, &rowless, recorded.rows, &regressed);
         }
     }
-    if (recorded.len != 0) {
+    if (recorded.found) {
         try writer.print("echo_runner: {d} row(s) fell behind the baseline\n", .{regressed});
     }
     try writer.flush();
@@ -91,9 +97,9 @@ pub fn main(init: std.process.Init) !void {
     if (regressed != 0) return error.BehindBaseline;
 }
 
-/// The baseline file's rows, or an empty slice when no `--baseline` was given. The text is read into
-/// a buffer this function owns, and the rows borrow it, so both live as long as the process: a run
-/// reads its baseline once and holds it.
+/// The baseline file's rows for `processor`, and nothing when no `--baseline` was given. The text is
+/// read into a buffer this function owns, and the rows borrow it, so both live as long as the
+/// process: a run reads its baseline once and holds it.
 var baseline_text: [baseline_bytes_max]u8 = undefined;
 
 /// The most bytes a baseline file may hold. `rows_max` rows of a line each, with room to spare.
@@ -102,15 +108,23 @@ const baseline_bytes_max = 16 * 1024;
 fn read_baseline(
     init: std.process.Init,
     options: Options,
+    processor: []const u8,
     into: []baseline.Row,
-) ![]const baseline.Row {
-    const path = options.baseline_path orelse return &.{};
+    writer: *std.Io.Writer,
+) !baseline.Section {
+    const path = options.baseline_path orelse return .{ .rows = &.{}, .found = false };
+    if (processor.len == 0) return error.ProcessorUnknown;
     var file = try std.Io.Dir.cwd().openFile(init.io, path, .{});
     defer file.close(init.io);
     var reader = file.reader(init.io, &.{});
     const read = try reader.interface.readSliceShort(&baseline_text);
     if (read == baseline_text.len) return error.BaselineTooLarge;
-    return baseline.parse(baseline_text[0..read], into);
+    const section = try baseline.parse(baseline_text[0..read], processor, into);
+    if (!section.found) {
+        try writer.print("echo_runner: the baseline holds no rows for {s}, so nothing is gated; " ++
+            "the rows below, from `processor` on, are this run's ratios in its format\n", .{processor});
+    }
+    return section;
 }
 
 const Configuration = setup.Configuration;
