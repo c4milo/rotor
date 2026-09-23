@@ -61,7 +61,7 @@ pub const Queue = struct {
             .nsec = @intCast(nanoseconds % core.constants.ns_per_s),
         };
         var retry: u32 = 0;
-        while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+        while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
             const rc = std.c.kevent(
                 queue.descriptor,
                 changes.ptr,

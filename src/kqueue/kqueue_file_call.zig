@@ -18,7 +18,7 @@ const Answer = core.file_call.Answer(posix.E);
 
 /// The operation's result: a count, or the negation of a `core.Code`.
 pub fn result(request: Request) i32 {
-    return core.file_call.result(Kernel{}, request, constants.interrupt_retries_max);
+    return core.file_call.result(Kernel{}, request, core.constants.interrupt_retries_max);
 }
 
 /// The system calls themselves, each made once. A test hands `core.file_call.result` a struct of
@@ -104,7 +104,7 @@ const Syncs = struct {
             .bytes = &.{},
             .offset = 0,
         };
-        return core.file_call.result(syncs, request, constants.interrupt_retries_max);
+        return core.file_call.result(syncs, request, core.constants.interrupt_retries_max);
     }
 };
 

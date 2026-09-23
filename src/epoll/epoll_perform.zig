@@ -27,43 +27,9 @@ const Loop = epoll.Loop;
 const Slot = core.Slot;
 const Filter = core.waiters.Filter;
 
-pub const Attempt = struct {
-    outcome: Outcome,
-    /// The final result when `done`: a count or a descriptor, or the negation of a `core.Code`.
-    result: i32 = 0,
-    /// The provided buffer that holds the bytes of a receive from a group.
-    buffer_id: ?u16 = null,
+pub const Attempt = core.attempt.Attempt;
 
-    pub const Outcome = enum { done, wait_read, wait_write, offloaded };
-
-    /// The operation is the caller's offload's now, and its result arrives on a worker's ring
-    /// (decision 18). Only a file operation under the `offload` policy answers this, and only from
-    /// the flush: a file needs no readiness, so nothing here is reached from the reap.
-    const handed_out: Attempt = .{ .outcome = .offloaded };
-
-    fn done(result: i32) Attempt {
-        return .{ .outcome = .done, .result = result };
-    }
-
-    fn failed(errno: linux.E) Attempt {
-        return done(core.event.result_of(core.errno.code_of(errno)));
-    }
-
-    /// The direction an attempt that must wait asks for.
-    pub fn filter(attempt_result: Attempt) Filter {
-        assert(attempt_result.outcome == .wait_read or attempt_result.outcome == .wait_write);
-        return if (attempt_result.outcome == .wait_read) .read else .write;
-    }
-};
-
-/// The direction an operation of this kind waits on when it cannot complete at once.
-pub fn filter_of(code: core.Operation.Code) Filter {
-    return switch (code) {
-        .accept, .receive, .receive_from => .read,
-        .connect, .send, .send_to => .write,
-        else => unreachable,
-    };
-}
+pub const filter_of = core.attempt.filter_of;
 
 /// Makes the operation's system call once.
 pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
@@ -84,8 +50,8 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
     };
 }
 
-/// What one system call answered, with EINTR folded into `retry` and EAGAIN into `would_block`.
-const Answer = union(enum) { value: usize, retry, would_block, errno: linux.E };
+/// What one socket call answered, with EINTR folded into `retry` and EAGAIN into `would_block`.
+const Answer = core.attempt.Answer(linux.E);
 
 fn answer_of(rc: usize) Answer {
     return switch (linux.errno(rc)) {
@@ -100,7 +66,7 @@ fn answer_of(rc: usize) Answer {
 /// no window in which it blocks or survives an exec, and no second call as on macOS.
 fn attempt_accept(slot: *const Slot) Attempt {
     var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+    while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
         const rc = linux.accept4(slot.descriptor, null, null, socket_calls.socket_flags);
         switch (answer_of(rc)) {
             .retry => continue,
@@ -112,7 +78,7 @@ fn attempt_accept(slot: *const Slot) Attempt {
             .value => |accepted| return Attempt.done(@intCast(accepted)),
         }
     }
-    return Attempt.done(core.event.result_of(.would_block));
+    return Attempt.interrupted;
 }
 
 /// True for the errnos Linux's `accept4` answers when the connection it was about to hand over
@@ -196,7 +162,7 @@ fn attempt_receive(loop: *Loop, slot: *const Slot) Attempt {
 
 fn receive_into(descriptor: core.Descriptor, bytes: []u8) Attempt {
     var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+    while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
         switch (answer_of(linux.recvfrom(descriptor, bytes.ptr, bytes.len, 0, null, null))) {
             .retry => continue,
             .would_block => return .{ .outcome = .wait_read },
@@ -204,7 +170,7 @@ fn receive_into(descriptor: core.Descriptor, bytes: []u8) Attempt {
             .value => |count| return Attempt.done(@intCast(count)),
         }
     }
-    return Attempt.done(core.event.result_of(.would_block));
+    return Attempt.interrupted;
 }
 
 /// One datagram in. The buffer holds the head, the address and the control block in front of the
@@ -235,7 +201,7 @@ fn attempt_send_to(slot: *const Slot) Attempt {
 fn attempt_send(slot: *const Slot) Attempt {
     const bytes = slot.bytes();
     var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+    while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
         // A closed peer answers EPIPE and raises no SIGPIPE, which would end the process.
         const rc = linux.sendto(slot.descriptor, bytes.ptr, bytes.len, linux.MSG.NOSIGNAL, null, 0);
         switch (answer_of(rc)) {
@@ -245,7 +211,7 @@ fn attempt_send(slot: *const Slot) Attempt {
             .value => |count| return Attempt.done(@intCast(count)),
         }
     }
-    return Attempt.done(core.event.result_of(.would_block));
+    return Attempt.interrupted;
 }
 
 fn attempt_shutdown(slot: *const Slot) Attempt {
@@ -254,21 +220,11 @@ fn attempt_shutdown(slot: *const Slot) Attempt {
     return Attempt.failed(linux.errno(rc));
 }
 
-/// What the loop's policy says to do with a file operation (decision 18). `refuse` is the default,
-/// because a stall nobody asked for is the complaint that record answers.
-fn policy_attempt(loop: *const Loop) ?Attempt {
-    return switch (loop.file_policy) {
-        .refuse => Attempt.done(core.event.result_of(.unsupported)),
-        .blocking => null,
-        .offload => Attempt.handed_out,
-    };
-}
-
 /// A file operation under the `blocking` policy runs inline and blocks the loop for its duration
 /// (decisions 2 and 20). Under `refuse` it never runs, and under `offload` a worker runs it through
 /// the same `file_call.result`.
 fn attempt_file(loop: *const Loop, slot: *const Slot) Attempt {
-    if (policy_attempt(loop)) |decided| return decided;
+    if (core.attempt.policy_attempt(loop.file_policy)) |decided| return decided;
     return Attempt.done(file_call.result(core.file_call.request_of_slot(slot)));
 }
 
@@ -280,19 +236,6 @@ comptime {
 }
 
 const testing = std.testing;
-
-test "an operation waits on the direction its call would block in" {
-    try testing.expectEqual(Filter.read, filter_of(.accept));
-    try testing.expectEqual(Filter.read, filter_of(.receive));
-    try testing.expectEqual(Filter.read, filter_of(.receive_from));
-    try testing.expectEqual(Filter.write, filter_of(.connect));
-    try testing.expectEqual(Filter.write, filter_of(.send));
-    try testing.expectEqual(Filter.write, filter_of(.send_to));
-    const read_wait: Attempt = .{ .outcome = .wait_read };
-    const write_wait: Attempt = .{ .outcome = .wait_write };
-    try testing.expectEqual(Filter.read, read_wait.filter());
-    try testing.expectEqual(Filter.write, write_wait.filter());
-}
 
 test "a network error that belongs to the next connection is skipped, not the listener's end" {
     for ([_]linux.E{ .NETDOWN, .PROTO, .NOPROTOOPT, .HOSTDOWN, .NONET }) |errno| {

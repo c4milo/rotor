@@ -178,7 +178,7 @@ pub const Queue = struct {
             .nsec = @intCast(wait_ns % core.constants.ns_per_s),
         };
         var retry: u32 = 0;
-        while (retry <= constants.interrupt_retries_max) : (retry += 1) {
+        while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
             const rc = linux.syscall6(
                 .epoll_pwait2,
                 @bitCast(@as(isize, queue.descriptor)),

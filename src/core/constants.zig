@@ -113,6 +113,10 @@ pub const buffer_ring_alignment = 64 * 1024;
 /// ring, so every backend asks a caller for the same amount. `uring_buffers.zig` asserts the size.
 pub const buffer_ring_entry_bytes = 16;
 
+/// Times kqueue and epoll make a system call again after a signal interrupted it (EINTR) before
+/// they report the operation as failed. A signal storm is the only way to reach it.
+pub const interrupt_retries_max: u32 = 64;
+
 /// The largest size `sync.set_buffer_bytes` carries for a socket buffer, which is what
 /// `setsockopt` takes. It is not a size any kernel grants: each refuses or caps long before it, in
 /// its own way, which is what the call answers and `SizeRefused` reports.
@@ -141,6 +145,7 @@ comptime {
     assert(std.math.isPowerOfTwo(buffers_per_group_max));
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));
     assert(buffer_ring_entry_bytes >= @sizeOf(u16));
+    assert(interrupt_retries_max >= 1);
 }
 
 test "the hot structure sizes are one cache line and one completion entry" {

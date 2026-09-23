@@ -16,6 +16,8 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
+const errno_module = @import("errno.zig");
+const event = @import("event.zig");
 const operation = @import("operation.zig");
 
 const Address = operation.Address;
@@ -157,6 +159,36 @@ pub fn payload_capacity(buffer_bytes: u32, options: GroupOptions) u32 {
 
 /// One received datagram: what it carries, and the bytes themselves.
 pub const Delivery = struct { from: Received, bytes: []u8 };
+
+/// What one `recvmsg` or `sendmsg` of a readiness backend came to: a result, or the answer that the
+/// socket is not ready.
+pub const Answer = struct {
+    /// The bytes the call moved, or the negation of the code the kernel refused with.
+    result: i32,
+    would_block: bool,
+
+    pub const not_ready: Answer = .{ .result = 0, .would_block = true };
+
+    pub fn done(result: i32) Answer {
+        return .{ .result = result, .would_block = false };
+    }
+
+    pub fn refused(code: event.Code) Answer {
+        return done(event.result_of(code));
+    }
+};
+
+/// What a `recvmsg` or `sendmsg` that failed with `errno` comes to, or null when it is to be made
+/// again. EINTR means a signal interrupted the call before it moved a byte, so the caller's loop
+/// makes the call again, and EINTR never reaches `errno.datagram_code_of`, which asserts it does
+/// not. `errno` is the backend's own errno type.
+pub fn answer_of(errno: anytype) ?Answer {
+    return switch (errno) {
+        .INTR => null,
+        .AGAIN => Answer.not_ready,
+        else => Answer.refused(errno_module.datagram_code_of(errno)),
+    };
+}
 
 /// The kernel's `in_pktinfo`, which `IP_PKTINFO` reports and takes, laid out the same on Linux and
 /// on Darwin (`netinet/in.h`). The two addresses are not interchangeable and the direction picks

@@ -4,6 +4,7 @@
 //! memory, the list of declarations every backend carries, the drain of a loop that is shutting
 //! down, the seeded generator the property tests draw from, and the named limits. It imports
 //! nothing but std and reads no clock.
+pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
@@ -42,6 +43,7 @@ pub const Slot = slot.Slot;
 pub const Tables = tables.Tables;
 
 test {
+    _ = attempt;
     _ = buffer_group;
     _ = constants;
     _ = datagram;

@@ -15,7 +15,7 @@ const Answer = core.file_call.Answer(linux.E);
 
 /// The operation's result: a count, or the negation of a `core.Code`.
 pub fn result(request: Request) i32 {
-    return core.file_call.result(Kernel{}, request, constants.interrupt_retries_max);
+    return core.file_call.result(Kernel{}, request, core.constants.interrupt_retries_max);
 }
 
 /// The system calls themselves, each made once.
@@ -62,7 +62,7 @@ fn negated(errno: linux.E) usize {
 test "an interrupted pread is made again, and one that would block ends with would_block" {
     var bytes: [8]u8 = undefined;
     const request: Request = .{ .code = .read, .descriptor = 0, .bytes = &bytes, .offset = 0 };
-    const limit = constants.interrupt_retries_max;
+    const limit = core.constants.interrupt_retries_max;
 
     var interrupted: Returns = .{ .words = &.{ negated(.INTR), 4 } };
     try testing.expectEqual(@as(i32, 4), core.file_call.result(&interrupted, request, limit));
@@ -76,7 +76,7 @@ test "an interrupted pread is made again, and one that would block ends with wou
 
 test "an interrupted fdatasync is made again, and its other errnos end it with their code" {
     const request: Request = .{ .code = .fdatasync, .descriptor = 0, .bytes = &.{}, .offset = 0 };
-    const limit = constants.interrupt_retries_max;
+    const limit = core.constants.interrupt_retries_max;
 
     var interrupted: Returns = .{ .words = &.{ negated(.INTR), 0 } };
     try testing.expectEqual(@as(i32, 0), core.file_call.result(&interrupted, request, limit));

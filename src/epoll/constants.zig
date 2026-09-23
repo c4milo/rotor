@@ -14,10 +14,6 @@ pub const readiness_max: u32 = 256;
 // registration is made as it is needed, nothing accumulates, and the flush needs no bound beyond
 // the pending list it walks (decision 20, "The shape").
 
-/// Times the backend makes a system call again after a signal interrupted it (EINTR) before it
-/// reports the operation as failed. A signal storm is the only way to reach it.
-pub const interrupt_retries_max: u32 = 64;
-
 /// What the readiness of a loop's own eventfd carries as its `user_data`, so the reap tells a wake
 /// from an operation without consulting a table. Every other registration carries its descriptor,
 /// an `i32` that is not negative, so no registration can carry this value: the comptime assert
@@ -27,6 +23,5 @@ pub const wake_user_data: u64 = std.math.maxInt(u64);
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
-    assert(interrupt_retries_max >= 1);
     assert(wake_user_data > std.math.maxInt(i32));
 }
