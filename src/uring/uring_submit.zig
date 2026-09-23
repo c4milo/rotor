@@ -42,19 +42,8 @@ pub fn flush(loop: *Loop) void {
     const queued = tables.pending.count;
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
-        const index = tables.pending.peek() orelse break;
-        const slot = tables.table.at(index);
-        assert(slot.state == .queued);
-        if (slot.flags.cancel_requested) {
-            _ = tables.pending.pop(tables.table.slots);
-            tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
-        } else if (slot.code == .timer) {
-            _ = tables.pending.pop(tables.table.slots);
-            slot.state = .submitted;
-            tables.arm(index, slot);
-        } else if (!flush_entry(loop, index, slot)) {
-            break;
-        }
+        const index = tables.next_pending() orelse break;
+        if (!flush_entry(loop, index, tables.table.at(index))) break;
     }
     assert(tables.pending.count <= queued);
 }
@@ -71,7 +60,7 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
         .post => {
             extra.target_ring = loop.registry_descriptor(slot);
             if (extra.target_ring < 0) {
-                _ = loop.tables.pending.pop(loop.tables.table.slots);
+                loop.tables.take_pending(index);
                 loop.tables.finish_local(index, core.event.result_of(.loop_not_found));
                 return true;
             }
@@ -79,11 +68,10 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
     }
-    _ = loop.tables.pending.pop(loop.tables.table.slots);
+    loop.tables.take_pending(index);
     const user_data = loop.tables.table.handle_of(index).to_bits();
     prepare(loop.ring.get_sqe().?, slot, user_data, extra);
-    slot.state = .submitted;
-    loop.tables.arm(index, slot);
+    loop.tables.hand_over(index, slot);
     return true;
 }
 

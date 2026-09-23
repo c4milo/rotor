@@ -26,10 +26,10 @@ pub fn flush(loop: *Loop) void {
     const queued = tables.pending.count;
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
-        const index = tables.pending.peek() orelse break;
+        const index = tables.next_pending() orelse break;
         // An operation that has to wait needs room for its registration.
         if (loop.changes_used == constants.changes_max) break;
-        _ = tables.pending.pop(tables.table.slots);
+        tables.take_pending(index);
         flush_one(loop, index, tables.table.at(index));
     }
     assert(tables.pending.count <= queued);
@@ -38,14 +38,7 @@ pub fn flush(loop: *Loop) void {
 fn flush_one(loop: *Loop, index: u32, slot: *Slot) void {
     assert(slot.state == .queued);
     const tables = &loop.tables;
-    if (slot.flags.cancel_requested) {
-        return tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
-    }
     switch (slot.code) {
-        .timer => {
-            slot.state = .submitted;
-            tables.arm(index, slot);
-        },
         .post => tables.finish_local(index, post(loop, slot)),
         .close => tables.finish_local(index, close(loop, slot)),
         else => start(loop, index, slot),
@@ -76,8 +69,7 @@ pub fn wait(loop: *Loop, index: u32, slot: *Slot, filter: Filter) void {
     if (slot.flags.multishot) assert(loop.waiters.count(slot.descriptor, filter) == 0);
     const first = loop.waiters.add(tables.table.slots, slot.descriptor, filter, index);
     if (first) register(loop, slot.descriptor, filter, slot.flags.multishot);
-    slot.state = .submitted;
-    tables.arm(index, slot);
+    tables.hand_over(index, slot);
 }
 
 /// Adds the change that asks the kernel to report `descriptor` ready on `filter`: once, or for
@@ -167,15 +159,7 @@ fn post(loop: *Loop, slot: *const Slot) i32 {
 /// finished list keeps their order, so the caller sees each of them before the close
 /// (decision 5, rule 6). Closing the descriptor removes its filters from the kqueue.
 fn close(loop: *Loop, slot: *const Slot) i32 {
-    const tables = &loop.tables;
-    const limit = tables.table.capacity();
-    var ended: u32 = 0;
-    while (ended < limit) : (ended += 1) {
-        const index = loop.waiters.pop_any(tables.table.slots, slot.descriptor) orelse break;
-        const waiting = tables.table.at(index);
-        waiting.flags.cancel_requested = true;
-        tables.finish_local(index, core.event.result_of(core.tables.cancel_code(waiting)));
-    }
+    loop.tables.end_waiters(&loop.waiters, slot.descriptor);
     sync.close_now(slot.descriptor);
     return 0;
 }

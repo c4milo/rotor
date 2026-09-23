@@ -47,5 +47,5 @@ pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     // A kept filter goes, and an operation that waited behind this one gets a one-shot filter of
     // its own. A one-shot filter is left to fire: the reap finds no waiter, or the next one.
     if (slot.flags.multishot) submit_module.after_leaving(loop, slot.descriptor, filter, true);
-    tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
+    tables.finish_canceled(index);
 }

@@ -52,5 +52,5 @@ pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     if (loop.waiters.count(slot.descriptor, filter) == 0) {
         submit_module.register(loop, slot.descriptor) catch {};
     }
-    tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
+    tables.finish_canceled(index);
 }

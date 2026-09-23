@@ -60,10 +60,9 @@ const Fixture = struct {
     /// What a backend's flush does to the oldest queued slot: hands it to the kernel.
     fn hand_to_kernel(fixture: *Fixture) u32 {
         const tables = &fixture.tables;
-        const index = tables.pending.pop(tables.table.slots).?;
-        const slot = tables.table.at(index);
-        slot.state = .submitted;
-        tables.arm(index, slot);
+        const index = tables.pending.peek().?;
+        tables.take_pending(index);
+        tables.hand_over(index, tables.table.at(index));
         return index;
     }
 };
@@ -139,6 +138,42 @@ test "a cancel ends a timer, leaves a queued slot to the flush and an operation 
     try testing.expectEqual(CancelAction.none, queued_request);
     try testing.expectEqual(Slot.State.queued, queued_slot.state);
     try testing.expect(queued_slot.flags.cancel_requested);
+}
+
+test "next_pending ends a cancelled slot and arms a timer, and answers the rest" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    var handles: [3]Handle = undefined;
+    const batch = [_]Operation{
+        fixture.receive(1, 0),
+        Fixture.timer(2, constants.ns_per_s),
+        fixture.receive(3, 0),
+    };
+    try testing.expectEqual(@as(u32, 3), tables.submit(&batch, &handles));
+    const cancelled = handles[0].index;
+    const action = tables.request_cancel(cancelled, tables.table.at(cancelled));
+    try testing.expectEqual(CancelAction.none, action);
+
+    // The cancelled receive ends and the timer is armed, and neither is answered: no kernel takes
+    // them. The second receive is, still queued until the backend takes it.
+    const next = tables.next_pending().?;
+    try testing.expectEqual(handles[2].index, next);
+    try testing.expectEqual(Slot.State.finishing, tables.table.at(cancelled).state);
+    try testing.expectEqual(Slot.State.submitted, tables.table.at(handles[1].index).state);
+    try testing.expect(tables.timers.is_armed(handles[1].index));
+    try testing.expectEqual(Slot.State.queued, tables.table.at(next).state);
+
+    tables.take_pending(next);
+    tables.hand_over(next, tables.table.at(next));
+    try testing.expectEqual(@as(?u32, null), tables.next_pending());
+    // A slot the kernel refused for now goes back, and is answered again.
+    tables.requeue(next);
+    try testing.expectEqual(next, tables.next_pending().?);
+
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), tables.drain_finished(&events));
+    try testing.expectError(error.Canceled, events[0].outcome());
 }
 
 test "due timers finish in deadline order, and an operation whose deadline passed is returned" {

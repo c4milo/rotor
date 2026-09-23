@@ -49,10 +49,8 @@ const Fixture = struct {
         const taken = fixture.loop.submit(&.{operation}, &handles);
         std.debug.assert(taken == 1);
         const tables = &fixture.loop.tables;
-        const index = tables.pending.pop(tables.table.slots).?;
-        const slot = tables.table.at(index);
-        slot.state = .submitted;
-        tables.arm(index, slot);
+        tables.take_pending(handles[0].index);
+        tables.hand_over(handles[0].index, tables.table.at(handles[0].index));
         return handles[0];
     }
 
@@ -124,8 +122,8 @@ test "EAGAIN resubmits without an event, and past the bound the caller hears wou
         try testing.expectEqual(core.Slot.State.queued, slot.state);
         try testing.expectEqual(round + 1, slot.retries);
         // What `flush` does to a queued slot.
-        _ = loop.tables.pending.pop(loop.tables.table.slots).?;
-        slot.state = .submitted;
+        loop.tables.take_pending(handle.index);
+        loop.tables.hand_over(handle.index, slot);
     }
     const event = fixture.fail(handle, .INTR).?;
     try testing.expectError(error.WouldBlock, event.outcome());

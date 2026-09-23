@@ -28,7 +28,8 @@ pub fn flush(loop: *Loop) void {
     const queued = tables.pending.count;
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
-        const index = tables.pending.pop(tables.table.slots) orelse break;
+        const index = tables.next_pending() orelse break;
+        tables.take_pending(index);
         flush_one(loop, index, tables.table.at(index));
     }
     assert(tables.pending.count <= queued);
@@ -37,14 +38,7 @@ pub fn flush(loop: *Loop) void {
 fn flush_one(loop: *Loop, index: u32, slot: *Slot) void {
     assert(slot.state == .queued);
     const tables = &loop.tables;
-    if (slot.flags.cancel_requested) {
-        return tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
-    }
     switch (slot.code) {
-        .timer => {
-            slot.state = .submitted;
-            tables.arm(index, slot);
-        },
         .post => tables.finish_local(index, post(loop, slot)),
         .close => tables.finish_local(index, close(loop, slot)),
         else => start(loop, index, slot),
@@ -87,8 +81,7 @@ fn wait(loop: *Loop, index: u32, slot: *Slot, filter: Filter) void {
             return tables.finish_local(index, core.event.result_of(code));
         };
     }
-    slot.state = .submitted;
-    tables.arm(index, slot);
+    tables.hand_over(index, slot);
 }
 
 /// Makes the kernel report `descriptor` for exactly the directions an operation waits on, or
@@ -122,15 +115,7 @@ fn post(loop: *Loop, slot: *const Slot) i32 {
 /// Closing the descriptor takes its registration out of the epoll instance, as the kernel removes a
 /// file from every instance when its last descriptor closes.
 fn close(loop: *Loop, slot: *const Slot) i32 {
-    const tables = &loop.tables;
-    const limit = tables.table.capacity();
-    var ended: u32 = 0;
-    while (ended < limit) : (ended += 1) {
-        const index = loop.waiters.pop_any(tables.table.slots, slot.descriptor) orelse break;
-        const waiting = tables.table.at(index);
-        waiting.flags.cancel_requested = true;
-        tables.finish_local(index, core.event.result_of(core.tables.cancel_code(waiting)));
-    }
+    loop.tables.end_waiters(&loop.waiters, slot.descriptor);
     sync.close_now(slot.descriptor);
     return 0;
 }

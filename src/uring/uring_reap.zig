@@ -93,8 +93,7 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     const errno = errno_module.errno_of(cqe.res);
     if (should_retry(slot, errno)) {
         slot.retries += 1;
-        slot.state = .queued;
-        loop.tables.pending.push(loop.tables.table.slots, handle.index);
+        loop.tables.requeue(handle.index);
         return null;
     }
     var code = errno_module.code_of(errno, .{

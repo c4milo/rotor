@@ -60,7 +60,7 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
     const code = core.offload.code_of(slot.code).?;
     const bytes = if (code == .fdatasync) &[_]u8{} else slot.bytes();
 
-    slot.state = .submitted;
+    loop.tables.hand_over(index, slot);
     const work = &loop.works[index];
     work.* = .{
         .run = run,

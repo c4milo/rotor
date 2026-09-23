@@ -17,8 +17,10 @@ const slot_list_module = @import("slot_list.zig");
 const slot_table_module = @import("slot_table.zig");
 const statistics_module = @import("statistics.zig");
 const timer_heap_module = @import("timer_heap.zig");
+const waiters_module = @import("waiters.zig");
 
 const Code = event_module.Code;
+const Descriptor = operation_module.Descriptor;
 const Event = event_module.Event;
 const Handle = handle_module.Handle;
 const LoopId = operation_module.LoopId;
@@ -190,6 +192,76 @@ pub const Tables = struct {
         tables.table.release(index);
     }
 
+    /// The oldest queued slot a backend must hand to its kernel, still queued, or null when none is
+    /// left. On the way it ends every slot at the head of the list whose cancel came while it
+    /// waited, and arms every timer there: neither reaches a kernel (decision 5, rule 2). Every
+    /// backend's flush calls it, checks its own room, and then calls `take_pending`.
+    pub fn next_pending(tables: *Tables) ?u32 {
+        const queued = tables.pending.count;
+        var visited: u32 = 0;
+        while (visited < queued) : (visited += 1) {
+            const index = tables.pending.peek() orelse return null;
+            const slot = tables.table.at(index);
+            assert(slot.state == .queued);
+            if (!slot.flags.cancel_requested and slot.code != .timer) return index;
+            tables.take_pending(index);
+            if (slot.flags.cancel_requested) {
+                tables.finish_canceled(index);
+            } else {
+                tables.hand_over(index, slot);
+            }
+        }
+        return null;
+    }
+
+    /// Takes `index`, the slot `next_pending` answered, off the pending list: the backend hands it
+    /// to its kernel now, or ends it itself.
+    pub fn take_pending(tables: *Tables, index: u32) void {
+        const taken = tables.pending.pop(tables.table.slots);
+        assert(taken == index);
+    }
+
+    /// Marks a slot the backend has handed to its kernel, or to an offload, `submitted`, and arms
+    /// its deadline, or a timer's delay.
+    pub fn hand_over(tables: *Tables, index: u32, slot: *Slot) void {
+        assert(slot.state == .queued);
+        slot.state = .submitted;
+        tables.arm(index, slot);
+    }
+
+    /// Puts a submitted slot back on the pending list for the next flush to hand over again: what
+    /// io_uring's reap does with an operation the kernel refused for now. Its deadline stays armed.
+    pub fn requeue(tables: *Tables, index: u32) void {
+        const slot = tables.table.at(index);
+        assert(slot.state == .submitted);
+        slot.state = .queued;
+        tables.pending.push(tables.table.slots, index);
+    }
+
+    /// Ends the operation in `index` with its cancel's code: `canceled`, or `timeout` when the loop
+    /// cancelled it because its deadline passed.
+    pub fn finish_canceled(tables: *Tables, index: u32) void {
+        tables.finish_local(index, event_module.result_of(cancel_code(tables.table.at(index))));
+    }
+
+    /// Ends every operation that waits on `descriptor` in `waiting`, oldest first, with
+    /// `canceled`: what a readiness backend's `close` does before it closes the descriptor
+    /// (decision 5, rule 6). The finished list keeps their order, so the caller sees each of them
+    /// before the close.
+    pub fn end_waiters(
+        tables: *Tables,
+        waiting: *waiters_module.Waiters,
+        descriptor: Descriptor,
+    ) void {
+        const limit = tables.table.capacity();
+        var ended: u32 = 0;
+        while (ended < limit) : (ended += 1) {
+            const index = waiting.pop_any(tables.table.slots, descriptor) orelse break;
+            tables.table.at(index).flags.cancel_requested = true;
+            tables.finish_canceled(index);
+        }
+    }
+
     /// The loop produced the operation's final result itself. The slot waits on `finished`, and
     /// the next `drain_finished` hands its event over and releases it: never the call that
     /// produced the result (decision 5, rule 2).
@@ -266,7 +338,7 @@ pub const Tables = struct {
         }
         if (slot.code != .timer) return .backend;
         tables.timers.disarm(index);
-        tables.finish_local(index, event_module.result_of(cancel_code(slot)));
+        tables.finish_canceled(index);
         return .none;
     }
 
