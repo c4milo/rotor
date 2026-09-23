@@ -189,36 +189,42 @@ several threads.
 
 These are summaries of runs of the harness in this repository, with each server running one event
 loop on one thread. Each cell is rotor's throughput divided by the other library's: above 1.00,
-rotor is faster. A cell is `undecided` when either side's runs disagreed by 10 percent or more.
-The two Linux columns are GitHub-hosted runners that were given different processors, and the
-ratios move with the processor.
+rotor is faster. A cell is `undecided` when either side's runs disagreed by 10 percent or more, or
+when another step of the same run measured the two differently. The Linux columns are GitHub-hosted
+runners that were given different processors, and the ratios move with the processor.
 
 TCP echo:
 
-| connections | payload | against | macOS, kqueue, Apple M1 Pro | Linux, io_uring, AMD EPYC 9V74 | Linux, io_uring, Intel Xeon 6973P-C |
-|---:|---:|---|---:|---:|---:|
-| 16 | 4 KiB | libuv | 1.01 | 1.04 | 1.20 |
-| 16 | 4 KiB | libxev | 1.24 | 1.12 | 1.33 |
-| 16 | 64 KiB | libuv | 0.97 | 1.01 | 1.05 |
-| 16 | 64 KiB | libxev | 0.98 | 0.92 | 1.12 |
-| 64 | 4 KiB | libuv | 1.02 | 1.05 | 1.20 |
-| 64 | 4 KiB | libxev | undecided | 1.04 | 1.27 |
-| 64 | 64 KiB | libuv | 0.99 | 1.02 | 0.95 |
-| 64 | 64 KiB | libxev | 1.05 | 0.91 | 0.99 |
+| connections | payload | against | macOS, kqueue, Apple M1 Pro | Linux, io_uring, AMD EPYC 9V74 | Linux, io_uring, Intel Xeon 6973P-C | Linux, io_uring, AMD EPYC 7763 |
+|---:|---:|---|---:|---:|---:|---:|
+| 16 | 4 KiB | libuv | 1.01 | 1.04 | 1.20 | 1.15 |
+| 16 | 4 KiB | libxev | 1.24 | 1.12 | 1.33 | undecided |
+| 16 | 64 KiB | libuv | 0.97 | 1.01 | 1.05 | undecided |
+| 16 | 64 KiB | libxev | 0.98 | 0.92 | 1.12 | undecided |
+| 64 | 4 KiB | libuv | 1.02 | 1.05 | 1.20 | 1.17 |
+| 64 | 4 KiB | libxev | undecided | 1.04 | 1.27 | 1.08 |
+| 64 | 64 KiB | libuv | 0.99 | 1.02 | 0.95 | 1.04 |
+| 64 | 64 KiB | libxev | 1.05 | 0.91 | 0.99 | undecided |
 
-Other workloads, on macOS:
+Other workloads:
 
-| workload | against libuv | against libxev |
-|---|---:|---:|
-| timer churn, 256 timers, fires per second | 1.22 | 1.16 |
-| timer churn, 4,096 timers, fires per second | 2.02 | 1.26 |
-| one message between loops on two cores, messages per second | 0.74, undecided | 0.89, undecided |
-| random 4 KiB file reads on a thread pool, 32 in flight | 1.00 | not measured |
-| accept storm | undecided | undecided |
+| workload | against | macOS, kqueue, Apple M1 Pro | Linux, io_uring, AMD EPYC 7763 |
+|---|---|---:|---:|
+| timer churn, 256 timers, fires per second | libuv | 1.22 | 1.12 |
+| timer churn, 256 timers, fires per second | libxev | 1.16 | 1.04 |
+| timer churn, 4,096 timers, fires per second | libuv | 2.02 | 1.96 |
+| timer churn, 4,096 timers, fires per second | libxev | 1.26 | 3.58 |
+| one message between loops on two cores, messages per second | libuv | 0.74, undecided | 1.12 |
+| one message between loops on two cores, messages per second | libxev | 0.89, undecided | 1.11 |
+| random 4 KiB file reads on a thread pool, 32 in flight | libuv | 1.00 | not measured |
+| accept storm | libuv | undecided | undecided |
+| accept storm | libxev | undecided | undecided |
 
-rotor's timers keep their full rate, and libxev's fire closer to each deadline. On the cross-core
-message, libuv's latency is lower. [`docs/benchmarks.md`](docs/benchmarks.md) has the full tables,
-with latency, memory, the machines, and the commands to take every number again.
+rotor's timers keep their full rate on both machines. At 4,096 timers, libxev's fires are closer to
+their deadlines than rotor's on macOS, and further from them on the EPYC 7763. On the cross-core
+message, libuv's latency is lower on macOS, and the three have about the same median latency on the
+EPYC 7763. [`docs/benchmarks.md`](docs/benchmarks.md) has the full tables, with latency, memory,
+the machines, and the commands to take every number again.
 
 ## Documentation
 
