@@ -111,8 +111,7 @@ pub const Series = struct {
     }
 
     /// The middle run's peak resident memory. Reported and never judged: a fixed pool against a
-    /// buffer per connection is a trade a caller makes, not a regression, so `report_comparison`
-    /// leaves it out of what counts as a loss.
+    /// buffer per connection is a trade a caller makes, not a regression, so no gate reads it.
     pub fn median_peak_rss_bytes(series: Series) u64 {
         return series.median_latency(peak_rss_field);
     }
@@ -217,8 +216,8 @@ const latency_p9999 = "p9999_ns";
 const operations_field = "operations";
 const peak_rss_field = "peak_rss_bytes";
 
-/// What a row says when its runs disagree too much to decide anything. Capitals, as
-/// report_comparison's loss mark is, so a reader who skims cannot miss it.
+/// What a row says when its runs disagree too much to decide anything. Capitals, so a reader who
+/// skims cannot miss it.
 pub const unreliable_mark = "**RUNS DISAGREE**";
 
 /// The mark on a row that other work leaned on. It is a separate mark from the spread's: a row

@@ -1,7 +1,6 @@
 //! `Result`, what one run of one candidate on one workload measured, and how results print: a
 //! Markdown table for a person, and one JSON object per line for a file that results append to
-//! and that diffs cleanly. report_comparison.zig prints several candidates against rotor and
-//! marks the rows rotor loses; this file is the entry point and re-exports it.
+//! and that diffs cleanly.
 //!
 //! Every renderer writes to the `std.Io.Writer` the caller backs with its own buffer, so nothing
 //! here allocates, and a buffer that is too small is an error and never a cut line. Every number
@@ -13,12 +12,6 @@ const Writer = std.Io.Writer;
 const text = @import("text.zig");
 const histogram_module = @import("histogram.zig");
 const Histogram = histogram_module.Histogram;
-
-pub const comparison = @import("report_comparison.zig");
-pub const Losses = comparison.Losses;
-pub const ComparisonError = comparison.ComparisonError;
-pub const render_comparison = comparison.render_comparison;
-pub const ratio_thousandths = comparison.ratio_thousandths;
 
 /// Nanoseconds in one second.
 const ns_per_s: u64 = 1_000_000_000;
@@ -180,7 +173,7 @@ pub fn write_cells(writer: *Writer, cells: []const []const u8) Writer.Error!void
     }
 }
 
-/// The results the tests of this file and of report_comparison.zig are built from. Nothing
+/// The results the tests of the harness are built from. Nothing
 /// outside a test names it, so no harness build holds it.
 pub const fixtures = struct {
     /// The numbers the results share: the `echo` configuration, the span of every run in

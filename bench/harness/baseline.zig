@@ -37,8 +37,8 @@
 //!
 //! - **Latency.** A percentile is a tail, and the tails of a shared runner move far more than its
 //!   throughput does. They are reported in the table and read by a person.
-//! - **Memory.** A fixed pool against a buffer per connection is a trade a caller makes, which
-//!   `report_comparison.zig` also leaves out of what counts as a loss.
+//! - **Memory.** A fixed pool against a buffer per connection is a trade a caller makes, not a
+//!   regression.
 //! - **A row whose runs disagree.** `series.unreliable()` means the run could not decide anything,
 //!   so gating it would fail on noise. Such a row is named in the verdict and counted apart, never
 //!   silently passed.

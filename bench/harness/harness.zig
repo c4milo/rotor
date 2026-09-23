@@ -6,12 +6,11 @@
 //!   the Linux text files it reads.
 //! - `series`: the several runs of one candidate on one workload, the median and spread they
 //!   make, and the mark for a row whose runs disagree too much to decide anything.
-//! - `report`: one result of one run and how it prints, with `report_comparison`, the table that
-//!   sets several candidates against rotor and marks the rows rotor loses, and `report_parse`,
-//!   which reads a result back from the line a candidate in its own process printed.
+//! - `report`: one result of one run and how it prints, with `report_parse`, which reads a result
+//!   back from the line a candidate in its own process printed.
 //! - `clock`: the monotonic clock every benchmark reads, so two spans are comparable.
-//! - `load`: the machine's load average, and the window of it a series was taken inside, so a row
-//!   spoiled by other work arriving says so instead of leaving it to the spread.
+//! - `other_work`: how busy the machine was in a pause before and after each run, and the window
+//!   of those readings a series was taken inside, so a row other work leaned on says so.
 //! - `percentile`: the nearest-rank percentile of an exactly kept sample, which five bench programs
 //!   each carried a copy of.
 //! - `candidates`: starting a candidate's program and reading back the line it printed, which
@@ -24,7 +23,6 @@ pub const machine = @import("machine.zig");
 pub const machine_block = @import("machine_block.zig");
 pub const machine_proc = @import("machine_proc.zig");
 pub const report = @import("report.zig");
-pub const report_comparison = @import("report_comparison.zig");
 pub const report_parse = @import("report_parse.zig");
 pub const clock = @import("clock.zig");
 pub const other_work = @import("other_work.zig");
@@ -47,7 +45,6 @@ test {
     _ = machine_block;
     _ = machine_proc;
     _ = report;
-    _ = report_comparison;
     _ = report_parse;
     _ = series;
     _ = clock;
