@@ -183,8 +183,11 @@ fn sync(descriptor: core.Descriptor) i32 {
 /// produced the result.
 ///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
+///
+/// It does not check the owner. `tick` checks it first, before its flush and expiry touch the
+/// tables, and in the loop only `tick` calls this. A second check here halted the same tick, so no
+/// halt scenario could show that `tick`'s own check halts, as decision 4 requires (2026-09-22).
 pub fn drain(loop: *Loop) u32 {
-    loop.tables.assert_owner();
     var finished: u32 = 0;
     var messages: [messages_per_drain]core.Message = undefined;
     for (loop.completions) |*ring| {
