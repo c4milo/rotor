@@ -76,7 +76,8 @@ jobs:
         run: zig build test-linux
       # A consumer reported on 2026-09-22 that GitHub's runners "disable io_uring". On this image
       # they do not: the cost and comparison jobs measure rows C7 and C17 natively and run rotor's
-      # io_uring echo, and rotor has no fallback to hide behind. What does refuse io_uring_setup is
+      # io_uring echo, whose server is built on the io_uring backend itself and so cannot fall back
+      # to epoll. What does refuse io_uring_setup is
       # Docker's default seccomp profile, which is why the step below passes seccomp=unconfined.
       # This step prints both facts so a run's log answers the question without anyone guessing.
       # It never fails the job: it reports what the runner allows, it does not require anything.
@@ -186,22 +187,27 @@ jobs:
           zig build bench-alternatives
       # Held to `bench/baseline/echo.txt`, so a comparison checks itself: a candidate that gained on
       # rotor past the margin fails this step and names the row. The baseline records ratios between
-      # candidates of one run, never throughputs, because this pool hands out a different processor
-      # each time (`bench/harness/baseline.zig`). This job is dispatched by hand, so the gate runs
+      # candidates of one run, never throughputs, and one section of them per processor, because
+      # this pool hands out a different processor each time and the ratios move with it
+      # (`bench/harness/baseline.zig`). A run on a processor the file does not name is held to
+      # nothing and prints its section instead. This job is dispatched by hand, so the gate runs
       # when a comparison runs; putting it on every push is a question of CI minutes, not of trust.
       - name: Echo, against the baseline
         run: ./zig-out/bin/echo_runner --baseline bench/baseline/echo.txt
+      # The steps below measure other workloads, so they run whatever the echo gate decided.
       - name: Accept storm
+        if: ${{ !cancelled() }}
         run: ./zig-out/bin/echo_runner --workload storm --port-base 31000
       - name: Timer churn, each library in its cheapest mode
+        if: ${{ !cancelled() }}
         run: ./zig-out/bin/timers_runner
       - name: One cross-core message
+        if: ${{ !cancelled() }}
         run: ./zig-out/bin/crosscore_runner
       # The two measurements `bench/calls/` made on `orbstack`, taken here too. On 2026-09-22 this
       # runner showed rotor's group and accumulate shapes level, where `orbstack` showed the whole-
-      # pool group well behind. The CPU table says which of two causes holds: a client that is the
-      # limit of the run, or a cache large enough to hold the pool. They run when an echo row above
-      # fails its baseline, because they explain such a row.
+      # pool group well behind, and its CPU table showed why: a whole-pool group costs this runner's
+      # server no more than a small one (`bench/results/cpu-github-2026-09-22.md`).
       - name: CPU per echo, server and client
         if: ${{ !cancelled() }}
         run: BIN=zig-out/bin sh bench/calls/cpu_per_echo.sh
