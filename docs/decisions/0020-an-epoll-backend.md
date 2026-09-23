@@ -93,22 +93,45 @@ never run, and aligning the rings to 64 passed every test. It has a test now.
 that waits; epoll needs one `epoll_ctl` per change and has no way to batch without io_uring, which
 is the thing that is missing. libuv batches them through an io_uring ring when one exists
 (`docs/decisions/0003-speed-sources.md` cites `src/unix/linux.c:651`), and that route is closed
-here by definition. So a tick that registers N descriptors makes N+1 syscalls. Level-triggered
-registration that is left in place turns most re-arms into no syscall at all, which is the
-mitigation and the reason multishot emulation costs nothing extra.
+here by definition. So a tick that registers N descriptors makes N+1 syscalls.
 
-## What it refuses
+This record first said that registrations left in place turn most re-arms into no syscall at all.
+The build showed that was wrong, and why. The loop cannot keep a record of what it registered: a
+descriptor the caller closes with `sync.close_now` leaves the epoll instance with it, and its number
+can come back as another socket, so a record in user space would be wrong exactly when it matters.
+So the kernel is asked each time, and the rules the backend settled on are these
+(`epoll_queue.zig`, `epoll_reap.zig`, `epoll_cancel.zig`):
 
-A capability with no epoll equivalent is refused and named, as kqueue refuses UDP segmentation
-rather than emulating it:
+- **An operation that waits costs one `epoll_ctl`**: a modify, and an add only when the kernel
+  answers that it holds nothing. That is the count by design; it has not been measured.
+- **The read direction stays registered after a receive or an accept completes**, because the next
+  one on that descriptor is the common case and finds it there.
+- **The write direction is taken out as soon as nobody waits on it.** A socket is writable almost
+  all the time, so a write registration left in place ends the very next wait, for nobody.
+- **A cancel, and a multishot operation that ends, take their direction out at once**, as kqueue
+  removes the filter a multishot operation kept.
+- **A direction the kernel reports with nobody waiting is taken out by the reap**, or a
+  level-triggered registration would report it on every wait.
 
-- **`register_descriptors`** answers `Unsupported`. Decision 3's source 1 is an io_uring feature.
-- **A registered buffer** answers `Unsupported`, for the same reason.
+The conformance suite decided the third and fourth rules: each was first written the other way,
+and a scenario in which a tick must take its whole wait failed until it was changed.
+
+## What it emulates, and what it refuses
+
+This record first said that `register_descriptors` and registered buffers answer `Unsupported`.
+That was wrong, and it contradicted this record's own gate: kqueue emulates both so that one program
+runs on every backend, and the conformance suite requires them of every backend. So epoll does what
+kqueue does:
+
+- **`register_descriptors`** keeps a table of the caller's descriptors and swaps an index for its
+  descriptor at the flush (`epoll_descriptors.zig`). Nothing is gained, and nothing is claimed.
+- **A registered buffer** is recorded and nothing else: epoll pins no pages.
 - **A file operation** follows decision 18: `file_policy` defaults to `refuse`, and a caller that
   wants one hands the loop a thread pool or asks for `blocking`.
 
 A capability that is a socket option rather than a ring feature is kept, because it is the kernel's
-and not io_uring's: decision 15's datagram surface, GSO, GRO and ECN included, works here.
+and not io_uring's: decision 15's datagram surface, GSO, GRO and ECN included, works here, and a
+segmented send is carried where kqueue answers `unsupported`.
 
 ## The gate
 
@@ -117,8 +140,37 @@ default seccomp profile**. That is the point of the backend, so it is the enviro
 proves it in. `tools/linux_test.sh` keeps `seccomp=unconfined` for the io_uring suite; the epoll
 suite must pass without it, and a run that needed the flag would be measuring nothing.
 
-The cost gates of `src/conformance/conformance_cost.zig` run against it like any backend, with
-bounds of their own: a poll that makes an `epoll_wait` is not a poll that makes a `kevent`.
+The cost gates of `src/conformance/conformance_cost.zig` run against it like any backend. They pass
+with the bounds every backend has; none needed one of its own.
+
+The gate passed on 2026-09-22, on OrbStack's Linux 7.0.14:
+
+| run | executable | passed | skipped | failed |
+|---|---|---:|---:|---:|
+| `tools/linux_test.sh`, default seccomp | `epoll` | 51 | 1 | 0 |
+| `tools/linux_test.sh`, default seccomp | `conformance-epoll` | 53 | 1 | 0 |
+| `tools/race_test.sh`, ThreadSanitizer | `conformance-epoll` | 50 | 4 | 0 |
+
+The skipped scenario in the Linux gate is the io_uring backend's own. The race gate skips more
+because it runs the Debug executable with the sanitizer, where the cost gates do not apply.
+
+## What building it found
+
+Four things outside this backend, each fixed or recorded where it belongs:
+
+- **kqueue left its poll trigger set.** A tick whose events were already full still added the
+  trigger, which the kernel applied and could not deliver, so it ended the next waiting tick at
+  once. The multishot accept scenario caught it once its late connection came from a second loop
+  (`kqueue_tick.zig`).
+- **Decision 18's teardown order had a second half.** A worker still inside `run` reads the loop
+  after its result is visible, so a caller stops its offload before `deinit`. ThreadSanitizer found
+  it in this suite, the first conformance suite whose loops use the mailbox rings under it.
+- **SIGPIPE cannot end a Zig test.** `std.Io.Threaded` installs a handler that does nothing for it,
+  so a missing `MSG_NOSIGNAL` passed unseen. The scenario for a closed peer counts the signal now,
+  and it holds on every backend.
+- **A Linux system call on a Mac runs some other call.** macOS reads the call number from another
+  register, so `zig build halt-check` cannot prove an epoll assertion whose path, once the assertion
+  is deleted, reaches one (`tools/halt/epoll_scenarios.zig`).
 
 ## Open questions
 
@@ -136,3 +188,15 @@ Each has a proposed answer, and the implementation follows it until the owner ru
    write replaces the `EVFILT_USER` trigger and nothing else moves.*
 4. **Does the comparison gain an epoll row?** *Proposed: no. There is no speed claim to make, and a
    row invites one. A person who wants the number runs the harness by hand.*
+5. **How does a caller get this backend?** `src/rotor.zig` wraps the host's backend, which on Linux
+   is `uring`, so today only a caller that imports the `epoll` module directly reaches it. Two
+   shapes answer the consumer that asked, and they differ in what that consumer tests:
+   - A **build option** that makes `rotor.zig` wrap `epoll` on Linux. No dispatch per call, and one
+     backend per binary; a consumer whose continuous integration runs in a container builds a
+     different binary there than in production.
+   - A **fallback at `init`**: try io_uring and, when the kernel refuses it, open epoll instead, and
+     report which one the loop runs. One binary everywhere, as libuv does, at the price of a branch
+     per call and both backends linked. `uring_ring.zig` promises never to fall back to a slower
+     path without saying so, so the report is part of the answer and not an extra.
+
+   *Not proposed here: it changes the public module, and the owner decides it.*

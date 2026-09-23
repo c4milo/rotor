@@ -144,8 +144,8 @@ measured against `zig build halt-check`.
   nothing; `uring`, `kqueue` and `epoll` import `core`; `adapter` imports `core` and one backend;
   nothing imports `bench`. `conformance` imports `core` and the backend under test, which the build
   hands it as its `backend` import, so one suite tests every backend (decision 10). `core`, `uring`,
-  `kqueue` and `epoll` exist today, the last of them part-built (decision 20). `bench/` sits outside
-  `src/` and outside the graph; `build/bench.zig` wires it.
+  `kqueue` and `epoll` exist today. `bench/` sits outside `src/` and outside the graph;
+  `build/bench.zig` wires it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
 - **A file two backends need, that names no kernel type, lives in `core`.** `kqueue` and `epoll` are
@@ -187,14 +187,15 @@ measured against `zig build halt-check`.
   module's test executable that runs under Linux, and the io_uring probe `tools/uring_probe.zig`,
   for Linux on the host's CPU architecture into `zig-out/linux/`, and runs none of them. The
   script runs them in Docker with `seccomp=unconfined`, the probe first, and stops at the first
-  failure. It prints the kernel release the container sees, because decision 2 sets the floor at
+  failure. The two epoll executables, `epoll` and `conformance-epoll`, run under Docker's default
+  seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. `zig build test` does not run it: it needs Docker.
-- Race gate: `zig build test-race && bash tools/race_test.sh`. It builds the `kqueue` and
-  `conformance-uring` test executables with ThreadSanitizer for Linux with glibc into
-  `zig-out/race/`, and the script runs them in Docker. Those two are the suites that start a
-  thread: the mailbox rings and the sleep flag (decision 12, point 6), and two loops posting
-  through the registry. A clean run is evidence and not a proof, because a sanitizer reports the
+- Race gate: `zig build test-race && bash tools/race_test.sh`. It builds the `kqueue`,
+  `conformance-uring` and `conformance-epoll` test executables with ThreadSanitizer for Linux with
+  glibc into `zig-out/race/`, and the script runs them in Docker. Those are the suites that start a
+  thread: the mailbox rings and the sleep flag (decision 12, point 6), two loops posting through
+  the registry, and an offload's worker beside a loop. A clean run is evidence and not a proof, because a sanitizer reports the
   interleavings that ran. It has its own target and image because the sanitizer's runtime needs a
   dynamic glibc, and it cannot be built on macOS at all. `zig build test` does not run it: it
   needs Docker. It does require the compile, through `zig build test-race-compile`, because this
@@ -274,13 +275,14 @@ Milestones 1 and 2 are done. `core`, `uring` and `kqueue` pass one conformance s
 Linux in Docker, `kqueue` natively on macOS. The halt check and the race gate pass. Registered
 descriptors and provided buffers are built, and no speed claim is made for either yet.
 
-The `epoll` backend of decision 20 is **part-built**, as of 2026-09-22: its queue, its loop's state
-and lifecycle, its buffer groups, its offload and eleven halt scenarios. Reap, perform, cancel,
-tick, the datagram path, the registered descriptors, `Remote` and the address and sync helpers are
-not there. `epoll.supported` is false until they are, so the conformance suite skips the backend and no
-gate can pass on it by accident; `epoll.zig`'s header lists what is built and what is not. No speed
-claim will be made for it: it exists so rotor runs where io_uring is refused, and the comparison
-gains no row.
+The `epoll` backend of decision 20 is **built**, as of 2026-09-22, and passes the conformance suite
+in Docker under the default seccomp profile, and the race gate. No speed claim is made for it: it
+exists so rotor runs where io_uring is refused, and the comparison gains no row. **A caller cannot
+reach it through `src/rotor.zig` yet**, which wraps `uring` on Linux: decision 20's open question 5
+asks the owner whether a build option or a fallback at `init` selects it. Building it found four
+things outside the backend, which that record lists: a kqueue poll trigger left set, the second half
+of decision 18's teardown order, a SIGPIPE check no Zig test could see, and halt scenarios a Mac
+cannot prove for a Linux backend.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
 has code for it, except decision 13, which is proposed and waits on the owner, and decision 17,
