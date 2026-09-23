@@ -60,57 +60,20 @@ pub fn code_of(errno: E, context: Context) Code {
         // The reap resubmits both (`is_retryable`), so the caller sees `would_block` only when
         // the retries ran out.
         .AGAIN, .INTR => .would_block,
-        // The kernel had no memory for the operation: for the state io_uring keeps of a connect
-        // it tries again (`io_connect` in io_uring/net.c), or for the request that carries a
-        // post to its target ring (`io_msg_data_remote` in io_uring/msg_ring.c, Linux 6.12).
-        .NOMEM => .system_resources,
         // An empty buffer group, or a network stack out of buffer space: the helper says which.
         .NOBUFS => code_of_no_buffers(context),
-        // An accept found no free descriptor: the process is at its limit of open descriptors
-        // (EMFILE), or the system is at its limit of open files (ENFILE). accept(2).
-        .MFILE, .NFILE => .descriptor_limit,
-        // The peer reset the connection, and a send or a receive found the reset (send(2)).
-        .CONNRESET => .connection_reset,
-        // A connect found nothing listening on the peer's address (connect(2)).
-        .CONNREFUSED => .connection_refused,
-        // An accept took a connection that the peer had already aborted (accept(2)).
-        .CONNABORTED => .connection_aborted,
-        // TCP stopped waiting for the peer: a connect whose attempt went unanswered (connect(2)),
-        // or a connection whose retransmitted data went unacknowledged (tcp(7)).
-        .TIMEDOUT => .connection_timed_out,
-        // A send on a connected socket whose sending side is shut down (send(2)). Recalled: a
-        // send also fails with it after the peer closed and an earlier send reported the reset.
-        .PIPE => .broken_pipe,
-        // A send, a receive or a shutdown on a socket that is not connected (send(2), recv(2),
-        // shutdown(2)).
-        .NOTCONN => .not_connected,
-        // A `send_to` that names no peer, on a datagram socket that is not connected, so the
-        // socket has no address to send to (`udp_sendmsg` in net/ipv4/udp.c, `udpv6_sendmsg` in
-        // net/ipv6/udp.c).
-        .DESTADDRREQ => .not_connected,
-        // A datagram longer than UDP or the route can carry, of which nothing was sent.
-        // `udp_sendmsg` refuses one longer than 0xFFFF bytes before it reads the address
-        // (net/ipv4/udp.c). `__ip_append_data` refuses one longer than the route's MTU when the
-        // socket does not fragment, which `IP_PMTUDISC_DO` asks for (net/ipv4/ip_output.c), and
-        // `__ip6_append_data` makes the same check for IPv6 (net/ipv6/ip6_output.c). A QUIC stack
-        // answers it by lowering its packet size (decision 15).
-        .MSGSIZE => .message_too_long,
-        // A connect found no route to the peer's network (ENETUNREACH, connect(2)) or to the
-        // peer (EHOSTUNREACH, ip(7)). An accept can fail with each of the four, because Linux
-        // hands it the pending network error of the new socket (accept(2)). Recalled: a local
-        // interface that is down sets ENETDOWN, and an ICMP message that says the host is
-        // unknown sets EHOSTDOWN.
-        .NETUNREACH, .HOSTUNREACH, .NETDOWN, .HOSTDOWN => .network_unreachable,
-        // The device failed a read, a write or an fdatasync (read(2), write(2), fsync(2)).
-        .IO => .input_output,
-        // A write or an fdatasync found no room: the device is full (ENOSPC), or the user's
-        // quota of blocks on it is used up (EDQUOT). write(2), fsync(2).
-        .NOSPC, .DQUOT => .no_space_left,
         // What the errno of a post says about its target ring: the helper names each situation.
         // For every other operation these five are `unexpected`.
         .OVERFLOW => code_of_post(context, .mailbox_full),
         .BADFD, .NXIO, .BADF, .OWNERDEAD => code_of_post(context, .loop_not_found),
-        else => .unexpected,
+        // io_uring's connect waits for the handshake itself, so no completion carries EINPROGRESS
+        // (recalled). `core.errno` keeps it for a readiness backend and asserts it never arrives.
+        .INPROGRESS => .unexpected,
+        // Every other errno means on io_uring what it means for a backend that makes the call
+        // itself, so `core.errno` maps it. ENOMEM there covers the state io_uring keeps of a
+        // connect it tries again (`io_connect` in io_uring/net.c) and the request that carries a
+        // post to its target ring (`io_msg_data_remote` in io_uring/msg_ring.c, Linux 6.12).
+        else => core.errno.datagram_code_of(errno),
     };
     assert(code != .timeout);
     return code;

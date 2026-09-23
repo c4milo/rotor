@@ -1,7 +1,9 @@
 //! The map from an errno to a `Code`: the branch an operation that succeeded never takes. A
 //! readiness backend makes each system call itself, so the errno is the call's own. `kqueue` and
-//! `epoll` share this file; `uring` has its own, because io_uring returns `-errno` in a completion
-//! and its map documents each kernel situation that produces one.
+//! `epoll` share this file. `uring` maps what only io_uring means by an errno, a cancel, a retry,
+//! an empty buffer group and a post's target, and hands every other errno here. A comment that
+//! cites a manual page states what is recalled of that page; "recalled" alone marks a situation
+//! that was read nowhere for this file.
 //!
 //! Two errnos never reach this map. EAGAIN means the descriptor is not ready: the operation waits
 //! for readiness and is tried again (decision 12, point 1). EINTR means a signal interrupted the
@@ -27,20 +29,37 @@ pub fn code_of(errno: anytype) event_module.Code {
     assert(errno != .SUCCESS);
     assert(!is_handled_by_the_backend(errno));
     return switch (errno) {
-        // The kernel had no memory, or no socket buffer space, for the call.
+        // The kernel had no memory, or no socket buffer space, for the call: a socket at its
+        // buffer limit, or an interface whose output queue is full (accept(2), send(2)).
         .NOMEM, .NOBUFS => .system_resources,
-        // accept(2): the process, or the system, has no free descriptor.
+        // An accept found no free descriptor: the process is at its limit of open descriptors
+        // (EMFILE), or the system is at its limit of open files (ENFILE). accept(2).
         .MFILE, .NFILE => .descriptor_limit,
+        // The peer reset the connection, and a send or a receive found the reset (send(2)).
         .CONNRESET => .connection_reset,
+        // A connect found nothing listening on the peer's address (connect(2)).
         .CONNREFUSED => .connection_refused,
-        // accept(2): the peer gave up before the accept.
+        // An accept took a connection that the peer had already aborted (accept(2)).
         .CONNABORTED => .connection_aborted,
-        // The peer stopped answering: TCP's own timeout.
+        // TCP stopped waiting for the peer: a connect whose attempt went unanswered (connect(2)),
+        // or a connection whose retransmitted data went unacknowledged (tcp(7)).
         .TIMEDOUT => .connection_timed_out,
+        // A send on a connected socket whose sending side is shut down (send(2)). Recalled: a
+        // send also fails with it after the peer closed and an earlier send reported the reset.
         .PIPE => .broken_pipe,
+        // A send, a receive or a shutdown on a socket that is not connected (send(2), recv(2),
+        // shutdown(2)).
         .NOTCONN => .not_connected,
+        // A connect found no route to the peer's network (ENETUNREACH, connect(2)) or to the
+        // peer (EHOSTUNREACH, ip(7)). On Linux an accept can fail with each of the four, because
+        // it hands the accept the pending network error of the new socket (accept(2)). Recalled:
+        // a local interface that is down sets ENETDOWN, and an ICMP message that says the host is
+        // unknown sets EHOSTDOWN.
         .NETUNREACH, .HOSTUNREACH, .NETDOWN, .HOSTDOWN => .network_unreachable,
+        // The device failed a read, a write or an fdatasync (read(2), write(2), fsync(2)).
         .IO => .input_output,
+        // A write or an fdatasync found no room: the device is full (ENOSPC), or the user's
+        // quota of blocks on it is used up (EDQUOT). write(2), fsync(2).
         .NOSPC, .DQUOT => .no_space_left,
         else => .unexpected,
     };
@@ -52,7 +71,15 @@ pub fn code_of(errno: anytype) event_module.Code {
 /// Every other errno means what it means for any call, so `code_of` answers it.
 pub fn datagram_code_of(errno: anytype) event_module.Code {
     return switch (errno) {
+        // A datagram longer than UDP or the route can carry, of which nothing was sent. On Linux
+        // `udp_sendmsg` refuses one longer than 0xFFFF bytes before it reads the address
+        // (net/ipv4/udp.c), and `__ip_append_data` refuses one longer than the route's MTU when
+        // the socket does not fragment, which `IP_PMTUDISC_DO` asks for (net/ipv4/ip_output.c);
+        // `__ip6_append_data` makes the same check for IPv6 (net/ipv6/ip6_output.c).
         .MSGSIZE => .message_too_long,
+        // A send that names no peer, on a datagram socket that is not connected, so the socket
+        // has no address to send to (`udp_sendmsg` in net/ipv4/udp.c, `udpv6_sendmsg` in
+        // net/ipv6/udp.c).
         .DESTADDRREQ => .not_connected,
         else => code_of(errno),
     };
