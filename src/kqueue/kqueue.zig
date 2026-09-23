@@ -229,11 +229,7 @@ pub const Loop = struct {
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
     pub fn cancel_all(loop: *Loop) void {
-        loop.tables.assert_owner();
-        var from: u32 = 0;
-        while (loop.tables.next_cancellable(from)) |index| : (from = index + 1) {
-            cancel_module.request(loop, index, loop.tables.table.at(index));
-        }
+        loop.tables.cancel_all(loop, cancel_module.request);
     }
 
     /// Ticks until no operation is in flight, discarding the events into `scratch`: what a

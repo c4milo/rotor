@@ -415,6 +415,20 @@ pub const Tables = struct {
         assert(tables.timers.count <= armed);
     }
 
+    /// Hands `request` every operation a cancel can still reach, to cancel: what every backend's
+    /// `cancel_all` does, with its own cancel as `request` and its loop as `backend`.
+    pub fn cancel_all(
+        tables: *Tables,
+        backend: anytype,
+        comptime request: fn (@TypeOf(backend), u32, *Slot) void,
+    ) void {
+        tables.assert_owner();
+        var from: u32 = 0;
+        while (tables.next_cancellable(from)) |index| : (from = index + 1) {
+            request(backend, index, tables.table.at(index));
+        }
+    }
+
     /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a
     /// timer. A slot being resubmitted keeps the deadline it has.
     pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
