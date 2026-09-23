@@ -146,7 +146,7 @@ pub fn kernel_filter(filter: Filter) i16 {
 /// Writes the message into the ring this loop has to the target, and wakes the target when it
 /// sleeps (decision 12, point 6). The result is the post's own final event.
 fn post(loop: *Loop, slot: *const Slot) i32 {
-    const registry = loop.registry orelse return core.event.result_of(.loop_not_found);
+    const registry = loop.inbox.registry orelse return core.event.result_of(.loop_not_found);
     const target = slot.post_target();
     const wake = core.remote.send(registry, loop.tables.id, target, slot.message()) catch |err| {
         return core.event.result_of(core.remote.code_of(err));

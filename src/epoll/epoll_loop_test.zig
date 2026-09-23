@@ -73,11 +73,11 @@ test "init_tables leaves an empty loop that owns this thread and holds no group"
     loop.assert_owner();
     loop.assert_empty();
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
-    try testing.expectEqual(@as(usize, 0), loop.completions.len);
+    try testing.expectEqual(@as(usize, 0), loop.inbox.completions.len);
     try testing.expectEqual(@as(usize, 0), loop.works.len);
     try testing.expectEqual(@as(u16, 0), loop.tables.buffers_registered);
-    try testing.expect(!loop.sleeping);
-    try testing.expect(loop.registry == null);
+    try testing.expect(!loop.inbox.sleeping);
+    try testing.expect(loop.inbox.registry == null);
     try testing.expect(loop.offload == null);
     try testing.expectEqual(core.offload.FilePolicy.refuse, loop.file_policy);
     for (&loop.groups) |*group| try testing.expectEqual(@as(u32, 0), group.buffer_bytes);
@@ -120,9 +120,9 @@ test "a loop with no registry drains no mailbox and sleeps for the wait it was g
     const wait = core.constants.ns_per_ms;
     try testing.expectEqual(@as(?u64, wait), loop.settle_to_sleep(wait));
     try testing.expectEqual(@as(?u64, null), loop.settle_to_sleep(null));
-    try testing.expect(!loop.sleeping);
+    try testing.expect(!loop.inbox.sleeping);
     loop.wake_up();
-    try testing.expect(!loop.sleeping);
+    try testing.expect(!loop.inbox.sleeping);
 }
 
 test "a loop with a registry says it sleeps, and a message already posted keeps it awake" {
@@ -144,10 +144,10 @@ test "a loop with a registry says it sleeps, and a message already posted keeps 
 
     const wait = core.constants.ns_per_ms;
     try testing.expectEqual(@as(?u64, wait), loop.settle_to_sleep(wait));
-    try testing.expect(loop.sleeping);
+    try testing.expect(loop.inbox.sleeping);
     try testing.expect(registry.must_wake(receiver));
     loop.wake_up();
-    try testing.expect(!loop.sleeping);
+    try testing.expect(!loop.inbox.sleeping);
     try testing.expect(!registry.must_wake(receiver));
 
     // A sender pushes before the loop settles, so the loop must not sleep on that message.

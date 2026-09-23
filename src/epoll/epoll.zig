@@ -77,9 +77,6 @@ const TimerHeap = core.timer_heap.TimerHeap;
 const Layout = core.layout.Layout;
 const Waiters = core.waiters.Waiters;
 
-/// Messages one call of `drain_mailboxes` moves out of one ring at a time.
-const messages_per_drain = 32;
-
 pub const Loop = struct {
     queue: queue_module.Queue,
     /// What a loop holds whatever its kernel: the slot table, the timer heap, the pending and
@@ -92,24 +89,14 @@ pub const Loop = struct {
     /// `epoll_ctl` has no batched form, so each registration is its own call as it is needed
     /// (decision 20, "The shape").
     readiness: [constants.readiness_max]queue_module.Event,
-    /// Where loops find each other's mailboxes. Null for a loop that posts to none and that
-    /// none posts to.
-    registry: ?*Registry,
-    /// True while the registry says this loop sleeps, so `wake_up` ends it once.
-    sleeping: bool,
+    /// What other threads send this loop, and the sleep handshake that wakes it for them.
+    inbox: core.inbox.Inbox,
     /// What this loop does with a file operation it cannot perform without blocking (decision 18).
     file_policy: core.offload.FilePolicy,
     /// The caller's offload, set when `file_policy` is `offload` and null otherwise.
     offload: ?core.offload.Offload,
-    /// One ring per worker of the offload, which the worker writes and this loop reads. Empty
-    /// unless the policy is `offload`.
-    completions: []core.mailbox.Mailbox,
     /// One per slot, filled when an operation is handed out. Empty unless the policy is `offload`.
     works: []core.offload.Work,
-    /// Set while this loop is inside a blocking `epoll_pwait2` call, so a worker on another thread
-    /// knows to wake it. It is read by the workers, so it is atomic, where `sleeping` is not
-    /// (decision 18, and decision 12's point 6 for the race it settles).
-    offload_asleep: std.atomic.Value(bool),
     /// The reserve every datagram group of this loop uses (decision 15). One loop serves one
     /// shape, so a receive knows where a datagram starts without a lookup per completion.
     datagram_group: core.datagram.GroupOptions,
@@ -174,7 +161,8 @@ pub const Loop = struct {
         loop.queue = try queue_module.Queue.init();
         // The eventfd and not the epoll instance: a post wakes a loop by writing to the descriptor
         // the registry holds, and an epoll descriptor cannot be written to.
-        if (loop.registry) |registry| registry.set(loop.tables.id, loop.queue.wake_descriptor);
+        const registry = loop.inbox.registry orelse return;
+        registry.set(loop.tables.id, loop.queue.wake_descriptor);
     }
 
     /// Everything but the epoll instance: what the paths that enter no kernel run on.
@@ -199,16 +187,14 @@ pub const Loop = struct {
         else
             layout.take(memory, core.offload.Work, options.operations);
         assert(layout.bytes == memory_bytes(options));
-        loop.completions = offload_module.init_rings(options.offload_memory, workers);
+        const completions = offload_module.init_rings(options.offload_memory, workers);
+        loop.inbox = core.inbox.Inbox.init(options.registry, completions);
         loop.file_policy = options.file_policy;
         loop.offload = options.offload;
-        loop.offload_asleep = .init(false);
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
             .sampling = options.sampling,
         });
-        loop.registry = options.registry;
-        loop.sleeping = false;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};
     }
@@ -217,7 +203,7 @@ pub const Loop = struct {
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
         loop.tables.assert_empty();
-        if (loop.registry) |registry| registry.clear(loop.tables.id);
+        if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.queue.deinit();
     }
 
@@ -320,59 +306,19 @@ pub const Loop = struct {
         return loop.groups[group_id].bytes_of(buffer_id);
     }
 
-    /// Moves the messages other loops posted into `events`, oldest first per sender, until the
-    /// events run out. A ring that still holds messages then is drained by the next tick, which
-    /// does not wait while one does.
+    /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        const registry = loop.registry orelse return 0;
-        var produced: u32 = 0;
-        var messages: [messages_per_drain]core.Message = undefined;
-        for (0..registry.loops()) |sender| {
-            if (sender == loop.tables.id) continue;
-            const room = @min(events.len - produced, messages_per_drain);
-            if (room == 0) break;
-            const ring = registry.mailbox(@intCast(sender), loop.tables.id);
-            const moved = ring.pop_into(messages[0..room]);
-            for (messages[0..moved]) |message| {
-                events[produced] = .{
-                    .user_data = message.payload,
-                    .result = @intCast(message.tag),
-                    .flags = .{ .message = true },
-                };
-                produced += 1;
-            }
-        }
-        assert(produced <= events.len);
-        return produced;
+        return loop.inbox.drain_mailboxes(loop.tables.id, events);
     }
 
-    /// Tells the registry this loop is about to sleep, then looks at its mailboxes once more: a
-    /// sender that posted before it saw the flag did not wake the loop, so the loop must not
-    /// sleep on that message (decision 12, point 6). Returns the wait to sleep for, or null.
+    /// Tells the registry and the offload's workers this loop is about to sleep: `core.inbox`'s.
     pub fn settle_to_sleep(loop: *Loop, wait: ?u64) ?u64 {
-        const bound = wait orelse return null;
-        // The offload's workers are told the same thing the other loops are told, through a flag of
-        // this loop's own: an offload works without a registry, because its workers own no loop.
-        if (loop.completions.len != 0) {
-            loop.offload_asleep.store(true, .seq_cst);
-            if (offload_module.pending(loop)) return null;
-        }
-        const registry = loop.registry orelse return bound;
-        registry.begin_sleep(loop.tables.id);
-        loop.sleeping = true;
-        for (0..registry.loops()) |sender| {
-            if (sender == loop.tables.id) continue;
-            if (!registry.mailbox(@intCast(sender), loop.tables.id).is_empty()) return null;
-        }
-        return bound;
+        return loop.inbox.settle_to_sleep(loop.tables.id, wait);
     }
 
     /// Tells the registry, and the offload's workers, that the loop is awake again.
     pub fn wake_up(loop: *Loop) void {
-        if (loop.completions.len != 0) loop.offload_asleep.store(false, .seq_cst);
-        if (!loop.sleeping) return;
-        loop.registry.?.end_sleep(loop.tables.id);
-        loop.sleeping = false;
+        loop.inbox.wake_up(loop.tables.id);
     }
 };
 

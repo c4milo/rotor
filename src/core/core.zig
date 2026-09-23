@@ -12,6 +12,7 @@ pub const errno = @import("errno.zig");
 pub const event = @import("event.zig");
 pub const file_call = @import("file_call.zig");
 pub const handle = @import("handle.zig");
+pub const inbox = @import("inbox.zig");
 pub const layout = @import("layout.zig");
 pub const mailbox = @import("mailbox.zig");
 pub const offload = @import("offload.zig");
@@ -51,6 +52,7 @@ test {
     _ = event;
     _ = file_call;
     _ = handle;
+    _ = inbox;
     _ = layout;
     _ = mailbox;
     _ = offload;

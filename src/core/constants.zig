@@ -33,6 +33,11 @@ pub const descriptor_entries_per_slot: u32 = 2;
 /// to a loop full hears `mailbox_full` (decision 12, point 6). Both readiness backends read it.
 pub const mailbox_messages: u32 = 256;
 
+/// Messages a readiness loop moves out of one ring at a time, from another loop's mailbox or from
+/// an offload worker's. A ring that still holds messages then is drained by the next tick, which
+/// does not wait while one does.
+pub const messages_per_drain: u32 = 32;
+
 /// The alignment that keeps a mailbox's producer index and consumer index on separate cache
 /// lines: Apple silicon reports 128-byte lines, and 128 also clears the 64-byte lines of x86-64.
 pub const mailbox_index_alignment = 128;
@@ -134,6 +139,7 @@ comptime {
     assert(timer_heap_arity >= 2);
     assert(descriptor_entries_per_slot >= 2);
     assert(std.math.isPowerOfTwo(mailbox_messages));
+    assert(mailbox_messages % messages_per_drain == 0);
     assert(std.math.isPowerOfTwo(mailbox_index_alignment));
     assert(generation_first >= 1);
     assert(timeout_ns_max >= wait_ns_max);

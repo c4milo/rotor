@@ -105,6 +105,13 @@ pub const Event = extern struct {
         return .{ .user_data = user_data, .result = @intCast(count), .flags = .{} };
     }
 
+    /// A message another loop posted: its payload as the user data, and its tag as the result,
+    /// which is never negative, so no caller mistakes it for a failure.
+    pub fn message(payload: u64, tag: u32) Event {
+        assert(tag <= constants.message_tag_max);
+        return .{ .user_data = payload, .result = @intCast(tag), .flags = .{ .message = true } };
+    }
+
     /// The final event of an operation that failed with `code`.
     pub fn failure(user_data: u64, code: Code) Event {
         const event: Event = .{ .user_data = user_data, .result = result_of(code), .flags = .{} };

@@ -127,10 +127,5 @@ fn message_of(cqe: *const linux.io_uring_cqe) Event {
     const bits: u32 = @bitCast(cqe.res);
     assert(bits & constants.message_result_flag != 0);
     const tag = bits & ~constants.message_result_flag;
-    assert(tag <= core.constants.message_tag_max);
-    return .{
-        .user_data = cqe.user_data,
-        .result = @intCast(tag),
-        .flags = .{ .message = true },
-    };
+    return Event.message(cqe.user_data, tag);
 }

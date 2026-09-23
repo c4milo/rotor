@@ -200,18 +200,14 @@ fn result_of_tag(tag: u32) i32 {
     return @bitCast(tag);
 }
 
-/// Messages one drain moves out of one worker's ring at a time. The same bound a readiness loop's
-/// `drain_mailboxes` uses, for the same reason: a ring that still holds messages is drained by the
-/// next tick, which does not wait while one does.
-const messages_per_drain = 32;
-
 /// Rounds one drain pops one ring in. A ring holds `constants.mailbox_messages` and each round
-/// takes `messages_per_drain`, so this many empties a ring that was full when the drain began.
+/// takes `constants.messages_per_drain`, so this many empties a ring that was full when the drain
+/// began.
 ///
 /// A worker may push while the drain runs, so a drain is not promised to leave the ring empty. It
 /// does not have to: what it leaves the next tick takes, and a tick with anything to hand over does
 /// not wait. `drain_mailboxes` makes the same trade for the same reason.
-const drain_rounds_max = constants.mailbox_messages / messages_per_drain;
+const drain_rounds_max = constants.mailbox_messages / constants.messages_per_drain;
 
 /// Moves every result the workers pushed into `tables`' finished list, on the loop thread. The
 /// next `drain_finished` hands their events over, as decision 5, rule 2 requires: not the call that
@@ -220,7 +216,7 @@ const drain_rounds_max = constants.mailbox_messages / messages_per_drain;
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
 pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
     var finished: u32 = 0;
-    var messages: [messages_per_drain]operation.Message = undefined;
+    var messages: [constants.messages_per_drain]operation.Message = undefined;
     for (completions) |*ring| {
         var round: u32 = 0;
         while (round < drain_rounds_max) : (round += 1) {

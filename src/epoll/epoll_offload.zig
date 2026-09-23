@@ -90,7 +90,7 @@ fn run(work: *Work, worker: u16) void {
     // that names a ring it was never given writes nothing. rotor builds only in Debug and
     // ReleaseSafe, where the bounds check is on. An `assert` of the index stood here until
     // 2026-09-22; no halt scenario could prove it, because this bounds check halts as well.
-    const ring = &loop.completions[worker];
+    const ring = &loop.inbox.completions[worker];
     // The call the inline attempt of `epoll_perform.zig` makes too, so the policy changes which
     // thread makes it and nothing else.
     const result = file_call.result(core.file_call.request_of_work(work));
@@ -105,7 +105,7 @@ fn run(work: *Work, worker: u16) void {
     // stores the flag with `seq_cst` before it re-reads the rings. So either this sees the flag or
     // the loop sees the message. The wake names the eventfd and not the epoll instance: an epoll
     // descriptor is not writable, so the loop owns a descriptor whose only job is to be written.
-    if (loop.offload_asleep.load(.seq_cst)) queue_module.Queue.wake(loop.queue.wake_descriptor);
+    if (loop.inbox.offload_asleep.load(.seq_cst)) queue_module.Queue.wake(loop.queue.wake_descriptor);
 }
 
 /// Moves every result the workers pushed into the loop's finished list: `core.offload.drain`.
@@ -114,12 +114,12 @@ fn run(work: *Work, worker: u16) void {
 /// tables, and in the loop only `tick` calls this. A second check here halted the same tick, so no
 /// halt scenario could show that `tick`'s own check halts, as decision 4 requires (2026-09-22).
 pub fn drain(loop: *Loop) u32 {
-    return core.offload.drain(loop.completions, &loop.tables, loop.works.len);
+    return core.offload.drain(loop.inbox.completions, &loop.tables, loop.works.len);
 }
 
 /// True when any worker has pushed a result the loop has not taken: `core.offload.pending`.
 pub fn pending(loop: *const Loop) bool {
-    return core.offload.pending(loop.completions);
+    return core.offload.pending(loop.inbox.completions);
 }
 
 const testing = std.testing;

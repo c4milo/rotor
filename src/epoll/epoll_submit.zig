@@ -101,7 +101,7 @@ pub fn register(loop: *Loop, descriptor: core.Descriptor) queue_module.ControlEr
 /// sleeps (decision 12, point 6). The registry holds each epoll loop's eventfd, which is what one
 /// write wakes. The result is the post's own final event.
 fn post(loop: *Loop, slot: *const Slot) i32 {
-    const registry = loop.registry orelse return core.event.result_of(.loop_not_found);
+    const registry = loop.inbox.registry orelse return core.event.result_of(.loop_not_found);
     const target = slot.post_target();
     const wake = core.remote.send(registry, loop.tables.id, target, slot.message()) catch |err| {
         return core.event.result_of(core.remote.code_of(err));

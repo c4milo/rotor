@@ -159,7 +159,7 @@ test "two workers answer into their own rings at the same time, and both results
 test "an awake loop is never woken, so a worker makes no system call on its behalf" {
     if (!kqueue.supported) return error.SkipZigTest;
     loop_fixture.init();
-    try testing.expect(!loop_fixture.loop.offload_asleep.load(.seq_cst));
+    try testing.expect(!loop_fixture.loop.inbox.offload_asleep.load(.seq_cst));
     // `init_tables` opens no kqueue, so the descriptor is set to one `Queue.wake` refuses. A worker
     // that woke a loop which never said it would sleep halts on that assertion, so the skipped wake
     // is observable and not merely harmless.
@@ -184,7 +184,7 @@ test "a loop with no offload holds no ring, and asks for no memory for one" {
     var memory: [Loop.memory_bytes(plain)]u8 align(alignment) = undefined;
     var loop: Loop = undefined;
     loop.init_tables(&memory, plain);
-    try testing.expectEqual(@as(usize, 0), loop.completions.len);
+    try testing.expectEqual(@as(usize, 0), loop.inbox.completions.len);
     try testing.expectEqual(@as(usize, 0), loop.works.len);
     try testing.expectEqual(core.offload.FilePolicy.refuse, loop.file_policy);
     try testing.expect(loop.offload == null);
@@ -221,13 +221,13 @@ test "a loop with a result waiting does not settle to sleep, and says so through
     // These two assertions are on the loop's own function: the flag it publishes, and the re-read
     // that stops it sleeping on a result a worker pushed before it could see the flag.
     loop_fixture.init();
-    const ring = &loop_fixture.loop.completions[0];
+    const ring = &loop_fixture.loop.inbox.completions[0];
 
     // Nothing waiting: the loop settles, and the workers are told so.
     try testing.expectEqual(@as(?u64, 1000), loop_fixture.loop.settle_to_sleep(1000));
-    try testing.expect(loop_fixture.loop.offload_asleep.load(.seq_cst));
+    try testing.expect(loop_fixture.loop.inbox.offload_asleep.load(.seq_cst));
     loop_fixture.loop.wake_up();
-    try testing.expect(!loop_fixture.loop.offload_asleep.load(.seq_cst));
+    try testing.expect(!loop_fixture.loop.inbox.offload_asleep.load(.seq_cst));
 
     // A result waiting: the loop refuses to sleep, which is the lost wake this prevents.
     try testing.expect(ring.push(.{ .tag = 0, .payload = 0 }));
