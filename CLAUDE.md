@@ -136,6 +136,23 @@ and its mutation is measured against the Linux gate.
   and does not refuse it. Refusing it needs a forbidden-trailer rule the pinned pepegrillo does
   not have. Commits up to `fd153c5` carry the trailer; rewriting them is the owner's call.
 
+### Parallel sessions
+
+Several sessions work on rotor at once. The owner approved these rules on 2026-09-22, after one
+day in which two sessions shared the main checkout and main moved nine commits under a session that
+was about to push.
+
+1. Each session works in its own worktree under `.claude/worktrees/`. The main checkout,
+   `/Users/camilo/Projects/c4milo/rotor`, is only for pulling. Do not edit or commit there.
+2. Before you edit a file, check the other worktrees for uncommitted edits to it: run
+   `git worktree list`, then `git -C <worktree> status --short` for each. If they overlap, message
+   that session before you touch the file.
+3. Before you push to main, run `git fetch origin && git rebase origin/main`, run `zig build test`
+   again, then run `git push origin HEAD:main`. Never force-push.
+4. Never edit, commit in, reset or remove another session's worktree. Remove a worktree only when
+   no session uses it and it holds nothing uncommitted or unpushed. Save uncommitted work as a
+   commit on its branch first.
+
 ## Layout
 
 - `build.zig` stays short: build options and the module graph. Helpers belong in `build/`.
