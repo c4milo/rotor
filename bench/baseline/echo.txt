@@ -2,9 +2,11 @@
 # measured in one run so a machine change moves every candidate together. `bench/harness/baseline.zig`
 # says why this is ratios and not throughputs, and what it deliberately leaves ungated.
 #
-# Taken on 2026-09-22 from the `comparison` job of .github/workflows/ci.yml, run 35788660457 on
-# commit c9f8e83: a GitHub-hosted ubuntu-24.04 runner, io_uring, one core, three runs per row, every
-# row's spread at or under 5 percent and none flagged. `bench/results/` holds the run.
+# Taken on 2026-09-22 from the `comparison` job of .github/workflows/ci.yml, run 35811462374 on
+# commit 86a7ade: a GitHub-hosted ubuntu-24.04 runner, io_uring, one core, three runs per row, every
+# row's spread at or under 3 percent and none flagged. It is the first run with rotor's buffer group
+# sized per connection (`bench/echo/echo_runner_setup.zig`); the run before it, 35788660457, gave
+# rotor the whole pool. `bench/results/echo-sized-pool-github-2026-09-22.md` holds the run.
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
 # rotor. To retake the whole file, run the comparison with `--write-baseline yes` and keep the
@@ -12,42 +14,42 @@
 #
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 1000
-echo 16 4096 libuv 965
-echo 16 4096 libxev 901
-echo 16 4096 std.Io.Threaded 615
+echo 16 4096 rotor (accumulate) 1002
+echo 16 4096 libuv 959
+echo 16 4096 libxev 894
+echo 16 4096 std.Io.Threaded 610
 echo 16 8192 rotor 1000
 echo 16 8192 rotor (accumulate) 1007
-echo 16 8192 libuv 1011
-echo 16 8192 libxev 934
-echo 16 8192 std.Io.Threaded 654
+echo 16 8192 libuv 1031
+echo 16 8192 libxev 926
+echo 16 8192 std.Io.Threaded 646
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 1000
-echo 16 16384 libuv 995
+echo 16 16384 rotor (accumulate) 997
+echo 16 16384 libuv 989
 echo 16 16384 libxev 942
-echo 16 16384 std.Io.Threaded 691
+echo 16 16384 std.Io.Threaded 672
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 1015
-echo 16 65536 libuv 988
-echo 16 65536 libxev 1053
-echo 16 65536 std.Io.Threaded 855
+echo 16 65536 rotor (accumulate) 1017
+echo 16 65536 libuv 990
+echo 16 65536 libxev 1084
+echo 16 65536 std.Io.Threaded 852
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 988
-echo 64 4096 libuv 955
-echo 64 4096 libxev 933
+echo 64 4096 rotor (accumulate) 1003
+echo 64 4096 libuv 954
+echo 64 4096 libxev 964
 echo 64 4096 std.Io.Threaded 622
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 1010
-echo 64 8192 libuv 1003
-echo 64 8192 libxev 970
-echo 64 8192 std.Io.Threaded 664
+echo 64 8192 rotor (accumulate) 999
+echo 64 8192 libuv 983
+echo 64 8192 libxev 956
+echo 64 8192 std.Io.Threaded 653
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 999
-echo 64 16384 libuv 988
-echo 64 16384 libxev 969
-echo 64 16384 std.Io.Threaded 717
+echo 64 16384 rotor (accumulate) 1004
+echo 64 16384 libuv 990
+echo 64 16384 libxev 981
+echo 64 16384 std.Io.Threaded 702
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1010
-echo 64 65536 libuv 964
-echo 64 65536 libxev 1114
-echo 64 65536 std.Io.Threaded 849
+echo 64 65536 rotor (accumulate) 1003
+echo 64 65536 libuv 978
+echo 64 65536 libxev 1101
+echo 64 65536 std.Io.Threaded 831

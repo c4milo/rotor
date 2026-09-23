@@ -5,7 +5,11 @@ run 35788660457. A GitHub-hosted `ubuntu-24.04` runner, io_uring, one core, thre
 
 **This is the first comparison over all four payload sizes, and the first with memory.** Every row's
 spread came in at or under 5 percent and none was flagged, so the rows decide. `bench/baseline/echo.txt`
-was taken from this run.
+was taken from this run, and retaken from `echo-sized-pool-github-2026-09-22.md`.
+
+**libuv has no timer or cross-core rows here.** Every libuv run of those workloads failed with
+`Malformed`: its programs printed a result line without two fields the harness had added that day,
+and the runners exited 0 anyway. `echo-sized-pool-github-2026-09-22.md` says what was fixed.
 
 Two things it settles. rotor leads libuv and libxev at 4 KiB, is level with libuv at 8 and 16 KiB,
 and trails libxev at 64 KiB by 5 to 11 percent. And rotor's provided-buffer group holds a flat

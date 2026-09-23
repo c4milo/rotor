@@ -306,9 +306,11 @@ connection, 1 MiB in total. The same server with 32 buffers spent 7.54 µs per 6
 both, and 1.75 µs per 4 KiB echo against 1.97 and 2.23. The cost set in between 2 and 8 MiB of group
 on this machine; whether cache or TLB reach sets that bound was not separated. kqueue and epoll keep
 the free buffers of a group in a stack and reuse the one returned last, so their groups do not have
-this cost at any size. Why `github` showed the two shapes level was not checked: its server spends
-about five times as long per echo, which leaves room for either a client that limits the run or a
-larger cache.
+this cost at any size. `github` showed the two shapes level because a large group costs its server
+nothing extra: 20.42 µs per 64 KiB echo with the whole pool against 19.80 with 32 buffers, and 6.08
+against 6.11 at 4 KiB (`bench/results/cpu-github-2026-09-22.md`). Its client was at 100 percent of a
+core in every row, but the server's own CPU shows no difference for the client to hide. Which part
+of either machine makes the difference was not separated.
 
 **The fix is in the bench: `rotor_echo` takes `--group-buffers`, and the runner gives it two buffers
 per connection, never fewer than 32**, as the other candidates hold a buffer per connection. With
