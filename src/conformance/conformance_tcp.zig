@@ -213,6 +213,90 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     try testing.expect(waited >= quiet_wait_ns / 2);
 }
 
+test "bytes that arrive while nobody receives do not keep the loop from sleeping" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+
+    // One receive that waits and completes. After it, nobody receives on this socket.
+    var buffer: [8]u8 = undefined;
+    try harness.submit(&.{ receive(1, pair[1], &buffer), send(2, pair[0], "one") }, &.{});
+    var events: [2]Event = undefined;
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u32, 3), try (try Harness.find(&events, 1)).outcome());
+
+    // More bytes arrive and nobody asks for them. A backend may wake once for them, but not on
+    // every wait: of two waiting ticks, the second takes its whole wait.
+    try harness.submit(&.{send(3, pair[0], "two")}, &.{});
+    try harness.collect(events[0..1]);
+    _ = try harness.loop.tick(events[0..1], quiet_wait_ns);
+    const before = backend.testing.monotonic_ns();
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(events[0..1], quiet_wait_ns));
+    try testing.expect(backend.testing.monotonic_ns() - before >= quiet_wait_ns / 2);
+}
+
+/// Sends a scenario makes to a peer that closed before it gives up. The first is taken and answered
+/// with a reset, and the kernel refuses one of the next few; this many is far beyond that.
+const sends_to_a_closed_peer_max = 64;
+
+/// SIGPIPEs this process received while the scenario below counted them.
+var broken_pipe_signals = std.atomic.Value(u32).init(0);
+
+fn count_broken_pipe_signal(signal: std.posix.SIG) callconv(.c) void {
+    _ = signal;
+    _ = broken_pipe_signals.fetchAdd(1, .monotonic);
+}
+
+test "a send to a peer that closed ends with broken_pipe, and raises no signal" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try connected_pair(&harness, &listener);
+    defer sync.close_now(pair[0]);
+
+    // The peer closes. The first send after it is still taken, and the peer answers it with a
+    // reset; a send after that is refused, and the kernel raises SIGPIPE with the refusal unless the
+    // backend asked it not to. Unasked, that signal ends a C program, or any that keeps the default
+    // action. A Zig test cannot see that: `std.Io.Threaded` installs a handler that does nothing for
+    // SIGPIPE, so this process would live either way. So the scenario counts the signal instead,
+    // with a handler of its own for the length of the sends.
+    const counting: std.posix.Sigaction = .{
+        .handler = .{ .handler = count_broken_pipe_signal },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    };
+    var previous: std.posix.Sigaction = undefined;
+    std.posix.sigaction(.PIPE, &counting, &previous);
+    defer std.posix.sigaction(.PIPE, &previous, null);
+    const signals_before = broken_pipe_signals.load(.monotonic);
+    sync.close_now(pair[1]);
+    var events: [1]Event = undefined;
+    var refused: anyerror = error.SendNeverRefused;
+    var sent: u32 = 0;
+    while (sent < sends_to_a_closed_peer_max) : (sent += 1) {
+        try harness.submit(&.{send(1, pair[0], "x")}, &.{});
+        try harness.collect(&events);
+        // A reset reported on one send is consumed by it, and the next send meets the closed pipe.
+        if (events[0].outcome()) |_| {} else |err| switch (err) {
+            error.ConnectionReset => {},
+            else => {
+                refused = err;
+                break;
+            },
+        }
+    }
+    try testing.expectEqual(@as(anyerror, error.BrokenPipe), refused);
+    try testing.expectEqual(signals_before, broken_pipe_signals.load(.monotonic));
+}
+
 const group_id = 3;
 const group_buffers = 2;
 const group_buffer_bytes = 16;

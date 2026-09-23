@@ -100,6 +100,9 @@ const Sleeper = struct {
     registry: *backend.Registry,
     /// How long the one tick that received the message took, or 0 when none arrived.
     waited_ns: u64 = 0,
+    /// How long the tick after it took, with nothing posted: the wake must be spent, or a backend
+    /// whose wake stays set would end every later wait at once.
+    after_ns: u64 = 0,
     failure: ?anyerror = null,
 
     fn run(sleeper: *Sleeper) void {
@@ -108,7 +111,8 @@ const Sleeper = struct {
         };
     }
 
-    /// Owns loop 1 and makes one tick with a wait of a second: what an idle core does.
+    /// Owns loop 1 and makes one tick with a wait of a second: what an idle core does. Then one
+    /// more, shorter, with nothing to wake it.
     fn sleep(sleeper: *Sleeper) !void {
         var harness: Harness = undefined;
         try harness.init(1, sleeper.registry);
@@ -119,8 +123,14 @@ const Sleeper = struct {
         if (count == 1 and events[0].flags.message) {
             sleeper.waited_ns = backend.testing.monotonic_ns() - before;
         }
+        const again = backend.testing.monotonic_ns();
+        _ = try harness.loop.tick(&events, quiet_wait_ns);
+        sleeper.after_ns = backend.testing.monotonic_ns() - again;
     }
 };
+
+/// The wait of the tick after the wake. Nothing is posted then, so it must take most of it.
+const quiet_wait_ns = 40 * core.constants.ns_per_ms;
 
 test "a post wakes a loop that sleeps in its tick, long before its wait is over" {
     if (conformance.unsupported()) return error.SkipZigTest;
@@ -154,4 +164,7 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
     try testing.expect(posted);
     try testing.expect(sleeper.waited_ns > 0);
     try testing.expect(sleeper.waited_ns < core.constants.ns_per_s / 2);
+    // The wake was spent by the tick it woke. A kernel wake that stays set, as a level-triggered
+    // eventfd does until it is read, would end this wait at once.
+    try testing.expect(sleeper.after_ns >= quiet_wait_ns / 2);
 }
