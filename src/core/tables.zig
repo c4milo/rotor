@@ -111,6 +111,18 @@ pub const Tables = struct {
         assert(tables.owner == thread_identity());
     }
 
+    /// What every backend's `tick` checks once, on entry (decision 8, class B): the calling thread
+    /// owns the loop, `events` has room for one event and for no more than a batch, and the wait is
+    /// one the loop allows. Until 2026-09-23 each backend made these checks itself, and kqueue and
+    /// epoll checked the wait only inside `wait_bound`, which a tick with events to hand over never
+    /// calls, so a wait io_uring refused passed on those backends.
+    pub fn begin_tick(tables: *const Tables, events_len: usize, wait_ns: u64) void {
+        tables.assert_owner();
+        assert(events_len >= 1);
+        assert(events_len <= constants.batch_max);
+        assert(wait_ns <= constants.wait_ns_max);
+    }
+
     /// Halts when an operation has not had its final event (decision 5, rule 7).
     pub fn assert_empty(tables: *const Tables) void {
         assert(tables.in_flight() == 0);

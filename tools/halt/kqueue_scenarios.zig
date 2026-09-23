@@ -243,6 +243,44 @@ fn provide_a_group_that_is_not_aligned() void {
     ) catch {};
 }
 
+// The tick's entry checks (decision 8, class B), which `core.Tables.begin_tick` makes for every
+// backend. The queue holds a descriptor no process has open, so with a check deleted
+// the tick's `kevent` call fails and `tick` returns the error.
+
+var no_events: [0]core.Event = .{};
+var too_many_events: [core.constants.batch_max + 1]core.Event = undefined;
+var one_event: [1]core.Event = undefined;
+
+fn init_with_a_closed_queue() void {
+    loop.init_tables(&memory, options);
+    loop.queue = .{ .descriptor = closed_descriptor };
+}
+
+fn tick_with_no_room_for_an_event() void {
+    init_with_a_closed_queue();
+    scenario.reached_violation();
+    _ = loop.tick(&no_events, 0) catch {};
+}
+
+fn tick_with_more_events_than_a_batch() void {
+    init_with_a_closed_queue();
+    scenario.reached_violation();
+    _ = loop.tick(&too_many_events, 0) catch {};
+}
+
+/// A wait above `wait_ns_max`, in a tick that has an event to hand over: a timer cancelled while it
+/// was still queued, which the flush ends without the kernel. Such a tick never asks `wait_bound`
+/// how long to wait, and until 2026-09-23 that was the only place kqueue and epoll checked the
+/// wait.
+fn tick_with_a_wait_above_the_limit() void {
+    init_with_a_closed_queue();
+    var handle: [1]core.Handle = undefined;
+    _ = loop.submit(&one_timer, &handle);
+    loop.cancel(handle[0]);
+    scenario.reached_violation();
+    _ = loop.tick(&one_event, core.constants.wait_ns_max + 1) catch {};
+}
+
 /// The group's memory, aligned forward at run time for the reason the scenario above gives.
 fn aligned_group_memory() []align(group_scenario_alignment) u8 {
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
@@ -325,6 +363,12 @@ const scenarios = [_]scenario.Scenario{
         .name = "buffers: provide a group that is not aligned",
         .run = provide_a_group_that_is_not_aligned,
     },
+    .{ .name = "tick: tick with no room for an event", .run = tick_with_no_room_for_an_event },
+    .{
+        .name = "tick: tick with more events than a batch",
+        .run = tick_with_more_events_than_a_batch,
+    },
+    .{ .name = "tick: tick with a wait above the limit", .run = tick_with_a_wait_above_the_limit },
     .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
     .{ .name = "buffers: register the buffers twice", .run = register_buffers_twice },
     .{

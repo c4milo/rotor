@@ -26,9 +26,7 @@ pub const TickError = queue_module.ExchangeError;
 /// passes, or the wait does.
 pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const tables = &loop.tables;
-    tables.assert_owner();
-    assert(events.len >= 1);
-    assert(events.len <= core.constants.batch_max);
+    tables.begin_tick(events.len, wait_ns);
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
     expire(loop);

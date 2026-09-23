@@ -190,7 +190,50 @@ fn end_the_remote_on_this_thread() void {
     remote.deinit();
 }
 
+// The tick's entry checks (decision 8, class B), which `core.Tables.begin_tick` makes for every
+// backend. After `begin_tick` the tick reads the clock, a Linux call, so these are
+// here and not in the file a Mac runs.
+
+const one_timer = [_]core.Operation{
+    .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
+};
+
+var no_events: [0]core.Event = .{};
+var too_many_events: [core.constants.batch_max + 1]core.Event = undefined;
+var one_event: [1]core.Event = undefined;
+
+fn tick_with_no_room_for_an_event() void {
+    loop.init(&memory, options) catch return;
+    scenario.reached_violation();
+    _ = loop.tick(&no_events, 0) catch {};
+}
+
+fn tick_with_more_events_than_a_batch() void {
+    loop.init(&memory, options) catch return;
+    scenario.reached_violation();
+    _ = loop.tick(&too_many_events, 0) catch {};
+}
+
+/// A wait above `wait_ns_max`, in a tick that has an event to hand over: a timer cancelled while it
+/// was still queued, which the flush ends without the kernel. Such a tick never asks `wait_bound`
+/// how long to wait, and until 2026-09-23 that was the only place kqueue and epoll checked the
+/// wait.
+fn tick_with_a_wait_above_the_limit() void {
+    loop.init(&memory, options) catch return;
+    var handle: [1]core.Handle = undefined;
+    _ = loop.submit(&one_timer, &handle);
+    loop.cancel(handle[0]);
+    scenario.reached_violation();
+    _ = loop.tick(&one_event, core.constants.wait_ns_max + 1) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "tick: tick with no room for an event", .run = tick_with_no_room_for_an_event },
+    .{
+        .name = "tick: tick with more events than a batch",
+        .run = tick_with_more_events_than_a_batch,
+    },
+    .{ .name = "tick: tick with a wait above the limit", .run = tick_with_a_wait_above_the_limit },
     .{ .name = "owner: tick from another thread", .run = tick_from_another_thread },
     .{
         .name = "buffers: provide a group that is not aligned",

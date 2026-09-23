@@ -102,8 +102,9 @@ result when either is wanted, and write the struct out for a receive into a regi
   operation taken, which is what `cancel` takes.
 - `tick` makes the loop's one system call, delivers events into `events` and returns how many. With
   `wait_ns` of 0 it polls and returns at once; otherwise it blocks until an event is ready, a
-  message arrives, or the wait passes, at most `constants.wait_ns_max`, 10 seconds. A tick that
-  already holds events to return does not wait. `tick` fails only when the kernel refuses the call
+  message arrives, or the wait passes, at most `constants.wait_ns_max`, 10 seconds. A longer wait
+  halts, as does an `events` that is empty or longer than `batch_max`, on every backend and whether
+  or not the tick would have waited. A tick that already holds events to return does not wait. `tick` fails only when the kernel refuses the call
   after `interrupt_retries_max` signals, or answers something rotor has no meaning for.
 - Batch first. One `submit` of many operations and one `tick` returning many events is the shape
   rotor is built for; one operation per call works and costs a system call each.
