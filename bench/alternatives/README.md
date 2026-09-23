@@ -317,7 +317,14 @@ it, rotor leads every clean row at 16 connections and at 64 connections with 4 K
 (`bench/results/echo-sized-pool-orbstack-2026-09-22.md`). The library is unchanged. A group sized
 to the buffers in flight is the caller's choice, and `docs/using.md` says so. Keeping io_uring's
 ring short and refilling it from a stack of recently returned buffers would make any group size
-warm, and would change `uring_buffers.zig`, so it waits for a ruling.
+warm. The owner ruled on 2026-09-22 that rotor does not do this: an application sizes its group.
+The design has a risk that needs a bound: the kernel takes buffers from the ring
+while the loop waits, so a ring shorter than the receives one wait completes runs dry, and a
+receive ends with `buffers_exhausted` while the stack still holds free buffers. The same day
+`bench/calls/buffers_per_wait.sh` counted it (`bench/results/buffers-per-wait-orbstack-2026-09-22.md`):
+on Linux 7.0 no wait took more than 42 buffers once the connections were up, because since 6.13
+the kernel runs at most 20 items of deferred completion work at a time. A batch of new connections
+took one buffer each in a single wait. On 6.1 to 6.12 the kernel sets no such limit.
 
 ## Two bugs in rotor_echo, and which rows they touched
 
