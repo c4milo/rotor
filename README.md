@@ -1,60 +1,69 @@
 # rotor
 
 [![CI](https://github.com/c4milo/rotor/actions/workflows/ci.yml/badge.svg)](https://github.com/c4milo/rotor/actions/workflows/ci.yml)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Zig 0.16.0](https://img.shields.io/badge/zig-0.16.0-f7a41d.svg)](https://ziglang.org/download/)
+[![Version](https://img.shields.io/github/v/tag/c4milo/rotor?label=version)](https://github.com/c4milo/rotor/tags)
 
-rotor is an event loop and I/O layer for Zig 0.16. It is completion-based: a program submits
-operations in batches, and each tick returns their results with one system call. It runs on Linux
-io_uring and macOS kqueue, and on Linux epoll where the kernel refuses io_uring.
+rotor is an event loop and I/O layer for Zig. It is for servers and network libraries that must
+know, before they run, how much memory they use and how their I/O behaves. It runs on io_uring on
+Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 
-The goal is to be faster than libuv, libxev and Zig's `std.Io` on named workloads, and to show it
-with a benchmark harness anyone can run again. The [results](#performance) include the rows where
-rotor loses.
+## Why rotor
 
-The latest release is `v0.3.0`.
+- **Fast.** rotor is completion-based: a program submits operations in batches, and one system
+  call per tick returns the results of many. On Linux it uses the parts of io_uring that save the
+  most work: one accept and one receive that each serve many completions, buffers the kernel picks
+  for each receive, and descriptors and buffers registered once. A benchmark harness in this
+  repository measures every speed claim, and [its results](#performance) include the rows where
+  rotor is slower.
+- **Deterministic.** What a loop does depends only on what the program submits and what the
+  kernel answers. rotor's core reads no clock, random number or pointer value, and its statistics
+  sample every Nth operation, never by time. Every operation ends with exactly one final event, so
+  a program's control flow can be followed and replayed.
+- **Pluggable I/O.** One API covers io_uring, kqueue and epoll. The process picks its backend once
+  and reports which it chose. The API names no kernel type, so a program can put its own
+  implementation behind it, such as a simulator for tests that must replay exactly. File
+  operations that would block the loop can go to threads the program supplies.
+- **Predictable memory.** rotor allocates nothing. A program gives each loop its memory once, at
+  startup. Every table and queue in the loop has a fixed limit, and rotor never grows one.
+- **Safe to run in production.** Assertions stay on in release builds. Misuse, such as calling a
+  loop from a thread that does not own it, stops the program at a named check instead of
+  corrupting memory.
+- **Scales by sharing nothing.** Each loop belongs to one thread and takes no locks. Loops pass
+  each other messages, and a thread that owns no loop can post to one.
 
-- [What rotor promises](#what-rotor-promises)
-- [Platforms](#platforms)
-- [Install](#install)
-- [Example](#example)
-- [What a loop can do](#what-a-loop-can-do)
-- [Performance](#performance)
-- [Build and test](#build-and-test)
-- [Repository layout](#repository-layout)
-- [Design records](#design-records)
-- [Not in version one](#not-in-version-one)
+## Status
 
-## What rotor promises
+rotor is at version 0.3.0. Everything planned for version one is built: TCP, UDP with
+segmentation offload and ECN on Linux, files, timers, deadlines and cancellation, and messages
+between loops. One conformance suite, written against the public API, passes on all three
+backends, and CI runs it on every push.
 
-- **It allocates nothing.** The caller gives each loop its memory at init. Every table and queue
-  inside a loop has a named limit.
-- **A loop belongs to one thread.** It holds no lock and starts no thread. Another thread reaches
-  it only by posting a message.
-- **Every operation ends with exactly one final event.** The buffer an operation names belongs to
-  the loop until that event arrives.
-- **Batches come first.** One `submit` takes many operations, and one `tick` returns many events.
-- **Assertions stay on in production.** The build offers Debug and ReleaseSafe only.
-- **A loop's behaviour depends only on what the caller submits and what the kernel answers.**
-  Nothing in the shared core reads the clock, a random number or a pointer value.
-
-## Platforms
-
-| host | backend | needs | tested on |
+| system | backend | requires | tested on |
 |---|---|---|---|
-| Linux | io_uring | Linux 6.1 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 7.0 on aarch64, Linux 6.17 on x86-64 |
-| Linux where io_uring is refused, or lacks a feature rotor needs | epoll | nothing beyond epoll | Docker's default seccomp profile, which refuses io_uring |
-| macOS | kqueue | nothing beyond kqueue | macOS 26.6 on Apple M1 Pro |
+| Linux | io_uring | Linux 6.1 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 6.17 on x86-64 (GitHub runners), Linux 7.0 on aarch64 (a virtual machine on Apple silicon) |
+| Linux, where io_uring is refused or lacks a feature rotor needs | epoll | Linux 6.1 or later | both of the above, under Docker's default seccomp profile |
+| macOS | kqueue | no minimum version is set | macOS 26.6 on Apple silicon |
 
-A process picks its backend once, the first time it needs one: it asks the kernel for an io_uring
-ring with the features rotor needs, and runs epoll if the kernel refuses or lacks one.
-`rotor.backend()` says which backend runs. The API is the
-same on every backend. rotor makes no speed claim for epoll: it exists so a program runs where
-io_uring is refused.
+> [!IMPORTANT]
+> **In a container, Linux runs epoll unless io_uring is allowed.** Docker's default seccomp
+> profile refuses io_uring. Run with `--security-opt seccomp=unconfined`, or a profile that allows
+> the io_uring system calls, to get io_uring. `rotor.backend()` says which backend a process runs;
+> a program that needs io_uring checks it at startup.
 
-On kqueue and epoll the kernel cannot complete a file operation, so a loop that touches files there
-needs a `file_policy` at init: refuse, block the loop, or hand the work to threads the caller
-supplies. The [guide](docs/using.md#files) explains the three.
+> [!IMPORTANT]
+> **On macOS and on epoll, file operations need a policy.** Those kernels cannot complete a file
+> operation, so by default a loop refuses one with `unsupported`. Set `file_policy` at init:
+> `.blocking` runs the call on the loop's thread, and `.offload` hands it to threads the program
+> supplies. [The guide](docs/using.md#files) explains both.
 
-## Install
+Not in version one: TLS, DNS, Unix sockets, process spawning, Windows, and a `std.Io` adapter.
+[Design record 2](docs/decisions/0002-scope.md) says why.
+
+## Quick start
+
+Add rotor to a project:
 
 ```bash
 zig fetch --save git+https://github.com/c4milo/rotor#v0.3.0
@@ -67,248 +76,162 @@ const rotor = b.dependency("rotor", .{ .target = target, .release = optimize != 
 exe.root_module.addImport("rotor", rotor.module("rotor"));
 ```
 
-rotor's build takes `release`, not `optimize`: it builds Debug or ReleaseSafe, and has no mode
-that removes its assertions.
+rotor's build takes `release` instead of `optimize`. It builds Debug or ReleaseSafe only, because
+it has no mode that removes its assertions.
 
-## Example
-
-A repeating timer that fires five times, then is cancelled:
+A TCP echo server:
 
 ```zig
 const std = @import("std");
 const rotor = @import("rotor");
 
+const port = 9000;
+/// Connections served at once. The server closes any connection beyond this.
+const connections_max = 128;
+const buffer_bytes = 4096;
+
+/// What an operation's `user_data` carries: its kind in the high 32 bits, its socket in the low.
+const Kind = enum(u32) { accept, receive, send, close };
+
+fn tag(kind: Kind, socket: rotor.Descriptor) u64 {
+    return @as(u64, @intFromEnum(kind)) << 32 | @as(u32, @bitCast(socket));
+}
+
+/// The loop holds the accept and one operation per connection: a connection is receiving, sending
+/// or closing, never two at once. rotor allocates nothing, so its memory is declared here.
+const options: rotor.Loop.Options = .{ .operations = connections_max + 1 };
+var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+
+/// One buffer per connection, the bytes it last received, and how many of them are sent back.
+var buffers: [connections_max][buffer_bytes]u8 = undefined;
+var received: [connections_max]u32 = undefined;
+var sent: [connections_max]u32 = undefined;
+
 pub fn main() !void {
-    // The caller owns every byte the loop uses.
-    const options: rotor.Loop.Options = .{ .operations = 64 };
-    var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
     var loop: rotor.Loop = undefined;
     try loop.init(&memory, options);
-    defer loop.deinit();
+    // The server runs until it is stopped, so it never calls `loop.deinit()`.
 
-    // One repeating timer: first fire after 100 ms, then every 100 ms.
-    const period_ns = 100 * rotor.constants.ns_per_ms;
-    var handles: [1]rotor.Handle = undefined;
-    const taken = loop.submit(&.{rotor.Operation.timer(1, period_ns, period_ns)}, &handles);
-    std.debug.assert(taken == 1);
+    const address = rotor.Address.ipv4(.{ 127, 0, 0, 1 }, port);
+    const listener = try rotor.sync.listen(&address, .{ .backlog = 128, .reuse_port = false });
+    // One multishot accept delivers every connection.
+    try submit(&loop, rotor.Operation.accept(tag(.accept, listener), listener, true));
+    std.debug.print("echo on 127.0.0.1:{d}, {t} backend\n", .{ port, rotor.backend() });
 
-    var fired: u32 = 0;
-    var events: [16]rotor.Event = undefined;
+    var events: [64]rotor.Event = undefined;
     while (true) {
         const count = try loop.tick(&events, rotor.constants.ns_per_s);
-        for (events[0..count]) |event| {
-            // Every operation ends with exactly one final event: the one without `more`.
-            if (!event.flags.more) return; // the answer to the cancel below
-            fired += 1;
-            std.debug.print("{t}: fire {d}\n", .{ rotor.backend(), fired });
-            if (fired == 5) loop.cancel(handles[0]);
-        }
+        for (events[0..count]) |event| try handle(&loop, event);
     }
+}
+
+fn handle(loop: *rotor.Loop, event: rotor.Event) !void {
+    const socket: rotor.Descriptor = @bitCast(@as(u32, @truncate(event.user_data)));
+    switch (@as(Kind, @enumFromInt(event.user_data >> 32))) {
+        .accept => {
+            // An event without `more` ends the multishot accept, so arm another.
+            if (!event.flags.more) try submit(loop, rotor.Operation.accept(event.user_data, socket, true));
+            const accepted: rotor.Descriptor = @intCast(event.outcome() catch return);
+            if (accepted >= connections_max) return rotor.sync.close_now(accepted);
+            try receive(loop, accepted);
+        },
+        .receive => {
+            // 0 bytes is the peer closing; an error ends the connection too.
+            const count = event.outcome() catch 0;
+            if (count == 0) return submit(loop, rotor.Operation.close(tag(.close, socket), socket));
+            received[@intCast(socket)] = count;
+            sent[@intCast(socket)] = 0;
+            try send_rest(loop, socket);
+        },
+        .send => {
+            const count = event.outcome() catch {
+                return submit(loop, rotor.Operation.close(tag(.close, socket), socket));
+            };
+            sent[@intCast(socket)] += count;
+            // A send may take fewer bytes than it was given: send the rest before reading again.
+            if (sent[@intCast(socket)] < received[@intCast(socket)]) return send_rest(loop, socket);
+            try receive(loop, socket);
+        },
+        .close => {},
+    }
+}
+
+fn receive(loop: *rotor.Loop, socket: rotor.Descriptor) !void {
+    const buffer = &buffers[@intCast(socket)];
+    try submit(loop, rotor.Operation.receive(tag(.receive, socket), socket, buffer));
+}
+
+fn send_rest(loop: *rotor.Loop, socket: rotor.Descriptor) !void {
+    const index: usize = @intCast(socket);
+    const rest = buffers[index][sent[index]..received[index]];
+    try submit(loop, rotor.Operation.send(tag(.send, socket), socket, rest));
+}
+
+/// `submit` takes as many operations as the loop has room for. This loop is sized for every
+/// operation the server can have in flight, so a refusal here is a bug in that sizing.
+fn submit(loop: *rotor.Loop, operation: rotor.Operation) !void {
+    if (loop.submit(&.{operation}, &.{}) != 1) return error.LoopFull;
 }
 ```
 
-On macOS it prints:
+Run it, then connect with `nc 127.0.0.1 9000`: each line typed comes back. It prints the backend it
+runs on:
 
 ```text
-kqueue: fire 1
-kqueue: fire 2
-kqueue: fire 3
-kqueue: fire 4
-kqueue: fire 5
+echo on 127.0.0.1:9000, kqueue backend
 ```
 
-On Linux the lines start with `uring`, or with `epoll` in a container that refuses io_uring.
-
-For a full server, [`bench/echo/rotor_echo.zig`](bench/echo/rotor_echo.zig) is the TCP echo server
-the comparison runs: a multishot accept, a multishot receive per connection from a provided-buffer
-group, and one send per receive.
-
-## What a loop can do
-
-| operation | what it does |
-|---|---|
-| `accept` | accepts a connection; with `multishot`, every connection from one submission |
-| `connect` | connects a socket to an `Address` |
-| `receive` | receives into a buffer, or into a buffer the loop picks from a group; with a group, `multishot` |
-| `send` | sends a buffer |
-| `shutdown`, `close` | shuts down or closes a descriptor; `close` cancels the descriptor's operations first |
-| `read`, `write`, `fdatasync` | file I/O at an offset |
-| `timer` | fires once, or every period until cancelled |
-| `post` | sends a message to another loop |
-| `receive_from`, `send_to` | UDP datagrams, with segmentation offload, receive coalescing and ECN on Linux |
-| `nop` | completes with no effect |
-
-Any operation takes a deadline (`timeout_ns`), and `cancel` ends it early by its handle. A loop also
-has:
-
-- registered descriptors and registered buffers, which io_uring uses to skip per-operation work;
-- provided-buffer groups, from which the kernel picks the buffer for each receive;
-- a `Registry` for loops that post messages to each other, and a `Remote` for a thread that owns no
-  loop;
-- sampled statistics: one operation in a configurable number records its latency.
-
-[`docs/using.md`](docs/using.md) is the guide: what each call promises, what it needs from the
-caller, and every limit.
+[The guide](docs/using.md) covers the rest of the API: every operation and what it promises,
+deadlines and cancellation, the three ways to hand the loop buffers, datagrams, files, and loops on
+several threads.
 
 ## Performance
 
-Every number here comes from the harness in [`bench/`](bench), and each table links to the run it
-came from. The harness runs each candidate on one core, runs every candidate in turn within each
-round so that drift in the machine affects them alike, and reports the median of the runs. The
-spread is the fastest run minus the slowest, divided by the median. A row with a spread of 10
-percent or more is marked **RUNS DISAGREE** and decides nothing.
+These are summaries of runs of the harness in this repository, with each server running one event
+loop on one thread. Each cell is rotor's throughput divided by the other library's: above 1.00,
+rotor is faster. A cell is `undecided` when either side's runs disagreed by 10 percent or more.
+The two Linux columns are GitHub-hosted runners that were given different processors, and the
+ratios move with the processor.
 
-[`bench/alternatives/README.md`](bench/alternatives/README.md) explains every table, including the
-rows rotor loses, and pins the version of each alternative. The tables below come from two of the
-machines named in [`docs/costs.md`](docs/costs.md):
+TCP echo:
 
-- `mac`: Apple M1 Pro, macOS 26.6.2, kqueue.
-- `github`: a GitHub-hosted runner with 4 virtual x86-64 CPUs, Linux 6.17, io_uring. It is a
-  shared cloud machine, and the processor differs between runs; the run below got an AMD EPYC 9V74.
+| connections | payload | against | macOS, kqueue, Apple M1 Pro | Linux, io_uring, AMD EPYC 9V74 | Linux, io_uring, Intel Xeon 6973P-C |
+|---:|---:|---|---:|---:|---:|
+| 16 | 4 KiB | libuv | 1.01 | 1.04 | 1.20 |
+| 16 | 4 KiB | libxev | 1.24 | 1.12 | 1.33 |
+| 16 | 64 KiB | libuv | 0.97 | 1.01 | 1.05 |
+| 16 | 64 KiB | libxev | 0.98 | 0.92 | 1.12 |
+| 64 | 4 KiB | libuv | 1.02 | 1.05 | 1.20 |
+| 64 | 4 KiB | libxev | undecided | 1.04 | 1.27 |
+| 64 | 64 KiB | libuv | 0.99 | 1.02 | 0.95 |
+| 64 | 64 KiB | libxev | 1.05 | 0.91 | 0.99 |
 
-No number exists yet for the Linux machine rotor is meant to be deployed on, because that machine
-is not named yet.
+Other workloads, on macOS:
 
-### Echo on `mac` (kqueue)
+| workload | against libuv | against libxev |
+|---|---:|---:|
+| timer churn, 256 timers, fires per second | 1.22 | 1.16 |
+| timer churn, 4,096 timers, fires per second | 2.02 | 1.26 |
+| one message between loops on two cores, messages per second | 0.74, undecided | 0.89, undecided |
+| random 4 KiB file reads on a thread pool, 32 in flight | 1.00 | not measured |
+| accept storm | undecided | undecided |
 
-TCP echo on one core, 2026-09-22
-([run](bench/results/echo-mac-2026-09-22.md)). The run also measured `std.Io.Threaded`.
+rotor's timers keep their full rate, and libxev's fire closer to each deadline. On the cross-core
+message, libuv's latency is lower. [`docs/benchmarks.md`](docs/benchmarks.md) has the full tables,
+with latency, memory, the machines, and the commands to take every number again.
 
-| connections | payload | candidate | messages per second | p50 µs | p99 µs | spread % |
-|---:|---:|---|---:|---:|---:|---|
-| 16 | 4 KiB | rotor | 159,103 | 92 | 207 | 2 |
-| 16 | 4 KiB | libuv | 158,001 | 92 | 217 | 0 |
-| 16 | 4 KiB | libxev | 128,484 | 118 | 238 | 0 |
-| 16 | 64 KiB | rotor | 61,937 | 260 | 444 | 3 |
-| 16 | 64 KiB | libuv | 63,673 | 232 | 489 | 3 |
-| 16 | 64 KiB | libxev | 63,193 | 224 | 496 | 2 |
-| 64 | 4 KiB | rotor | 151,102 | 381 | 844 | 2 |
-| 64 | 4 KiB | libuv | 148,613 | 430 | 1,028 | 5 |
-| 64 | 4 KiB | libxev | 164,166 | 319 | 782 | 12 **RUNS DISAGREE** |
-| 64 | 64 KiB | rotor | 56,632 | 1,114 | 1,950 | 1 |
-| 64 | 64 KiB | libuv | 57,000 | 1,122 | 2,015 | 2 |
-| 64 | 64 KiB | libxev | 53,869 | 1,212 | 1,761 | 1 |
+## Documentation
 
-rotor and libuv are level on every row.
-
-### Echo on `github` (io_uring)
-
-TCP echo on one core, 2026-09-22, with rotor's buffer group sized to two buffers per connection
-([run](bench/results/echo-sized-pool-github-2026-09-22.md)). The run also measured 8 KiB and 16 KiB
-payloads and `std.Io.Threaded`.
-
-| connections | payload | candidate | messages per second | p50 µs | p99 µs | spread % | peak memory MB |
-|---:|---:|---|---:|---:|---:|---|---:|
-| 16 | 4 KiB | rotor | 136,066 | 116 | 151 | 1 | 3.96 |
-| 16 | 4 KiB | libuv | 130,510 | 121 | 174 | 1 | 3.31 |
-| 16 | 4 KiB | libxev | 121,730 | 130 | 176 | 1 | 3.31 |
-| 16 | 64 KiB | rotor | 26,044 | 614 | 672 | 2 | 6.16 |
-| 16 | 64 KiB | libuv | 25,785 | 623 | 655 | 0 | 4.33 |
-| 16 | 64 KiB | libxev | 28,257 | 565 | 651 | 2 | 4.33 |
-| 64 | 4 KiB | rotor | 138,324 | 459 | 494 | 1 | 8.57 |
-| 64 | 4 KiB | libuv | 131,967 | 485 | 635 | 0 | 8.57 |
-| 64 | 4 KiB | libxev | 133,410 | 479 | 508 | 1 | 8.57 |
-| 64 | 64 KiB | rotor | 26,362 | 2,425 | 2,572 | 0 | 12.45 |
-| 64 | 64 KiB | libuv | 25,808 | 2,490 | 2,589 | 2 | 8.87 |
-| 64 | 64 KiB | libxev | 29,035 | 2,245 | 2,490 | 2 | 8.87 |
-
-rotor leads at 4 KiB and trails libxev at 64 KiB.
-[`bench/alternatives/README.md`](bench/alternatives/README.md#rotor-loses-the-64-kib-row-on-io_uring-on-clean-rows)
-records what is known about the 64 KiB rows.
-
-### Timer churn on `mac`
-
-Timers on a 1 ms period, each library in the cheapest mode it offers
-([run](bench/results/timers-modes-mac-2026-09-22.md)). Lateness is how long after its deadline a
-timer fired.
-
-| timers | candidate | fires per second | p50 late µs | p99 late µs | spread % |
-|---:|---|---:|---:|---:|---|
-| 256 | rotor (repeating) | 255,974 | 169 | 527 | 0 |
-| 256 | libxev | 220,901 | 180 | 250 | 1 |
-| 256 | libuv (repeating) | 209,337 | 185 | 757 | 3 |
-| 4,096 | rotor (repeating) | 4,094,231 | 793 | 1,075 | 0 |
-| 4,096 | libxev | 3,252,874 | 53 | 1,051 | 2 |
-| 4,096 | libuv (repeating) | 2,024,570 | 1,089 | 1,353 | 3 |
-
-A 1 ms period asks each timer for 1,000 fires per second, and only rotor keeps that rate. libxev
-fires closer to the deadline: on p99 at 256 timers, and on p50 and p99 at 4,096. A rotor timer is
-scheduled from its previous deadline, so it never drops a period. The others schedule the next fire
-from the clock at the moment they fire, so they fire less often and each fire is less late.
-
-### One cross-core message on `mac`
-
-Two loops on two cores send a message back and forth, each waiting in its tick for the other's
-message ([run](bench/results/crosscore-mac-2026-09-22-after.md)). One message is half a round trip.
-rotor's message carries a 16-byte payload; libuv's and libxev's carry none.
-
-| candidate | messages per second | p50 ns | p99 ns | spread % |
-|---|---:|---:|---:|---|
-| rotor | 384,127 | 2,007 | 8,031 | 14 **RUNS DISAGREE** |
-| libuv | 518,732 | 1,500 | 6,000 | 4 |
-| libxev | 434,027 | 2,007 | 8,031 | 8 |
-
-libuv is faster here.
-
-### File reads and writes on `mac`
-
-A 256 MiB file on the internal NVMe, 32 operations in flight
-([run](bench/results/files-mac-2026-09-22.md)). kqueue cannot complete a file operation. `rotor`
-runs the call on the loop's thread, and `rotor (registered, offload)` hands it to a pool of threads
-the caller supplies.
-
-| workload | block | candidate | operations per second | spread % |
-|---|---:|---|---:|---|
-| sequential read | 4 KiB | rotor (registered, offload) | 125,285 | 2 |
-| sequential read | 4 KiB | libuv (thread pool) | 123,006 | 1 |
-| sequential read | 4 KiB | rotor | 44,878 | 3 |
-| random read | 4 KiB | rotor (registered, offload) | 48,095 | 3 |
-| random read | 4 KiB | libuv (thread pool) | 48,145 | 1 |
-| random read | 4 KiB | rotor | 12,452 | 0 |
-| sequential write, then `fdatasync` | 4 KiB | rotor (registered, offload) | 662 | 94 **RUNS DISAGREE** |
-| sequential write, then `fdatasync` | 4 KiB | libuv (thread pool) | 2,005 | 28 **RUNS DISAGREE** |
-| sequential write, then `fdatasync` | 4 KiB | rotor | 5,181 | 7 |
-
-The offload and libuv's pool are level on reads. On synced writes, one thread flushing in order is
-faster than several threads waiting on the drive's flush.
-
-## Build and test
-
-| command | what it does |
+| document | what it covers |
 |---|---|
-| `zig build` | builds the library |
-| `zig build test` | the lint, every module's tests, the conformance suite, the halt check and the format check |
-| `zig build test-linux && bash tools/linux_test.sh` | the Linux tests in Docker: io_uring with `seccomp=unconfined`, epoll under the default profile |
-| `zig build test-race && bash tools/race_test.sh` | the suites that start threads, under ThreadSanitizer in Docker |
-| `zig build bench-echo bench-alternatives` | the echo servers, the runner, and the pinned libuv and libxev |
-| `./zig-out/bin/echo_runner` | the echo comparison; `--workload storm` runs the accept storm |
+| [`docs/using.md`](docs/using.md) | the guide: every operation and its promises, buffers, datagrams, files, threads and limits |
+| [`docs/benchmarks.md`](docs/benchmarks.md) | the full measurements, and how to take them again |
+| [`docs/decisions/`](docs/decisions) | one record per design decision, with the alternatives it was chosen over |
+| [`docs/costs.md`](docs/costs.md) | the measured cost of each kernel call and loop operation the decisions argue from |
+| [`bench/alternatives/README.md`](bench/alternatives/README.md) | the record of every comparison experiment, including each row rotor loses and why |
 
-One conformance suite, written against the loop's API, runs on every backend. The halt check runs
-each scenario in [`tools/halt/`](tools/halt) in a child process and requires it to stop on the
-assertion it names. CI runs the macOS tests, the Linux tests and the race tests on every push.
-
-[`CLAUDE.md`](CLAUDE.md) holds the rules of the tree: the style, the limits on function and file
-size, the commit format, and how a test is shown to catch the bug it covers.
-
-## Repository layout
-
-| path | what it holds |
-|---|---|
-| [`src/rotor/`](src/rotor) | the public module: `Loop`, `Registry`, `Remote`, and the choice of backend |
-| [`src/core/`](src/core) | the types every backend shares, the slot table, the timer heap and the limits |
-| [`src/uring/`](src/uring) | the io_uring backend |
-| [`src/kqueue/`](src/kqueue) | the kqueue backend |
-| [`src/epoll/`](src/epoll) | the epoll backend |
-| [`src/conformance/`](src/conformance) | the suite every backend passes |
-| [`bench/`](bench) | the harness, a server per candidate, the cost probes and every recorded run |
-| [`docs/`](docs) | the guide, the design records, and the table of measured costs |
-| [`tools/`](tools) | the lint configuration, the halt scenarios, the io_uring probe and the Docker gates |
-
-## Design records
-
-Each record in [`docs/decisions/`](docs/decisions) states one decision, the alternatives it was
-chosen over, and the measured costs it was argued from. [`docs/costs.md`](docs/costs.md) holds those
-costs.
+<details>
+<summary>The design records</summary>
 
 | record | subject | status |
 |---:|---|---|
@@ -335,7 +258,36 @@ costs.
 
 A proposed record describes something not yet built.
 
-## Not in version one
+</details>
 
-TLS, DNS, Unix sockets, process spawning, Windows, and a `std.Io` adapter over the loop.
-[Record 2](docs/decisions/0002-scope.md) says why, and what would bring each one in.
+## Contributing
+
+You need Zig 0.16.0. The Linux and race gates also need Docker. The first build fetches the lint
+tooling, so it needs the network.
+
+| command | what it does |
+|---|---|
+| `zig build test` | the lint, every module's tests, the conformance suite, the halt check and the format check |
+| `zig build test-linux && bash tools/linux_test.sh` | the Linux tests in Docker: io_uring with `seccomp=unconfined`, epoll under the default profile |
+| `zig build test-race && bash tools/race_test.sh` | the suites that start threads, under ThreadSanitizer in Docker |
+| `zig build bench-echo bench-crosscore bench-alternatives` | the benchmark programs and the pinned libuv and libxev; [`docs/benchmarks.md`](docs/benchmarks.md) says how to run them |
+
+The halt check runs each scenario in [`tools/halt/`](tools/halt) in a child process and requires it
+to stop at the assertion it names, which is how an assertion is tested.
+[`CLAUDE.md`](CLAUDE.md) holds the rules of the tree, for people and coding agents alike: the
+style, the limits on function and file size, the commit message format, and how each test is
+shown to catch the bug it covers.
+
+| path | what it holds |
+|---|---|
+| [`src/rotor/`](src/rotor) | the public module: `Loop`, `Registry`, `Remote`, and the choice of backend |
+| [`src/core/`](src/core) | the types every backend shares, the slot table, the timer heap and the limits |
+| [`src/uring/`](src/uring), [`src/kqueue/`](src/kqueue), [`src/epoll/`](src/epoll) | the three backends |
+| [`src/conformance/`](src/conformance) | the suite every backend passes |
+| [`bench/`](bench) | the harness, a server per library, the cost probes and every recorded run |
+| [`docs/`](docs) | the guide, the benchmarks, the design records and the table of measured costs |
+| [`tools/`](tools) | the lint configuration, the halt scenarios, the io_uring probe and the Docker gates |
+
+## License
+
+rotor is licensed under the [Apache License 2.0](LICENSE).
