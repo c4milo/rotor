@@ -102,8 +102,13 @@ can come back as another socket, so a record in user space would be wrong exactl
 So the kernel is asked each time, and the rules the backend settled on are these
 (`epoll_queue.zig`, `epoll_reap.zig`, `epoll_cancel.zig`):
 
-- **An operation that waits costs one `epoll_ctl`**: a modify, and an add only when the kernel
-  answers that it holds nothing. That is the count by design; it has not been measured.
+- **An operation that waits costs one `epoll_ctl` or more**: a modify, and an add when the kernel
+  answers that it holds nothing. Measured on `orbstack` on 2026-09-22
+  (`bench/results/calls-orbstack-2026-09-22.md`), per echo at 64 KiB: a receive that is re-armed per
+  message waited 0.505 times and cost 0.652 `epoll_ctl`, more than one per wait, because bytes that
+  arrive while nobody receives are taken out by the reap and the next receive then adds its
+  registration again. A multishot receive keeps its registration and cost none. At 4 KiB the
+  re-armed receive waited 0.115 times and cost 0.208.
 - **The read direction stays registered after a receive or an accept completes**, because the next
   one on that descriptor is the common case and finds it there.
 - **The write direction is taken out as soon as nobody waits on it.** A socket is writable almost

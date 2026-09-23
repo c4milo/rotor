@@ -264,6 +264,44 @@ surface already offers a receive into a caller-named buffer, so a second `rotor_
 accumulates a whole message and sends once separates this explanation from the Nagle one in two
 runs.
 
+## Kernel calls per echo, and rotor's group shape on `orbstack`
+
+Measured on 2026-09-22 with `bench/calls/count_calls.sh`, which counts a server's system calls and
+io_uring requests with the kernel's tracepoints, so the server runs at its own pace
+(`bench/results/calls-orbstack-2026-09-22.md`). Per echo, 16 connections, `orbstack`:
+
+| payload | candidate | `io_uring_enter` | io_uring requests | recv poll arms | other calls |
+|---:|---|---:|---:|---:|---|
+| 64 KiB | rotor (group) | 0.216 | 1.00: send | 0 | — |
+| 64 KiB | rotor (accumulate) | 0.240 | 2.00: receive, send | 0.72 | — |
+| 64 KiB | libuv | 0.173 | 2.00: `EPOLL_CTL` | — | read 1.00, write 1.00, epoll wait 0.086 |
+| 64 KiB | libxev | 0.215 | 2.01: receive, send | 0.81 | — |
+| 4 KiB | rotor (group) | 0.172 | 1.00: send | 0 | — |
+| 4 KiB | rotor (accumulate) | 0.136 | 2.00: receive, send | 0.17 | — |
+| 4 KiB | libuv | 0.169 | 2.00: `EPOLL_CTL` | — | read 1.00, write 1.00, epoll wait 0.084 |
+| 4 KiB | libxev | 0.136 | 2.00: receive, send | 0.21 | — |
+
+No request of any candidate went to an `io-wq` worker thread.
+
+- **rotor does not lose on kernel calls.** Its group shape makes the fewest requests of the four:
+  the multishot receive is armed once per connection and never again, so an echo costs one send. An
+  explanation of the 64 KiB rows as rotor making more kernel calls than libxev does not survive
+  this table.
+- **libuv on Linux batches its `epoll_ctl` through io_uring**, two `EPOLL_CTL` requests per echo,
+  and reads and writes with plain system calls. `docs/decisions/0003-speed-sources.md` cites the
+  code; this is the first count of it.
+- **On `orbstack`, the group shape runs at about half the rate of everything else**, with the
+  fewest calls (`bench/results/echo-orbstack-2026-09-22.md`): 207,382 echoes per second at 4 KiB
+  against 467,655 for rotor's accumulate shape, and 46,712 at 64 KiB against 89,466; median
+  latency at 4 KiB is 79 µs against 24 µs. The machine was busy and most rows spread past the
+  harness's threshold, but not by a factor of two. On `github` the two rotor shapes are level at
+  both payloads. A shape that does less kernel work in more time is waiting for something, and what
+  it waits for is not known. The two shapes differ in two things at once, the multishot receive and
+  the provided-buffer group, so the next experiment is a third shape of `rotor_echo`: a one-shot
+  receive from the group, which keeps the group and drops the multishot. Run on both machines, it
+  says which of the two costs the time, and whether the machine or the kernel (7.0.14 on `orbstack`,
+  6.17 on `github`) is what differs.
+
 ## Two bugs in rotor_echo, and which rows they touched
 
 Found on 2026-09-20 by reading the file, not by a test, which is the point of writing them down.
