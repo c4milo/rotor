@@ -11,15 +11,18 @@ operation ends with exactly one final event. Those three rules shape everything 
 ## Getting the module
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#<commit>
+zig fetch --save git+https://github.com/c4milo/rotor#v0.3.0
 ```
 
 In `build.zig`:
 
 ```zig
-const rotor = b.dependency("rotor", .{ .target = target, .optimize = optimize });
+const rotor = b.dependency("rotor", .{ .target = target, .release = optimize != .Debug });
 exe.root_module.addImport("rotor", rotor.module("rotor"));
 ```
+
+rotor's build declares `release` and no `optimize` option, so a dependency that passes `.optimize`
+prints `invalid option: -Doptimize` on every build.
 
 Then `const rotor = @import("rotor");`. The module picks the backend for the host it runs on. On
 macOS it is kqueue. On Linux it is io_uring, **and epoll where the kernel refuses io_uring**, as
@@ -326,9 +329,9 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 
 - Linux 6.1 or later, with io_uring: `IORING_FEAT_NODROP`, `IORING_FEAT_EXT_ARG`, `MSG_RING`,
   multishot accept and receive, provided buffer rings, `SINGLE_ISSUER` and `DEFER_TASKRUN`. A
-  kernel or a container that lacks one answers `Unsupported` at `init`; there is no epoll
-  fallback. Docker's default seccomp profile refuses `io_uring_setup`, so a container runs with
-  `seccomp=unconfined`. `tools/uring_probe.zig` names the first thing a kernel lacks.
+  kernel that lacks one of these, or refuses io_uring itself as Docker's default seccomp profile
+  does, gets the epoll backend instead (above): the process asks for a ring with the same flags,
+  features and opcodes a loop needs. `tools/uring_probe.zig` names the first thing a kernel lacks.
 - macOS with kqueue. Files need a policy (above). A loop that polls carries its own wake trigger
   in the `kevent` call, because a poll that finds nothing ready parks the thread for about 12 µs
   on macOS 26 otherwise (decision 12, point 6).
@@ -336,12 +339,13 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 ## Not in version one
 
 TLS (chapulin fills that interface for colibri), DNS (cocuyo), Unix sockets, process spawning,
-Windows, an epoll backend and the `std.Io` adapter. Decision 2 says why, and what would bring each
-in.
+Windows and the `std.Io` adapter. Decision 2 says why, and what would bring each in. The epoll
+backend was on this list until decision 20 brought it in.
 
 ## Where the numbers are
 
 `docs/costs.md` holds the measured costs of the operations the design arguments cite, for the
-`mac` and `orbstack` machines. `bench/alternatives/README.md` reads the comparison against libuv,
-libxev and `std.Io`, the losing rows included, and `bench/results/` holds every run as printed.
-No claim is made for Linux hardware: that machine is not named yet.
+`mac`, `orbstack` and `github` machines. `bench/alternatives/README.md` reads the comparison against
+libuv, libxev and `std.Io`, the losing rows included, and `bench/results/` holds every run as
+printed. The Linux machine rotor is meant to be deployed on is not named yet, so no claim is made
+for it.
