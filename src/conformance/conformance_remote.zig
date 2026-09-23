@@ -42,18 +42,6 @@ var registry_memory: [backend.Registry.memory_bytes(ids)]u8 align(core.layout.me
 const wake_registry_bytes = backend.Registry.memory_bytes(wake_ids);
 var wake_registry_memory: [wake_registry_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
-/// Waits one `pause_ns` through this thread's own loop, with a timer: a remote has no tick to
-/// wait with.
-fn pause(harness: *Harness) !void {
-    const timer: core.Operation = .{
-        .user_data = 0,
-        .kind = .{ .timer = .{ .after_ns = pause_ns } },
-    };
-    try harness.submit(&.{timer}, &.{});
-    var events: [1]Event = undefined;
-    try harness.collect(&events);
-}
-
 /// The second thread: holds the remote, posts once, and records what the post answered.
 const Sender = struct {
     registry: *backend.Registry,
@@ -265,9 +253,9 @@ test "a remote's post wakes a loop that sleeps in its tick, long before its wait
     var posted = false;
     var attempt: u32 = 0;
     while (!posted and attempt < pause_attempts_max) : (attempt += 1) {
-        try pause(&harness);
+        try harness.pause(pause_ns);
         if (registry.get(sleeper_id) < 0) continue;
-        try pause(&harness);
+        try harness.pause(pause_ns);
         remote.post(sleeper_id, .{ .payload = payload_hello, .tag = tag_hello }) catch |err| {
             if (err == error.LoopNotFound) continue;
             return err;

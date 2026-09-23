@@ -81,7 +81,7 @@ test "several listeners share one port, and every connection is accepted exactly
 
     var accepts: [listeners_count]Operation = undefined;
     for (&accepts, 0..) |*accept, index| {
-        accept.* = tcp.accept(index, listeners[index].descriptor, true);
+        accept.* = Operation.accept(index, listeners[index].descriptor, true);
     }
     try harness.submit(&accepts, &.{});
 

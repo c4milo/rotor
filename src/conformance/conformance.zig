@@ -84,6 +84,14 @@ pub const Harness = struct {
         if (filled < events.len) return error.EventsMissing;
     }
 
+    /// Waits `nanoseconds` through the loop itself, with a timer, so another thread gets time to
+    /// start: a scenario that posts across threads gives the other side that long.
+    pub fn pause(harness: *Harness, nanoseconds: u64) !void {
+        try harness.submit(&.{Operation.timer(0, nanoseconds, 0)}, &.{});
+        var events: [1]Event = undefined;
+        try harness.collect(&events);
+    }
+
     /// The event among `events` that carries `user_data`.
     pub fn find(events: []const Event, user_data: u64) !Event {
         for (events) |event| {

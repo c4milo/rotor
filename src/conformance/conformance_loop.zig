@@ -16,15 +16,11 @@ const sync = backend.sync;
 
 const ms = core.constants.ns_per_ms;
 
-fn timer(user_data: u64, after_ns: u64) Operation {
-    return .{ .user_data = user_data, .kind = .{ .timer = .{ .after_ns = after_ns } } };
-}
-
+/// A receive into `buffer` with a deadline, which the constructor leaves to its caller.
 fn receive(user_data: u64, socket: core.Descriptor, buffer: []u8, timeout_ns: u64) Operation {
-    return .{ .user_data = user_data, .timeout_ns = timeout_ns, .kind = .{ .receive = .{
-        .socket = socket,
-        .target = .{ .buffer = .{ .bytes = buffer } },
-    } } };
+    var operation = Operation.receive(user_data, socket, buffer);
+    operation.timeout_ns = timeout_ns;
+    return operation;
 }
 
 test "timers fire in deadline order, and equal deadlines in the order they were submitted" {
@@ -33,7 +29,10 @@ test "timers fire in deadline order, and equal deadlines in the order they were 
     try harness.init(0, null);
     defer harness.deinit();
     try harness.submit(&.{
-        timer(30, 3 * ms), timer(10, 1 * ms), timer(20, 2 * ms), timer(21, 2 * ms),
+        Operation.timer(30, 3 * ms, 0),
+        Operation.timer(10, 1 * ms, 0),
+        Operation.timer(20, 2 * ms, 0),
+        Operation.timer(21, 2 * ms, 0),
     }, &.{});
     try testing.expectEqual(@as(u32, 4), harness.loop.in_flight());
     var events: [4]Event = undefined;
@@ -52,7 +51,7 @@ test "a timer does not fire before its delay, and a waiting tick wakes for it an
     try harness.init(0, null);
     defer harness.deinit();
     const delay_ns = 20 * ms;
-    try harness.submit(&.{timer(1, delay_ns)}, &.{});
+    try harness.submit(&.{Operation.timer(1, delay_ns, 0)}, &.{});
     var events: [1]Event = undefined;
     // The first tick arms the timer from a clock reading it takes after this one, so the deadline
     // is at least `delay_ns` after `armed_ns`. The two short ticks are usually early. A busy
@@ -79,7 +78,7 @@ test "a cancelled timer ends with canceled at the next tick, never inside cancel
     try harness.init(0, null);
     defer harness.deinit();
     var handles: [1]Handle = undefined;
-    try harness.submit(&.{timer(5, core.constants.ns_per_s)}, &handles);
+    try harness.submit(&.{Operation.timer(5, core.constants.ns_per_s, 0)}, &handles);
     var events: [1]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
     harness.loop.cancel(handles[0]);
@@ -160,7 +159,7 @@ test "two receives waiting on one socket both complete, and between them get eve
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&none, 0));
     // Eight bytes fill both buffers. Which receive gets which half is not promised
     // (`Operation.Receive`): io_uring wakes two receives on one socket in an order of its own.
-    try harness.submit(&.{tcp.send(3, pair[0], "onetwo!!")}, &.{});
+    try harness.submit(&.{Operation.send(3, pair[0], "onetwo!!")}, &.{});
     var events: [3]Event = undefined;
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 4), try (try Harness.find(&events, 1)).outcome());
@@ -189,7 +188,11 @@ test "an operation cancelled before any tick ends with canceled and leaves nothi
     try testing.expectError(error.Canceled, events[0].outcome());
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
     // The socket is as it was: a receive after the cancelled one gets the next bytes.
-    try harness.submit(&.{ receive(2, pair[1], &buffer, 0), tcp.send(3, pair[0], "after") }, &.{});
+    const batch = [_]Operation{
+        receive(2, pair[1], &buffer, 0),
+        Operation.send(3, pair[0], "after"),
+    };
+    try harness.submit(&batch, &.{});
     var two: [2]Event = undefined;
     try harness.collect(&two);
     try testing.expectEqual(@as(u32, 5), try (try Harness.find(&two, 2)).outcome());
@@ -214,13 +217,13 @@ test "cancel_all and drain leave the loop empty, whatever was in flight" {
     try harness.submit(&.{
         receive(1, pair[0], &first, 0),
         receive(2, pair[1], &second, outlasts_drain_ns),
-        timer(3, outlasts_drain_ns),
-        tcp.accept(4, listener.descriptor, true),
+        Operation.timer(3, outlasts_drain_ns, 0),
+        Operation.accept(4, listener.descriptor, true),
     }, &.{});
     var scratch: [4]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&scratch, 0));
     // One more is still queued when the cancel comes: it never reaches the kernel.
-    try harness.submit(&.{timer(5, outlasts_drain_ns)}, &.{});
+    try harness.submit(&.{Operation.timer(5, outlasts_drain_ns, 0)}, &.{});
     try testing.expectEqual(@as(u32, 5), harness.loop.in_flight());
     harness.loop.cancel_all();
     try harness.loop.drain(&scratch);
@@ -256,7 +259,7 @@ test "submit takes as many operations as the table has slots and no more" {
     try harness.init(0, null);
     defer harness.deinit();
     var batch: [conformance.operations + 2]Operation = undefined;
-    for (&batch, 0..) |*operation, index| operation.* = timer(index, 0);
+    for (&batch, 0..) |*operation, index| operation.* = Operation.timer(index, 0, 0);
     const slots = conformance.operations;
     try testing.expectEqual(@as(u32, slots), harness.loop.submit(batch[0..slots], &.{}));
     try testing.expectEqual(@as(u32, 0), harness.loop.submit(batch[slots..], &.{}));
@@ -296,7 +299,7 @@ test "a loop that polls and never waits still sees bytes that arrive later" {
     var none: [1]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&none, 0));
     // The bytes are sent by another loop, so nothing tells the polling loop they are coming.
-    try sender.submit(&.{tcp.send(9, pair[0], "hi")}, &.{});
+    try sender.submit(&.{Operation.send(9, pair[0], "hi")}, &.{});
     var sent: [1]Event = undefined;
     try sender.collect(&sent);
     const received = try poll_one(&harness);

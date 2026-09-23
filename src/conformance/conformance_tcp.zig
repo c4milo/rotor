@@ -28,41 +28,13 @@ pub const Listener = struct {
     }
 };
 
-pub fn accept(user_data: u64, listener: core.Descriptor, multishot: bool) Operation {
-    return .{ .user_data = user_data, .kind = .{ .accept = .{
-        .listener = listener,
-        .multishot = multishot,
-    } } };
-}
-
-fn connect(user_data: u64, socket: core.Descriptor, address: *const core.Address) Operation {
-    return .{ .user_data = user_data, .kind = .{ .connect = .{
-        .socket = socket,
-        .address = address,
-    } } };
-}
-
-fn receive(user_data: u64, socket: core.Descriptor, buffer: []u8) Operation {
-    return .{ .user_data = user_data, .kind = .{ .receive = .{
-        .socket = socket,
-        .target = .{ .buffer = .{ .bytes = buffer } },
-    } } };
-}
-
-pub fn send(user_data: u64, socket: core.Descriptor, bytes: []const u8) Operation {
-    return .{ .user_data = user_data, .kind = .{ .send = .{
-        .socket = socket,
-        .buffer = .{ .bytes = bytes },
-    } } };
-}
-
 /// Connects one client to `listener` through the loop, and returns both ends.
 pub fn connected_pair(harness: *Harness, listener: *const Listener) ![2]core.Descriptor {
     const client = try sync.open_socket(.ipv4);
     errdefer sync.close_now(client);
     try harness.submit(&.{
-        accept(100, listener.descriptor, false),
-        connect(101, client, &listener.address),
+        Operation.accept(100, listener.descriptor, false),
+        Operation.connect(101, client, &listener.address),
     }, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
@@ -86,8 +58,8 @@ test "accept, connect, and bytes both ways over loopback" {
     var to_server: [16]u8 = @splat(0);
     var to_client: [16]u8 = @splat(0);
     try harness.submit(&.{
-        receive(1, pair[1], &to_server), send(2, pair[0], "ping"),
-        receive(3, pair[0], &to_client), send(4, pair[1], "pong!"),
+        Operation.receive(1, pair[1], &to_server), Operation.send(2, pair[0], "ping"),
+        Operation.receive(3, pair[0], &to_client), Operation.send(4, pair[1], "pong!"),
     }, &.{});
     var events: [4]Event = undefined;
     try harness.collect(&events);
@@ -108,7 +80,7 @@ test "a connect to a port nobody listens on is refused" {
     sync.close_now(listener.descriptor);
     const client = try sync.open_socket(.ipv4);
     defer sync.close_now(client);
-    try harness.submit(&.{connect(1, client, &listener.address)}, &.{});
+    try harness.submit(&.{Operation.connect(1, client, &listener.address)}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
     try testing.expectError(error.ConnectionRefused, events[0].outcome());
@@ -126,7 +98,7 @@ test "a receive returns 0 when the peer shut its sending side" {
 
     var buffer: [8]u8 = undefined;
     try harness.submit(&.{
-        receive(1, pair[1], &buffer),
+        Operation.receive(1, pair[1], &buffer),
         .{ .user_data = 2, .kind = .{ .shutdown = .{ .socket = pair[0], .how = .send } } },
     }, &.{});
     var events: [2]Event = undefined;
@@ -151,7 +123,7 @@ fn storm_wave(harness: *Harness, listener: *const Listener, accept_user_data: u6
     var connects: [storm_connections]Operation = undefined;
     for (&clients, &connects, 0..) |*client, *operation, index| {
         client.* = try sync.open_socket(.ipv4);
-        operation.* = connect(10 + index, client.*, &listener.address);
+        operation.* = Operation.connect(10 + index, client.*, &listener.address);
     }
     defer for (clients) |client| sync.close_now(client);
     try harness.submit(&connects, &.{});
@@ -180,7 +152,7 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     defer sync.close_now(listener.descriptor);
 
     var handles: [1]Handle = undefined;
-    try harness.submit(&.{accept(1, listener.descriptor, true)}, &handles);
+    try harness.submit(&.{Operation.accept(1, listener.descriptor, true)}, &handles);
     comptime std.debug.assert(storm_waves * storm_connections > conformance.entries);
     for (0..storm_waves) |_| {
         const accepted = try storm_wave(&harness, &listener, 1);
@@ -204,7 +176,7 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     defer other.deinit();
     const late = try sync.open_socket(.ipv4);
     defer sync.close_now(late);
-    try other.submit(&.{connect(99, late, &listener.address)}, &.{});
+    try other.submit(&.{Operation.connect(99, late, &listener.address)}, &.{});
     try other.collect(&last);
     try testing.expectEqual(@as(u32, 0), try last[0].outcome());
     const before = backend.testing.monotonic_ns();
@@ -225,14 +197,18 @@ test "bytes that arrive while nobody receives do not keep the loop from sleeping
 
     // One receive that waits and completes. After it, nobody receives on this socket.
     var buffer: [8]u8 = undefined;
-    try harness.submit(&.{ receive(1, pair[1], &buffer), send(2, pair[0], "one") }, &.{});
+    const batch = [_]Operation{
+        Operation.receive(1, pair[1], &buffer),
+        Operation.send(2, pair[0], "one"),
+    };
+    try harness.submit(&batch, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 3), try (try Harness.find(&events, 1)).outcome());
 
     // More bytes arrive and nobody asks for them. A backend may wake once for them, but not on
     // every wait: of two waiting ticks, the second takes its whole wait.
-    try harness.submit(&.{send(3, pair[0], "two")}, &.{});
+    try harness.submit(&.{Operation.send(3, pair[0], "two")}, &.{});
     try harness.collect(events[0..1]);
     _ = try harness.loop.tick(events[0..1], quiet_wait_ns);
     const before = backend.testing.monotonic_ns();
@@ -282,7 +258,7 @@ test "a send to a peer that closed ends with broken_pipe, and raises no signal" 
     var refused: anyerror = error.SendNeverRefused;
     var sent: u32 = 0;
     while (sent < sends_to_a_closed_peer_max) : (sent += 1) {
-        try harness.submit(&.{send(1, pair[0], "x")}, &.{});
+        try harness.submit(&.{Operation.send(1, pair[0], "x")}, &.{});
         try harness.collect(&events);
         // A reset reported on one send is consumed by it, and the next send meets the closed pipe.
         if (events[0].outcome()) |_| {} else |err| switch (err) {
@@ -325,7 +301,7 @@ test "a multishot receive names the provided buffer of each event and ends when 
     // each arrives as its own event.
     const messages = [_][]const u8{ "first", "second" };
     for (messages, 0..) |message, round| {
-        try harness.submit(&.{send(10 + round, pair[0], message)}, &.{});
+        try harness.submit(&.{Operation.send(10 + round, pair[0], message)}, &.{});
         var events: [2]Event = undefined;
         try harness.collect(&events);
         const received = try Harness.find(&events, 1);
@@ -335,7 +311,7 @@ test "a multishot receive names the provided buffer of each event and ends when 
     }
     try testing.expectEqual(@as(u32, 1), harness.loop.in_flight());
 
-    try harness.submit(&.{send(12, pair[0], "third")}, &.{});
+    try harness.submit(&.{Operation.send(12, pair[0], "third")}, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
     const last = try Harness.find(&events, 1);

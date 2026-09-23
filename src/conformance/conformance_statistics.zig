@@ -73,7 +73,7 @@ test "a sampled operation the kernel completes carries a latency, and a cancelle
             .socket = pair[1],
             .target = .{ .buffer = .{ .bytes = &bytes } },
         } } },
-        tcp.send(2, pair[0], "measured"),
+        Operation.send(2, pair[0], "measured"),
     }, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 8), try (try Harness.find(&events, 1)).outcome());

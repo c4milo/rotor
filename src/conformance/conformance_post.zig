@@ -18,18 +18,6 @@ const post_attempts_max = 200;
 /// How long the first loop waits between two posts that found no ring.
 const pause_ns = core.constants.ns_per_ms;
 
-/// Waits one `pause_ns` through the loop itself, with a timer, so the other thread gets time to
-/// start: a post that finds no ring ends in the same tick, and 200 of them take no time at all.
-fn pause(harness: *Harness) !void {
-    const timer: core.Operation = .{
-        .user_data = 0,
-        .kind = .{ .timer = .{ .after_ns = pause_ns } },
-    };
-    try harness.submit(&.{timer}, &.{});
-    var events: [1]Event = undefined;
-    try harness.collect(&events);
-}
-
 const Peer = struct {
     registry: *backend.Registry,
     failure: ?anyerror = null,
@@ -84,7 +72,7 @@ test "a message crosses to a loop on another thread and its answer comes back" {
             error.LoopNotFound => false,
             else => return err,
         };
-        if (!posted) try pause(&harness);
+        if (!posted) try harness.pause(pause_ns);
     }
     try testing.expect(posted);
 
@@ -149,9 +137,9 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
     var attempt: u32 = 0;
     var events: [1]Event = undefined;
     while (!posted and attempt < post_attempts_max) : (attempt += 1) {
-        try pause(&harness);
+        try harness.pause(pause_ns);
         if (registry.get(1) < 0) continue;
-        try pause(&harness);
+        try harness.pause(pause_ns);
         try harness.submit(&.{.{ .user_data = 1, .kind = .{ .post = .{
             .target = 1,
             .message = .{ .payload = 7, .tag = tag_ping },

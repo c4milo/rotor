@@ -21,13 +21,6 @@ const ms = core.constants.ns_per_ms;
 /// into two, short enough that a scenario runs in well under a second.
 const period_ns = 20 * ms;
 
-fn repeating(user_data: u64, after_ns: u64, repeat_ns: u64) Operation {
-    return .{ .user_data = user_data, .kind = .{ .timer = .{
-        .after_ns = after_ns,
-        .repeat_ns = repeat_ns,
-    } } };
-}
-
 /// Busy-waits without ticking, which is what a caller that is slow looks like to the loop.
 fn hold_off(nanoseconds: u64) void {
     const until = now_ns() + nanoseconds;
@@ -49,7 +42,7 @@ test "a repeating timer fires again and again, and a cancel ends it with one fin
     defer harness.deinit();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{repeating(7, period_ns, period_ns)}, &handles);
+    try harness.submit(&.{Operation.timer(7, period_ns, period_ns)}, &handles);
 
     var events: [4]Event = undefined;
     var fired: u32 = 0;
@@ -85,8 +78,8 @@ const final_rounds_max = 8;
 /// position in `handles` of the timer whose fire was not handed over.
 fn one_fire_left_queued(harness: *Harness, handles: *[2]core.Handle) !usize {
     try harness.submit(&.{
-        repeating(21, period_ns, period_ns),
-        repeating(22, period_ns, period_ns),
+        Operation.timer(21, period_ns, period_ns),
+        Operation.timer(22, period_ns, period_ns),
     }, handles);
     var one: [1]Event = undefined;
     try harness.collect(&one);
@@ -163,7 +156,7 @@ test "a loop held off its tick is handed the deadlines it missed, and does not s
     defer harness.deinit();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{repeating(9, period_ns, period_ns)}, &handles);
+    try harness.submit(&.{Operation.timer(9, period_ns, period_ns)}, &handles);
     // The submit arms nothing: the next tick does. One tick with no wait starts the clock.
     var events: [8]Event = undefined;
     _ = try harness.loop.tick(&events, 0);
@@ -225,7 +218,7 @@ fn measure_two_fires() !u64 {
     defer harness.deinit();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{repeating(11, period_ns, period_ns)}, &handles);
+    try harness.submit(&.{Operation.timer(11, period_ns, period_ns)}, &handles);
     var events: [8]Event = undefined;
     // The submit arms nothing; this tick does, and it is when the first deadline starts running.
     _ = try harness.loop.tick(&events, 0);
@@ -272,7 +265,7 @@ test "now_ns is 0 before the first tick, and the tick that fires a timer has rea
     // this one, so the tick that hands the fire over read at least this one plus the wait. Each
     // tick's reading is at or past the one before.
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{repeating(9, period_ns, 0)}, &handles);
+    try harness.submit(&.{Operation.timer(9, period_ns, 0)}, &handles);
     var previous_ns = submitted_ns;
     var count: u32 = 0;
     while (count == 0) {

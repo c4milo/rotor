@@ -53,21 +53,6 @@ const Pair = struct {
     }
 };
 
-fn receive_from(user_data: u64, socket: core.Descriptor) Operation {
-    return .{ .user_data = user_data, .kind = .{ .receive_from = .{
-        .socket = socket,
-        .group = group_id,
-    } } };
-}
-
-fn send_to(user_data: u64, socket: core.Descriptor, bytes: []const u8, to: *const Outbound) Operation {
-    return .{ .user_data = user_data, .kind = .{ .send_to = .{
-        .socket = socket,
-        .buffer = .{ .bytes = bytes },
-        .to = to,
-    } } };
-}
-
 fn provide(harness: *Harness) !void {
     try harness.loop.provide_datagram_buffers(
         group_id,
@@ -98,7 +83,7 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
     defer pair.close();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -106,7 +91,7 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(2, pair.sender, message, &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(2, pair.sender, message, &out)}, &.{});
 
     var events: [2]Event = undefined;
     try harness.collect(&events);
@@ -139,7 +124,7 @@ test "a datagram's bytes are read through the loop and not from the front of its
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -147,7 +132,7 @@ test "a datagram's bytes are read through the loop and not from the front of its
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(2, pair.sender, message, &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(2, pair.sender, message, &out)}, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
 
@@ -173,7 +158,7 @@ test "a multishot receive takes datagram after datagram from one submission" {
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
 
     var out: Outbound = .{
         .peer = pair.address,
@@ -185,7 +170,7 @@ test "a multishot receive takes datagram after datagram from one submission" {
     const datagrams = 3;
     var sent: u32 = 0;
     while (sent < datagrams) : (sent += 1) {
-        try harness.submit(&.{send_to(2, pair.sender, message, &out)}, &.{});
+        try harness.submit(&.{Operation.send_to(2, pair.sender, message, &out)}, &.{});
     }
 
     var received: u32 = 0;
@@ -218,7 +203,7 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(1, pair.receiver)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
 
     // One byte more than a buffer can hold past its prefix.
     const capacity = core.datagram.payload_capacity(buffer_bytes, group);
@@ -230,7 +215,7 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(2, pair.sender, large[0 .. capacity + 1], &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(2, pair.sender, large[0 .. capacity + 1], &out)}, &.{});
 
     var events: [2]Event = undefined;
     try harness.collect(&events);
@@ -254,7 +239,7 @@ test "a cancelled datagram receive ends with one final event and leaves nothing 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{receive_from(7, pair.receiver)}, &handles);
+    try harness.submit(&.{Operation.receive_from(7, pair.receiver, group_id)}, &handles);
     var events: [4]Event = undefined;
     _ = try harness.loop.tick(&events, 0);
 
@@ -300,7 +285,7 @@ test "a datagram sent on a socket shut for sending ends with broken_pipe" {
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(3, pair.sender, message, &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(3, pair.sender, message, &out)}, &.{});
     try harness.collect(&events);
     try testing.expectError(error.BrokenPipe, events[0].outcome());
 }
@@ -324,7 +309,7 @@ test "a segmented send is carried where the kernel segments and refused where it
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(2, pair.sender, &payload, &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(2, pair.sender, &payload, &out)}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
 
@@ -356,7 +341,7 @@ test "a datagram longer than UDP can carry ends with message_too_long" {
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    try harness.submit(&.{send_to(1, pair.sender, &oversized, &out)}, &.{});
+    try harness.submit(&.{Operation.send_to(1, pair.sender, &oversized, &out)}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
 
