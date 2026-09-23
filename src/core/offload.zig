@@ -21,9 +21,11 @@ const constants = @import("constants.zig");
 const layout = @import("layout.zig");
 const mailbox_module = @import("mailbox.zig");
 const operation = @import("operation.zig");
+const tables_module = @import("tables.zig");
 
 const Descriptor = operation.Descriptor;
 const Mailbox = mailbox_module.Mailbox;
+const Tables = tables_module.Tables;
 
 /// What a loop does with `read`, `write` and `fdatasync` on a backend that cannot perform them
 /// without blocking (decision 18). The default refuses, because the complaint that record answers
@@ -155,7 +157,7 @@ const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment
 /// asks for none of it.
 ///
 /// It is here rather than in a backend because every readiness backend carves the same rings out of
-/// the same memory; each one re-exports it so a caller reaches it as `offload_memory_bytes`.
+/// the same memory. The public module hands it to a caller as `offload_memory_bytes`.
 pub fn memory_bytes(workers: u16) usize {
     if (workers == 0) return 0;
     assert(workers <= constants.offload_workers_max);
@@ -174,6 +176,110 @@ pub fn init_rings(memory: []align(layout.memory_alignment) u8, workers: u16) []M
     const taken = rings[0..workers];
     for (taken) |*ring| ring.init();
     return taken;
+}
+
+/// The `Work.Code` an operation maps to, or null when it is not one an offload is handed. Every
+/// other operation waits for readiness, so handing it to a worker would spend a thread on nothing.
+pub fn code_of(code: operation.Operation.Code) ?Work.Code {
+    return switch (code) {
+        .read => .read,
+        .write => .write,
+        .fdatasync => .fdatasync,
+        else => null,
+    };
+}
+
+/// The result of one offloaded call, as a `Message` tag. A `Message` tag is unsigned, and a failed
+/// operation's result is the negation of a `Code`, so the tag carries the bits and `result_of_tag`
+/// reads them back. Nothing is lost: a transfer count fits in 31 bits (`transfer_bytes_max`) and a
+/// code is small.
+pub fn tag_of(result: i32) u32 {
+    return @bitCast(result);
+}
+
+fn result_of_tag(tag: u32) i32 {
+    return @bitCast(tag);
+}
+
+/// Messages one drain moves out of one worker's ring at a time. The same bound a readiness loop's
+/// `drain_mailboxes` uses, for the same reason: a ring that still holds messages is drained by the
+/// next tick, which does not wait while one does.
+const messages_per_drain = 32;
+
+/// Rounds one drain pops one ring in. A ring holds `constants.mailbox_messages` and each round
+/// takes `messages_per_drain`, so this many empties a ring that was full when the drain began.
+///
+/// A worker may push while the drain runs, so a drain is not promised to leave the ring empty. It
+/// does not have to: what it leaves the next tick takes, and a tick with anything to hand over does
+/// not wait. `drain_mailboxes` makes the same trade for the same reason.
+const drain_rounds_max = constants.mailbox_messages / messages_per_drain;
+
+/// Moves every result the workers pushed into `tables`' finished list, on the loop thread. The
+/// next `drain_finished` hands their events over, as decision 5, rule 2 requires: not the call that
+/// produced the result. `works_len` is how many works the loop holds, one per slot.
+///
+/// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
+pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
+    var finished: u32 = 0;
+    var messages: [messages_per_drain]operation.Message = undefined;
+    for (completions) |*ring| {
+        var round: u32 = 0;
+        while (round < drain_rounds_max) : (round += 1) {
+            const moved = ring.pop_into(&messages);
+            if (moved == 0) break;
+            for (messages[0..moved]) |message| {
+                // The payload is the slot index this loop wrote into the work before handing it
+                // out, so it names a slot of this loop's own table and nothing else.
+                assert(message.payload < works_len);
+                const index: u32 = @intCast(message.payload);
+                // A result can only come back for an operation that was handed out, and a hand-out
+                // marks such an operation `submitted`. A slot in any other state means the ring
+                // carried something this loop never sent.
+                assert(tables.table.at(index).state == .submitted);
+                tables.finish_local(index, result_of_tag(message.tag));
+                finished += 1;
+            }
+        }
+    }
+    return finished;
+}
+
+/// True when any worker has pushed a result the loop has not taken. The check a loop makes after
+/// it has said it will sleep, so it never sleeps on a message already in a ring.
+pub fn pending(completions: []const Mailbox) bool {
+    for (completions) |*ring| {
+        if (!ring.is_empty()) return true;
+    }
+    return false;
+}
+
+test "only the three blocking operations map to offload work" {
+    try testing.expectEqual(Work.Code.read, code_of(.read).?);
+    try testing.expectEqual(Work.Code.write, code_of(.write).?);
+    try testing.expectEqual(Work.Code.fdatasync, code_of(.fdatasync).?);
+    const others = [_]operation.Operation.Code{
+        .accept, .receive, .send, .connect, .timer, .post, .close,
+    };
+    for (others) |code| try testing.expectEqual(@as(?Work.Code, null), code_of(code));
+}
+
+test "a result survives the trip through a message tag, failures included" {
+    // A `Message` tag is unsigned and a failed result is negative, so the tag carries the bits.
+    // A round trip that lost the sign would turn every error into an enormous transfer count.
+    const event = @import("event.zig");
+    const results = [_]i32{
+        0,
+        1,
+        4096,
+        @intCast(constants.transfer_bytes_max),
+        event.result_of(.would_block),
+        event.result_of(.connection_reset),
+        event.result_of(.unexpected),
+        -1,
+        std.math.minInt(i32),
+        std.math.maxInt(i32),
+    };
+    for (results) |result| try testing.expectEqual(result, result_of_tag(tag_of(result)));
 }
 
 /// Workers of the alignment test: two rings are enough to prove where the second one lands.

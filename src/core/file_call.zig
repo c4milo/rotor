@@ -76,12 +76,7 @@ pub fn result(calls: anytype, request: Request, comptime retries_max: u32) i32 {
 
 /// The request of a slot that holds a file operation, built on the loop thread.
 pub fn request_of_slot(slot: *const Slot) Request {
-    const code: Code = switch (slot.code) {
-        .read => .read,
-        .write => .write,
-        .fdatasync => .fdatasync,
-        else => unreachable,
-    };
+    const code: Code = offload.code_of(slot.code).?;
     // A sync's slot holds no buffer, so `bytes` would fail its own check.
     const bytes: []u8 = if (code == .fdatasync) &.{} else slot.bytes();
     return .{ .code = code, .descriptor = slot.descriptor, .bytes = bytes, .offset = slot.offset };

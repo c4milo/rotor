@@ -180,8 +180,7 @@ pub const supported = if (linux) uring.supported or epoll.supported else kqueue.
 /// (decision 18): the rings the workers answer through. On Linux it is what epoll needs, and what
 /// io_uring checks for although it uses none of it; a caller sizes it before the choice is made.
 pub fn offload_memory_bytes(workers: u16) usize {
-    if (linux) return epoll.offload_module.memory_bytes(workers);
-    return kqueue.offload_module.memory_bytes(workers);
+    return core.offload.memory_bytes(workers);
 }
 
 /// The registry a group of loops shares, for `post` between them (decision 4).
