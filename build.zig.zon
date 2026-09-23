@@ -39,5 +39,7 @@
         "build.zig.zon",
         "build",
         "src",
+        // Apache 2.0 section 4(a): whoever passes rotor on passes a copy of the license with it.
+        "LICENSE",
     },
 }
