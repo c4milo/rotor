@@ -23,6 +23,7 @@ const halt = @import("build/halt.zig");
 const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
 const race = @import("build/race.zig");
+const proofs = @import("build/proofs.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
 const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
@@ -32,7 +33,7 @@ const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
 const lint_rule_directories = [_][]const u8{ "bench", "build", "src", "tools", "docs" };
 
 /// The Markdown files at the top of the tree, which the markdown rule reads beside `docs`.
-const lint_rule_files = [_][]const u8{ "CLAUDE.md", "README.md" };
+const lint_rule_files = [_][]const u8{ "CLAUDE.md", "README.md", "proofs/README.md" };
 
 /// Every tool built on pepegrillo whose own tests `zig build test` runs. A build that does not
 /// run the checkers' own tests lets a rule lose its own test without the build reporting it.
@@ -133,6 +134,7 @@ pub fn build(b: *std.Build) void {
     // Compiling it needs no Docker and costs about three seconds.
     test_step.dependOn(race.add(b).compile);
     bench_linux.add(b);
+    proofs.add(b);
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
     add_commit_lint_step(b, pepegrillo, install_step);

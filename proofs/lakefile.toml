@@ -1,0 +1,5 @@
+name = "rotor_proofs"
+defaultTargets = ["RotorProofs"]
+
+[[lean_lib]]
+name = "RotorProofs"

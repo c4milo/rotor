@@ -179,6 +179,7 @@ was about to push.
 - `tools/` is developer tooling, run by `zig build lint` and never linked into the library. Its
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds
   rotor's configuration of each rule.
+- `proofs/` holds the Lean proofs, a Lake project outside the Zig build's module graph.
 - `docs/` is the design set. `bench/` will hold the harness, the cost probes of
   `docs/costs.md`, the pinned versions of what rotor is measured against, and the committed
   results with the machine and kernel beside them.
@@ -238,12 +239,17 @@ was about to push.
   statement and die by a signal, and the canary's scenarios must not. The Linux gate runs the
   `*_linux_scenarios.zig` files instead.
 - Format: `zig build fmt`.
+- Proofs: `zig build proofs` — `lake build` in `proofs/`, the Lean proofs of the timer heap and the
+  timer lifecycle. It needs the Lean toolchain `proofs/lean-toolchain` names, which `elan`
+  installs, so it is a step of its own and not part of `zig build test`. A change to a function a
+  model mirrors changes the model in the same commit; `proofs/README.md` lists the models.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
-  request. Four jobs, each the command a developer runs by hand: `zig build test` on macOS, the
-  Linux gate and the race gate on Ubuntu with Docker, and `zig build lint-commits` on a pull
-  request. Zig is downloaded from ziglang.org and checked against a pinned SHA-256; no third-party
-  action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor
-  quiet, and rule 1 of that file stands.
+  request. Five jobs, each the command a developer runs by hand: `zig build test` on macOS, the
+  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` on Ubuntu, and
+  `zig build lint-commits` on a pull request. Zig is downloaded from ziglang.org and Lean from its
+  GitHub release, each checked against a pinned SHA-256; no third-party action runs. **No number
+  from CI enters `docs/costs.md`**: those runners are neither named nor quiet, and rule 1 of that
+  file stands.
 - Cost gates: `src/conformance/conformance_cost.zig` bounds what the loop's own work costs — a
   poll, one fire of a repeating timer, one operation of a batch submit — so a path that becomes
   slow fails `zig build test` on both backends. The 12 µs polling park of 2026-09-22 is why: every
