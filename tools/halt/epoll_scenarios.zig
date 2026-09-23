@@ -2,9 +2,19 @@
 //! on a loop with tables and no epoll instance, because every one of them halts before the loop
 //! would enter the kernel, so the check runs on every host, macOS included.
 //!
-//! This is `kqueue_scenarios.zig` for the organs decision 20's build has reached. The scenarios of
-//! `tick`, `cancel` and the `Remote` join it as those are built; until then this file covers the
-//! loop's lifecycle, its options, the offload's options and the buffer groups.
+//! This is `kqueue_scenarios.zig` less two of its scenarios, and the reason is where the check runs.
+//! `zig build halt-check` runs on the developer's Mac, and a scenario proves an assertion only if,
+//! with that assertion deleted, the scenario returns. On a Mac a Linux system call does not fail
+//! cleanly: macOS reads the call number from another register, so it runs some other call of its
+//! own. A scenario whose path after the violating statement reaches a Linux call could then die, or
+//! not, for that reason, and a deleted assertion could pass for a halt. So every scenario here halts
+//! on a path that makes no Linux call, and two of kqueue's are left out:
+//!
+//! - `tick` from another thread. With the owner check gone, the next statement reads the clock.
+//! - An offload worker the loop has no ring for. With the bound gone, the worker makes its `pread`.
+//!
+//! Both checks are `core`'s or the same line as kqueue's, and kqueue's scenarios run them on the
+//! kernel they were written for.
 const std = @import("std");
 const core = @import("core");
 const epoll = @import("epoll");
@@ -89,12 +99,11 @@ var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 /// the scenario would halt for the wrong reason: deleting the bound it tests would still halt.
 var ample_ring_memory: [1 << 20]u8 align(alignment) = undefined;
 
-/// The work the loop handed out, kept so a scenario can answer with it.
-var captured: ?*core.offload.Work = null;
-
+/// The offload's hand-off. Nothing calls it: every offload scenario here halts in `init_tables`,
+/// before an operation could be handed out.
 fn capture(context: ?*anyopaque, work: *core.offload.Work) void {
     _ = context;
-    captured = work;
+    _ = work;
 }
 
 /// The `offload` policy with no offload: nothing would ever answer, so every file operation would
@@ -193,6 +202,68 @@ fn give_back_a_buffer_the_group_does_not_hold() void {
     loop.give_back_buffer(0, group_buffers);
 }
 
+// The Remote's assertions (decision 4). Each is a mistake only the caller can make. A remote's
+// `init` and `post` reach the registry and its rings before any system call, and with any of these
+// assertions deleted, `post` answers `LoopNotFound` without one: the target of each is an id that
+// no loop holds.
+
+/// A registry of two ids, which the scenarios claim as a loop and a remote would.
+const remote_ids: u16 = 2;
+const remote_registry_bytes = epoll.Registry.memory_bytes(remote_ids);
+var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
+    undefined;
+var remote_registry: epoll.Registry = undefined;
+var remote_one: epoll.Remote = undefined;
+
+/// Two remotes claiming one id would put two producers on a single-producer ring.
+fn claim_one_id_with_two_remotes() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    var remote_two: epoll.Remote = undefined;
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    remote_two.init(&remote_registry, 1) catch return;
+}
+
+/// A remote claiming an id a loop already holds: the loop published its eventfd there, and the
+/// remote would overwrite it. The number is never written to: nothing here posts.
+fn claim_a_loops_id_with_a_remote() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    const published_wake: core.Descriptor = 3;
+    remote_registry.set(0, published_wake);
+    scenario.reached_violation();
+    remote_one.init(&remote_registry, 0) catch return;
+}
+
+/// A remote posting to its own id. It has nothing to receive with, so a message to itself is a
+/// programmer error, as a loop posting to itself is.
+fn post_from_a_remote_to_itself() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A remote used from a thread that did not create it: two producers on one ring.
+fn post_from_a_remote_on_another_thread() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    const thread = std.Thread.spawn(.{}, post_through_remote_one, .{}) catch return;
+    thread.join();
+}
+
+fn post_through_remote_one() void {
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
+/// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
+fn post_a_tag_above_the_limit() void {
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    remote_one.init(&remote_registry, 1) catch return;
+    scenario.reached_violation();
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: submit from another thread", .run = submit_from_another_thread },
     .{
@@ -223,6 +294,14 @@ const scenarios = [_]scenario.Scenario{
         .name = "buffers: give back a buffer the group does not hold",
         .run = give_back_a_buffer_the_group_does_not_hold,
     },
+    .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
+    .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },
+    .{ .name = "remote: post from a remote to itself", .run = post_from_a_remote_to_itself },
+    .{
+        .name = "remote: post from a remote on another thread",
+        .run = post_from_a_remote_on_another_thread,
+    },
+    .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
 };
 
 pub fn main(init: std.process.Init) !void {

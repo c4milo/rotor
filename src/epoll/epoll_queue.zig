@@ -6,9 +6,17 @@
 //!
 //! **A registration is its own system call.** kqueue carries up to 256 changes in the call that
 //! waits; `epoll_ctl` takes one descriptor at a time and there is no batched form. libuv batches
-//! them through an io_uring ring, which is closed to this backend by definition. So `control` is
-//! called once per change and a tick that registers N descriptors makes N+1 calls. Registrations
-//! are left in place rather than re-armed, which is what keeps that N small: see `arm` below.
+//! them through an io_uring ring, which is closed to this backend by definition. So a tick that
+//! registers N descriptors makes N+1 calls.
+//!
+//! **Registrations are left in place, and the kernel says what is there.** The loop keeps no record
+//! of what it registered: a descriptor the caller closed with `sync.close_now` leaves the epoll
+//! instance with it, and its number can come back as another socket, so a record in user space
+//! would be wrong exactly when it matters. `arm` therefore asks the kernel each time, modifying
+//! first and adding when the kernel answers that it holds nothing. A descriptor that stays in use,
+//! which is a connection between two of its operations, costs one `epoll_ctl` per operation that
+//! waits. `epoll_reap.zig` takes a direction out only when the kernel reports it ready and nobody
+//! waits on it, which is what keeps a level-triggered registration from reporting for ever.
 //!
 //! **The wake is an eventfd.** kqueue triggers an `EVFILT_USER` it registered at init; epoll has no
 //! user event, so the loop owns an eventfd registered for read readiness, and another thread wakes
@@ -35,8 +43,11 @@ pub const InitError = error{ Unsupported, PermissionDenied, SystemResources, Une
 /// `SystemResources`: a signal interrupted the call more than `interrupt_retries_max` times.
 pub const WaitError = error{ SystemResources, Unexpected };
 
-/// `Unexpected` covers every refusal of `epoll_ctl` a correct caller cannot reach: a descriptor it
-/// does not own is a programmer error and asserts instead.
+/// `SystemResources`: the kernel had no memory for the registration, or the user's
+/// `max_user_watches` is used up. `Unexpected` covers every refusal a correct caller cannot reach:
+/// EBADF for a descriptor that is not open, and EPERM for one epoll cannot watch, which is a
+/// regular file or a directory. Only socket operations wait, so neither reaches here from a correct
+/// caller.
 pub const ControlError = error{ SystemResources, Unexpected };
 
 const supported = builtin.os.tag == .linux;
@@ -48,16 +59,25 @@ pub const Interest = enum {
     write,
     both,
 
-    /// The epoll event mask. `ERR` and `HUP` arrive whether or not they are asked for, so naming
-    /// them costs nothing and says which readiness the reap must handle.
+    /// The interest for the directions that have an operation waiting, or null for none.
+    pub fn of(read: bool, write: bool) ?Interest {
+        if (read and write) return .both;
+        if (read) return .read;
+        if (write) return .write;
+        return null;
+    }
+
+    /// The epoll event mask. `ERR` and `HUP` arrive whether or not they are asked for, so they are
+    /// not named. `RDHUP`, the peer's half close, is asked for with the read direction alone: it is
+    /// level triggered like the rest, so asking for it with only the write direction would report a
+    /// half-closed socket on every wait with nobody to serve it.
     pub fn mask(interest: Interest) u32 {
-        const common: u32 = linux.EPOLL.ERR | linux.EPOLL.HUP | linux.EPOLL.RDHUP;
-        const wanted: u32 = switch (interest) {
-            .read => linux.EPOLL.IN,
+        const read_bits: u32 = linux.EPOLL.IN | linux.EPOLL.RDHUP;
+        return switch (interest) {
+            .read => read_bits,
             .write => linux.EPOLL.OUT,
-            .both => linux.EPOLL.IN | linux.EPOLL.OUT,
+            .both => read_bits | linux.EPOLL.OUT,
         };
-        return common | wanted;
     }
 };
 
@@ -77,8 +97,17 @@ pub const Queue = struct {
 
         const flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
         queue.wake_descriptor = try descriptor_of(linux.eventfd(0, flags));
-        queue.arm(queue.wake_descriptor, .read, constants.wake_user_data) catch
-            return error.Unexpected;
+        var wake_event: Event = .{
+            .events = linux.EPOLL.IN,
+            .data = .{ .u64 = constants.wake_user_data },
+        };
+        const added = linux.epoll_ctl(
+            queue.descriptor,
+            linux.EPOLL.CTL_ADD,
+            queue.wake_descriptor,
+            &wake_event,
+        );
+        if (linux.errno(added) != .SUCCESS) return error.SystemResources;
 
         // A kernel without `epoll_pwait2` refuses it with ENOSYS, and this backend has no second
         // path: a millisecond timeout cannot hold a deadline rotor accepts.
@@ -99,34 +128,32 @@ pub const Queue = struct {
         }
     }
 
-    /// Registers `descriptor` for `interest`, or changes what an already registered one waits for.
-    /// `user_data` is what the readiness carries back, which is the slot the reap looks up.
+    /// Makes the kernel report `descriptor` for `interest` and nothing else. The readiness carries
+    /// the descriptor back, which is what the reap looks its waiters up by.
     ///
-    /// One `epoll_ctl` per call, and `CTL_ADD` or `CTL_MOD` decided by the kernel's answer rather
-    /// than by bookkeeping here: EEXIST means it was already registered, so the same call becomes a
-    /// modify. That keeps this file from holding a second copy of what the waiters table knows.
+    /// `CTL_MOD` first, and `CTL_ADD` only when the kernel answers ENOENT, because a descriptor in
+    /// use is one the kernel already holds: see the file's comment. So one call in the common case,
+    /// and two for the first operation that waits on a descriptor.
     pub fn arm(
         queue: *const Queue,
         descriptor: core.Descriptor,
         interest: Interest,
-        user_data: u64,
     ) ControlError!void {
         assert(queue.descriptor >= 0);
         assert(descriptor >= 0);
+        const user_data: u64 = @intCast(descriptor);
         var event: Event = .{ .events = interest.mask(), .data = .{ .u64 = user_data } };
+        const changed = linux.epoll_ctl(queue.descriptor, linux.EPOLL.CTL_MOD, descriptor, &event);
+        switch (linux.errno(changed)) {
+            .SUCCESS => return,
+            .NOENT => {},
+            else => |errno| return control_error(errno),
+        }
         const added = linux.epoll_ctl(queue.descriptor, linux.EPOLL.CTL_ADD, descriptor, &event);
         switch (linux.errno(added)) {
             .SUCCESS => return,
-            .EXIST => {},
-            .NOMEM, .NOSPC, .PERM => return error.SystemResources,
-            else => return error.Unexpected,
+            else => |errno| return control_error(errno),
         }
-        const changed = linux.epoll_ctl(queue.descriptor, linux.EPOLL.CTL_MOD, descriptor, &event);
-        return switch (linux.errno(changed)) {
-            .SUCCESS => {},
-            .NOMEM, .NOSPC => error.SystemResources,
-            else => error.Unexpected,
-        };
     }
 
     /// Removes `descriptor` from the epoll instance. A descriptor the kernel already forgot, which
@@ -185,6 +212,14 @@ pub const Queue = struct {
     }
 };
 
+fn control_error(errno: linux.E) ControlError {
+    assert(errno != .SUCCESS);
+    return switch (errno) {
+        .NOMEM, .NOSPC => error.SystemResources,
+        else => error.Unexpected,
+    };
+}
+
 fn descriptor_of(rc: usize) InitError!core.Descriptor {
     return switch (linux.errno(rc)) {
         .SUCCESS => @intCast(rc),
@@ -218,7 +253,7 @@ test "a poll of an idle epoll returns nothing, and a wake ends a wait long befor
     try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
 }
 
-test "arming a descriptor twice modifies it rather than failing" {
+test "arming adds a descriptor the kernel does not hold, and modifies one it does" {
     if (!supported) return error.SkipZigTest;
     var queue = try Queue.init();
     defer queue.deinit();
@@ -227,24 +262,64 @@ test "arming a descriptor twice modifies it rather than failing" {
         _ = linux.close(end);
     };
 
-    const user_data = 0x5ec0_0001;
-    try queue.arm(pair[0], .read, user_data);
-    // The same descriptor again: the add answers EEXIST and the modify carries the new interest.
-    try queue.arm(pair[0], .both, user_data);
+    // Not held yet: the modify answers ENOENT and the add registers it.
+    try queue.arm(pair[0], .read);
+    // Held: the modify alone changes the interest.
+    try queue.arm(pair[0], .both);
 
     var readiness: [4]Event = undefined;
-    // Nothing written yet, so the read end is not ready; the write end was never armed.
+    // Nothing written yet, so the read end is not ready. A pipe's read end is never writable, so
+    // asking for both reports nothing either.
     try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
     const byte: [1]u8 = .{0xa5};
     try testing.expectEqual(@as(usize, 1), linux.write(pair[1], &byte, 1));
     try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, 0));
-    try testing.expectEqual(@as(u64, user_data), readiness[0].data.u64);
+    // The readiness names the descriptor, which is how the reap finds its waiters.
+    try testing.expectEqual(@as(u64, @intCast(pair[0])), readiness[0].data.u64);
     try testing.expect(readiness[0].events & linux.EPOLL.IN != 0);
 
+    // Level triggered: still ready, still reported, until it is read or disarmed.
+    try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, 0));
     queue.disarm(pair[0]);
     try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
     // A descriptor the queue never held: removing it is not an error.
     queue.disarm(pair[1]);
+}
+
+test "a descriptor closed while registered leaves the instance, and its number arms again" {
+    if (!supported) return error.SkipZigTest;
+    var queue = try Queue.init();
+    defer queue.deinit();
+    const first = try pipe_pair();
+    try queue.arm(first[0], .read);
+    // Closed the way `sync.close_now` closes it, with no disarm: the kernel drops the registration.
+    _ = linux.close(first[0]);
+    _ = linux.close(first[1]);
+    // The kernel hands out the lowest free number, so the new pipe's read end is the old number.
+    const second = try pipe_pair();
+    defer for (second) |end| {
+        _ = linux.close(end);
+    };
+    try testing.expectEqual(first[0], second[0]);
+    // A record in user space would say it is armed and skip the call; the kernel says ENOENT, and
+    // the add makes the new descriptor report.
+    try queue.arm(second[0], .read);
+    const byte: [1]u8 = .{0x5a};
+    try testing.expectEqual(@as(usize, 1), linux.write(second[1], &byte, 1));
+    var readiness: [2]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, 0));
+}
+
+test "an interest names the directions that have a waiter, and half close rides with reading" {
+    try testing.expectEqual(@as(?Interest, null), Interest.of(false, false));
+    try testing.expectEqual(@as(?Interest, .read), Interest.of(true, false));
+    try testing.expectEqual(@as(?Interest, .write), Interest.of(false, true));
+    try testing.expectEqual(@as(?Interest, .both), Interest.of(true, true));
+    try testing.expect(Interest.read.mask() & linux.EPOLL.RDHUP != 0);
+    try testing.expect(Interest.write.mask() & linux.EPOLL.RDHUP == 0);
+    try testing.expect(Interest.write.mask() & linux.EPOLL.IN == 0);
+    try testing.expect(Interest.read.mask() & linux.EPOLL.OUT == 0);
+    try testing.expectEqual(Interest.read.mask() | Interest.write.mask(), Interest.both.mask());
 }
 
 /// Ends of a pipe: the read end and the write end.

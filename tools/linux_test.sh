@@ -44,10 +44,11 @@ readonly image='alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be1216
 # Docker's default seccomp profile refuses io_uring_setup with EPERM, so an io_uring container runs
 # without that profile. Without this option the probe reports the refusal and the run fails.
 readonly security_option='seccomp=unconfined'
-# The one executable that runs under Docker's DEFAULT profile instead. The epoll backend exists for a
-# container nobody relaxed (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests
-# would prove nothing: they must pass in the environment that refuses io_uring.
-readonly confined_test='epoll'
+# The executables that run under Docker's DEFAULT profile instead: the epoll module's own tests and
+# the conformance suite against it. The epoll backend exists for a container nobody relaxed
+# (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests would prove nothing: they
+# must pass in the environment that refuses io_uring.
+readonly confined_tests=' epoll conformance-epoll '
 # The directory `zig build test-linux` installs into, relative to the top of the work tree.
 readonly install_directory='zig-out/linux'
 # The file `zig build test-linux` touches after its last install (build/linux.zig).
@@ -115,7 +116,7 @@ in_default_container() {
 run() {
   local name="$1"
   local runner='in_container'
-  if [[ "$name" == "$confined_test" ]]; then
+  if [[ "$confined_tests" == *" $name "* ]]; then
     runner='in_default_container'
     echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
   else

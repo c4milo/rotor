@@ -94,10 +94,9 @@ pub fn build(b: *std.Build) void {
         .{ .name = "kqueue", .module = graph.kqueue },
         .{ .name = "conformance-kqueue", .module = graph.conformance_kqueue },
         .{ .name = "epoll", .module = graph.epoll },
-        // `conformance-epoll` is created in the graph and not compiled here yet. The epoll module
-        // has a `Loop` now, but the suite also names `tick`, `cancel`, `drain` and the rest of
-        // `core/surface.zig`, which decision 20's build has not reached. It joins this list in the
-        // commit that calls `core.surface.check` on that Loop, which is what makes the suite run.
+        // It skips off Linux like `conformance-uring`, so on a Mac this proves it compiles, and the
+        // Linux gate is where it runs.
+        .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
     };
     for (unit_test_modules) |entry| {
         const unit_tests = b.addTest(.{ .name = entry.name, .root_module = entry.module });

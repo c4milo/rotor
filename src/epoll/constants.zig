@@ -9,11 +9,10 @@ const std = @import("std");
 /// readiness: epoll is level triggered here, so one still ready is still reported.
 pub const readiness_max: u32 = 256;
 
-/// There is no changelist. kqueue carries up to `changes_max` registrations in the call that waits;
-/// `epoll_ctl` takes one descriptor per call and has no batched form, so a registration is made as
-/// it is needed and nothing accumulates (decision 20, "The shape"). The constant kqueue needs for
-/// its changelist has no counterpart here, and its absence is the difference.
-pub const registrations_per_tick_max: u32 = readiness_max;
+// There is no changelist and so no `changes_max`. kqueue carries up to that many registrations in
+// the call that waits; `epoll_ctl` takes one descriptor per call and has no batched form, so a
+// registration is made as it is needed, nothing accumulates, and the flush needs no bound beyond
+// the pending list it walks (decision 20, "The shape").
 
 /// The alignment of the memory a provided-buffer group's bookkeeping sits in: what the uring
 /// backend asks for its buffer ring, so one declaration in a caller's code serves every backend.
@@ -35,7 +34,6 @@ pub const wake_user_data: u64 = std.math.maxInt(u64);
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
-    assert(registrations_per_tick_max >= 1);
     assert(interrupt_retries_max >= 1);
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));
 }

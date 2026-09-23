@@ -54,10 +54,12 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .{ .name = "core", .module = graph.core },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
-        // The second Linux backend (decision 20). Its queue enters the kernel, so its tests mean
-        // nothing until they run against one; `tools/linux_test.sh` runs this executable **without**
-        // `seccomp=unconfined`, because a backend that needed that flag would be pointless.
+        // The second Linux backend (decision 20), and the one suite against it. Both enter the
+        // kernel, so they mean nothing until they run against one; `tools/linux_test.sh` runs them
+        // **without** `seccomp=unconfined`, because a backend that needed that flag would be
+        // pointless.
         .{ .name = "epoll", .module = graph.epoll },
+        .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
         // The public module picks `uring` on this target, and its tests drive a loop through it.
         .{ .name = "rotor", .module = graph.rotor },
         // The harness is outside the module graph, and nothing built it for Linux until

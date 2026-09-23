@@ -106,7 +106,9 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
 /// sleep.
 ///
 /// It touches the work, the caller's buffer, one ring and one atomic flag. It reads no slot and no
-/// table, so it can run while the loop ticks.
+/// table, so it can run while the loop ticks. It does read the loop after its push has made the
+/// result visible, so the loop must outlive every call: a caller stops its offload before `deinit`
+/// (decision 18).
 fn run(work: *Work, worker: u16) void {
     const loop: *Loop = @ptrCast(@alignCast(work.owner));
     assert(worker < loop.completions.len);

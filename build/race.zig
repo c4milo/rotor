@@ -38,11 +38,14 @@ pub fn add(b: *std.Build) Steps {
     const target = race_target(b);
     const graph = modules.add(b, target, .Debug);
 
-    // One line per module whose tests start a thread. `core` starts none. `kqueue` owns the
-    // mailbox rings; `conformance-uring` runs two loops on two threads over the registry.
+    // One line per module whose tests start a thread. `core` starts none. `kqueue` holds the
+    // threaded tests of the mailbox rings; each conformance suite runs two loops on two threads over
+    // the registry, and the offload's workers beside a loop. `conformance-epoll` is the only one of
+    // those whose loops use the rings: io_uring carries a post in the kernel.
     const suites = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "kqueue", .module = graph.kqueue },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
+        .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
     };
 
     const stamp = b.addSystemCommand(&.{"touch"});

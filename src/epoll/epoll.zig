@@ -18,26 +18,31 @@
 //! registered descriptors, no provided buffer rings, no multishot, no batched submission. It exists
 //! so that rotor runs where io_uring does not, and the comparison gains no row for it.
 //!
-//! **Under construction.** Decision 20 was accepted on 2026-09-22 and this module is being built
-//! organ by organ, `kqueue`'s file by `kqueue`'s file. What is here compiles and is tested; what is
-//! not here yet is listed below, so nobody reads the module as finished.
-//!
-//! Built: `constants.zig`, `epoll_queue.zig`, `epoll_buffers.zig`, `epoll_offload.zig`, and the
-//! loop's state and lifecycle below. The waiters table, the mailboxes, the errno map and the
-//! offload's rings are `core`'s, shared with `kqueue` rather than copied.
-//!
-//! Not built: submit's kernel half, reap, perform, cancel, tick, the datagram path, the registered
-//! descriptors, `Remote`, the address and sync helpers, the surface check, and `supported` becoming
-//! true. Until the last of those, `supported` stays false and the conformance suite skips this
-//! backend everywhere, so no gate can pass by accident.
+//! Every organ is `kqueue`'s file by file, with Linux's calls. The waiters table, the mailboxes,
+//! the errno map and the offload's rings are `core`'s and shared with `kqueue`; the address and
+//! sync helpers are the `uring` backend's, copied, because both Linux backends convert to the same
+//! Linux structures and the graph has no module the two share (`epoll_address.zig` says why).
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
 
 pub const constants = @import("constants.zig");
+pub const address = @import("epoll_address.zig");
 pub const buffers = @import("epoll_buffers.zig");
+const datagram_module = @import("epoll_datagram.zig");
+pub const cancel_module = @import("epoll_cancel.zig");
+pub const descriptors_module = @import("epoll_descriptors.zig");
+pub const errno = core.errno;
+pub const mailbox = core.mailbox;
 pub const offload_module = @import("epoll_offload.zig");
+pub const perform = @import("epoll_perform.zig");
 pub const queue_module = @import("epoll_queue.zig");
+pub const reap_module = @import("epoll_reap.zig");
+pub const remote_module = @import("epoll_remote.zig");
+pub const submit_module = @import("epoll_submit.zig");
+pub const sync = @import("epoll_sync.zig");
+pub const testing = @import("epoll_testing.zig");
+pub const tick_module = @import("epoll_tick.zig");
 
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. epoll reports readiness and never
@@ -51,19 +56,17 @@ pub const files_block = true;
 /// full one is refused with `mailbox_full`.
 pub const post_bounded = true;
 
-/// True on a host whose kernel this backend can run on, and only once it can actually run there.
-/// **False while the module is under construction**: the conformance suite skips a backend that
-/// says false, and a half-built backend that claimed a host would let a gate pass on nothing.
-pub const supported = false;
-
-/// What `supported` will read when the module is finished: Linux, where epoll is.
-pub const supported_when_built = @import("builtin").os.tag == .linux;
+/// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
+pub const supported = @import("builtin").os.tag == .linux;
 
 /// The rings are `core`'s, and so is the table of which loop is where: this backend's `post` is
 /// kqueue's, because neither kernel carries a message the way io_uring's `msg_ring` does
 /// (decision 20, open question 3).
 pub const Registry = core.mailbox.Registry;
+pub const Remote = remote_module.Remote;
 pub const InitError = queue_module.InitError;
+pub const TickError = tick_module.TickError;
+pub const DrainError = TickError || error{StillInFlight};
 
 const Event = core.Event;
 const Handle = core.Handle;
@@ -170,7 +173,9 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.queue = try queue_module.Queue.init();
-        if (loop.registry) |registry| registry.set(loop.tables.id, loop.queue.descriptor);
+        // The eventfd and not the epoll instance: a post wakes a loop by writing to the descriptor
+        // the registry holds, and an epoll descriptor cannot be written to.
+        if (loop.registry) |registry| registry.set(loop.tables.id, loop.queue.wake_descriptor);
     }
 
     /// Everything but the epoll instance: what the paths that enter no kernel run on.
@@ -241,14 +246,69 @@ pub const Loop = struct {
         return loop.tables.submit(operations, handles);
     }
 
+    pub fn cancel(loop: *Loop, handle: Handle) void {
+        loop.tables.assert_owner();
+        cancel_module.cancel(loop, handle);
+    }
+
+    pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+        return tick_module.tick(loop, events, wait_ns);
+    }
+
+    /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
+    /// with its own final event, which `drain` or the caller's ticks hand over.
+    pub fn cancel_all(loop: *Loop) void {
+        loop.tables.assert_owner();
+        var from: u32 = 0;
+        while (loop.tables.next_cancellable(from)) |index| : (from = index + 1) {
+            cancel_module.request(loop, index, loop.tables.table.at(index));
+        }
+    }
+
+    /// Ticks until no operation is in flight, discarding the events into `scratch`: what a
+    /// caller that is shutting down, and has no use for them, calls after `cancel_all`. Fails
+    /// when the loop is still not empty after `core.constants.drain_rounds_max` ticks.
+    pub fn drain(loop: *Loop, scratch: []Event) DrainError!void {
+        const rounds_max = core.constants.drain_rounds_max;
+        return core.shutdown.drain(loop, scratch, rounds_max, core.constants.drain_wait_ns);
+    }
+
     /// What the loop has counted about itself, sampled (decision 9). Read by the caller alone.
     pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
         return &loop.tables.statistics;
     }
 
     pub const register_buffers = buffers.register;
+    pub const register_descriptors = descriptors_module.register;
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
+
+    /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
+    /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a
+    /// precondition. One loop serves one datagram shape.
+    pub fn provide_datagram_buffers(
+        loop: *Loop,
+        group_id: u16,
+        memory: []align(buffers.group_alignment) u8,
+        count: u16,
+        buffer_bytes: u32,
+        group: core.datagram.GroupOptions,
+    ) buffers.ProvideError!void {
+        assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        loop.datagram_group = group;
+        return buffers.provide(loop, group_id, memory, count, buffer_bytes);
+    }
+
+    /// The datagram an event of group `group_id` names: the only supported reader of that
+    /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
+    /// caller's until `give_back_buffer`.
+    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
+        assert(!event.flags.message);
+        assert(event.flags.buffer);
+        const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
+        const bytes: u32 = @intCast(event.result);
+        return datagram_module.delivery(buffer, bytes, loop.datagram_group);
+    }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
     pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
@@ -312,161 +372,26 @@ pub const Loop = struct {
     }
 };
 
-// `core.surface.check(Loop)` is not called yet: `cancel`, `tick`, `cancel_all`, `drain`,
-// `register_descriptors`, `provide_datagram_buffers` and `datagram` are not built. It goes in with
-// the last of them, in the commit that sets `supported`, so the check never passes on a Loop a
-// caller cannot use.
-
-const testing = std.testing;
-
-/// Operations the sizing tests ask a loop for. Small, because what they measure is the arithmetic.
-const sized_operations = 8;
-
-test "the loop's memory holds the slots, the timers, the starts and the waiters, and no more" {
-    const options: Loop.Options = .{ .operations = sized_operations };
-    const slots = sized_operations * @sizeOf(Slot);
-    const timers = sized_operations * @sizeOf(TimerHeap.Entry);
-    const starts = sized_operations * @sizeOf(u64);
-    const waiting = Waiters.capacity_for(sized_operations) * @sizeOf(core.waiters.Entry);
-    // Each part is carved to `memory_alignment`, so the total is at least their sum and the padding
-    // is bounded by one alignment per part.
-    const sum = slots + timers + starts + waiting;
-    try testing.expect(Loop.memory_bytes(options) >= sum);
-    try testing.expect(Loop.memory_bytes(options) <= sum + 4 * core.layout.memory_alignment);
-    // No offload was asked for, so not one byte of `Work` is counted.
-    const works = sized_operations * @sizeOf(core.offload.Work);
-    try testing.expect(Loop.memory_bytes(options) < sum + works);
-}
-
-test "an offload's works are counted only when the policy asks for one" {
-    const offload: core.offload.Offload = comptime .{
-        .context = null,
-        .submit = &submit_nothing,
-        .workers = 2,
-    };
-    const without: Loop.Options = .{ .operations = sized_operations };
-    const with: Loop.Options = .{
-        .operations = sized_operations,
-        .file_policy = .offload,
-        .offload = offload,
-    };
-    const works = sized_operations * @sizeOf(core.offload.Work);
-    try testing.expect(Loop.memory_bytes(with) >= Loop.memory_bytes(without) + works);
-    // An offload named without the policy that uses it holds no rings, so it counts no works.
-    const named: Loop.Options = .{ .operations = sized_operations, .offload = offload };
-    try testing.expectEqual(Loop.memory_bytes(without), Loop.memory_bytes(named));
-}
-
-/// An offload that takes work and does nothing with it. The sizing tests never hand it any: they
-/// name an offload so that `memory_bytes` counts one.
-fn submit_nothing(context: ?*anyopaque, work: *core.offload.Work) void {
-    _ = context;
-    _ = work;
-}
-
-test "init_tables leaves an empty loop that owns this thread and holds no group" {
-    const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
-    loop.assert_owner();
-    loop.assert_empty();
-    try testing.expectEqual(@as(u32, 0), loop.in_flight());
-    try testing.expectEqual(@as(usize, 0), loop.completions.len);
-    try testing.expectEqual(@as(usize, 0), loop.works.len);
-    try testing.expect(!loop.buffers_registered);
-    try testing.expect(!loop.sleeping);
-    try testing.expect(loop.registry == null);
-    try testing.expect(loop.offload == null);
-    try testing.expectEqual(core.offload.FilePolicy.refuse, loop.file_policy);
-    for (&loop.groups) |*group| try testing.expectEqual(@as(u32, 0), group.buffer_bytes);
-    // The readiness array is where `epoll_pwait2` writes. There is no changelist beside it, and
-    // that absence is the difference from kqueue's loop, so it is checked and not just described.
-    try testing.expectEqual(@as(usize, constants.readiness_max), loop.readiness.len);
-    try testing.expect(!@hasField(Loop, "changes"));
-    try testing.expect(!@hasField(Loop, "changes_used"));
-}
-
-test "submit claims a slot per operation until the table is full, and makes no system call" {
-    const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
-
-    const timer: Operation = .{
-        .user_data = 1,
-        .kind = .{ .timer = .{ .after_ns = core.constants.ns_per_ms } },
-    };
-    var handles: [3]Handle = undefined;
-    const operations = [_]Operation{ timer, timer, timer };
-    // The table holds two, so the third is refused and the caller is told how many were taken.
-    // Nothing entered a kernel: this loop has no epoll instance, because `init_tables` opens none.
-    try testing.expectEqual(@as(u32, 2), loop.submit(&operations, &handles));
-    try testing.expectEqual(@as(u32, 2), loop.in_flight());
-    try testing.expectEqual(@as(u32, 0), loop.submit(&operations, &handles));
-    try testing.expect(handles[0].generation >= core.constants.generation_first);
-}
-
-test "a loop with no registry drains no mailbox and sleeps for the wait it was given" {
-    const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
-
-    var events: [4]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), loop.drain_mailboxes(&events));
-    // No registry and no offload, so nothing can hold a message back: the wait passes through.
-    const wait = core.constants.ns_per_ms;
-    try testing.expectEqual(@as(?u64, wait), loop.settle_to_sleep(wait));
-    try testing.expectEqual(@as(?u64, null), loop.settle_to_sleep(null));
-    try testing.expect(!loop.sleeping);
-    loop.wake_up();
-    try testing.expect(!loop.sleeping);
-}
-
-test "a loop with a registry says it sleeps, and a message already posted keeps it awake" {
-    const loops = 2;
-    const receiver: core.LoopId = 1;
-    const sender: core.LoopId = 0;
-    var registry_memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
-        undefined;
-    var registry: Registry = undefined;
-    registry.init(&registry_memory, loops);
-
-    // The memory is sized from the one field `memory_bytes` reads, because the options below hold a
-    // pointer to the registry, which no array length can be.
-    const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
-    const options: Loop.Options = .{ .operations = 2, .id = receiver, .registry = &registry };
-    var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
-
-    const wait = core.constants.ns_per_ms;
-    try testing.expectEqual(@as(?u64, wait), loop.settle_to_sleep(wait));
-    try testing.expect(loop.sleeping);
-    try testing.expect(registry.must_wake(receiver));
-    loop.wake_up();
-    try testing.expect(!loop.sleeping);
-    try testing.expect(!registry.must_wake(receiver));
-
-    // A sender pushes before the loop settles, so the loop must not sleep on that message.
-    const payload = 0x5ec0_1234;
-    const tag = 7;
-    const message: core.Message = .{ .tag = tag, .payload = payload };
-    try testing.expect(registry.mailbox(sender, receiver).push(message));
-    try testing.expectEqual(@as(?u64, null), loop.settle_to_sleep(wait));
-
-    var events: [4]Event = undefined;
-    try testing.expectEqual(@as(u32, 1), loop.drain_mailboxes(&events));
-    try testing.expectEqual(@as(u64, payload), events[0].user_data);
-    try testing.expectEqual(@as(i32, tag), events[0].result);
-    try testing.expect(events[0].flags.message);
-    loop.wake_up();
+comptime {
+    core.surface.check(Loop);
+    core.surface.check_remote(Remote);
 }
 
 test {
+    _ = @import("epoll_loop_test.zig");
     _ = constants;
+    _ = address;
     _ = buffers;
+    _ = datagram_module;
+    _ = cancel_module;
+    _ = descriptors_module;
     _ = offload_module;
+    _ = perform;
     _ = queue_module;
+    _ = reap_module;
+    _ = remote_module;
+    _ = submit_module;
+    _ = sync;
+    _ = testing;
+    _ = tick_module;
 }
