@@ -40,11 +40,41 @@ const flags_need_enter: u32 = linux.IORING_SQ_TASKRUN | linux.IORING_SQ_CQ_OVERF
 /// after the call (decision 6, kept from stompy).
 pub const features_required: u32 = linux.IORING_FEAT_NODROP | linux.IORING_FEAT_EXT_ARG;
 
-/// Every opcode version one submits. `init` probes each.
+/// Every opcode version one submits. `init` probes each, and `set_opcode` refuses at compile time
+/// an opcode that is not here.
 pub const opcodes_required = [_]linux.IORING_OP{
-    .ACCEPT, .CONNECT,    .RECV,        .SEND,  .SHUTDOWN,     .CLOSE,    .READ,
-    .WRITE,  .READ_FIXED, .WRITE_FIXED, .FSYNC, .ASYNC_CANCEL, .MSG_RING, .NOP,
+    .ACCEPT,
+    .CONNECT,
+    .RECV,
+    .SEND,
+    .RECVMSG,
+    .SENDMSG,
+    .SHUTDOWN,
+    .CLOSE,
+    .READ,
+    .WRITE,
+    .READ_FIXED,
+    .WRITE_FIXED,
+    .FSYNC,
+    .ASYNC_CANCEL,
+    .MSG_RING,
+    .NOP,
 };
+
+/// Sets the opcode of `sqe`. The backend sets every opcode it submits here, so an opcode that
+/// `init` does not probe fails to compile. RECVMSG and SENDMSG were submitted without being probed
+/// until 2026-09-23.
+pub fn set_opcode(sqe: *linux.io_uring_sqe, comptime opcode: linux.IORING_OP) void {
+    comptime assert(is_required(opcode));
+    sqe.opcode = opcode;
+}
+
+fn is_required(comptime opcode: linux.IORING_OP) bool {
+    for (opcodes_required) |required| {
+        if (required == opcode) return true;
+    }
+    return false;
+}
 
 /// The two counts `IORING_REGISTER_IOWQ_MAX_WORKERS` takes: bounded and unbounded workers.
 const worker_kinds = 2;
@@ -224,6 +254,16 @@ fn setup_error(err: anyerror) InitError {
 }
 
 const testing = std.testing;
+
+test "the files that fill an entry set its opcode only through set_opcode" {
+    // An opcode set any other way escapes the compile-time check, and `init` would not probe it.
+    const sources = [_][]const u8{
+        @embedFile("uring_submit.zig"),
+        @embedFile("uring_datagram.zig"),
+        @embedFile("uring_remote.zig"),
+    };
+    for (sources) |source| try testing.expect(std.mem.indexOf(u8, source, ".opcode = ") == null);
+}
 
 test "init refuses on a host without io_uring" {
     if (builtin.os.tag == .linux) return error.SkipZigTest;

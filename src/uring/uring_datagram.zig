@@ -17,6 +17,7 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
 const address_module = @import("uring_address.zig");
+const ring_module = @import("uring_ring.zig");
 
 const Address = core.Address;
 const Ecn = core.datagram.Ecn;
@@ -73,7 +74,7 @@ pub fn prepare_receive(
     message.header = std.mem.zeroes(linux.msghdr);
     message.header.namelen = options.name_reserve;
     message.header.controllen = options.control_reserve;
-    sqe.opcode = .RECVMSG;
+    ring_module.set_opcode(sqe, .RECVMSG);
     sqe.addr = @intFromPtr(&message.header);
     sqe.len = 1;
     if (slot.flags.multishot) {
@@ -109,7 +110,7 @@ pub fn prepare_send(
         message.header.control = &message.control;
         message.header.controllen = written;
     }
-    sqe.opcode = .SENDMSG;
+    ring_module.set_opcode(sqe, .SENDMSG);
     sqe.addr = @intFromPtr(&message.header);
     sqe.len = 1;
     // Without it, a send to a peer that closed raises SIGPIPE and ends the process.

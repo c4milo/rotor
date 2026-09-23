@@ -10,6 +10,7 @@ const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
 const address_module = @import("uring_address.zig");
+const ring_module = @import("uring_ring.zig");
 const uring = @import("uring.zig");
 const datagram = @import("uring_datagram.zig");
 
@@ -117,33 +118,33 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
     switch (slot.code) {
         .accept => prepare_accept(sqe, slot),
         .connect => {
-            sqe.opcode = .CONNECT;
+            ring_module.set_opcode(sqe, .CONNECT);
             sqe.addr = extra.address;
             sqe.off = extra.address_len;
         },
         .receive => prepare_receive(sqe, slot),
         .send => {
-            sqe.opcode = .SEND;
+            ring_module.set_opcode(sqe, .SEND);
             sqe.addr = slot.buffer;
             sqe.len = slot.len;
             // Without it, a send to a peer that closed raises SIGPIPE and ends the process.
             sqe.rw_flags = linux.MSG.NOSIGNAL;
         },
         .shutdown => {
-            sqe.opcode = .SHUTDOWN;
+            ring_module.set_opcode(sqe, .SHUTDOWN);
             sqe.len = slot.len;
         },
-        .close => sqe.opcode = .CLOSE,
+        .close => ring_module.set_opcode(sqe, .CLOSE),
         .read, .write => prepare_file_transfer(sqe, slot),
         .fdatasync => {
-            sqe.opcode = .FSYNC;
+            ring_module.set_opcode(sqe, .FSYNC);
             sqe.rw_flags = linux.IORING_FSYNC_DATASYNC;
         },
         .post => {
             const message: core.Message = .{ .payload = slot.buffer, .tag = slot.len };
             prepare_message(sqe, extra.target_ring, message);
         },
-        .nop => sqe.opcode = .NOP,
+        .nop => ring_module.set_opcode(sqe, .NOP),
         .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
         .send_to => {
             const out: *const core.datagram.Outbound = @ptrFromInt(slot.offset);
@@ -161,13 +162,13 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
 }
 
 fn prepare_accept(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
-    sqe.opcode = .ACCEPT;
+    ring_module.set_opcode(sqe, .ACCEPT);
     sqe.rw_flags = linux.SOCK.CLOEXEC;
     if (slot.flags.multishot) sqe.ioprio = linux.IORING_ACCEPT_MULTISHOT;
 }
 
 fn prepare_receive(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
-    sqe.opcode = .RECV;
+    ring_module.set_opcode(sqe, .RECV);
     if (slot.flags.buffer_group) {
         sqe.flags |= linux.IOSQE_BUFFER_SELECT;
         sqe.buf_index = slot.buffer_index;
@@ -187,10 +188,10 @@ fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
     sqe.len = slot.len;
     sqe.off = slot.offset;
     if (slot.flags.buffer_registered) {
-        sqe.opcode = if (is_read) .READ_FIXED else .WRITE_FIXED;
+        if (is_read) ring_module.set_opcode(sqe, .READ_FIXED) else ring_module.set_opcode(sqe, .WRITE_FIXED);
         sqe.buf_index = slot.buffer_index;
     } else {
-        sqe.opcode = if (is_read) .READ else .WRITE;
+        if (is_read) ring_module.set_opcode(sqe, .READ) else ring_module.set_opcode(sqe, .WRITE);
     }
 }
 
@@ -202,7 +203,7 @@ pub fn prepare_message(
     message: core.Message,
 ) void {
     assert(target_ring >= 0);
-    sqe.opcode = .MSG_RING;
+    ring_module.set_opcode(sqe, .MSG_RING);
     sqe.fd = target_ring;
     sqe.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
     sqe.len = message.tag | constants.message_result_flag;
@@ -214,7 +215,7 @@ pub fn prepare_message(
 pub fn prepare_cancel(sqe: *linux.io_uring_sqe, target: u64) void {
     assert(!Handle.from_bits(target).is_none());
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
-    sqe.opcode = .ASYNC_CANCEL;
+    ring_module.set_opcode(sqe, .ASYNC_CANCEL);
     sqe.fd = -1;
     sqe.addr = target;
     sqe.user_data = constants.user_data_cancel;
@@ -225,7 +226,7 @@ pub fn prepare_cancel(sqe: *linux.io_uring_sqe, target: u64) void {
 pub fn prepare_close_cancel(sqe: *linux.io_uring_sqe, descriptor: core.Descriptor) void {
     assert(descriptor >= 0);
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
-    sqe.opcode = .ASYNC_CANCEL;
+    ring_module.set_opcode(sqe, .ASYNC_CANCEL);
     sqe.fd = descriptor;
     sqe.rw_flags = linux.IORING_ASYNC_CANCEL_FD | linux.IORING_ASYNC_CANCEL_ALL;
     sqe.flags = linux.IOSQE_IO_HARDLINK;
