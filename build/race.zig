@@ -30,8 +30,9 @@ const manifest_name = "tests.manifest";
 /// The file the step touches last, which says when this install finished.
 const stamp_name = ".test-race-stamp";
 
-/// The steps this file adds. `compile` builds the sanitized executables and installs nothing, so
-/// `zig build test` can require the compile without writing to zig-out or needing Docker.
+/// The steps this file adds. `compile` checks that the sanitized suites compile for Linux, and
+/// emits no binary, so `zig build test` can require it without writing to zig-out, needing Docker,
+/// or paying for code generation, the link and the sanitizer's runtime.
 pub const Steps = struct { compile: *std.Build.Step };
 
 pub fn add(b: *std.Build) Steps {
@@ -54,7 +55,7 @@ pub fn add(b: *std.Build) Steps {
 
     const compile_all = b.step(
         "test-race-compile",
-        "Compile the ThreadSanitizer executables, and install none of them",
+        "Check that the ThreadSanitizer suites compile for Linux, and emit no binary",
     );
 
     var manifest: []const u8 = "";
@@ -63,7 +64,9 @@ pub fn add(b: *std.Build) Steps {
         // The sanitizer's runtime is C, and it needs libc linked.
         suite.module.link_libc = true;
         const tests = b.addTest(.{ .name = suite.name, .root_module = suite.module });
-        compile_all.dependOn(&tests.step);
+        // A second compile of the same module whose binary nothing reads, so it emits none. It is
+        // enough to catch a symbol that exists on Darwin alone, which is why the compile is here.
+        compile_all.dependOn(&b.addTest(.{ .name = suite.name, .root_module = suite.module }).step);
         const installed = b.addInstallArtifact(tests, .{
             .dest_dir = .{ .override = .{ .custom = install_directory } },
         });

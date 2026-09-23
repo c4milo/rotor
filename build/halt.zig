@@ -43,39 +43,47 @@ pub fn add(
     const check = check_executable(b, b.graph.host);
     const step = b.step("halt-check", "Require every halt scenario to die by a signal");
 
-    const core_scenarios = scenarios(b, "core_scenarios", target, optimize);
-    core_scenarios.root_module.addImport("core", graph.core);
-    const core_run = b.addRunArtifact(check);
-    core_run.addArtifactArg(core_scenarios);
-    step.dependOn(&core_run.step);
-
-    const uring_scenarios = scenarios(b, "uring_scenarios", target, optimize);
-    uring_scenarios.root_module.addImport("core", graph.core);
-    uring_scenarios.root_module.addImport("uring", graph.uring);
-    const uring_run = b.addRunArtifact(check);
-    uring_run.addArtifactArg(uring_scenarios);
-    step.dependOn(&uring_run.step);
-
-    const kqueue_scenarios = scenarios(b, "kqueue_scenarios", target, optimize);
-    kqueue_scenarios.root_module.addImport("core", graph.core);
-    kqueue_scenarios.root_module.addImport("kqueue", graph.kqueue);
-    const kqueue_run = b.addRunArtifact(check);
-    kqueue_run.addArtifactArg(kqueue_scenarios);
-    step.dependOn(&kqueue_run.step);
-
-    const epoll_scenarios = scenarios(b, "epoll_scenarios", target, optimize);
-    epoll_scenarios.root_module.addImport("core", graph.core);
-    epoll_scenarios.root_module.addImport("epoll", graph.epoll);
-    const epoll_run = b.addRunArtifact(check);
-    epoll_run.addArtifactArg(epoll_scenarios);
-    step.dependOn(&epoll_run.step);
+    // Each scenario file and the backend it proves, beside `core`, which all of them import.
+    const files = [_]struct { name: []const u8, backend: ?[]const u8 }{
+        .{ .name = "core_scenarios", .backend = null },
+        .{ .name = "uring_scenarios", .backend = "uring" },
+        .{ .name = "kqueue_scenarios", .backend = "kqueue" },
+        .{ .name = "epoll_scenarios", .backend = "epoll" },
+    };
+    inline for (files) |file| {
+        const executable = scenarios(b, file.name, target, optimize);
+        executable.root_module.addImport("core", graph.core);
+        if (file.backend) |name| executable.root_module.addImport(name, module_named(graph, name));
+        step.dependOn(&run_check(b, check, executable, &.{}).step);
+    }
 
     const canary = scenarios(b, "canary_scenarios", target, optimize);
-    const canary_run = b.addRunArtifact(check);
-    canary_run.addArtifactArg(canary);
-    canary_run.addArgs(&canary_arguments);
-    step.dependOn(&canary_run.step);
+    step.dependOn(&run_check(b, check, canary, &canary_arguments).step);
     return step;
+}
+
+/// One run of the check over `executable`. It must exit 0, which makes the run a check of its own
+/// and not a step with side effects: Zig then caches it on the content of both executables and
+/// the arguments, and runs it beside the others. A failure prints what the check wrote to stderr,
+/// the name of each scenario that did not halt.
+fn run_check(
+    b: *std.Build,
+    check: *std.Build.Step.Compile,
+    executable: *std.Build.Step.Compile,
+    arguments: []const []const u8,
+) *std.Build.Step.Run {
+    const run = b.addRunArtifact(check);
+    run.addArtifactArg(executable);
+    run.addArgs(arguments);
+    run.expectExitCode(0);
+    return run;
+}
+
+fn module_named(graph: modules.Modules, name: []const u8) *std.Build.Module {
+    if (std.mem.eql(u8, name, "uring")) return graph.uring;
+    if (std.mem.eql(u8, name, "kqueue")) return graph.kqueue;
+    std.debug.assert(std.mem.eql(u8, name, "epoll"));
+    return graph.epoll;
 }
 
 /// The check and the scenarios of the Linux gate, built for `target`, which must be Linux.

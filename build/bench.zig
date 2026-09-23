@@ -44,7 +44,10 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     if (b.args) |arguments| run_costs.addArgs(arguments);
     const costs_step = b.step("bench-costs", "Run the cost probes that fill docs/costs.md");
     costs_step.dependOn(&run_costs.step);
-    compile_all.dependOn(&costs.step);
+    // A compile of the probes whose binary nothing reads, so it emits none: the run above builds
+    // the binary when `bench-costs` asks for it.
+    const costs_check = b.addExecutable(.{ .name = "costs", .root_module = costs.root_module });
+    compile_all.dependOn(&costs_check.step);
 
     const harness_tests = b.addTest(.{
         .name = "bench-harness",
@@ -59,8 +62,8 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     harness_step.dependOn(run_harness_tests);
 
     const graph = modules.add(b, target, .ReleaseSafe);
-    const echo = add_echo(b, target, graph);
-    compile_all.dependOn(echo);
+    const echo_smoke = add_echo_smoke(b);
+    add_echo(b, target, graph, compile_all, echo_smoke.run);
 
     alternatives.add(b, target);
 
@@ -68,7 +71,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
         .compile = compile_all,
         .harness_tests = run_harness_tests,
         .program_tests = add_program_tests(b, target, graph),
-        .echo_smoke = add_echo_smoke(b, echo),
+        .echo_smoke = echo_smoke.step,
     };
 }
 
@@ -84,8 +87,16 @@ const Tested = struct {
 /// never runs them, which is the failure this list exists to stop, so a new one is added here
 /// with its first test.
 const tested = [_]Tested{
-    .{ .name = "bench-costs-tests", .root = "bench/costs/main.zig", .needs_loop = false },
-    .{ .name = "bench-post-tests", .root = "bench/crosscore/rotor_post.zig", .needs_loop = true },
+    .{
+        .name = "bench-costs-tests",
+        .root = "bench/costs/main.zig",
+        .needs_loop = false,
+    },
+    .{
+        .name = "bench-post-tests",
+        .root = "bench/crosscore/rotor_post.zig",
+        .needs_loop = true,
+    },
     .{
         .name = "bench-crosscore-runner-tests",
         .root = "bench/crosscore/crosscore_runner.zig",
@@ -106,10 +117,26 @@ const tested = [_]Tested{
         .root = "bench/files/reads_runner.zig",
         .needs_loop = false,
     },
-    .{ .name = "bench-reads-pool-tests", .root = "bench/files/reads_pool.zig", .needs_loop = true },
-    .{ .name = "bench-storm-tests", .root = "bench/echo/storm.zig", .needs_loop = true },
-    .{ .name = "bench-rotor-echo-tests", .root = "bench/echo/rotor_echo.zig", .needs_loop = true },
-    .{ .name = "bench-rotor-reads-tests", .root = "bench/files/rotor_reads.zig", .needs_loop = true },
+    .{
+        .name = "bench-reads-pool-tests",
+        .root = "bench/files/reads_pool.zig",
+        .needs_loop = true,
+    },
+    .{
+        .name = "bench-storm-tests",
+        .root = "bench/echo/storm.zig",
+        .needs_loop = true,
+    },
+    .{
+        .name = "bench-rotor-echo-tests",
+        .root = "bench/echo/rotor_echo.zig",
+        .needs_loop = true,
+    },
+    .{
+        .name = "bench-rotor-reads-tests",
+        .root = "bench/files/rotor_reads.zig",
+        .needs_loop = true,
+    },
     .{
         .name = "bench-rotor-timers-tests",
         .root = "bench/timers/rotor_timers.zig",
@@ -118,7 +145,11 @@ const tested = [_]Tested{
     // No `main` of its own: it is the client inside `echo_runner`, and its tests run because it
     // is named here. The guard below requires a program with a `main`; naming one without is how
     // a file like this is covered.
-    .{ .name = "bench-echo-client-tests", .root = "bench/echo/client.zig", .needs_loop = true },
+    .{
+        .name = "bench-echo-client-tests",
+        .root = "bench/echo/client.zig",
+        .needs_loop = true,
+    },
     .{
         .name = "bench-echo-runner-tests",
         .root = "bench/echo/echo_runner_setup.zig",
@@ -199,161 +230,158 @@ fn add_program_tests(
     return step;
 }
 
-/// The echo servers and the client of the echo workload. Each is its own executable, as
-/// bench/alternatives' are, so the runner starts a server, drives it with one client and stops it.
-/// The backend is the one this host can run, as the conformance suite's is.
+/// One bench program: the name it installs as, its source, and what it imports beside `std`.
+const Program = struct {
+    name: []const u8,
+    root: []const u8,
+    /// `core` and the host's backend, for a program that drives a rotor loop.
+    needs_loop: bool,
+    /// The harness, for placement, the clock and the result line a self-timed candidate prints.
+    needs_harness: bool,
+    /// Installed by `bench-crosscore` as well as by `bench-echo`.
+    crosscore: bool = false,
+};
+
+/// Every program `bench-echo` installs. Each is its own executable, as bench/alternatives' are, so
+/// a runner starts a candidate, measures it and stops it.
+const programs = [_]Program{
+    // `std_io_echo` and `std_io_timers` are alternatives that need no pinned package, because
+    // `std.Io` is the compiler's own, so they are built here and not by build/alternatives.zig.
+    .{
+        .name = "std_io_echo",
+        .root = "bench/alternatives/std_io_echo.zig",
+        .needs_loop = false,
+        .needs_harness = false,
+    },
+    .{
+        .name = "std_io_timers",
+        .root = "bench/alternatives/std_io_timers.zig",
+        .needs_loop = false,
+        .needs_harness = true,
+    },
+    // Timer churn: each candidate measures itself, because a timer has no client to measure it
+    // from, and the runner starts the programs and reads the result lines they print.
+    .{
+        .name = "rotor_timers",
+        .root = "bench/timers/rotor_timers.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+    .{
+        .name = "timers_runner",
+        .root = "bench/timers/timers_runner.zig",
+        .needs_loop = false,
+        .needs_harness = true,
+    },
+    // The datagram round trip measures itself too: its client and server are two sockets on one
+    // loop.
+    .{
+        .name = "rotor_datagram",
+        .root = "bench/datagram/rotor_datagram.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+    // The O_DIRECT reads, the only program that registers a buffer, and their runner.
+    .{
+        .name = "rotor_reads",
+        .root = "bench/files/rotor_reads.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+    .{
+        .name = "reads_runner",
+        .root = "bench/files/reads_runner.zig",
+        .needs_loop = false,
+        .needs_harness = true,
+    },
+    // Decision 4's main claim, one cross-core message at a time, with a step of its own because
+    // its runner drives the pinned alternatives too and a caller may want only this one.
+    .{
+        .name = "rotor_post",
+        .root = "bench/crosscore/rotor_post.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+        .crosscore = true,
+    },
+    .{
+        .name = "crosscore_runner",
+        .root = "bench/crosscore/crosscore_runner.zig",
+        .needs_loop = false,
+        .needs_harness = true,
+        .crosscore = true,
+    },
+    // The echo workload. Every echo program gets the harness, because placement lives there.
+    .{
+        .name = "rotor_echo",
+        .root = "bench/echo/rotor_echo.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+    .{
+        .name = "echo_client",
+        .root = "bench/echo/echo_client.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+    .{
+        .name = "echo_runner",
+        .root = "bench/echo/echo_runner.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+    },
+};
+
+/// The programs the echo smoke runs: the runner, which holds the client, and rotor's server.
+const smoke_programs = [_][]const u8{ "echo_runner", "rotor_echo" };
+
+/// The programs of `programs`, built against the backend this host can run, as the conformance
+/// suite's are, installed by the `bench-echo` step. Each program is two compile steps over one
+/// module. The installed one is a full ReleaseSafe build. The one `check` depends on is a compile
+/// whose binary nothing reads, so Zig analyses every function and emits no binary: that proves the
+/// program compiles at a fraction of the cost, which is all `zig build test` asks of most of them.
+/// `smoke` depends on the installs of the programs the echo smoke runs.
 fn add_echo(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     graph: modules.Modules,
-) *std.Build.Step {
+    check: *std.Build.Step,
+    smoke: *std.Build.Step,
+) void {
     const backend = if (target.result.os.tag == .linux) graph.uring else graph.kqueue;
-    const step = b.step("bench-echo", "Build the echo servers and the echo client");
+    const echo = b.step("bench-echo", "Build the echo servers and the echo client");
+    const crosscore = b.step("bench-crosscore", "Build the cross-core message programs");
+    echo.dependOn(crosscore);
     const harness_module = b.createModule(.{
         .root_source_file = b.path("bench/harness/harness.zig"),
         .target = target,
         .optimize = .ReleaseSafe,
     });
-    // `std_io_echo` is an alternative, and it needs no pinned package: `std.Io` is the compiler's
-    // own. So it is built here and not by build/alternatives.zig.
-    const std_io = b.addExecutable(.{
-        .name = "std_io_echo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("bench/alternatives/std_io_echo.zig"),
-            .target = target,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    step.dependOn(&b.addInstallArtifact(std_io, .{}).step);
-
-    // The same alternative on the timer workload, built here for the same reason. It needs the
-    // harness, because a candidate that measures itself prints the harness's result line.
-    const std_io_timers_module = b.createModule(.{
-        .root_source_file = b.path("bench/alternatives/std_io_timers.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    std_io_timers_module.addImport("harness", harness_module);
-    const std_io_timers = b.addExecutable(.{
-        .name = "std_io_timers",
-        .root_module = std_io_timers_module,
-    });
-    step.dependOn(&b.addInstallArtifact(std_io_timers, .{}).step);
-
-    // The timer churn workload: one program per candidate, each measuring itself, because a
-    // timer has no client to measure it from.
-    const timers = b.createModule(.{
-        .root_source_file = b.path("bench/timers/rotor_timers.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    timers.addImport("core", graph.core);
-    timers.addImport("backend", backend);
-    timers.addImport("harness", harness_module);
-    const timers_program = b.addExecutable(.{ .name = "rotor_timers", .root_module = timers });
-    step.dependOn(&b.addInstallArtifact(timers_program, .{}).step);
-
-    // The runner of that workload. It needs the harness alone: it starts programs and reads the
-    // result lines they print.
-    const timers_runner = b.createModule(.{
-        .root_source_file = b.path("bench/timers/timers_runner.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    timers_runner.addImport("harness", harness_module);
-    const timers_runner_program = b.addExecutable(.{
-        .name = "timers_runner",
-        .root_module = timers_runner,
-    });
-    step.dependOn(&b.addInstallArtifact(timers_runner_program, .{}).step);
-
-    // The datagram round-trip workload, which measures itself as the timer one does: its client
-    // and its server are two sockets on one loop, so no second program has to be started.
-    const datagram = b.createModule(.{
-        .root_source_file = b.path("bench/datagram/rotor_datagram.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    datagram.addImport("core", graph.core);
-    datagram.addImport("backend", backend);
-    datagram.addImport("harness", harness_module);
-    const datagram_program = b.addExecutable(.{
-        .name = "rotor_datagram",
-        .root_module = datagram,
-    });
-    step.dependOn(&b.addInstallArtifact(datagram_program, .{}).step);
-
-    // The O_DIRECT read workload, which is the only program that registers a buffer.
-    const reads = b.createModule(.{
-        .root_source_file = b.path("bench/files/rotor_reads.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    reads.addImport("core", graph.core);
-    reads.addImport("backend", backend);
-    reads.addImport("harness", harness_module);
-    const reads_program = b.addExecutable(.{ .name = "rotor_reads", .root_module = reads });
-    step.dependOn(&b.addInstallArtifact(reads_program, .{}).step);
-
-    // The runner of that workload, which compares four candidates across two programs: rotor
-    // with registered buffers and without, and libuv on its pool and on its ring.
-    const reads_runner = b.createModule(.{
-        .root_source_file = b.path("bench/files/reads_runner.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    reads_runner.addImport("harness", harness_module);
-    const reads_runner_program = b.addExecutable(.{
-        .name = "reads_runner",
-        .root_module = reads_runner,
-    });
-    step.dependOn(&b.addInstallArtifact(reads_runner_program, .{}).step);
-
-    // The cross-core workload: decision 4's main claim, one message at a time. Each candidate
-    // measures itself and prints a result line, because a message between two threads of one
-    // process has no client outside it. It has its own step, because the runner drives the
-    // pinned alternatives too and a caller may want only this one.
-    const crosscore = b.step("bench-crosscore", "Build the cross-core message programs");
-    const post = b.createModule(.{
-        .root_source_file = b.path("bench/crosscore/rotor_post.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    post.addImport("core", graph.core);
-    post.addImport("backend", backend);
-    post.addImport("harness", harness_module);
-    const post_program = b.addExecutable(.{ .name = "rotor_post", .root_module = post });
-    crosscore.dependOn(&b.addInstallArtifact(post_program, .{}).step);
-
-    // The runner needs the harness alone: it starts programs and reads the lines they print.
-    const crosscore_runner = b.createModule(.{
-        .root_source_file = b.path("bench/crosscore/crosscore_runner.zig"),
-        .target = target,
-        .optimize = .ReleaseSafe,
-    });
-    crosscore_runner.addImport("harness", harness_module);
-    const crosscore_program = b.addExecutable(.{
-        .name = "crosscore_runner",
-        .root_module = crosscore_runner,
-    });
-    crosscore.dependOn(&b.addInstallArtifact(crosscore_program, .{}).step);
-    step.dependOn(crosscore);
-
-    const programs = [_][]const u8{ "rotor_echo", "echo_client", "echo_runner" };
-    // Every echo program gets the harness, because placement lives there now.
-    for (programs) |name| {
+    for (programs) |program| {
         const module = b.createModule(.{
-            .root_source_file = b.path(b.fmt("bench/echo/{s}.zig", .{name})),
+            .root_source_file = b.path(program.root),
             .target = target,
             .optimize = .ReleaseSafe,
         });
-        module.addImport("core", graph.core);
-        module.addImport("backend", backend);
-        module.addImport("harness", harness_module);
-        const program = b.addExecutable(.{ .name = name, .root_module = module });
-        step.dependOn(&b.addInstallArtifact(program, .{}).step);
+        if (program.needs_loop) {
+            module.addImport("core", graph.core);
+            module.addImport("backend", backend);
+        }
+        if (program.needs_harness) module.addImport("harness", harness_module);
+        const install = &b.addInstallArtifact(
+            b.addExecutable(.{ .name = program.name, .root_module = module }),
+            .{},
+        ).step;
+        (if (program.crosscore) crosscore else echo).dependOn(install);
+        if (is_smoke_program(program.name)) smoke.dependOn(install);
+        check.dependOn(&b.addExecutable(.{ .name = program.name, .root_module = module }).step);
     }
-    return step;
+}
+
+fn is_smoke_program(name: []const u8) bool {
+    for (smoke_programs) |smoke| {
+        if (std.mem.eql(u8, smoke, name)) return true;
+    }
+    return false;
 }
 
 /// Milestone 4's gate. One short run of the echo workload against rotor's server: three rounds of
@@ -363,7 +391,7 @@ fn add_echo(
 ///
 /// It is short, and it is not a measurement: `zig build test` runs on a machine doing other
 /// things, and docs/costs.md says what a number needs.
-fn add_echo_smoke(b: *std.Build, echo: *std.Build.Step) *std.Build.Step {
+fn add_echo_smoke(b: *std.Build) struct { run: *std.Build.Step, step: *std.Build.Step } {
     const run = b.addSystemCommand(&.{
         b.pathJoin(&.{ b.install_path, "bin", "echo_runner" }),
         "--rounds",
@@ -383,10 +411,9 @@ fn add_echo_smoke(b: *std.Build, echo: *std.Build.Step) *std.Build.Step {
         "--directory",
         b.pathJoin(&.{ b.install_path, "bin" }),
     });
-    run.step.dependOn(echo);
     // It starts a server and binds a port, so a cached result would say nothing.
     run.has_side_effects = true;
     const step = b.step("test-bench-echo", "Run the echo workload against rotor, briefly");
     step.dependOn(&run.step);
-    return step;
+    return .{ .run = &run.step, .step = step };
 }
