@@ -185,6 +185,39 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     try testing.expect(waited >= quiet_wait_ns / 2);
 }
 
+test "a one-shot accept behind a cancelled multishot accept still takes the next connection" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try Listener.open();
+    defer sync.close_now(listener.descriptor);
+
+    // Both wait on the one listener: the multishot accept first, the one-shot accept behind it.
+    var handles: [2]Handle = undefined;
+    try harness.submit(&.{
+        Operation.accept(1, listener.descriptor, true),
+        Operation.accept(2, listener.descriptor, false),
+    }, &handles);
+    var ended: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&ended, 0));
+    harness.loop.cancel(handles[0]);
+    try harness.collect(&ended);
+    try testing.expectEqual(@as(u64, 1), ended[0].user_data);
+    try testing.expectError(error.Canceled, ended[0].outcome());
+
+    // The next connection is the one-shot accept's, although the filter it waited on was the
+    // multishot accept's.
+    const client = try sync.open_socket(.ipv4);
+    defer sync.close_now(client);
+    try harness.submit(&.{Operation.connect(3, client, &listener.address)}, &.{});
+    var answers: [2]Event = undefined;
+    try harness.collect(&answers);
+    const accepted = try (try Harness.find(&answers, 2)).outcome();
+    sync.close_now(@intCast(accepted));
+    try testing.expectEqual(@as(u32, 0), try (try Harness.find(&answers, 3)).outcome());
+}
+
 test "bytes that arrive while nobody receives do not keep the loop from sleeping" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;

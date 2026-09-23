@@ -29,3 +29,22 @@ pub fn closes_on_exec(descriptor: i32) bool {
     assert(flags >= 0);
     return flags & std.c.FD_CLOEXEC != 0;
 }
+
+/// The ends of a socket pair.
+const pair_ends = 2;
+
+/// Two connected Unix stream sockets that do not block, for a test of this backend alone.
+pub fn nonblocking_pair() ![pair_ends]i32 {
+    var descriptors: [pair_ends]c_int = undefined;
+    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &descriptors) != 0) {
+        return error.SocketPairFailed;
+    }
+    for (descriptors) |descriptor| {
+        const flags = std.c.fcntl(descriptor, std.c.F.GETFL, @as(c_int, 0));
+        const nonblocking: c_int = @bitCast(@as(u32, @bitCast(std.c.O{ .NONBLOCK = true })));
+        if (std.c.fcntl(descriptor, std.c.F.SETFL, flags | nonblocking) != 0) {
+            return error.NonBlockingFailed;
+        }
+    }
+    return descriptors;
+}

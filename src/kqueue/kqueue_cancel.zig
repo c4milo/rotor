@@ -44,8 +44,8 @@ pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     const filter = perform.filter_of(slot.code);
     const removed = loop.waiters.remove(tables.table.slots, slot.descriptor, filter, index);
     assert(removed);
-    // A kept filter would report for ever with nobody to serve. A one-shot filter is left to
-    // fire: the reap finds no waiter and does nothing.
-    if (slot.flags.multishot) submit_module.unregister(loop, slot.descriptor, filter);
+    // A kept filter goes, and an operation that waited behind this one gets a one-shot filter of
+    // its own. A one-shot filter is left to fire: the reap finds no waiter, or the next one.
+    if (slot.flags.multishot) submit_module.after_leaving(loop, slot.descriptor, filter, true);
     tables.finish_local(index, core.event.result_of(core.tables.cancel_code(slot)));
 }

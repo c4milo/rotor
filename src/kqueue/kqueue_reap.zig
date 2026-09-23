@@ -14,6 +14,7 @@ const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Event = core.Event;
+const Operation = core.Operation;
 const Filter = core.waiters.Filter;
 const Kevent = queue_module.Kevent;
 
@@ -69,12 +70,54 @@ fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
     }
     const popped = loop.waiters.pop(tables.table.slots, descriptor, filter);
     assert(popped == index);
-    if (slot.flags.multishot) {
-        submit_module.unregister(loop, descriptor, filter);
-    } else if (loop.waiters.count(descriptor, filter) != 0) {
-        // The one-shot filter fired for this operation, and another still waits behind it.
-        submit_module.register(loop, descriptor, filter, false);
-    }
+    submit_module.after_leaving(loop, descriptor, filter, slot.flags.multishot);
     tables.finish(index, slot);
     return event;
+}
+
+const testing = std.testing;
+
+test "an operation behind a multishot receive that ran out of buffers is still served" {
+    if (!@import("builtin").os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    const group_id = 1;
+    const buffer_bytes = 8;
+    const group_bytes = comptime kqueue.buffers.group_bytes(1, buffer_bytes);
+    var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
+    try loop.provide_buffers(group_id, &group_memory, 1, buffer_bytes);
+    const pair = try @import("kqueue_testing.zig").nonblocking_pair();
+    defer for (pair) |descriptor| {
+        _ = std.c.close(descriptor);
+    };
+
+    // The multishot receive waits first and keeps the filter; the one-shot receive waits behind.
+    var own: [buffer_bytes]u8 = undefined;
+    const waiting = [_]Operation{
+        Operation.receive_group(1, pair[0], group_id),
+        Operation.receive(2, pair[0], &own),
+    };
+    try testing.expectEqual(@as(u32, 2), loop.submit(&waiting, &.{}));
+    var events: [2]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+
+    // The first byte takes the group's one buffer, and the caller keeps it.
+    try testing.expectEqual(@as(isize, 1), std.c.write(pair[1], "a", 1));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expect(events[0].flags.more);
+
+    // The second finds no buffer, so the multishot receive ends and its kept filter goes.
+    try testing.expectEqual(@as(isize, 1), std.c.write(pair[1], "b", 1));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectError(error.BuffersExhausted, events[0].outcome());
+
+    // The receive behind it has a filter of its own, and takes the byte that is waiting.
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(@as(u64, 2), events[0].user_data);
+    try testing.expectEqual(@as(u32, 1), try events[0].outcome());
+    try testing.expectEqual(@as(u8, 'b'), own[0]);
 }

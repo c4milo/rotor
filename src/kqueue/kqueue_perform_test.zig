@@ -14,21 +14,6 @@ const group_id = 2;
 const group_buffers = 2;
 const group_buffer_bytes = 8;
 
-fn nonblocking_pair() ![2]i32 {
-    var descriptors: [2]c_int = undefined;
-    if (std.c.socketpair(std.c.AF.UNIX, std.c.SOCK.STREAM, 0, &descriptors) != 0) {
-        return error.SocketPairFailed;
-    }
-    for (descriptors) |descriptor| {
-        const flags = std.c.fcntl(descriptor, std.c.F.GETFL, @as(c_int, 0));
-        const nonblocking: c_int = @bitCast(@as(u32, @bitCast(std.c.O{ .NONBLOCK = true })));
-        if (std.c.fcntl(descriptor, std.c.F.SETFL, flags | nonblocking) != 0) {
-            return error.NonBlockingFailed;
-        }
-    }
-    return descriptors;
-}
-
 test "a receive from a group that would block gives its buffer back and asks to wait" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
@@ -37,7 +22,7 @@ test "a receive from a group that would block gives its buffer back and asks to 
     const group_bytes = comptime kqueue.buffers.group_bytes(group_buffers, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
     try loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
-    const pair = try nonblocking_pair();
+    const pair = try @import("kqueue_testing.zig").nonblocking_pair();
     defer for (pair) |descriptor| {
         _ = std.c.close(descriptor);
     };
