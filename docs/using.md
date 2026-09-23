@@ -21,13 +21,22 @@ const rotor = b.dependency("rotor", .{ .target = target, .optimize = optimize })
 exe.root_module.addImport("rotor", rotor.module("rotor"));
 ```
 
-Then `const rotor = @import("rotor");`. The module picks the backend for the host it is built for:
-io_uring on Linux, kqueue on macOS. Both carry the same surface, so the program is the same either
-way. rotor builds in Debug and ReleaseSafe; its assertions stay on in production, and it offers no
-mode that removes them.
+Then `const rotor = @import("rotor");`. The module picks the backend for the host it runs on. On
+macOS it is kqueue. On Linux it is io_uring, **and epoll where the kernel refuses io_uring**, as
+Docker's default seccomp profile does and as `io_uring_disabled` does: the first thing that needs
+the answer asks the kernel for a ring, and the answer holds for the life of the process.
+`rotor.backend()` says which one runs (`.uring`, `.epoll` or `.kqueue`), so the fallback is never
+silent. Every backend carries the same surface, so the program is the same whichever runs. rotor
+builds in Debug and ReleaseSafe; its assertions stay on in production, and it offers no mode that
+removes them.
 
-What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, the flags
-`files_block`, `post_bounded` and `supported`, `offload_memory_bytes`, `memory_alignment`, and the
+epoll has none of io_uring's speed sources, and rotor makes no speed claim for it: it exists so a
+program runs where io_uring does not. A program that must have io_uring checks `backend()` at
+start and refuses to go on without it.
+
+What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, `backend`
+and `Backend`, the flags `files_block`, `post_bounded` and `supported`, `offload_memory_bytes`,
+`memory_alignment`, and the
 types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
 `Address`, `Message`, `LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces
 `constants`, `datagram`, `offload`, `statistics`).
@@ -58,13 +67,14 @@ defer loop.deinit();
 - `init` must run on the thread that will own the loop. Every other call on the loop asserts that
   it comes from that thread, and a call from another thread halts the process: it is a programmer
   error, not a condition the loop reports.
-- `init` fails with `Unsupported` when the host's kernel lacks what the backend needs (below),
-  with `SystemResources` when a descriptor or memory limit refuses the ring or the kqueue, and
-  with `PermissionDenied` on Linux when `io_uring_setup` is refused.
+- `init` fails with `Unsupported` when the host's kernel lacks what the backend needs (below), and
+  with `SystemResources` when a descriptor or memory limit refuses the ring, the epoll instance or
+  the kqueue. A kernel that refuses io_uring does not fail `init` on Linux: the process runs epoll.
 - `deinit` requires an empty loop: nothing in flight. `cancel_all` then `drain` gets there.
 
 The other options: `id` and `registry` for a loop that posts to others (below), `sampling` for the
-statistics, and `file_policy`, `offload` and `offload_memory` for files on macOS (below).
+statistics, and `file_policy`, `offload` and `offload_memory` for files on macOS and on epoll
+(below).
 
 ## Submit and tick
 
@@ -219,9 +229,10 @@ cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmen
 
 ## Files
 
-io_uring performs `read`, `write` and `fdatasync` without a thread. kqueue reports readiness and
-never completes a file operation, so on macOS the loop needs to be told what to do, and
-`rotor.files_block` says which backend this is:
+io_uring performs `read`, `write` and `fdatasync` without a thread. kqueue and epoll report
+readiness and never complete a file operation, so on macOS, and on Linux where the process runs
+epoll, the loop needs to be told what to do. `rotor.files_block` is true on both, because on Linux
+a process may run either backend; a caller that sets a policy there is right on both:
 
 - `file_policy = .refuse`, the default: a file operation ends with `unsupported`. Nobody is quietly
   slowed.
@@ -234,6 +245,10 @@ never completes a file operation, so on macOS the loop needs to be told what to 
 
 io_uring takes the option and ignores it. A loop that never touches a file needs none of this.
 
+A caller that hands a loop an offload stops the offload's threads before the loop's `deinit`, and
+not before the loop is drained: a worker still inside `Work.run` reads the loop after its result is
+visible (decision 18).
+
 ## Threads
 
 A loop belongs to one thread, holds no lock and starts no thread. The one thing another thread
@@ -244,8 +259,9 @@ may do to it is post a message:
   `loops` and the `registry` in its options. `post{ .target, .message }` from one loop arrives in
   the target's next tick as an event with `flags.message`, `user_data` the payload and `result`
   the tag (at most `message_tag_max`). The sender's own final event says 0, `mailbox_full` or
-  `loop_not_found`. On kqueue the mailbox between two loops holds `mailbox_messages` (256);
-  on io_uring a full target overflows into kernel memory, and `rotor.post_bounded` says which.
+  `loop_not_found`. On kqueue and epoll the mailbox between two loops holds `mailbox_messages`
+  (256); on io_uring a full target overflows into kernel memory. `rotor.post_bounded` is true on
+  Linux, because a process there may run either.
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
   one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
   loop's post produces an event: `MailboxFull`, `LoopNotFound`, and on io_uring `SystemResources`,

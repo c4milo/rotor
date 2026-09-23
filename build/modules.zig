@@ -3,7 +3,7 @@
 //! and not by review (CLAUDE.md, Layout).
 //!
 //! One module is registered with `addModule` and the rest are created with `createModule`: only
-//! `rotor`, the public API of `src/rotor.zig`, can be named by a dependent package. It picks this
+//! `rotor`, the public API of `src/rotor/rotor.zig`, can be named by a dependent package. It picks this
 //! host's backend and re-exports the loop, the types and the socket and buffer helpers. The
 //! backends themselves stay private, because how one performs an operation is nobody else's
 //! business, and a consumer that needs a backend of its own carries the surface rather than
@@ -61,9 +61,12 @@ pub fn add(
     conformance_kqueue.addImport("core", core);
     conformance_kqueue.addImport("backend", kqueue);
     // The public module sees both backends and chooses one by host. Nothing else imports both.
-    const rotor = public(b, "rotor", "src/rotor.zig", target, optimize);
+    const rotor = public(b, "rotor", "src/rotor/rotor.zig", target, optimize);
     rotor.addImport("core", core);
     rotor.addImport("uring", uring);
+    // On Linux the public module falls back to epoll where the kernel refuses io_uring (decision 20,
+    // open question 5, ruled by the owner on 2026-09-22), so it needs both Linux backends.
+    rotor.addImport("epoll", epoll);
     rotor.addImport("kqueue", kqueue);
     return .{
         .rotor = rotor,

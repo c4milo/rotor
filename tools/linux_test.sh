@@ -49,6 +49,10 @@ readonly security_option='seccomp=unconfined'
 # (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests would prove nothing: they
 # must pass in the environment that refuses io_uring.
 readonly confined_tests=' epoll conformance-epoll '
+# The executables that run twice, once each way. The public module chooses its backend when the
+# process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
+# open question 5). Each run takes the other branch, so each is tested where it is chosen.
+readonly both_ways_tests=' rotor '
 # The directory `zig build test-linux` installs into, relative to the top of the work tree.
 readonly install_directory='zig-out/linux'
 # The file `zig build test-linux` touches after its last install (build/linux.zig).
@@ -110,22 +114,33 @@ in_default_container() {
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 
-# Copies one installed executable into its container and runs it there. The inner script takes
-# the mount point, the run directory and the name as its arguments, so the container's shell
-# expands them and this one does not.
-run() {
-  local name="$1"
-  local runner='in_container'
-  if [[ "$confined_tests" == *" $name "* ]]; then
-    runner='in_default_container'
-    echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
-  else
-    echo "linux_test: $name"
-  fi
+# Copies one installed executable into a container of the runner's kind and runs it there. The
+# inner script takes the mount point, the run directory and the name as its arguments, so the
+# container's shell expands them and this one does not.
+run_with() {
+  local runner="$1"
+  local name="$2"
   # shellcheck disable=SC2016
   if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
     sh "$mount_point" "$run_directory" "$name"; then
     fail "$name failed; nothing after it was run"
+  fi
+}
+
+# Runs one installed executable: relaxed, confined, or both, as the lists above say.
+run() {
+  local name="$1"
+  if [[ "$both_ways_tests" == *" $name "* ]]; then
+    echo "linux_test: $name, with io_uring"
+    run_with in_container "$name"
+    echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
+    run_with in_default_container "$name"
+  elif [[ "$confined_tests" == *" $name "* ]]; then
+    echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
+    run_with in_default_container "$name"
+  else
+    echo "linux_test: $name"
+    run_with in_container "$name"
   fi
 }
 

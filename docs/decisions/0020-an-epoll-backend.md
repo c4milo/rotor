@@ -79,7 +79,7 @@ two copies drift:
 | `core/errno.zig` | `src/kqueue/kqueue_errno.zig` | both backends make their own calls; the map matches by name |
 | `core.offload.init_rings` | `kqueue_offload.zig` | the same rings out of the same caller memory |
 
-Each backend re-exports what a caller reaches, so `src/rotor.zig` is untouched. Two kinds of file
+Each backend re-exports what a caller reaches, so the public module was untouched by the move. Two kinds of file
 stayed put: one whose calls take a `*Loop`, because `core` would have to be generic over it
 (`epoll_buffers.zig` is `kqueue_buffers.zig` copied for that reason), and one that names the target's
 own kernel types (the sync helpers, the address helpers, `perform`). The threaded mailbox tests also
@@ -188,15 +188,27 @@ Each has a proposed answer, and the implementation follows it until the owner ru
    write replaces the `EVFILT_USER` trigger and nothing else moves.*
 4. **Does the comparison gain an epoll row?** *Proposed: no. There is no speed claim to make, and a
    row invites one. A person who wants the number runs the harness by hand.*
-5. **How does a caller get this backend?** `src/rotor.zig` wraps the host's backend, which on Linux
-   is `uring`, so today only a caller that imports the `epoll` module directly reaches it. Two
-   shapes answer the consumer that asked, and they differ in what that consumer tests:
-   - A **build option** that makes `rotor.zig` wrap `epoll` on Linux. No dispatch per call, and one
-     backend per binary; a consumer whose continuous integration runs in a container builds a
-     different binary there than in production.
-   - A **fallback at `init`**: try io_uring and, when the kernel refuses it, open epoll instead, and
-     report which one the loop runs. One binary everywhere, as libuv does, at the price of a branch
-     per call and both backends linked. `uring_ring.zig` promises never to fall back to a slower
-     path without saying so, so the report is part of the answer and not an extra.
+5. **How does a caller get this backend?** Two shapes were put to the owner: a build option that
+   makes the public module wrap `epoll` on Linux, and a fallback at `init` that tries io_uring and
+   runs epoll when the kernel refuses it. **The owner ruled on 2026-09-22: the fallback at init.**
+   One binary runs everywhere, as libuv does; the price is a branch per call on Linux and both
+   backends linked. What was built (`src/rotor/rotor_loop.zig`):
+   - **The choice is made once per process, not per loop.** The sockets `sync` opens before any
+     loop exists must suit the backend: uring's block, because the ring does the waiting, and
+     epoll's must not. So the first thing that needs the answer asks the kernel, with a ring of one
+     entry made the way a loop makes one (`uring.refused`), and one atomic keeps the answer. It is
+     the one value rotor keeps outside the memory a caller hands it.
+   - **Refused means `PermissionDenied` or `Unsupported`**: seccomp, `io_uring_disabled`, a kernel
+     without io_uring or without what the backend requires. A process short of descriptors or
+     memory is short of them on either backend, so that is reported and not fallen back from.
+   - **It is reported.** `rotor.backend()` answers `.uring`, `.epoll` or `.kqueue`, which keeps
+     `uring_ring.zig`'s promise never to fall back to a slower path without saying so.
+   - **The flags answer for either backend.** `files_block` and `post_bounded` are true on Linux,
+     because a process may run epoll; a caller that sets a file policy and handles `mailbox_full`
+     is right on both.
+   - **The public module imports `epoll`**, the one edge of the module graph the ruling adds, and
+     moved to `src/rotor/` because it is two files now.
 
-   *Not proposed here: it changes the public module, and the owner decides it.*
+   The Linux gate runs the public module's tests twice, with io_uring and under the default seccomp
+   profile, so each branch is tested where it is chosen. No build option to pin one backend was
+   built: nothing asked for it yet, and the benchmarks use the backends directly.

@@ -136,12 +136,14 @@ measured against `zig build halt-check`.
 ## Layout
 
 - `build.zig` stays short: build options and the module graph. Helpers belong in `build/`.
-- `src/rotor.zig` is the public module, the only one a dependent package can name. Its `Loop`,
+- `src/rotor/rotor.zig` is the public module, the only one a dependent package can name. Its `Loop`,
   `Registry` and `Remote` wrap the host's backend and carry exactly the surface of
   `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
-  nothing; `uring`, `kqueue` and `epoll` import `core`; `adapter` imports `core` and one backend;
+  nothing; `uring`, `kqueue` and `epoll` import `core`; the public module `rotor` imports `core`
+  and every backend, because on Linux it falls back from `uring` to `epoll` (decision 20);
+  `adapter` imports `core` and one backend;
   nothing imports `bench`. `conformance` imports `core` and the backend under test, which the build
   hands it as its `backend` import, so one suite tests every backend (decision 10). `core`, `uring`,
   `kqueue` and `epoll` exist today. `bench/` sits outside `src/` and outside the graph;
@@ -188,7 +190,9 @@ measured against `zig build halt-check`.
   for Linux on the host's CPU architecture into `zig-out/linux/`, and runs none of them. The
   script runs them in Docker with `seccomp=unconfined`, the probe first, and stops at the first
   failure. The two epoll executables, `epoll` and `conformance-epoll`, run under Docker's default
-  seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for. It prints the kernel release the container sees, because decision 2 sets the floor at
+  seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for.
+  `rotor`, the public module's tests, runs both ways, because the module chooses io_uring or epoll
+  by what the kernel allows, and each run takes the other branch. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. `zig build test` does not run it: it needs Docker.
 - Race gate: `zig build test-race && bash tools/race_test.sh`. It builds the `kqueue`,
@@ -277,12 +281,14 @@ descriptors and provided buffers are built, and no speed claim is made for eithe
 
 The `epoll` backend of decision 20 is **built**, as of 2026-09-22, and passes the conformance suite
 in Docker under the default seccomp profile, and the race gate. No speed claim is made for it: it
-exists so rotor runs where io_uring is refused, and the comparison gains no row. **A caller cannot
-reach it through `src/rotor.zig` yet**, which wraps `uring` on Linux: decision 20's open question 5
-asks the owner whether a build option or a fallback at `init` selects it. Building it found four
-things outside the backend, which that record lists: a kqueue poll trigger left set, the second half
-of decision 18's teardown order, a SIGPIPE check no Zig test could see, and halt scenarios a Mac
-cannot prove for a Linux backend.
+exists so rotor runs where io_uring is refused, and the comparison gains no row. **The public module
+falls back to it**, by the owner's ruling of 2026-09-22 on decision 20's open question 5: a process
+asks the kernel for an io_uring ring once, runs epoll where it is refused, and `rotor.backend()`
+reports which. Building it found four things outside the backend, which that record lists: a kqueue
+poll trigger left set, the second half of decision 18's teardown order, a SIGPIPE check no Zig test
+could see, and halt scenarios a Mac cannot prove for a Linux backend. Building the fallback found a
+fifth: the public module's `register_descriptors` and `register_buffers` did not compile for Linux,
+because nothing there named them.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
 has code for it, except decision 13, which is proposed and waits on the owner, and decision 17,
@@ -293,7 +299,7 @@ Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09
 ahead of measurement. On kqueue a loop's `file_policy` is `refuse` by default, so **a file operation
 there now needs a policy named at init**: a caller that wants the old inline behaviour asks for
 `blocking`. `Remote` was built on 2026-09-22: `post` for a thread that has no loop, one per
-backend, exported from `src/rotor.zig`. Decision 4 records what it settled.
+backend, exported from `src/rotor/rotor.zig`. Decision 4 records what it settled.
 
 The `mac`, `orbstack` and `github` columns of `docs/costs.md` were filled on 2026-09-22;
 `bench/results/` holds the runs. `github` is a GitHub-hosted x86-64 runner, added as a named

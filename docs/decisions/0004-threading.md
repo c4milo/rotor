@@ -220,7 +220,7 @@ used only to submit `MSG_RING`.
 
 **`Remote` was built on 2026-09-22**, after `0017-the-layer-that-owns-the-loop.md` found it
 described here and absent from `src/`. It is `src/kqueue/kqueue_remote.zig` and
-`src/uring/uring_remote.zig`, with what they share in `src/core/remote.zig`, and `src/rotor.zig`
+`src/uring/uring_remote.zig`, with what they share in `src/core/remote.zig`, and `src/rotor/rotor.zig`
 exports it. What it settled that this paragraph did not say:
 
 - A `Remote` claims a registry slot with a sentinel, `descriptor_remote`, distinct from the empty
@@ -249,7 +249,7 @@ exports it. What it settled that this paragraph did not say:
   id may be claimed again, and a message left in a ring by a previous holder is delivered to the
   next loop that claims the receiving id.
 - Whether `MailboxFull` can happen at all is the backend's, and `post_bounded`, exported from
-  `src/rotor.zig`, says: yes on kqueue, whose mailbox holds `mailbox_messages`; on io_uring only
+  `src/rotor/rotor.zig`, says: yes on kqueue, whose mailbox holds `mailbox_messages`; on io_uring only
   when the kernel is out of memory, because `IORING_FEAT_NODROP` keeps an overflowing completion
   in a kernel list.
 

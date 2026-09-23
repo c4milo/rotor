@@ -50,7 +50,7 @@ const messages_per_drain = 32;
 const drain_rounds_max = core.constants.mailbox_messages / messages_per_drain;
 
 /// The rings are `core`'s: every readiness backend carves the same ones out of the caller's memory
-/// (`core/offload.zig`). They are re-exported here because `src/rotor.zig` reaches them through the
+/// (`core/offload.zig`). They are re-exported here because `src/rotor/rotor.zig` reaches them through the
 /// backend's `offload_module`.
 pub const memory_bytes = core.offload.memory_bytes;
 pub const init_rings = core.offload.init_rings;

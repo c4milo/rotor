@@ -112,11 +112,15 @@ each compares its declarations against `core`'s list.
 
 ### The public module, 2026-09-22
 
-`src/rotor.zig` is the one module a dependent package can name, and since 2026-09-22 its `Loop`,
+`src/rotor/rotor.zig` is the one module a dependent package can name, and since 2026-09-22 its `Loop`,
 `Registry` and `Remote` are types of that file that wrap the host's backend and carry exactly the
 surface `core/surface.zig` lists, plus their error sets; a test holds each to that count. The
 owner's ruling: rotor supports its public API and no internal one. A backend's other public
 functions serve its own files, the benchmarks and the conformance suite, and stay inside the tree.
+
+On Linux the host's backend is chosen per process since the same day: io_uring where the kernel
+gives a ring, epoll where it refuses one, and `backend()` reports which (decision 20, open question
+5). The module moved to `src/rotor/` then, being two files.
 
 ## Alternatives it beat
 

@@ -54,6 +54,25 @@ pub const InitError = ring_module.InitError;
 pub const TickError = tick_module.TickError;
 pub const DrainError = TickError || error{StillInFlight};
 
+/// True when this kernel refuses the ring this backend needs, which is when a process should run
+/// the epoll backend instead (decision 20, open question 5). It asks the way `Loop.init` asks, with
+/// the same flags, features and opcodes, on a ring of one entry that it closes again, so its answer
+/// is the one a loop would get.
+///
+/// Refused means `PermissionDenied`, which is a seccomp profile or `io_uring_disabled`, or
+/// `Unsupported`, which is a kernel without io_uring or without something this backend requires.
+/// Any other failure is not a refusal: a process short of descriptors or memory is short of them
+/// on either backend, and `Loop.init` reports it.
+pub fn refused() bool {
+    const probe_entries = 1;
+    var ring = ring_module.Ring.init(probe_entries) catch |err| return switch (err) {
+        error.PermissionDenied, error.Unsupported => true,
+        error.SystemResources, error.Unexpected => false,
+    };
+    ring.deinit();
+    return false;
+}
+
 const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
