@@ -85,6 +85,11 @@ stayed put: one whose calls take a `*Loop`, because `core` would have to be gene
 own kernel types (the sync helpers, the address helpers, `perform`). The threaded mailbox tests also
 stayed in `src/kqueue/`: they need a deadline, and `core` reads no clock.
 
+On 2026-09-23 a simplification pass moved three more pieces that take no `*Loop` out of both
+readiness backends: the post of a message (`core.remote.send`), the drain of an offload's rings
+(`core.offload.drain` and `pending`), and the buffer group with its layout and errors
+(`core/buffer_group.zig`). `epoll_buffers.zig` keeps only the three calls that take a `*Loop`.
+
 Moving `core.offload.init_rings` found a gap rather than just saving lines. Nothing had ever handed
 it memory that was 64-byte aligned and not 128-byte aligned, so the skip forward it exists for had
 never run, and aligning the rings to 64 passed every test. It has a test now.

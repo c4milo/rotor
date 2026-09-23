@@ -103,6 +103,16 @@ pub const registered_buffers_max: u16 = 1024;
 pub const buffer_groups_max: u16 = 16;
 pub const buffers_per_group_max: u16 = 32768;
 
+/// The alignment of the memory a provided-buffer group sits in. io_uring's buffer ring sits at the
+/// front of it, and the kernel wants that aligned to a page. A page is 4, 16 or 64 KiB depending on
+/// how the kernel was built, so rotor asks for the largest and is right on all three. kqueue and
+/// epoll ask for the same, so one declaration in a caller's code serves every backend.
+pub const buffer_ring_alignment = 64 * 1024;
+
+/// The bytes of bookkeeping per buffer of a group: the size of one entry of an io_uring buffer
+/// ring, so every backend asks a caller for the same amount. `uring_buffers.zig` asserts the size.
+pub const buffer_ring_entry_bytes = 16;
+
 /// The largest errno Linux returns, so the most negative result an operation can have.
 const errno_max: u32 = 4095;
 
@@ -124,6 +134,8 @@ comptime {
     assert((1 << 31) - message_tag_max > errno_max);
     assert(transfer_retries_max >= 1);
     assert(std.math.isPowerOfTwo(buffers_per_group_max));
+    assert(std.math.isPowerOfTwo(buffer_ring_alignment));
+    assert(buffer_ring_entry_bytes >= @sizeOf(u16));
 }
 
 test "the hot structure sizes are one cache line and one completion entry" {

@@ -389,23 +389,8 @@ pub const Loop = struct {
 };
 
 /// The alignment of a provided-buffer group's memory. Every backend asks for io_uring's figure, so
-/// one declaration in a caller's code serves whichever runs; the comptime assert below holds them
-/// to it.
-pub const group_alignment = if (linux)
-    uring.buffers.group_alignment
-else
-    kqueue.buffers.group_alignment;
-
-comptime {
-    if (linux) {
-        std.debug.assert(uring.buffers.group_alignment == epoll.buffers.group_alignment);
-        // Both lay a group out the same way, so a caller sizes one block for either.
-        for ([_]u16{ 1, 64, 1024 }) |count| {
-            std.debug.assert(uring.buffers.group_bytes(count, 2048) ==
-                epoll.buffers.group_bytes(count, 2048));
-        }
-    }
-}
+/// one declaration in a caller's code serves whichever runs: all three take it from `core`.
+pub const group_alignment = core.buffer_group.group_alignment;
 
 const testing = std.testing;
 

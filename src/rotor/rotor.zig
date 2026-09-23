@@ -151,11 +151,11 @@ const linux_sync = struct {
     }
 };
 
-/// Sizing the memory of a provided-buffer group. Every backend lays a group out the same way, which
-/// `rotor_loop.zig` holds with a comptime assert.
+/// Sizing the memory of a provided-buffer group. Every backend lays a group out the same way,
+/// `core/buffer_group.zig`'s.
 pub const buffers = struct {
     pub const group_alignment = loop_module.group_alignment;
-    pub const group_bytes = if (linux) uring.buffers.group_bytes else kqueue.buffers.group_bytes;
+    pub const group_bytes = core.buffer_group.group_bytes;
 };
 
 /// Whether a loop's file operations may block the loop thread, which is what decides whether

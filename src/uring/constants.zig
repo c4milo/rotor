@@ -24,11 +24,6 @@ pub const user_data_cancel: u64 = 1;
 /// the close itself (decision 5, rule 6). Consumed like `user_data_cancel`.
 pub const user_data_close_cancel: u64 = 2;
 
-/// The alignment of the memory a provided-buffer ring sits in. The kernel wants it aligned to a
-/// page, and a page is 4, 16 or 64 KiB depending on how the kernel was built, so rotor asks for
-/// the largest and is right on all three.
-pub const buffer_ring_alignment = 64 * 1024;
-
 /// Submission entries the ring a `Remote` creates holds (decision 4, "a small ring created for that
 /// thread, used only to submit `MSG_RING`"). One, derived and not chosen: a `Remote.post` submits
 /// one entry and does not submit another until the kernel has answered it, which `Remote.unanswered`
@@ -64,7 +59,6 @@ comptime {
     assert(std.math.isPowerOfTwo(remote_entries));
     assert(remote_wait_ns >= 1);
     assert(remote_wait_ns <= @import("core").constants.wait_ns_max);
-    assert(std.math.isPowerOfTwo(buffer_ring_alignment));
     assert(enter_retries_max >= 1);
     assert(kernel_workers_max >= 1);
     assert(user_data_cancel >> 32 == 0);

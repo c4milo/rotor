@@ -7,14 +7,6 @@ const std = @import("std");
 pub const changes_max: u32 = 256;
 pub const readiness_max: u32 = 256;
 
-/// The alignment of the memory a provided-buffer group's bookkeeping sits in: what the uring
-/// backend asks for its buffer ring, so one declaration in a caller's code serves both.
-pub const buffer_ring_alignment = 64 * 1024;
-
-/// The bytes of bookkeeping per buffer of a group: the size of one entry of an io_uring buffer
-/// ring, so both backends ask a caller for the same amount.
-pub const buffer_ring_entry_bytes = 16;
-
 /// Times the backend makes a system call again after a signal interrupted it (EINTR) before it
 /// reports the operation as failed. A signal storm is the only way to reach it.
 pub const interrupt_retries_max: u32 = 64;
