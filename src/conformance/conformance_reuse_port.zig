@@ -96,10 +96,8 @@ test "several listeners share one port, and every connection is accepted exactly
     // depend on the order the harness happened to tick in.
     while (opened < connections_count) : (opened += 1) {
         clients[opened] = try sync.open_socket(.ipv4);
-        try harness.submit(&.{.{ .user_data = connections_count + opened, .kind = .{ .connect = .{
-            .socket = clients[opened],
-            .address = &address,
-        } } }}, &.{});
+        const connect = Operation.connect(connections_count + opened, clients[opened], &address);
+        try harness.submit(&.{connect}, &.{});
         taken += try collect_one(&harness, &events, &listeners, accepted[taken..]);
     }
 

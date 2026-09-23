@@ -2,6 +2,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const Operation = core.Operation;
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -34,32 +35,20 @@ test "a block written and synced reads back, and a read past the end returns 0" 
     var in: [block_bytes]u8 align(block_bytes) = @splat(0);
     var events: [1]Event = undefined;
 
-    try harness.submit(&.{.{ .user_data = 1, .kind = .{ .write = .{
-        .file = file,
-        .buffer = .{ .bytes = &out },
-        .offset = 2 * block_bytes,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.write(1, file, &out, 2 * block_bytes)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, block_bytes), try events[0].outcome());
 
-    try harness.submit(&.{.{ .user_data = 2, .kind = .{ .fdatasync = .{ .file = file } } }}, &.{});
+    try harness.submit(&.{Operation.fdatasync(2, file)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 
-    try harness.submit(&.{.{ .user_data = 3, .kind = .{ .read = .{
-        .file = file,
-        .buffer = .{ .bytes = &in },
-        .offset = 2 * block_bytes,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.read(3, file, &in, 2 * block_bytes)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, block_bytes), try events[0].outcome());
     try testing.expectEqualSlices(u8, &out, &in);
 
-    try harness.submit(&.{.{ .user_data = 4, .kind = .{ .read = .{
-        .file = file,
-        .buffer = .{ .bytes = &in },
-        .offset = file_blocks * block_bytes,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.read(4, file, &in, file_blocks * block_bytes)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 }

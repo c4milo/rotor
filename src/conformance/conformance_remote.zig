@@ -6,6 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const Operation = core.Operation;
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -118,10 +119,7 @@ test "a loop that posts to a remote's id is told there is no loop there" {
     try remote.init(&registry, remote_id);
     defer remote.deinit();
 
-    try harness.submit(&.{.{ .user_data = 5, .kind = .{ .post = .{
-        .target = remote_id,
-        .message = .{ .payload = 1, .tag = 1 },
-    } } }}, &.{});
+    try harness.submit(&.{Operation.post(5, remote_id, .{ .payload = 1, .tag = 1 })}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
     try testing.expectError(error.LoopNotFound, events[0].outcome());

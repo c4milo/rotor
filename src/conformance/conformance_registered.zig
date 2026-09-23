@@ -63,15 +63,11 @@ test "a file named by its registered index is written, synced and read as by its
     var out: [block_bytes]u8 align(block_bytes) = undefined;
     for (&out, 0..) |*byte, index| byte.* = @truncate(index * 5 + 1);
     var events: [1]Event = undefined;
-    try harness.submit(&.{registered(.{ .user_data = 1, .kind = .{ .write = .{
-        .file = 0,
-        .buffer = .{ .bytes = &out },
-        .offset = block_bytes,
-    } } }, 1)}, &.{});
+    try harness.submit(&.{registered(Operation.write(1, 0, &out, block_bytes), 1)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, block_bytes), try events[0].outcome());
 
-    const fdatasync: Operation = .{ .user_data = 2, .kind = .{ .fdatasync = .{ .file = 0 } } };
+    const fdatasync: Operation = Operation.fdatasync(2, 0);
     try harness.submit(&.{registered(fdatasync, 1)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
@@ -122,10 +118,7 @@ test "sockets named by registered index carry bytes, time out, shut down, and ac
     try testing.expectError(error.Timeout, (try Harness.find(&events, 3)).outcome());
 
     // Index 0 shuts its sending side, and index 1 reads the end of the stream.
-    const shutdown: Operation = .{ .user_data = 4, .kind = .{ .shutdown = .{
-        .socket = 0,
-        .how = .send,
-    } } };
+    const shutdown: Operation = Operation.shutdown(4, 0, .send);
     try harness.submit(&.{ registered(shutdown, 0), registered(receive(5, &in, 0), 1) }, &.{});
     try harness.collect(events[0..2]);
     try testing.expectEqual(@as(u32, 0), try (try Harness.find(events[0..2], 4)).outcome());
@@ -140,10 +133,7 @@ fn accept_by_index(harness: *Harness, listener: *const tcp.Listener) !void {
     try harness.submit(&.{registered(Operation.accept(6, 0, true), 2)}, &handles);
     const client = try sync.open_socket(.ipv4);
     defer sync.close_now(client);
-    try harness.submit(&.{.{ .user_data = 7, .kind = .{ .connect = .{
-        .socket = client,
-        .address = &listener.address,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.connect(7, client, &listener.address)}, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
     const accepted = try Harness.find(&events, 6);

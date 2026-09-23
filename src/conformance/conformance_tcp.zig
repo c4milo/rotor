@@ -99,7 +99,7 @@ test "a receive returns 0 when the peer shut its sending side" {
     var buffer: [8]u8 = undefined;
     try harness.submit(&.{
         Operation.receive(1, pair[1], &buffer),
-        .{ .user_data = 2, .kind = .{ .shutdown = .{ .socket = pair[0], .how = .send } } },
+        Operation.shutdown(2, pair[0], .send),
     }, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
@@ -323,11 +323,7 @@ test "a multishot receive names the provided buffer of each event and ends when 
     const group_bytes = comptime backend.buffers.group_bytes(group_buffers, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
     try harness.loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
-    try harness.submit(&.{.{ .user_data = 1, .kind = .{ .receive = .{
-        .socket = pair[1],
-        .target = .{ .group = group_id },
-        .multishot = true,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.receive_group(1, pair[1], group_id)}, &.{});
 
     // Two messages take the two buffers, and none is given back, so the third finds the group
     // empty, which ends the operation. Each message is received before the next is sent, so

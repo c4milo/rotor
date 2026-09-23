@@ -3,6 +3,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const Operation = core.Operation;
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -36,10 +37,8 @@ const Peer = struct {
         var events: [1]Event = undefined;
         try harness.collect(&events);
         if (!events[0].flags.message or events[0].result != tag_ping) return error.NotAPing;
-        try harness.submit(&.{.{ .user_data = 7, .kind = .{ .post = .{
-            .target = 0,
-            .message = .{ .payload = events[0].user_data + 1, .tag = tag_pong },
-        } } }}, &.{});
+        const pong: core.Message = .{ .payload = events[0].user_data + 1, .tag = tag_pong };
+        try harness.submit(&.{Operation.post(7, 0, pong)}, &.{});
         try harness.collect(&events);
         if (try events[0].outcome() != 0) return error.PongNotPosted;
     }
@@ -63,10 +62,7 @@ test "a message crosses to a loop on another thread and its answer comes back" {
     var attempt: u32 = 0;
     var events: [1]Event = undefined;
     while (!posted and attempt < post_attempts_max) : (attempt += 1) {
-        try harness.submit(&.{.{ .user_data = 1, .kind = .{ .post = .{
-            .target = 1,
-            .message = .{ .payload = 41, .tag = tag_ping },
-        } } }}, &.{});
+        try harness.submit(&.{Operation.post(1, 1, .{ .payload = 41, .tag = tag_ping })}, &.{});
         try harness.collect(&events);
         posted = if (events[0].outcome()) |_| true else |err| switch (err) {
             error.LoopNotFound => false,
@@ -140,10 +136,7 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
         try harness.pause(pause_ns);
         if (registry.get(1) < 0) continue;
         try harness.pause(pause_ns);
-        try harness.submit(&.{.{ .user_data = 1, .kind = .{ .post = .{
-            .target = 1,
-            .message = .{ .payload = 7, .tag = tag_ping },
-        } } }}, &.{});
+        try harness.submit(&.{Operation.post(1, 1, .{ .payload = 7, .tag = tag_ping })}, &.{});
         try harness.collect(&events);
         posted = (try events[0].outcome()) == 0;
     }

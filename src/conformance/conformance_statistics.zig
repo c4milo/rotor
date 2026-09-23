@@ -69,10 +69,7 @@ test "a sampled operation the kernel completes carries a latency, and a cancelle
     var bytes: [8]u8 = undefined;
     var events: [2]Event = undefined;
     try harness.submit(&.{
-        .{ .user_data = 1, .kind = .{ .receive = .{
-            .socket = pair[1],
-            .target = .{ .buffer = .{ .bytes = &bytes } },
-        } } },
+        Operation.receive(1, pair[1], &bytes),
         Operation.send(2, pair[0], "measured"),
     }, &.{});
     try harness.collect(&events);

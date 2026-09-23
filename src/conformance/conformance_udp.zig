@@ -261,17 +261,11 @@ test "a datagram sent on a socket shut for sending ends with broken_pipe" {
     const pair = try Pair.open();
     defer pair.close();
     // macOS shuts only a connected datagram socket, so the sender connects to the receiver first.
-    try harness.submit(&.{.{ .user_data = 1, .kind = .{ .connect = .{
-        .socket = pair.sender,
-        .address = &pair.address,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.connect(1, pair.sender, &pair.address)}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
-    try harness.submit(&.{.{ .user_data = 2, .kind = .{ .shutdown = .{
-        .socket = pair.sender,
-        .how = .send,
-    } } }}, &.{});
+    try harness.submit(&.{Operation.shutdown(2, pair.sender, .send)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 

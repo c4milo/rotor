@@ -133,7 +133,7 @@ test "a close ends the receive in flight for its descriptor with canceled, then 
     try harness.submit(&.{receive(1, pair[0], &buffer, 0)}, &.{});
     var events: [2]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
-    const close: Operation = .{ .user_data = 2, .kind = .{ .close = .{ .descriptor = pair[0] } } };
+    const close: Operation = Operation.close(2, pair[0]);
     try harness.submit(&.{close}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u64, 1), events[0].user_data);

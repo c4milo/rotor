@@ -13,6 +13,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const Operation = core.Operation;
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -160,11 +161,7 @@ const Fixture = struct {
     /// Submits one read of block 0 into `into` and returns its one event.
     fn read_block(fixture: *Fixture, into: []u8) !Event {
         var events: [1]Event = undefined;
-        const taken = fixture.loop.submit(&.{.{ .user_data = 7, .kind = .{ .read = .{
-            .file = fixture.file,
-            .buffer = .{ .bytes = into },
-            .offset = 0,
-        } } }}, &.{});
+        const taken = fixture.loop.submit(&.{Operation.read(7, fixture.file, into, 0)}, &.{});
         if (taken != 1) return error.TableFull;
 
         var round: u32 = 0;
@@ -276,11 +273,8 @@ test "an offloaded result lands in the tick that waited for it, not the one afte
     }
 
     var into: [block_bytes]u8 align(block_bytes) = undefined;
-    const taken = loop_fixture.loop.submit(&.{.{ .user_data = 9, .kind = .{ .read = .{
-        .file = loop_fixture.file,
-        .buffer = .{ .bytes = &into },
-        .offset = 0,
-    } } }}, &.{});
+    const read = Operation.read(9, loop_fixture.file, &into, 0);
+    const taken = loop_fixture.loop.submit(&.{read}, &.{});
     try testing.expectEqual(@as(u32, 1), taken);
 
     // One tick, with a wait long enough for the worker to answer. The worker's wake ends the wait,
@@ -312,11 +306,8 @@ test "an offloaded read that is cancelled still ends with exactly one final even
 
     var into: [block_bytes]u8 align(block_bytes) = undefined;
     var handles: [1]core.Handle = undefined;
-    const taken = loop_fixture.loop.submit(&.{.{ .user_data = 11, .kind = .{ .read = .{
-        .file = loop_fixture.file,
-        .buffer = .{ .bytes = &into },
-        .offset = 0,
-    } } }}, &handles);
+    const read = Operation.read(11, loop_fixture.file, &into, 0);
+    const taken = loop_fixture.loop.submit(&.{read}, &handles);
     try testing.expectEqual(@as(u32, 1), taken);
 
     // The flush hands it out, so it is submitted and on a thread, not queued.
@@ -362,10 +353,7 @@ test "the offload policy leaves a socket operation's cancel alone" {
     defer sync.close_now(listener);
 
     var handles: [1]core.Handle = undefined;
-    const taken = loop_fixture.loop.submit(&.{.{
-        .user_data = 13,
-        .kind = .{ .accept = .{ .listener = listener, .multishot = false } },
-    }}, &handles);
+    const taken = loop_fixture.loop.submit(&.{Operation.accept(13, listener, false)}, &handles);
     try testing.expectEqual(@as(u32, 1), taken);
 
     var events: [2]Event = undefined;
