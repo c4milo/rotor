@@ -60,6 +60,8 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
     // never does, because its tests need the kernel of a Mac.
     const unit_tests = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "core", .module = graph.core },
+        // What both Linux backends share. It needs no io_uring, so it runs confined.
+        .{ .name = "linux-shared", .module = graph.linux_shared },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         // The second Linux backend (decision 20), and the one suite against it. Both enter the

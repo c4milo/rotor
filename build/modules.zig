@@ -9,9 +9,9 @@
 //! business, and a consumer that needs a backend of its own carries the surface rather than
 //! reaching into these (decision 10).
 //!
-//! `core` imports nothing. `uring` imports `core`. `conformance` imports `core` and one backend,
-//! which this file hands it as its `backend` import, so one suite tests every backend
-//! (decision 10). `kqueue` imports `core`. docs/decisions/0001-interface.md names the module that
+//! `core` imports nothing. `linux_shared` imports `core`. `uring` and `epoll` import `core` and
+//! `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one backend, which
+//! this file hands it as its `backend` import, so one suite tests every backend (decision 10). docs/decisions/0001-interface.md names the module that
 //! follows: `adapter`, after version one. `bench/` is outside `src/` and outside this graph;
 //! build/bench.zig wires it.
 const std = @import("std");
@@ -23,6 +23,9 @@ pub const Modules = struct {
     rotor: *std.Build.Module,
     /// The types the caller sees, the slot table, the timer heap and the named limits.
     core: *std.Build.Module,
+    /// What both Linux backends need and do the same way: address conversion, the sync calls, the
+    /// clock and the datagram control blocks. Its pure parts are tested on every host.
+    linux_shared: *std.Build.Module,
     /// The Linux backend, over io_uring. Its pure parts are tested on every host.
     uring: *std.Build.Module,
     /// The conformance suite with `uring` as the backend under test. It skips off Linux.
@@ -45,8 +48,11 @@ pub fn add(
     optimize: std.builtin.OptimizeMode,
 ) Modules {
     const core = create(b, "src/core/core.zig", target, optimize);
+    const linux_shared = create(b, "src/linux_shared/linux_shared.zig", target, optimize);
+    linux_shared.addImport("core", core);
     const uring = create(b, "src/uring/uring.zig", target, optimize);
     uring.addImport("core", core);
+    uring.addImport("linux_shared", linux_shared);
     const conformance_uring = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_uring.addImport("core", core);
     conformance_uring.addImport("backend", uring);
@@ -54,6 +60,7 @@ pub fn add(
     kqueue.addImport("core", core);
     const epoll = create(b, "src/epoll/epoll.zig", target, optimize);
     epoll.addImport("core", core);
+    epoll.addImport("linux_shared", linux_shared);
     const conformance_epoll = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_epoll.addImport("core", core);
     conformance_epoll.addImport("backend", epoll);
@@ -71,6 +78,7 @@ pub fn add(
     return .{
         .rotor = rotor,
         .core = core,
+        .linux_shared = linux_shared,
         .uring = uring,
         .conformance_uring = conformance_uring,
         .kqueue = kqueue,

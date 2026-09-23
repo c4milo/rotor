@@ -1,13 +1,7 @@
 //! `core.Address` to and from the kernel's socket address structures, `sockaddr_in` and
-//! `sockaddr_in6`. The surface names no kernel type (decision 1), so every address crosses here on
-//! its way into a `bind`, a `connect` or a `sendmsg`, and on its way out of a `getsockname` or a
-//! `recvmsg`.
-//!
-//! This is `src/uring/uring_address.zig`, copied. Both Linux backends convert to the same Linux
-//! structures, and the module graph has no module the two share: `core` names no kernel type, and
-//! a `linux` module both import would be a new edge of the graph, which is the owner's call
-//! (CLAUDE.md, "Ask before"). kqueue's `kqueue_address.zig` is not the source because it names the
-//! host's `std.posix.sockaddr`, which on a macOS build is Darwin's and does not fit Linux's calls.
+//! `sockaddr_in6`, for both Linux backends. The surface names no kernel type (decision 1), so every
+//! address crosses here on its way into a `bind`, a `connect` or a `sendmsg`, and on its way out of
+//! a `getsockname` or a `recvmsg`.
 //!
 //! This file enters no kernel. It reads `std.os.linux` for types and constants alone, so its
 //! tests run on every host.

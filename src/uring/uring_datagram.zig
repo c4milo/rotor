@@ -16,7 +16,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
-const address_module = @import("uring_address.zig");
+const address_module = @import("linux_shared").address;
 const ring_module = @import("uring_ring.zig");
 
 const Address = core.Address;

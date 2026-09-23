@@ -19,15 +19,15 @@
 //! so that rotor runs where io_uring does not, and the comparison gains no row for it.
 //!
 //! Every organ is `kqueue`'s file by file, with Linux's calls. The waiters table, the mailboxes,
-//! the errno map and the offload's rings are `core`'s and shared with `kqueue`; the address and
-//! sync helpers are the `uring` backend's, copied, because both Linux backends convert to the same
-//! Linux structures and the graph has no module the two share (`epoll_address.zig` says why).
+//! the errno map and the offload's rings are `core`'s and shared with `kqueue`; the address
+//! conversion, the clock and the test support are `linux_shared`'s, shared with `uring`, because
+//! both Linux backends convert to the same Linux structures.
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
 
 pub const constants = @import("constants.zig");
-pub const address = @import("epoll_address.zig");
+pub const address = @import("linux_shared").address;
 pub const buffers = @import("epoll_buffers.zig");
 const datagram_module = @import("epoll_datagram.zig");
 pub const cancel_module = @import("epoll_cancel.zig");
@@ -41,7 +41,7 @@ pub const reap_module = @import("epoll_reap.zig");
 pub const remote_module = @import("epoll_remote.zig");
 pub const submit_module = @import("epoll_submit.zig");
 pub const sync = @import("epoll_sync.zig");
-pub const testing = @import("epoll_testing.zig");
+pub const testing = @import("linux_shared").testing;
 pub const tick_module = @import("epoll_tick.zig");
 
 /// Whether this backend's file operations block the loop thread, which is what decides whether

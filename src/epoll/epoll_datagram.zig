@@ -16,7 +16,7 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
-const address_module = @import("epoll_address.zig");
+const address_module = @import("linux_shared").address;
 const socket_calls = @import("epoll_sync_socket.zig");
 
 const Address = core.Address;

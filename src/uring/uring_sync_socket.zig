@@ -14,7 +14,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
-const uring_address = @import("uring_address.zig");
+const address_module = @import("linux_shared").address;
 
 const Address = core.Address;
 const Descriptor = core.Descriptor;
@@ -57,8 +57,8 @@ pub fn listen(address: *const Address, options: ListenOptions) ListenError!Descr
         set_option(socket, linux.SOL.SOCKET, linux.SO.REUSEPORT, true) catch
             return error.Unexpected;
     }
-    var storage: uring_address.Storage = undefined;
-    const len = uring_address.to_kernel(address, &storage);
+    var storage: address_module.Storage = undefined;
+    const len = address_module.to_kernel(address, &storage);
     const bind_errno = linux.errno(linux.bind(socket, @ptrCast(&storage), len));
     if (bind_errno != .SUCCESS) return listen_error(bind_errno);
     // Two sockets that both set SO_REUSEADDR can bind one port while neither listens, so the
@@ -71,12 +71,12 @@ pub fn listen(address: *const Address, options: ListenOptions) ListenError!Descr
 /// getsockname: how a caller that bound port 0 learns the port the kernel chose.
 pub fn local_address(descriptor: Descriptor) AddressError!Address {
     assert(descriptor >= 0);
-    var storage = std.mem.zeroes(uring_address.Storage);
-    var len: linux.socklen_t = @sizeOf(uring_address.Storage);
+    var storage = std.mem.zeroes(address_module.Storage);
+    var len: linux.socklen_t = @sizeOf(address_module.Storage);
     const errno = linux.errno(linux.getsockname(descriptor, @ptrCast(&storage), &len));
     if (errno != .SUCCESS) return socket_call_error(errno);
     assert(len >= @sizeOf(linux.sa_family_t));
-    return uring_address.from_kernel(&storage, len) orelse error.AddressFamilyUnsupported;
+    return address_module.from_kernel(&storage, len) orelse error.AddressFamilyUnsupported;
 }
 
 /// TCP_NODELAY: when `enabled`, the kernel sends a small segment at once (Nagle's algorithm off).
@@ -218,8 +218,8 @@ pub fn open_datagram(
     @import("uring_datagram.zig").apply_options(socket, family, options);
     if (bind_to) |address| {
         assert(address.family == family);
-        var storage: uring_address.Storage = undefined;
-        const len = uring_address.to_kernel(address, &storage);
+        var storage: address_module.Storage = undefined;
+        const len = address_module.to_kernel(address, &storage);
         const bind_errno = linux.errno(linux.bind(socket, @ptrCast(&storage), len));
         if (bind_errno != .SUCCESS) return listen_error(bind_errno);
     }
@@ -277,8 +277,8 @@ fn probe_descriptor() !Descriptor {
 fn connect_to(address: *const Address) !Descriptor {
     const client = try open_socket(address.family);
     errdefer close_now(client);
-    var storage: uring_address.Storage = undefined;
-    const len = uring_address.to_kernel(address, &storage);
+    var storage: address_module.Storage = undefined;
+    const len = address_module.to_kernel(address, &storage);
     try testing.expectEqual(E.SUCCESS, linux.errno(linux.connect(client, &storage, len)));
     return client;
 }

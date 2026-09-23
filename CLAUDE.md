@@ -124,8 +124,9 @@ and its mutation is measured against the Linux gate.
 
 - A commit message is a Conventional Commit: `type(scope)!: description`, with the scope and the
   `!` optional. The type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
-  `ci`, `chore`. Scopes track the module graph: `core`, `uring`, `kqueue`, `epoll`, `conformance`,
-  `adapter`, `bench`, `tools`. A scope outside that set is a warning.
+  `ci`, `chore`. Scopes track the module graph: `core`, `linux-shared` (the module `linux_shared`,
+  since a scope holds no underscore), `uring`, `kqueue`, `epoll`, `conformance`, `adapter`,
+  `bench`, `tools`. A scope outside that set is a warning.
 - The description is imperative, starts with a lowercase letter, and ends without a period. The
   subject line stays at or under 72 columns.
 - Exactly one blank line separates the body from the subject. A body line stays at or under 100
@@ -166,20 +167,22 @@ was about to push.
   `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
-  nothing; `uring`, `kqueue` and `epoll` import `core`; the public module `rotor` imports `core`
-  and every backend, because on Linux it falls back from `uring` to `epoll` (decision 20);
-  `adapter` imports `core` and one backend;
-  nothing imports `bench`. `conformance` imports `core` and the backend under test, which the build
-  hands it as its `backend` import, so one suite tests every backend (decision 10). `core`, `uring`,
-  `kqueue` and `epoll` exist today. `bench/` sits outside `src/` and outside the graph;
-  `build/bench.zig` wires it.
+  nothing; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
+  edge the owner approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
+  imports `core` and every backend, because on Linux it falls back from `uring` to `epoll`
+  (decision 20); `adapter` imports `core` and one backend; nothing imports `bench`. `conformance`
+  imports `core` and the backend under test, which the build hands it as its `backend` import, so
+  one suite tests every backend (decision 10). `core`, `linux_shared`, `uring`, `kqueue` and
+  `epoll` exist today. `bench/` sits outside `src/` and outside the graph; `build/bench.zig` wires
+  it.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
 - **A file two backends need, that names no kernel type, lives in `core`.** `kqueue` and `epoll` are
   both readiness backends, so the waiters table, the mailbox rings, the errno map and the offload's
   ring carving are `core`'s and each backend re-exports what a caller reaches. A file whose calls
   take a `*Loop`, or that names the target's own kernel types, stays in the backend: `core` would
-  have to be generic over the loop to hold it.
+  have to be generic over the loop to hold it. A file both Linux backends need, that names Linux's
+  types and takes no `*Loop`, lives in `linux_shared`.
 - Tests belong in the file they test.
 - `tools/` is developer tooling, run by `zig build lint` and never linked into the library. Its
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds

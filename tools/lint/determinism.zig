@@ -34,7 +34,8 @@
 //! that was missed.
 //!
 //! The kernel backends, `src/uring/`, `src/kqueue/` and `src/epoll/`, are exempt: reading the
-//! monotonic clock for a timer is their job. `bench/` is outside `src/` and is not read.
+//! monotonic clock for a timer is their job. So is `src/linux_shared/`, which reads it for both
+//! Linux backends. `bench/` is outside `src/` and is not read.
 //!
 //! What the rule cannot see:
 //!
@@ -72,7 +73,12 @@ comptime {
 }
 
 /// The modules that talk to a kernel and so may read its clock.
-const kernel_backend_directories = [_][]const u8{ "src/uring", "src/kqueue", "src/epoll" };
+const kernel_backend_directories = [_][]const u8{
+    "src/uring",
+    "src/kqueue",
+    "src/epoll",
+    "src/linux_shared",
+};
 
 const reason = "core reads no clock and draws from core.random alone";
 
@@ -192,6 +198,7 @@ test "determinism reads core and not the kernel backends" {
     try testing.expect(!config.scope.applies("src/uring/uring.zig"));
     try testing.expect(!config.scope.applies("src/kqueue/kqueue.zig"));
     try testing.expect(!config.scope.applies("src/epoll/epoll_tick.zig"));
+    try testing.expect(!config.scope.applies("src/linux_shared/linux_shared_clock.zig"));
     // The public module is in scope: it chooses a backend and reads no clock of its own.
     try testing.expect(config.scope.applies("src/rotor/rotor_loop.zig"));
     try testing.expect(!config.scope.applies("bench/echo.zig"));

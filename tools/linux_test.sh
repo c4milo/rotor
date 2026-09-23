@@ -57,7 +57,7 @@ readonly security_option='seccomp=unconfined'
 # the conformance suite against it, and its halt scenarios. The epoll backend exists for a container
 # nobody relaxed (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these would prove
 # nothing: they must pass in the environment that refuses io_uring.
-readonly confined_executables=' epoll conformance-epoll epoll_linux_scenarios '
+readonly confined_executables=' epoll conformance-epoll epoll_linux_scenarios linux-shared '
 # The executables that run twice, once each way. The public module chooses its backend when the
 # process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
 # open question 5). Each run takes the other branch, so each is tested where it is chosen.

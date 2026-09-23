@@ -56,15 +56,5 @@ fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
     return loop.tables.wait_bound(wait_ns);
 }
 
-/// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that
-/// produced nothing (decision 9, rule 4). `uring_testing.zig` hands it to the tests, so a test
-/// measures with the clock the tick reads.
-pub fn clock_ns() u64 {
-    var now: linux.timespec = undefined;
-    const rc = linux.clock_gettime(.MONOTONIC, &now);
-    assert(linux.errno(rc) == .SUCCESS);
-    assert(now.sec >= 0);
-    const seconds: u64 = @intCast(now.sec);
-    const nanoseconds: u64 = @intCast(now.nsec);
-    return seconds * core.constants.ns_per_s + nanoseconds;
-}
+/// The monotonic clock both Linux backends read (`linux_shared_clock.zig`).
+const clock_ns = @import("linux_shared").clock.clock_ns;

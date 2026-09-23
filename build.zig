@@ -90,6 +90,8 @@ pub fn build(b: *std.Build) void {
         // promises still hold.
         .{ .name = "rotor", .module = graph.rotor },
         .{ .name = "core", .module = graph.core },
+        // Named `linux-shared`, because `test-linux` is the Linux gate's build step.
+        .{ .name = "linux-shared", .module = graph.linux_shared },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         .{ .name = "kqueue", .module = graph.kqueue },

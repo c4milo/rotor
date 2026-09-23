@@ -42,7 +42,7 @@ pub const probes = [_]measure.Probe{
 };
 
 /// Where the probe writes its file. The Linux gate runs a container whose /tmp is the
-/// container's own filesystem, as `src/uring/uring_testing.zig` says of the suite's files.
+/// container's own filesystem, as `src/linux_shared/linux_shared_testing.zig` says of the suite's files.
 const directory = "/tmp";
 
 /// The transfer size every row names, and the alignment O_DIRECT needs.

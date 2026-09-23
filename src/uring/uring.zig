@@ -12,7 +12,7 @@ const assert = std.debug.assert;
 const core = @import("core");
 
 pub const constants = @import("constants.zig");
-pub const address = @import("uring_address.zig");
+pub const address = @import("linux_shared").address;
 pub const datagram_module = @import("uring_datagram.zig");
 pub const buffers = @import("uring_buffers.zig");
 pub const cancel_module = @import("uring_cancel.zig");
@@ -24,7 +24,7 @@ pub const remote_module = @import("uring_remote.zig");
 pub const ring_module = @import("uring_ring.zig");
 pub const submit_module = @import("uring_submit.zig");
 pub const sync = @import("uring_sync.zig");
-pub const testing = @import("uring_testing.zig");
+pub const testing = @import("linux_shared").testing;
 pub const tick_module = @import("uring_tick.zig");
 
 pub const Registry = registry_module.Registry;

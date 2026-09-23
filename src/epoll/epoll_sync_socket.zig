@@ -21,7 +21,7 @@ const builtin = @import("builtin");
 const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
-const address_module = @import("epoll_address.zig");
+const address_module = @import("linux_shared").address;
 
 const Address = core.Address;
 const Descriptor = core.Descriptor;
