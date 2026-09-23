@@ -325,6 +325,24 @@ pub const Tables = struct {
         return null;
     }
 
+    /// Finishes every timer that is due, and hands `request` every operation whose deadline passed,
+    /// marked `timed_out`, to cancel (decision 5, rule 4). Every backend's tick runs it, with its
+    /// own cancel as `request` and its loop as `backend`. At most the heap's entries can be due,
+    /// which bounds the loop.
+    pub fn expire(
+        tables: *Tables,
+        backend: anytype,
+        comptime request: fn (@TypeOf(backend), u32, *Slot) void,
+    ) void {
+        const armed = tables.timers.count;
+        var expired: u32 = 0;
+        while (expired < armed) : (expired += 1) {
+            const index = tables.next_expired() orelse break;
+            request(backend, index, tables.table.at(index));
+        }
+        assert(tables.timers.count <= armed);
+    }
+
     /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a
     /// timer. A slot being resubmitted keeps the deadline it has.
     pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {

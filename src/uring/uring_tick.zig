@@ -25,7 +25,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     tables.begin_tick(events.len, wait_ns);
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
-    expire(loop);
+    loop.tables.expire(loop, cancel_module.request);
     cancel_module.flush(loop);
     var produced = tables.drain_finished(events);
     const wait = if (produced == 0) wait_for(loop, wait_ns) else null;
@@ -42,7 +42,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     if (produced == 0 and wait != null) {
         // The wait may have ended because a deadline came due.
         tables.now_ns = clock_ns();
-        expire(loop);
+        loop.tables.expire(loop, cancel_module.request);
         produced += tables.drain_finished(events[produced..]);
     }
     assert(produced <= events.len);
@@ -54,18 +54,6 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
 fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
     if (loop.cancels.count != 0) return null;
     return loop.tables.wait_bound(wait_ns);
-}
-
-/// Finishes every timer that is due, and asks for the cancel of every operation whose deadline
-/// passed (decision 5, rule 4). At most the heap's entries can be due, which bounds the loop.
-fn expire(loop: *Loop) void {
-    const armed = loop.tables.timers.count;
-    var expired: u32 = 0;
-    while (expired < armed) : (expired += 1) {
-        const index = loop.tables.next_expired() orelse break;
-        cancel_module.request(loop, index, loop.tables.table.at(index));
-    }
-    assert(loop.tables.timers.count <= armed);
 }
 
 /// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that
