@@ -24,8 +24,9 @@ pub const LinuxScenarios = struct {
     arguments: []const []const u8,
 };
 
-/// The scenario executables `linux` builds: the Linux-only scenarios of uring, and the canary.
-pub const linux_scenarios_count = 2;
+/// The scenario executables `linux` builds: the Linux-only scenarios of uring and of epoll, and the
+/// canary.
+pub const linux_scenarios_count = 3;
 
 /// What `linux` builds: the check, and the scenario executables it runs.
 pub const Linux = struct {
@@ -88,11 +89,15 @@ pub fn linux(
     const uring_scenarios = scenarios(b, "uring_linux_scenarios", target, optimize);
     uring_scenarios.root_module.addImport("core", graph.core);
     uring_scenarios.root_module.addImport("uring", graph.uring);
+    const epoll_scenarios = scenarios(b, "epoll_linux_scenarios", target, optimize);
+    epoll_scenarios.root_module.addImport("core", graph.core);
+    epoll_scenarios.root_module.addImport("epoll", graph.epoll);
     const canary = scenarios(b, "canary_scenarios", target, optimize);
     return .{
         .check = check_executable(b, target),
         .scenarios = .{
             .{ .executable = uring_scenarios, .arguments = &.{} },
+            .{ .executable = epoll_scenarios, .arguments = &.{} },
             .{ .executable = canary, .arguments = &canary_arguments },
         },
     };

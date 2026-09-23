@@ -11,10 +11,12 @@
 //! on a path that makes no Linux call, and two of kqueue's are left out:
 //!
 //! - `tick` from another thread. With the owner check gone, the next statement reads the clock.
+//!   `epoll_linux_scenarios.zig` has this scenario, and the Linux gate runs it on a real epoll
+//!   instance.
 //! - An offload worker the loop has no ring for. With the bound gone, the worker makes its `pread`.
-//!
-//! Both checks are `core`'s or the same line as kqueue's, and kqueue's scenarios run them on the
-//! kernel they were written for.
+//!   No scenario on any host proves this bound. With it gone, the worker indexes its ring next,
+//!   and the bounds check on that index halts the scenario. On 2026-09-22 kqueue's copy of this
+//!   scenario still halted with the bound deleted.
 const std = @import("std");
 const core = @import("core");
 const epoll = @import("epoll");

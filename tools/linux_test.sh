@@ -53,11 +53,11 @@ readonly image='alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be1216
 # Docker's default seccomp profile refuses io_uring_setup with EPERM, so an io_uring container runs
 # without that profile. Without this option the probe reports the refusal and the run fails.
 readonly security_option='seccomp=unconfined'
-# The executables that run under Docker's DEFAULT profile instead: the epoll module's own tests and
-# the conformance suite against it. The epoll backend exists for a container nobody relaxed
-# (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests would prove nothing: they
-# must pass in the environment that refuses io_uring.
-readonly confined_executables=' epoll conformance-epoll '
+# The executables that run under Docker's DEFAULT profile instead: the epoll module's own tests,
+# the conformance suite against it, and its halt scenarios. The epoll backend exists for a container
+# nobody relaxed (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these would prove
+# nothing: they must pass in the environment that refuses io_uring.
+readonly confined_executables=' epoll conformance-epoll epoll_linux_scenarios '
 # The executables that run twice, once each way. The public module chooses its backend when the
 # process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
 # open question 5). Each run takes the other branch, so each is tested where it is chosen.
