@@ -1,7 +1,9 @@
 //! The loop against the real kernel (decision 10, point 2). Every test here enters io_uring, so
 //! each runs under Linux alone: `tools/linux_test.sh` runs them in Docker. The sockets are a
 //! connected pair from `socketpair(2)`, so these tests need nothing the module's other files
-//! provide; TCP, O_DIRECT files and both backends' agreement are the conformance suite's.
+//! provide; TCP, O_DIRECT files and both backends' agreement are the conformance suite's. A
+//! scenario that suite runs on every backend is not repeated here: what is left is what only a
+//! ring has, such as more operations than it has submission entries.
 const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
@@ -55,10 +57,6 @@ fn close_pair(descriptors: [2]i32) void {
     for (descriptors) |descriptor| _ = linux.close(descriptor);
 }
 
-fn timer(user_data: u64, after_ns: u64) Operation {
-    return .{ .user_data = user_data, .kind = .{ .timer = .{ .after_ns = after_ns } } };
-}
-
 fn receive(user_data: u64, socket: i32, buffer: []u8, timeout_ns: u64) Operation {
     return .{ .user_data = user_data, .timeout_ns = timeout_ns, .kind = .{ .receive = .{
         .socket = socket,
@@ -71,123 +69,6 @@ fn send(user_data: u64, socket: i32, bytes: []const u8) Operation {
         .socket = socket,
         .buffer = .{ .bytes = bytes },
     } } };
-}
-
-test "timers fire in deadline order, and equal deadlines in the order they were submitted" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const ms = core.constants.ns_per_ms;
-    const taken = fixture.loop.submit(&.{
-        timer(30, 3 * ms), timer(10, 1 * ms), timer(20, 2 * ms), timer(21, 2 * ms),
-    }, &.{});
-    try testing.expectEqual(@as(u32, 4), taken);
-    try testing.expectEqual(@as(u32, 4), fixture.loop.in_flight());
-    var events: [4]Event = undefined;
-    try fixture.collect(&events);
-    const order = [_]u64{ 10, 20, 21, 30 };
-    for (events, order) |event, user_data| {
-        try testing.expectEqual(user_data, event.user_data);
-        try testing.expectEqual(@as(u32, 0), try event.outcome());
-    }
-    try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
-}
-
-test "a timer does not fire before its delay" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const delay_ns = 20 * core.constants.ns_per_ms;
-    _ = fixture.loop.submit(&.{timer(1, delay_ns)}, &.{});
-    var events: [1]Event = undefined;
-    // The first tick arms the timer from a clock reading it takes after this one. A busy machine
-    // can hold this process off the processor past the deadline, and then a short tick hands the
-    // timer over on time. So the test reads the clock and does not assume the short ticks are early.
-    const armed_ns = monotonic_ns();
-    var produced = try fixture.loop.tick(&events, 0);
-    if (produced == 0) produced = try fixture.loop.tick(&events, core.constants.ns_per_ms);
-    if (produced == 0) try fixture.collect(&events);
-    try testing.expect(monotonic_ns() - armed_ns >= delay_ns);
-    try testing.expectEqual(@as(u64, 1), events[0].user_data);
-}
-
-const monotonic_ns = @import("uring_tick.zig").clock_ns;
-
-test "a tick that waits wakes for the nearest deadline, long before its own wait is over" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const delay_ns = 5 * core.constants.ns_per_ms;
-    _ = fixture.loop.submit(&.{timer(1, delay_ns)}, &.{});
-    var events: [1]Event = undefined;
-    const before = monotonic_ns();
-    try testing.expectEqual(@as(u32, 1), try fixture.loop.tick(&events, core.constants.ns_per_s));
-    const waited = monotonic_ns() - before;
-    try testing.expect(waited >= delay_ns);
-    try testing.expect(waited < core.constants.ns_per_s / 2);
-    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
-}
-
-test "a cancelled timer ends with canceled at the next tick, never inside cancel" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    var handles: [1]Handle = undefined;
-    _ = fixture.loop.submit(&.{timer(5, core.constants.ns_per_s)}, &handles);
-    var events: [1]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, 0));
-    fixture.loop.cancel(handles[0]);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.in_flight());
-    try testing.expectEqual(@as(u32, 1), try fixture.loop.tick(&events, 0));
-    try testing.expectError(error.Canceled, events[0].outcome());
-    // The handle names nothing now, and cancelling it again is legal.
-    fixture.loop.cancel(handles[0]);
-    try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
-}
-
-test "a receive gets the bytes a send wrote" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const pair = try socket_pair();
-    defer close_pair(pair);
-    var buffer: [16]u8 = @splat(0);
-    _ = fixture.loop.submit(&.{ receive(1, pair[0], &buffer, 0), send(2, pair[1], "rotor") }, &.{});
-    var events: [2]Event = undefined;
-    try fixture.collect(&events);
-    for (events) |event| try testing.expectEqual(@as(u32, 5), try event.outcome());
-    try testing.expectEqualStrings("rotor", buffer[0..5]);
-}
-
-test "a receive whose deadline passes ends with timeout, and a cancelled one with canceled" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const pair = try socket_pair();
-    defer close_pair(pair);
-    var first: [8]u8 = undefined;
-    var second: [8]u8 = undefined;
-    var handles: [2]Handle = undefined;
-    _ = fixture.loop.submit(&.{
-        receive(1, pair[0], &first, 2 * core.constants.ns_per_ms),
-        receive(2, pair[1], &second, 0),
-    }, &handles);
-    var events: [1]Event = undefined;
-    try fixture.collect(&events);
-    try testing.expectEqual(@as(u64, 1), events[0].user_data);
-    try testing.expectError(error.Timeout, events[0].outcome());
-
-    fixture.loop.cancel(handles[1]);
-    try fixture.collect(&events);
-    try testing.expectEqual(@as(u64, 2), events[0].user_data);
-    try testing.expectError(error.Canceled, events[0].outcome());
-    try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
 }
 
 test "more operations than submission entries all complete, a ring's worth per tick" {
@@ -271,41 +152,6 @@ test "a batch of no-ops completes in one tick, each with its own user data" {
     try testing.expectEqual(@as(u64, 0xFF), seen);
 }
 
-test "submit takes as many operations as the table has slots and no more" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = 4, .entries = 8 });
-    defer fixture.loop.deinit();
-    var batch: [6]Operation = undefined;
-    for (&batch, 0..) |*operation, index| operation.* = timer(index, 0);
-    try testing.expectEqual(@as(u32, 4), fixture.loop.submit(&batch, &.{}));
-    try testing.expectEqual(@as(u32, 0), fixture.loop.submit(batch[4..], &.{}));
-    var events: [4]Event = undefined;
-    try fixture.collect(&events);
-    try testing.expectEqual(@as(u32, 2), fixture.loop.submit(batch[4..], &.{}));
-    try fixture.collect(events[0..2]);
-}
-
-test "a close cancels the receive in flight for its descriptor, then closes" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const pair = try socket_pair();
-    defer _ = linux.close(pair[1]);
-    var buffer: [8]u8 = undefined;
-    _ = fixture.loop.submit(&.{receive(1, pair[0], &buffer, 0)}, &.{});
-    var events: [2]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, 0));
-    const close: Operation = .{ .user_data = 2, .kind = .{ .close = .{ .descriptor = pair[0] } } };
-    _ = fixture.loop.submit(&.{close}, &.{});
-    try fixture.collect(&events);
-    try testing.expectEqual(@as(u64, 1), events[0].user_data);
-    try testing.expectError(error.Canceled, events[0].outcome());
-    try testing.expectEqual(@as(u64, 2), events[1].user_data);
-    try testing.expectEqual(@as(u32, 0), try events[1].outcome());
-}
-
 test "a post reaches the other loop with its payload and tag, and a missing loop is an error" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var registry: uring.Registry = undefined;
@@ -340,56 +186,6 @@ test "a post reaches the other loop with its payload and tag, and a missing loop
 
 const group_buffers = 2;
 const group_buffer_bytes = 8;
-
-test "a multishot receive names the provided buffer of each event and ends when they run out" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(.{ .operations = operations, .entries = 8 });
-    defer fixture.loop.deinit();
-    const pair = try socket_pair();
-    defer close_pair(pair);
-    const group_bytes = comptime uring.buffers.group_bytes(group_buffers, group_buffer_bytes);
-    var group_memory: [group_bytes]u8 align(uring.buffers.group_alignment) = undefined;
-    try fixture.loop.provide_buffers(3, &group_memory, group_buffers, group_buffer_bytes);
-    // Buffer 0 starts where the kernel's ring ends, so a receive into it cannot overwrite the ring.
-    const ring_end = @intFromPtr(&group_memory[uring.buffers.ring_bytes(group_buffers)]);
-    try testing.expectEqual(ring_end, @intFromPtr(fixture.loop.provided_buffer(3, 0).ptr));
-
-    _ = fixture.loop.submit(&.{.{ .user_data = 1, .kind = .{ .receive = .{
-        .socket = pair[0],
-        .target = .{ .group = 3 },
-        .multishot = true,
-    } } }}, &.{});
-    var events: [1]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, 0));
-
-    _ = fixture.loop.submit(&.{send(2, pair[1], "first")}, &.{});
-    var pair_of_events: [2]Event = undefined;
-    try fixture.collect(&pair_of_events);
-    for (pair_of_events) |event| {
-        if (event.user_data != 1) continue;
-        try testing.expect(event.flags.more and event.flags.buffer);
-        const bytes = fixture.loop.provided_buffer(3, event.flags.buffer_id);
-        try testing.expectEqualStrings("first", bytes[0..try event.outcome()]);
-    }
-    try testing.expectEqual(@as(u32, 1), fixture.loop.in_flight());
-
-    // One buffer is left and none is given back: the second message takes it, and the third
-    // finds the group empty, which ends the operation.
-    _ = fixture.loop.submit(&.{send(3, pair[1], "second")}, &.{});
-    try fixture.collect(&pair_of_events);
-    _ = fixture.loop.submit(&.{send(4, pair[1], "third")}, &.{});
-    try fixture.collect(&pair_of_events);
-    var ended = false;
-    for (pair_of_events) |event| {
-        if (event.user_data != 1) continue;
-        try testing.expect(event.is_final());
-        try testing.expectError(error.BuffersExhausted, event.outcome());
-        ended = true;
-    }
-    try testing.expect(ended);
-    try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
-}
 
 /// Datagram operations sent, which must exceed the ring's `entries` so that the per-entry
 /// message scratch has to be reused. Three times over is enough to catch a counter that only
