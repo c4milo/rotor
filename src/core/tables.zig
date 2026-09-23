@@ -52,7 +52,9 @@ pub const Tables = struct {
     timers: TimerHeap,
     /// Slots that are `queued`, oldest first: claimed, and waiting for the backend's flush.
     pending: SlotList,
-    /// Slots that are `finishing`, oldest first: each holds its final result in `Slot.result`.
+    /// Slots that are `finishing`, oldest first: each holds in `Slot.result` the result of the
+    /// event the next `drain_finished` hands over. That event is final, except for a repeating
+    /// timer that was not cancelled, whose event is one fire flagged `more`.
     finished: SlotList,
     /// The monotonic clock as the backend's tick last read it.
     now_ns: u64,
