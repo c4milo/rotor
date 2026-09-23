@@ -115,14 +115,11 @@ pub fn kernel_filter(filter: Filter) i16 {
 fn post(loop: *Loop, slot: *const Slot) i32 {
     const registry = loop.registry orelse return core.event.result_of(.loop_not_found);
     const target: core.LoopId = @intCast(slot.descriptor);
-    if (target >= registry.loops()) return core.event.result_of(.loop_not_found);
-    const target_queue = registry.get(target);
-    if (target_queue < 0) return core.event.result_of(.loop_not_found);
     const message: core.Message = .{ .payload = slot.buffer, .tag = slot.len };
-    if (!registry.mailbox(loop.tables.id, target).push(message)) {
-        return core.event.result_of(.mailbox_full);
-    }
-    if (registry.must_wake(target)) queue_module.Queue.wake(target_queue);
+    const wake = core.remote.send(registry, loop.tables.id, target, message) catch |err| {
+        return core.event.result_of(core.remote.code_of(err));
+    };
+    if (wake) |descriptor| queue_module.Queue.wake(descriptor);
     return 0;
 }
 

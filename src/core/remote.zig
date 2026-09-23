@@ -18,7 +18,17 @@
 //! A `Remote` belongs to one thread, as a loop does. Every backend records the thread at `init`
 //! and halt a `post` or `deinit` from another thread, with the compare `core/tables.zig` makes
 //! for a loop.
+//!
+//! `send` is the post of the readiness backends, kqueue and epoll, where a loop's post and a
+//! `Remote`'s post write the same mailbox ring. io_uring posts through the kernel instead.
 const std = @import("std");
+const event = @import("event.zig");
+const mailbox = @import("mailbox.zig");
+const operation = @import("operation.zig");
+
+const Descriptor = operation.Descriptor;
+const LoopId = operation.LoopId;
+const Message = operation.Message;
 
 /// What `Remote.post` answers.
 pub const PostError = error{
@@ -57,13 +67,42 @@ pub const InitError = error{
     Unexpected,
 };
 
+/// Why `send` delivered nothing. Both are also `PostError`s, so a `Remote` returns them as they are.
+pub const SendError = error{ LoopNotFound, MailboxFull };
+
+/// Pushes `message` into the ring `sender` has to `target`. Answers the descriptor that wakes the
+/// target when the target said it would sleep, and null when it is awake: the caller makes its own
+/// backend's wake call with it (decision 12, point 6). The target's `settle_to_sleep` reads the
+/// rings again after it sets the flag, so a message pushed before it saw the flag is found anyway.
+pub fn send(
+    registry: *mailbox.Registry,
+    sender: LoopId,
+    target: LoopId,
+    message: Message,
+) SendError!?Descriptor {
+    if (target >= registry.loops()) return error.LoopNotFound;
+    // Negative covers a loop that is not running and another remote, which publishes a sentinel
+    // below zero for exactly this reason.
+    const wake = registry.get(target);
+    if (wake < 0) return error.LoopNotFound;
+    if (!registry.mailbox(sender, target).push(message)) return error.MailboxFull;
+    return if (registry.must_wake(target)) wake else null;
+}
+
+/// The code a loop's post ends with when `send` refused it.
+pub fn code_of(err: SendError) event.Code {
+    return switch (err) {
+        error.LoopNotFound => .loop_not_found,
+        error.MailboxFull => .mailbox_full,
+    };
+}
+
 const testing = std.testing;
 
 test "the errors a post shares with a loop's post carry the names of the matching codes" {
     // A caller that moves work off the loop thread meets the names it knows from a loop's own
     // post: `event.error_of` gives them. The set adds `Unanswered`, which a loop cannot report
     // because a loop never waits for a post's answer.
-    const event = @import("event.zig");
     try testing.expectEqual(PostError.MailboxFull, event.error_of(.mailbox_full));
     try testing.expectEqual(PostError.LoopNotFound, event.error_of(.loop_not_found));
     try testing.expectEqual(PostError.SystemResources, event.error_of(.system_resources));

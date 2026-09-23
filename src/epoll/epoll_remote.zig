@@ -56,24 +56,16 @@ pub const Remote = struct {
         remote.registry.clear(remote.id);
     }
 
-    /// Sends one message to the loop `target` runs, or says why it could not. A target that names
-    /// no running loop, including another remote, is `LoopNotFound`; a target whose ring from this
-    /// sender is full is `MailboxFull`.
+    /// Sends one message to the loop `target` runs, or says why it could not. It is
+    /// `core.remote.send`, as a loop's post is, with this remote's id as the sender. A target that
+    /// names no running loop, including another remote, is `LoopNotFound`; a target whose ring
+    /// from this sender is full is `MailboxFull`.
     pub fn post(remote: *Remote, target: core.LoopId, message: core.Message) PostError!void {
         remote.assert_owner();
         assert(target != remote.id);
         assert(message.tag <= core.constants.message_tag_max);
-        const registry = remote.registry;
-        if (target >= registry.loops()) return error.LoopNotFound;
-        // The target's eventfd. Negative covers both a loop that is not running and another remote,
-        // which publishes a sentinel below zero for exactly this reason.
-        const target_wake = registry.get(target);
-        if (target_wake < 0) return error.LoopNotFound;
-        if (!registry.mailbox(remote.id, target).push(message)) return error.MailboxFull;
-        // The same handshake a loop makes: the target said it would sleep, so it has to be woken,
-        // and `settle_to_sleep` re-reads the rings so a message pushed before it saw the flag is
-        // found anyway (decision 12, point 6).
-        if (registry.must_wake(target)) queue_module.Queue.wake(target_wake);
+        const wake = try core.remote.send(remote.registry, remote.id, target, message);
+        if (wake) |descriptor| queue_module.Queue.wake(descriptor);
     }
 
     /// Halts when another thread calls into the remote: a programmer error, and one that would put
