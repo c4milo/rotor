@@ -289,6 +289,14 @@ fn end_a_loop_whose_operation_the_kernel_holds() void {
     tables.assert_empty();
 }
 
+/// Rings for more workers than a loop holds. A caller reaches this through
+/// `rotor.offload_memory_bytes` before any loop exists. A loop's own options halt on the same count
+/// earlier, in `assert_options`, so only this scenario can prove the sizing's check.
+fn size_the_rings_for_more_workers_than_the_limit() void {
+    scenario.reached_violation();
+    _ = core.offload.memory_bytes(core.constants.offload_workers_max + 1);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "slot_table: release a free slot", .run = release_a_free_slot },
     .{
@@ -363,6 +371,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "tables: end a loop whose operation the kernel holds",
         .run = end_a_loop_whose_operation_the_kernel_holds,
+    },
+    .{
+        .name = "offload: size the rings for more workers than the limit",
+        .run = size_the_rings_for_more_workers_than_the_limit,
     },
 };
 

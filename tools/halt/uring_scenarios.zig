@@ -106,6 +106,77 @@ fn submit_more_handles_than_operations() void {
     _ = loop.submit(&one_timer, &handles);
 }
 
+// The offload's options (decision 18). io_uring uses none of them, and checks them as kqueue and
+// epoll do, so options that halt there halt here. Each check comes before the ring would exist.
+
+/// One worker, so the rings the options must carry are one ring's.
+const offload_workers: u16 = 1;
+
+fn submit_nothing(context: ?*anyopaque, work: *core.offload.Work) void {
+    _ = context;
+    _ = work;
+}
+
+const offload_options: Loop.Options = .{
+    .operations = 4,
+    .entries = 4,
+    .id = 2,
+    .file_policy = .offload,
+    .offload = .{ .context = null, .submit = submit_nothing, .workers = offload_workers },
+};
+
+const alignment = core.layout.memory_alignment;
+const ring_bytes = core.offload.memory_bytes(offload_workers);
+var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
+
+/// Ring memory with room to spare, so the worker count is the only thing wrong with the options.
+var ample_ring_memory: [1 << 20]u8 align(alignment) = undefined;
+
+/// The `offload` policy with no offload: on epoll nothing would ever answer a file operation.
+fn choose_the_offload_policy_without_an_offload() void {
+    var options_without: Loop.Options = offload_options;
+    options_without.offload = null;
+    options_without.offload_memory = &ring_memory;
+    scenario.reached_violation();
+    loop.init_tables(&memory, options_without);
+}
+
+fn give_an_offload_no_workers() void {
+    var options_empty: Loop.Options = offload_options;
+    options_empty.offload = .{ .context = null, .submit = submit_nothing, .workers = 0 };
+    options_empty.offload_memory = &ring_memory;
+    scenario.reached_violation();
+    loop.init_tables(&memory, options_empty);
+}
+
+fn give_an_offload_more_workers_than_the_limit() void {
+    var options_many: Loop.Options = offload_options;
+    options_many.offload = .{
+        .context = null,
+        .submit = submit_nothing,
+        .workers = core.constants.offload_workers_max + 1,
+    };
+    options_many.offload_memory = &ample_ring_memory;
+    scenario.reached_violation();
+    loop.init_tables(&memory, options_many);
+}
+
+/// Less ring memory than the workers need. kqueue and epoll halt on this twice, once here and once
+/// when they carve their rings, so only this backend's scenario can prove the first check.
+fn give_an_offload_too_little_ring_memory() void {
+    var options_short: Loop.Options = offload_options;
+    options_short.offload_memory = ring_memory[0 .. ring_bytes - alignment];
+    scenario.reached_violation();
+    loop.init_tables(&memory, options_short);
+}
+
+fn name_an_offload_under_another_policy() void {
+    var options_blocking: Loop.Options = offload_options;
+    options_blocking.file_policy = .blocking;
+    scenario.reached_violation();
+    loop.init_tables(&memory, options_blocking);
+}
+
 // The Remote's assertions (decision 4). Each is a mistake only the caller can make. On io_uring a
 // Remote's `init` creates a ring, which this host may not have, so the scenarios claim the registry
 // slot themselves and fill the remote's fields by hand; each assertion then fires before the ring
@@ -191,6 +262,23 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "loop: submit with more handles than operations",
         .run = submit_more_handles_than_operations,
+    },
+    .{
+        .name = "offload: choose the offload policy without an offload",
+        .run = choose_the_offload_policy_without_an_offload,
+    },
+    .{ .name = "offload: give an offload no workers", .run = give_an_offload_no_workers },
+    .{
+        .name = "offload: give an offload more workers than the limit",
+        .run = give_an_offload_more_workers_than_the_limit,
+    },
+    .{
+        .name = "offload: give an offload too little ring memory",
+        .run = give_an_offload_too_little_ring_memory,
+    },
+    .{
+        .name = "offload: name an offload under another policy",
+        .run = name_an_offload_under_another_policy,
     },
     .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
     .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },

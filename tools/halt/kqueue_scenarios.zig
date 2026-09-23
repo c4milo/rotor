@@ -133,6 +133,16 @@ fn give_an_offload_no_workers() void {
     loop.init_tables(&offload_memory, options_empty);
 }
 
+/// An offload under a policy that never hands it work. The options refuse it, and until 2026-09-23
+/// nothing enforced that: the loop kept the offload and never called it.
+fn name_an_offload_under_another_policy() void {
+    var options_blocking: Loop.Options = offload_options;
+    options_blocking.file_policy = .blocking;
+    options_blocking.offload_memory = &ring_memory;
+    scenario.reached_violation();
+    loop.init_tables(&offload_memory, options_blocking);
+}
+
 /// An offload with more workers than a loop holds rings for.
 fn give_an_offload_more_workers_than_the_limit() void {
     var options_many: Loop.Options = offload_options;
@@ -302,6 +312,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "offload: give an offload more workers than the limit",
         .run = give_an_offload_more_workers_than_the_limit,
+    },
+    .{
+        .name = "offload: name an offload under another policy",
+        .run = name_an_offload_under_another_policy,
     },
     .{ .name = "remote: claim one id with two remotes", .run = claim_one_id_with_two_remotes },
     .{ .name = "remote: claim a loop's id with a remote", .run = claim_a_loops_id_with_a_remote },

@@ -30,8 +30,9 @@ pub const tick_module = @import("uring_tick.zig");
 pub const Registry = registry_module.Registry;
 pub const Remote = remote_module.Remote;
 /// Whether this backend's file operations block the loop thread, which is what decides whether
-/// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation without a thread, so there is nothing to hand out and
-/// `Options.file_policy` is taken and ignored (decision 18).
+/// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation
+/// without a thread, so there is nothing to hand out, and `Options.file_policy` is checked and then
+/// ignored (decision 18).
 pub const files_block = false;
 
 /// Whether a `post` can be refused for lack of room at the target, which decides what a caller
@@ -125,15 +126,19 @@ pub const Loop = struct {
         /// Where loops find each other's rings. Null for a loop that posts to none and that
         /// none posts to.
         registry: ?*Registry = null,
-        /// **Taken and ignored** (decision 18). The kernel performs `read`, `write` and `fdatasync`
-        /// without a thread here, which is the whole point of this backend, so there is nothing to
-        /// hand out and no policy to apply. It is in the options so that a caller's options are the
-        /// same on both backends, as `entries` is on the other one.
+        /// **Checked and ignored** (decision 18). The kernel performs `read`, `write` and
+        /// `fdatasync` without a thread here, which is the whole point of this backend, so there is
+        /// nothing to hand out and no policy to apply. It is in the options so that a caller's
+        /// options are the same on every backend, as `entries` is on the others. `init` checks it
+        /// with `offload` and `offload_memory` as kqueue and epoll do
+        /// (`core.offload.assert_options`), so options that halt there halt here.
         file_policy: core.offload.FilePolicy = .refuse,
-        /// Taken and ignored, for the same reason as `file_policy`.
+        /// Checked and ignored, for the same reason as `file_policy`: required when `file_policy`
+        /// is `offload`, and refused otherwise.
         offload: ?core.offload.Offload = null,
-        /// Taken and ignored, for the same reason as `file_policy`. This backend holds no ring for
-        /// an offload, so it asks for no memory for one.
+        /// Checked and ignored, for the same reason as `file_policy`. This backend holds no ring for
+        /// an offload and asks for no memory for one, but under the `offload` policy it requires
+        /// `core.offload.memory_bytes(offload.?.workers)` bytes, as epoll does.
         offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
     };
 
@@ -180,6 +185,7 @@ pub const Loop = struct {
         assert(options.operations <= core.constants.operations_max);
         assert(options.id < core.constants.loops_max);
         assert(memory.len >= memory_bytes(options));
+        core.offload.assert_options(options.file_policy, options.offload, options.offload_memory);
         var layout: Layout = .{};
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);

@@ -134,7 +134,7 @@ pub const Loop = struct {
         id: core.LoopId = 0,
         registry: ?*Registry = null,
         /// What the loop does with `read`, `write` and `fdatasync`, which this backend cannot
-        /// perform without blocking (decision 18). The uring backend takes it and ignores it.
+        /// perform without blocking (decision 18). The uring backend checks it and ignores it.
         file_policy: core.offload.FilePolicy = .refuse,
         /// The caller's threads, required when `file_policy` is `offload` and refused otherwise.
         offload: ?core.offload.Offload = null,
@@ -187,6 +187,7 @@ pub const Loop = struct {
         assert(options.operations >= 1);
         assert(options.operations <= core.constants.operations_max);
         assert(memory.len >= memory_bytes(options));
+        core.offload.assert_options(options.file_policy, options.offload, options.offload_memory);
         var layout: Layout = .{};
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
@@ -194,10 +195,6 @@ pub const Loop = struct {
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, core.waiters.Entry, waiting));
         const workers = workers_of(options);
-        // An `offload` policy without an offload, or one with workers the rings cannot hold, is a
-        // programmer error and not an operational one: it is a mistake at init and nothing can
-        // recover from it later (CLAUDE.md, Conventions).
-        assert((options.file_policy == .offload) == (workers != 0));
         loop.works = if (workers == 0)
             &.{}
         else

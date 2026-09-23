@@ -1,7 +1,7 @@
 //! What a caller hands a loop so the loop can perform a blocking file operation without stalling
-//! (decision 18). `core` owns the types because both backends take the same options, and only the
-//! kqueue backend acts on them: io_uring performs these operations without a thread, so it takes
-//! the policy and ignores it.
+//! (decision 18). `core` owns the types because every backend takes the same options, and only the
+//! readiness backends act on them: io_uring performs these operations without a thread, so it checks
+//! the options as the others do and then ignores them (`assert_options`).
 //!
 //! rotor names no thread type and no pool. It names a context, one function it calls to hand work
 //! out, and one function a worker calls to run it. The caller decides whether its side is a pool,
@@ -81,6 +81,33 @@ pub const Offload = struct {
         return offload.workers >= 1 and offload.workers <= constants.offload_workers_max;
     }
 };
+
+/// Halts on file options a loop cannot use. Every backend's `init` calls it, io_uring's included,
+/// which uses none of them: under the public module one binary runs io_uring or epoll by what the
+/// kernel allows, so the same options must halt on both or on neither. Until 2026-09-23 io_uring
+/// checked nothing, and kqueue and epoll checked only what their ring carving happened to.
+///
+/// A mistake here is a programmer error and not an operational one: it is made at init, and nothing
+/// can recover from it later (CLAUDE.md, Conventions).
+pub fn assert_options(
+    policy: FilePolicy,
+    offload: ?Offload,
+    memory: []align(layout.memory_alignment) const u8,
+) void {
+    if (policy != .offload) {
+        // An offload named under another policy would never be handed work. The options say an
+        // offload is refused then, and this is where that is enforced.
+        assert(offload == null);
+        return;
+    }
+    // A missing offload fails the same check as one with no worker: either way no thread would run
+    // the work, and every file operation would wait for a final event that cannot come
+    // (decision 5, rule 1). One check for both is also what lets a halt scenario prove it: a
+    // separate null check would be followed by the unwrap below, which halts on its own.
+    const usable = if (offload) |given| given.valid() else false;
+    assert(usable);
+    assert(memory.len >= memory_bytes(offload.?.workers));
+}
 
 const testing = std.testing;
 

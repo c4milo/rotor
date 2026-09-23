@@ -33,7 +33,7 @@ pub const Harness = struct {
 
     /// A loop that performs a file operation inline, which on kqueue a caller must now ask for by
     /// name (decision 18): the default policy refuses, so that a stall is never invisible. On
-    /// io_uring the option is taken and ignored, and the scenario reads the same thing either way.
+    /// io_uring the option is checked and ignored, and the scenario reads the same thing either way.
     pub fn init_blocking(
         harness: *Harness,
         id: core.LoopId,

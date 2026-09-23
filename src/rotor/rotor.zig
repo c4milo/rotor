@@ -160,7 +160,7 @@ pub const buffers = struct {
 
 /// Whether a loop's file operations may block the loop thread, which is what decides whether
 /// `Loop.Options.file_policy` and an offload mean anything (decision 18). On Linux it is true: a
-/// process that runs epoll makes those calls itself, and io_uring takes the policy and ignores it,
+/// process that runs epoll makes those calls itself, and io_uring checks the policy and ignores it,
 /// so a caller that sets one is right on both. `backend()` says which one runs.
 pub const files_block = if (linux) uring.files_block or epoll.files_block else kqueue.files_block;
 
@@ -177,8 +177,8 @@ else
 pub const supported = if (linux) uring.supported or epoll.supported else kqueue.supported;
 
 /// The bytes of memory `Loop.Options.offload_memory` needs for an offload of `workers` threads
-/// (decision 18): the rings the workers answer through. On Linux it is what epoll needs, because
-/// io_uring takes the option and ignores it; a caller sizes it before the choice is made.
+/// (decision 18): the rings the workers answer through. On Linux it is what epoll needs, and what
+/// io_uring checks for although it uses none of it; a caller sizes it before the choice is made.
 pub fn offload_memory_bytes(workers: u16) usize {
     if (linux) return epoll.offload_module.memory_bytes(workers);
     return kqueue.offload_module.memory_bytes(workers);

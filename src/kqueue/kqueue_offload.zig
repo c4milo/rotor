@@ -1,6 +1,6 @@
 //! Handing a blocking file operation to the caller's threads, and taking its result back
 //! (decision 18). This is the kqueue half: io_uring performs these operations without a thread, so
-//! it takes the policy and does nothing with it.
+//! it checks the policy and does nothing with it.
 //!
 //! Three operations block on this backend: `read`, `write` and `fdatasync`. A tick holding a batch
 //! of them performs each in turn and serves no socket until the last returns. Decision 18 measured

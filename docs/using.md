@@ -257,7 +257,9 @@ a process may run either backend; a caller that sets a policy there is right on 
   bytes of the caller's, because the caller's threads write it. `bench/files/reads_pool.zig` is a
   pool that does this.
 
-io_uring takes the option and ignores it. A loop that never touches a file needs none of this.
+`offload` is required under `.offload` and must be null under the other two policies. io_uring
+checks the options as kqueue and epoll do, so options that halt on one backend halt on all of them,
+and then ignores them. A loop that never touches a file needs none of this.
 
 A caller that hands a loop an offload stops the offload's threads before the loop's `deinit`, and
 not before the loop is drained: a worker still inside `Work.run` reads the loop after its result is

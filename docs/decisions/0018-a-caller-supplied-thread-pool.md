@@ -80,7 +80,8 @@ one file policy at init:
 The default is `refuse`, because the complaint this record answers is that the stall is invisible.
 A caller that wants the stall says so in one word at init, and a caller that says nothing is told
 rather than slowed. The io_uring backend takes the option and ignores it: the kernel does these
-operations without a thread, and that is the whole point of the backend.
+operations without a thread, and that is the whole point of the backend. **Amended on 2026-09-23:**
+it checks the option first, as the other backends do ("How it is checked").
 
 ### The thing this needs, and what was built instead of `Remote`
 
@@ -172,6 +173,13 @@ Done on 2026-09-21, except the last:
   of the ring lookup in `run`, which comes before the system call. An `assert` of the worker index
   stood there first, and no halt scenario could prove it, because the bounds check halted as well.
   The scenario cannot show that the lookup comes first either, so a comment in `run` says so.
+- **Amended on 2026-09-23: every backend checks the options at init**, io_uring included, through
+  `core.offload.assert_options`. Under the public module one binary runs io_uring or epoll by what
+  the kernel allows, and the same options halted on epoll and passed on io_uring. An offload named
+  under another policy, which the options refuse, passed on every backend. io_uring still ignores
+  the options once they are checked. The three scenarios of the options above run on every backend
+  now, beside two more: an offload under another policy, and, on io_uring alone, too little ring
+  memory, because kqueue and epoll halt on that twice and neither halt can prove the other.
 - **The race gate cannot see any of this, and that is recorded where it bites.** The offload exists
   on kqueue alone, so its conformance scenarios run on macOS, where ThreadSanitizer cannot be built.
   So the ordering is tested twice: once through the real path on macOS

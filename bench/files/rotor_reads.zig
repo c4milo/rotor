@@ -96,12 +96,10 @@ var loop_memory: [loop_bytes]u8 align(core.layout.memory_alignment) = undefined;
 /// One buffer per read in flight, each aligned and sized for the largest block offered.
 var buffer_memory: [setup_module.buffer_bytes_total]u8 align(buffer_alignment) = undefined;
 
-/// The offload's rings. The caller owns this memory because the caller's threads write it. It is
-/// one byte on a backend that offloads nothing, so the io_uring build carries none of it.
-const ring_bytes = if (backend.files_block)
-    backend.offload_module.memory_bytes(pool_module.workers)
-else
-    1;
+/// The offload's rings. The caller owns this memory because the caller's threads write it. io_uring
+/// uses none of it, and still checks that it is there under the `offload` policy, as epoll does
+/// (`core.offload.assert_options`), so every build carries it.
+const ring_bytes = core.offload.memory_bytes(pool_module.workers);
 var ring_memory: [ring_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 var started_ns: [depth_max]u64 = undefined;
