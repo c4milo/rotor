@@ -106,6 +106,11 @@ result when either is wanted, and write the struct out for a receive into a regi
   halts, as does an `events` that is empty or longer than `batch_max`, on every backend and whether
   or not the tick would have waited. A tick that already holds events to return does not wait. `tick` fails only when the kernel refuses the call
   after `interrupt_retries_max` signals, or answers something rotor has no meaning for.
+- `now_ns` returns the monotonic clock in nanoseconds as the last `tick` read it, at its start or
+  after its wait. Timers expire against that reading. It is 0 until the first tick, and reading it
+  makes no system call. A caller that keeps timeouts of its own can read the time here instead of
+  reading a clock itself. A timer submitted now fires no earlier than `now_ns` plus its `after_ns`,
+  because the next tick arms it at that tick's own reading.
 - Batch first. One `submit` of many operations and one `tick` returning many events is the shape
   rotor is built for; one operation per call works and costs a system call each.
 

@@ -253,3 +253,34 @@ fn measure_two_fires() !u64 {
     try harness.loop.drain(&events);
     return elapsed_ns;
 }
+
+test "now_ns is 0 before the first tick, and the tick that fires a timer has read its deadline" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    try testing.expectEqual(@as(u64, 0), harness.loop.now_ns());
+
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    const submitted_ns = harness.loop.now_ns();
+    // The backend's own monotonic clock, read after the tick, is at or past what the tick read.
+    try testing.expect(submitted_ns >= 1);
+    try testing.expect(submitted_ns <= now_ns());
+
+    // The next tick arms the timer at its own reading plus the wait, and that reading is at or past
+    // this one, so the tick that hands the fire over read at least this one plus the wait. Each
+    // tick's reading is at or past the one before.
+    var handles: [1]core.Handle = undefined;
+    try harness.submit(&.{repeating(9, period_ns, 0)}, &handles);
+    var previous_ns = submitted_ns;
+    var count: u32 = 0;
+    while (count == 0) {
+        count = try harness.loop.tick(&events, core.constants.ns_per_s);
+        try testing.expect(harness.loop.now_ns() >= previous_ns);
+        previous_ns = harness.loop.now_ns();
+    }
+    try testing.expectEqual(@as(u32, 1), count);
+    try testing.expectEqual(@as(u64, 9), events[0].user_data);
+    try testing.expect(harness.loop.now_ns() >= submitted_ns + period_ns);
+}

@@ -278,6 +278,15 @@ pub const Loop = struct {
         };
     }
 
+    /// The monotonic clock in nanoseconds, as the last `tick` read it, which timers expire
+    /// against. A timer submitted now fires no earlier than this plus its `after_ns`. 0 until the
+    /// first tick.
+    pub fn now_ns(loop: *const Loop) u64 {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.now_ns(),
+        };
+    }
+
     pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
         return switch (loop.inner) {
             inline else => |*inner| inner.statistics(),

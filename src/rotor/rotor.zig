@@ -251,11 +251,14 @@ test "a loop built through the public module runs, cancels, drains and counts" {
     var handles = [_]Handle{.none};
     var events: [4]Event = undefined;
 
-    // A timer fires, with its user data, inside one waiting tick.
+    // A timer fires, with its user data, inside one waiting tick. No clock is read before the first
+    // tick, and the tick that hands the fire over read at least the timer's wait.
+    try testing.expectEqual(0, loop.now_ns());
     try testing.expectEqual(1, loop.submit(&.{Operation.timer(7, test_timer_ns, 0)}, &handles));
     try testing.expect(handles[0] != Handle.none);
     try testing.expectEqual(1, loop.in_flight());
     try testing.expectEqual(1, try loop.tick(&events, test_wait_ns));
+    try testing.expect(loop.now_ns() >= test_timer_ns);
     try testing.expectEqual(7, events[0].user_data);
     try testing.expectEqual(0, try events[0].outcome());
     try testing.expectEqual(0, loop.in_flight());

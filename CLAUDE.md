@@ -6,7 +6,8 @@ workloads, and to show it in a harness anyone can re-run. Home: github.com/c4mil
 
 It is a standalone library. stompy is meant to become its first consumer
 (`docs/decisions/0006-stompy-lineage.md`). rotor never depends on stompy and never names it in
-source. colibri owns no I/O and is not a consumer.
+source. colibri's library owns no I/O. Its test-only UDP endpoints run on rotor's public module
+(colibri's decision 58) and take the time from `Loop.now_ns` (its decision 63, ruled 2026-09-23).
 
 ## Read before changing behaviour
 

@@ -216,6 +216,15 @@ pub const Loop = struct {
         return loop.tables.in_flight();
     }
 
+    /// The monotonic clock in nanoseconds, as the last `tick` read it: at its start, or after its
+    /// wait when it waited. Timers expire against this reading. The next tick arms a timer
+    /// submitted now at that tick's own reading plus its `after_ns`, so the timer fires no earlier
+    /// than this reading plus its `after_ns`. 0 until the first tick. Reading it makes no system
+    /// call.
+    pub fn now_ns(loop: *const Loop) u64 {
+        return loop.tables.now_ns;
+    }
+
     /// Claims a slot per operation until the table is full, and returns how many it took. Makes
     /// no system call: the next `tick` tries them.
     pub fn submit(loop: *Loop, operations: []const Operation, handles: []Handle) u32 {
