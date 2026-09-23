@@ -345,7 +345,7 @@ backend was on this list until decision 20 brought it in.
 ## Where the numbers are
 
 `docs/costs.md` holds the measured costs of the operations the design arguments cite, for the
-`mac`, `orbstack` and `github` machines. `bench/alternatives/README.md` reads the comparison against
-libuv, libxev and `std.Io`, the losing rows included, and `bench/results/` holds every run as
-printed. The Linux machine rotor is meant to be deployed on is not named yet, so no claim is made
+`mac`, `orbstack` and `github` machines. `docs/benchmarks.md` holds the current comparison against
+libuv and libxev and the commands that take it, `bench/alternatives/README.md` records every
+experiment behind it, the losing rows included, and `bench/results/` holds every run as printed. The Linux machine rotor is meant to be deployed on is not named yet, so no claim is made
 for it.
