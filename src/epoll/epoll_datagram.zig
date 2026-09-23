@@ -67,6 +67,17 @@ pub const Answer = struct {
     }
 };
 
+/// What a `recvmsg` or `sendmsg` that failed comes to, or null when it is to be made again.
+/// EINTR means a signal interrupted the call before it moved a byte, so the caller's loop makes the
+/// call again, and EINTR never reaches `core.errno`, which asserts it does not.
+fn answer_of(errno: linux.E) ?Answer {
+    return switch (errno) {
+        .INTR => null,
+        .AGAIN => Answer.not_ready,
+        else => Answer.refused(core.errno.datagram_code_of(errno)),
+    };
+}
+
 /// Receives one datagram into `buffer`, writing the head, the address and the control block in
 /// front of it exactly as io_uring's multishot `recvmsg` would. Returns the datagram's own bytes,
 /// so the caller never subtracts a prefix.
@@ -88,22 +99,20 @@ pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOpt
     var retry: u32 = 0;
     while (retry <= constants.interrupt_retries_max) : (retry += 1) {
         const rc = linux.recvmsg(descriptor, &header, 0);
-        switch (linux.errno(rc)) {
-            .SUCCESS => {},
-            .INTR => continue,
-            .AGAIN => return Answer.not_ready,
-            else => |errno| return Answer.refused(core.errno.datagram_code_of(errno)),
+        const errno = linux.errno(rc);
+        if (errno == .SUCCESS) {
+            // The head the uring backend gets from the kernel, written here from what `recvmsg`
+            // reported: the bytes of each part it used, and its flags, `MSG_TRUNC` among them.
+            const head: *Head = @ptrCast(@alignCast(buffer.ptr));
+            head.* = .{
+                .name_bytes = header.namelen,
+                .control_bytes = @intCast(header.controllen),
+                .payload_bytes = @intCast(rc),
+                .flags = @bitCast(header.flags),
+            };
+            return Answer.done(@intCast(rc));
         }
-        // The head the uring backend gets from the kernel, written here from what `recvmsg`
-        // reported: the bytes of each part it used, and its flags, `MSG_TRUNC` among them.
-        const head: *Head = @ptrCast(@alignCast(buffer.ptr));
-        head.* = .{
-            .name_bytes = header.namelen,
-            .control_bytes = @intCast(header.controllen),
-            .payload_bytes = @intCast(rc),
-            .flags = @bitCast(header.flags),
-        };
-        return Answer.done(@intCast(rc));
+        if (answer_of(errno)) |answer| return answer;
     }
     return Answer.refused(.would_block);
 }
@@ -129,12 +138,9 @@ pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Out
     var retry: u32 = 0;
     while (retry <= constants.interrupt_retries_max) : (retry += 1) {
         const rc = linux.sendmsg(descriptor, &header, linux.MSG.NOSIGNAL);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return Answer.done(@intCast(rc)),
-            .INTR => continue,
-            .AGAIN => return Answer.not_ready,
-            else => |errno| return Answer.refused(core.errno.datagram_code_of(errno)),
-        }
+        const errno = linux.errno(rc);
+        if (errno == .SUCCESS) return Answer.done(@intCast(rc));
+        if (answer_of(errno)) |answer| return answer;
     }
     return Answer.refused(.would_block);
 }
@@ -376,6 +382,15 @@ test "a control block that claims more than it holds stops the walk" {
     var from: Received = std.mem.zeroes(Received);
     read_control(buffer[0..used], &from);
     try testing.expectEqual(@as(u16, 0), from.segment_bytes);
+}
+
+test "EINTR makes the call again, EAGAIN waits for readiness, and any other errno is refused" {
+    // A signal cannot be made to land inside a non-blocking call, so the errno is fabricated.
+    try testing.expectEqual(@as(?Answer, null), answer_of(.INTR));
+    try testing.expectEqual(@as(?Answer, Answer.not_ready), answer_of(.AGAIN));
+    const refused = answer_of(.MSGSIZE).?;
+    try testing.expect(!refused.would_block);
+    try testing.expectEqual(core.event.result_of(.message_too_long), refused.result);
 }
 
 /// One byte more than the 16-bit length field of a UDP header can state.
