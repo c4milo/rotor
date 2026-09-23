@@ -272,6 +272,9 @@ pub const Loop = struct {
     /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
     /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a
     /// precondition. One loop serves one datagram shape.
+    ///
+    /// The shape is recorded after `provide` returns, so a call from another thread halts on
+    /// `provide`'s owner check before it writes anything.
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
@@ -281,8 +284,8 @@ pub const Loop = struct {
         group: core.datagram.GroupOptions,
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        try buffers.provide(loop, group_id, memory, count, buffer_bytes);
         loop.datagram_group = group;
-        return buffers.provide(loop, group_id, memory, count, buffer_bytes);
     }
 
     /// The datagram an event of group `group_id` names: the only supported reader of that

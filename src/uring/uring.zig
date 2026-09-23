@@ -285,6 +285,10 @@ pub const Loop = struct {
     ///
     /// One loop serves one datagram shape: a second group with a different reserve would make
     /// the prefix a per-completion lookup, which is what the constant exists to avoid.
+    ///
+    /// The shape is recorded after `provide` returns, so a call from another thread halts on
+    /// `provide`'s owner check before it writes anything, and a group the kernel refused leaves
+    /// the shape as it was.
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
@@ -294,9 +298,9 @@ pub const Loop = struct {
         group: core.datagram.GroupOptions,
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        try buffers.provide(loop, group_id, memory, count, buffer_bytes);
         loop.datagram_group = group;
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
-        return buffers.provide(loop, group_id, memory, count, buffer_bytes);
     }
 
     /// The datagram an event of group `group_id` names: the only supported reader of that
@@ -348,6 +352,48 @@ test {
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
+}
+
+/// Buffers of the refused group below: two, each big enough for a datagram's prefix and a payload.
+const refused_group_buffers = 2;
+const refused_group_payload_bytes = 64;
+const refused_group_buffer_bytes = core.datagram.prefix_bytes(.{}) + refused_group_payload_bytes;
+
+/// A shape whose prefix differs from the default's, so a shape written too early shows.
+const refused_group_shape: core.datagram.GroupOptions = .{ .control_reserve = 0 };
+
+test "a datagram group the kernel refuses leaves the loop's datagram shape as it was" {
+    if (!supported) return error.SkipZigTest;
+    const linux = std.os.linux;
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+
+    // The test registers a ring for group 0 itself, which the loop does not know of, so the loop's
+    // own registration of group 0 reaches the kernel and is refused there.
+    const group_bytes = comptime buffers.group_bytes(refused_group_buffers, refused_group_buffer_bytes);
+    var taken_memory: [group_bytes]u8 align(buffers.group_alignment) = undefined;
+    var refused_memory: [group_bytes]u8 align(buffers.group_alignment) = undefined;
+    var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{
+        .ring_addr = @intFromPtr(&taken_memory),
+        .ring_entries = refused_group_buffers,
+        .bgid = 0,
+    });
+    const rc = linux.io_uring_register(loop.ring.io.fd, .REGISTER_PBUF_RING, &registration, 1);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
+
+    const prefix_before = loop.datagram_prefix;
+    try std.testing.expectError(error.Unexpected, loop.provide_datagram_buffers(
+        0,
+        &refused_memory,
+        refused_group_buffers,
+        refused_group_buffer_bytes,
+        refused_group_shape,
+    ));
+    try std.testing.expectEqual(prefix_before, loop.datagram_prefix);
+    try std.testing.expectEqual(core.datagram.GroupOptions{}, loop.datagram_group);
 }
 
 test "entries default to the operations rounded up to a power of two, capped at the ring's most" {

@@ -116,6 +116,27 @@ fn provide_a_group_on_this_thread() void {
     loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
 }
 
+/// A datagram group needs buffers larger than a datagram's prefix, or `provide_datagram_buffers`
+/// halts on that before it reaches the owner check.
+const datagram_buffer_bytes = core.datagram.prefix_bytes(.{}) + group_buffer_bytes;
+const datagram_group_bytes = epoll.buffers.group_bytes(group_buffers, datagram_buffer_bytes);
+var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alignment) = undefined;
+
+/// With the check deleted, `provide` makes the group without a system call, and the loop records
+/// the datagram shape after it.
+fn provide_datagram_buffers_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(provide_datagram_buffers_on_this_thread);
+}
+
+fn provide_datagram_buffers_on_this_thread() void {
+    const base = std.mem.alignForward(usize, @intFromPtr(&datagram_memory), group_alignment);
+    const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
+    const group = start[0..datagram_group_bytes];
+    scenario.reached_violation();
+    loop.provide_datagram_buffers(0, group, group_buffers, datagram_buffer_bytes, .{}) catch {};
+}
+
 /// The main thread provides the group and takes one buffer out, as a receive would. So with the
 /// check deleted, the second thread's give-back fits the free list and returns.
 var taken_buffer: u16 = undefined;
@@ -180,6 +201,10 @@ pub const scenarios = [_]scenario.Scenario{
     .{
         .name = "owner: provide a group from another thread",
         .run = provide_a_group_from_another_thread,
+    },
+    .{
+        .name = "owner: provide datagram buffers from another thread",
+        .run = provide_datagram_buffers_from_another_thread,
     },
     .{
         .name = "owner: give back a buffer from another thread",

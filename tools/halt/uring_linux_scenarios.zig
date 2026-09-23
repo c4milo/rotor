@@ -136,6 +136,27 @@ fn provide_a_group_on_this_thread() void {
     loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
 }
 
+/// A datagram group needs buffers larger than a datagram's prefix, or `provide_datagram_buffers`
+/// halts on that before it reaches the owner check.
+const datagram_buffer_bytes = core.datagram.prefix_bytes(.{}) + group_buffer_bytes;
+const datagram_group_bytes = uring.buffers.group_bytes(group_buffers, datagram_buffer_bytes);
+var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alignment) = undefined;
+
+/// With the owner check deleted, `provide` asks the kernel for the group from the second thread
+/// and returns what it answers, and the scenario returns.
+fn provide_datagram_buffers_from_another_thread() void {
+    loop.init(&memory, options) catch return;
+    on_another_thread(provide_datagram_buffers_on_this_thread);
+}
+
+fn provide_datagram_buffers_on_this_thread() void {
+    const base = std.mem.alignForward(usize, @intFromPtr(&datagram_memory), group_alignment);
+    const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
+    const group = start[0..datagram_group_bytes];
+    scenario.reached_violation();
+    loop.provide_datagram_buffers(0, group, group_buffers, datagram_buffer_bytes, .{}) catch {};
+}
+
 /// The main thread provides the group. With the owner check deleted, the second thread writes one
 /// entry to the group's ring, which is memory the process shares with the kernel, and makes no
 /// system call.
@@ -253,6 +274,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "owner: provide a group from another thread",
         .run = provide_a_group_from_another_thread,
+    },
+    .{
+        .name = "owner: provide datagram buffers from another thread",
+        .run = provide_datagram_buffers_from_another_thread,
     },
     .{
         .name = "owner: give back a buffer from another thread",
