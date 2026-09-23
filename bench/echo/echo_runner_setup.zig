@@ -282,7 +282,7 @@ pub fn found(init: std.process.Init, options: Options, writer: *std.Io.Writer) !
     return count;
 }
 
-/// Reads a comma-separated list of counts into `buffer`.
+/// The candidate called `name`, or null when this runner has none by that name.
 pub fn candidate_named(name: []const u8) ?Candidate {
     for (candidates) |candidate| {
         if (std.mem.eql(u8, candidate.name, name)) return candidate;
@@ -338,4 +338,50 @@ test "a candidate blocked outright is blocked in every workload" {
     try testing.expect(blocked.blocked != null);
     try testing.expect(unavailable(blocked, .echo) != null);
     try testing.expect(unavailable(blocked, .storm) != null);
+}
+
+/// The most processors the committed baseline may name before its test refuses it.
+const baseline_processors_max = 16;
+
+test "the committed baseline parses, and every row names a workload and a candidate of this runner" {
+    // A row whose candidate or workload this runner does not have never matches a measurement,
+    // so a run reports it as missing from the baseline and gates nothing, where a typo should fail.
+    const text = @embedFile("echo_baseline");
+    var names: [baseline_processors_max][]const u8 = undefined;
+    const processors = try processors_in(text, &names);
+    try testing.expect(processors.len >= 1);
+    for (processors) |processor| try expect_section(text, processor);
+}
+
+/// The processors `text` names, in order. One named twice is refused, because `baseline.parse`
+/// would read its two sections as one.
+fn processors_in(text: []const u8, into: [][]const u8) ![]const []const u8 {
+    var used: usize = 0;
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const named = try harness.baseline.processor_of(line) orelse continue;
+        for (into[0..used]) |earlier| {
+            if (std.mem.eql(u8, earlier, named)) return error.ProcessorNamedTwice;
+        }
+        if (used == into.len) return error.TooManyProcessors;
+        into[used] = named;
+        used += 1;
+    }
+    return into[0..used];
+}
+
+/// Parses `processor`'s section and checks each row, and that no row is there twice: `judge`
+/// reads the first of two, so the second would sit in the file and decide nothing.
+fn expect_section(text: []const u8, processor: []const u8) !void {
+    var rows: [harness.baseline.rows_max]harness.baseline.Row = undefined;
+    const section = try harness.baseline.parse(text, processor, &rows);
+    if (section.rows.len == 0) return error.EmptySection;
+    for (section.rows, 0..) |row, index| {
+        if (std.meta.stringToEnum(Workload, row.workload) == null) return error.UnknownWorkload;
+        if (candidate_named(row.candidate) == null) return error.UnknownCandidate;
+        for (section.rows[0..index]) |earlier| {
+            if (earlier.names_same(row)) return error.RowRecordedTwice;
+        }
+    }
 }

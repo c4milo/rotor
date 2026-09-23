@@ -81,6 +81,8 @@ const Tested = struct {
     name: []const u8,
     root: []const u8,
     needs_loop: bool,
+    /// True when its tests read the committed echo baseline, which they get as `echo_baseline`.
+    reads_baseline: bool = false,
 };
 
 /// Every bench program that holds tests. A program missing from this list keeps its tests and
@@ -154,6 +156,7 @@ const tested = [_]Tested{
         .name = "bench-echo-runner-tests",
         .root = "bench/echo/echo_runner_setup.zig",
         .needs_loop = true,
+        .reads_baseline = true,
     },
 };
 
@@ -224,6 +227,9 @@ fn add_program_tests(
             module.addImport("core", graph.core);
             module.addImport("backend", backend);
         }
+        if (program.reads_baseline) module.addAnonymousImport("echo_baseline", .{
+            .root_source_file = b.path("bench/baseline/echo.txt"),
+        });
         const tests = b.addTest(.{ .name = program.name, .root_module = module });
         step.dependOn(&b.addRunArtifact(tests).step);
     }

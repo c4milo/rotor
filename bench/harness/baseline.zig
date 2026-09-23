@@ -143,8 +143,8 @@ const Sections = struct {
     }
 };
 
-/// The processor a `processor` line names, or null for any other line.
-fn processor_of(line: []const u8) ParseError!?[]const u8 {
+/// The processor a `processor` line names, or null for any other line. `line` is trimmed.
+pub fn processor_of(line: []const u8) ParseError!?[]const u8 {
     if (!std.mem.startsWith(u8, line, processor_word)) return null;
     const rest = line[processor_word.len..];
     if (rest.len == 0) return error.Malformed;
