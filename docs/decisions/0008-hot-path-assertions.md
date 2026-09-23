@@ -18,6 +18,13 @@ then die by a signal. A canary whose scenarios do not halt must fail the check. 
 caller's mistake can reach gets a scenario; a mutation that deletes one is measured against `zig
 build halt-check`.
 
+Amended on 2026-09-23 by the owner's ruling: an assertion that only rotor's own code or the
+kernel's answer can break also gets a scenario, when a scenario can reach it through the
+function's own parameters. `core.file_call.result` takes its system call as a parameter, so a
+scenario hands it a made-up answer, and both of its assertions have one. An assertion that no
+parameter reaches, such as a tick's check of what the kernel returned, gains no parameter for
+this: that parameter would sit on the path every tick runs, only to prove an assertion.
+
 ## The collision
 
 TigerStyle keeps assertions on in production, roughly two per function. The Performance Hints

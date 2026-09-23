@@ -1,5 +1,6 @@
-//! Halt scenarios for the `core` module: one per assertion a caller's mistake can reach. Each
-//! name says what the scenario does wrong.
+//! Halt scenarios for the `core` module: one per assertion a caller's mistake can reach, and one
+//! per assertion a scenario reaches through a function's own parameters, as the made-up answers
+//! handed to `file_call.result` do. Each name says what the scenario does wrong.
 const std = @import("std");
 const core = @import("core");
 const scenario = @import("scenario.zig");
@@ -314,6 +315,50 @@ fn cancel_a_slot_whose_final_event_is_queued() void {
     _ = tables.request_cancel(index, tables.table.at(index));
 }
 
+const FileAnswer = core.file_call.Answer(std.posix.E);
+
+/// A call that answers one more byte than it was given, which no kernel does.
+const OverCount = struct {
+    pub fn answer(_: OverCount, request: core.file_call.Request) FileAnswer {
+        return .{ .count = request.bytes.len + 1 };
+    }
+};
+
+/// A call that transfers nothing and succeeds, so only the request's own shape can halt.
+const NoCount = struct {
+    pub fn answer(_: NoCount, request: core.file_call.Request) FileAnswer {
+        _ = request;
+        return .{ .count = 0 };
+    }
+};
+
+/// The bound handed to `file_call.result`. Each call here answers the first time.
+const file_retries_max = 1;
+
+var file_bytes: [1]u8 = undefined;
+
+fn answer_a_read_with_more_bytes_than_it_was_given() void {
+    const request: core.file_call.Request = .{
+        .code = .read,
+        .descriptor = 0,
+        .bytes = &file_bytes,
+        .offset = 0,
+    };
+    scenario.reached_violation();
+    _ = core.file_call.result(OverCount{}, request, file_retries_max);
+}
+
+fn hand_a_sync_bytes_to_transfer() void {
+    const request: core.file_call.Request = .{
+        .code = .fdatasync,
+        .descriptor = 0,
+        .bytes = &file_bytes,
+        .offset = 0,
+    };
+    scenario.reached_violation();
+    _ = core.file_call.result(NoCount{}, request, file_retries_max);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "slot_table: release a free slot", .run = release_a_free_slot },
     .{
@@ -396,6 +441,14 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "tables: cancel a slot whose final event is queued",
         .run = cancel_a_slot_whose_final_event_is_queued,
+    },
+    .{
+        .name = "file_call: answer a read with more bytes than it was given",
+        .run = answer_a_read_with_more_bytes_than_it_was_given,
+    },
+    .{
+        .name = "file_call: hand a sync bytes to transfer",
+        .run = hand_a_sync_bytes_to_transfer,
     },
 };
 

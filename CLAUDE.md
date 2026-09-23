@@ -81,8 +81,12 @@ narrowest target that can catch it: `zig build test-<module>`.
 
 An assertion is a check too. A Zig test cannot expect a panic in its own process, so an assertion
 a caller's mistake can reach gets a scenario under `tools/halt/`, which `zig build halt-check`
-runs in a child process that must die by a signal. A mutation that deletes such an assertion is
-measured against `zig build halt-check`. A scenario proves its assertion only if it returns once
+runs in a child process that must die by a signal. So does an assertion that only rotor's own code
+or the kernel's answer can break, when a scenario can reach it through the function's own
+parameters: `core.file_call.result` takes its system call as one, so a scenario hands it a made-up
+answer. An assertion that no parameter reaches, such as a tick's check of what the kernel returned,
+gets no new parameter for it (decision 8). A mutation that deletes such an assertion is measured
+against `zig build halt-check`. A scenario proves its assertion only if it returns once
 the assertion is deleted. When the path after the assertion makes a Linux system call, a Mac runs
 some other call in its place, so the scenario goes in a `tools/halt/*_linux_scenarios.zig` file,
 and its mutation is measured against the Linux gate.
