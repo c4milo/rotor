@@ -27,8 +27,9 @@ pub const buffer_ring_entry_bytes = 16;
 pub const interrupt_retries_max: u32 = 64;
 
 /// What the readiness of a loop's own eventfd carries as its `user_data`, so the reap tells a wake
-/// from an operation without consulting a table. No slot can hold it: `core.constants` reserves the
-/// value, and the comptime assert below holds that.
+/// from an operation without consulting a table. Every other registration carries its descriptor,
+/// an `i32` that is not negative, so no registration can carry this value: the comptime assert
+/// below holds that.
 pub const wake_user_data: u64 = std.math.maxInt(u64);
 
 comptime {
@@ -36,4 +37,5 @@ comptime {
     assert(readiness_max >= 1);
     assert(interrupt_retries_max >= 1);
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));
+    assert(wake_user_data > std.math.maxInt(i32));
 }

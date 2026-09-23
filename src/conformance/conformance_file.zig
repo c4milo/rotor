@@ -7,7 +7,6 @@ const conformance = @import("conformance.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
-const Operation = core.Operation;
 const sync = backend.sync;
 
 /// The unit O_DIRECT transfers in: every buffer address, offset and length is a multiple of it.

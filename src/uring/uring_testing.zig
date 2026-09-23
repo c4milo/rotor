@@ -22,15 +22,8 @@ pub fn remove_file(path: [*:0]const u8) void {
     _ = linux.unlink(path);
 }
 
-/// The monotonic clock, for a scenario that measures how long a tick waited.
-pub fn monotonic_ns() u64 {
-    var now: linux.timespec = undefined;
-    const rc = linux.clock_gettime(.MONOTONIC, &now);
-    assert(linux.errno(rc) == .SUCCESS);
-    return @as(u64, @intCast(now.sec)) * ns_per_s + @as(u64, @intCast(now.nsec));
-}
-
-const ns_per_s: u64 = 1_000_000_000;
+/// The clock the tick reads, for a scenario that measures how long a tick waited.
+pub const monotonic_ns = @import("uring_tick.zig").clock_ns;
 
 /// True when `descriptor` closes on exec: what the suite checks of an accepted socket.
 pub fn closes_on_exec(descriptor: i32) bool {

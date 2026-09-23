@@ -70,20 +70,20 @@ const InPktinfo = extern struct { ifindex: u32, spec_dst: u32, addr: u32 };
 /// Darwin's `in6_pktinfo`.
 const In6Pktinfo = extern struct { addr: [Address.ipv6_bytes]u8, ifindex: u32 };
 
-/// What one `recvmsg` needs and fills, laid out so the head, the name and the control block land
-/// where `core.datagram` expects them: at the front of the caller's buffer.
-pub const Receive = struct {
-    /// The bytes received, or the code the kernel refused with.
+/// What one `recvmsg` or `sendmsg` came to: a result, or the answer that the socket is not ready.
+/// `epoll_datagram.zig` has the same type under the same name.
+pub const Answer = struct {
+    /// The bytes the call moved, or the negation of the code the kernel refused with.
     result: i32,
     would_block: bool,
 
-    const not_ready: Receive = .{ .result = 0, .would_block = true };
+    const not_ready: Answer = .{ .result = 0, .would_block = true };
 
-    fn done(result: i32) Receive {
+    fn done(result: i32) Answer {
         return .{ .result = result, .would_block = false };
     }
 
-    fn refused(code: core.Code) Receive {
+    fn refused(code: core.Code) Answer {
         return done(core.event.result_of(code));
     }
 };
@@ -91,18 +91,18 @@ pub const Receive = struct {
 /// What a `recvmsg` or `sendmsg` that returned -1 comes to, or null when it is to be made again.
 /// EINTR means a signal interrupted the call before it moved a byte, so the caller's loop makes the
 /// call again, and EINTR never reaches `core.errno`, which asserts it does not.
-fn answer_of(errno: posix.E) ?Receive {
+fn answer_of(errno: posix.E) ?Answer {
     return switch (errno) {
         .INTR => null,
-        .AGAIN => Receive.not_ready,
-        else => Receive.refused(core.errno.datagram_code_of(errno)),
+        .AGAIN => Answer.not_ready,
+        else => Answer.refused(core.errno.datagram_code_of(errno)),
     };
 }
 
 /// Receives one datagram into `buffer`, writing the head, the address and the control block in
 /// front of it exactly as io_uring's multishot `recvmsg` would. Returns the datagram's own bytes,
 /// so the caller never subtracts a prefix the uring backend has to.
-pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOptions) Receive {
+pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOptions) Answer {
     const prefix = core.datagram.prefix_bytes(options);
     assert(buffer.len > prefix);
     const name_start = @sizeOf(Head);
@@ -132,16 +132,16 @@ pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOpt
                 .payload_bytes = @intCast(rc),
                 .flags = @intCast(@as(u32, @bitCast(header.flags))),
             };
-            return Receive.done(@intCast(rc));
+            return Answer.done(@intCast(rc));
         }
         if (answer_of(posix.errno(rc))) |answer| return answer;
     }
-    return Receive.refused(.would_block);
+    return Answer.refused(.would_block);
 }
 
 /// Sends one datagram. A segmented send is refused: macOS has no `UDP_SEGMENT` (decision 15).
-pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Outbound) Receive {
-    if (out.segment_bytes != 0) return Receive.refused(.unsupported);
+pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Outbound) Answer {
+    if (out.segment_bytes != 0) return Answer.refused(.unsupported);
     var name: address_module.Storage = undefined;
     var control: [control_bytes_max]u8 align(@alignOf(c.cmsghdr)) = undefined;
     var vector: posix.iovec_const = .{ .base = bytes.ptr, .len = bytes.len };
@@ -152,7 +152,7 @@ pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Out
         header.namelen = address_module.to_kernel(&out.peer, &name);
         header.name = @ptrCast(@alignCast(&name));
     }
-    const written = write_control(&control, out) orelse return Receive.refused(.unsupported);
+    const written = write_control(&control, out) orelse return Answer.refused(.unsupported);
     if (written != 0) {
         header.control = &control;
         header.controllen = @intCast(written);
@@ -160,10 +160,10 @@ pub fn send_from(descriptor: core.Descriptor, bytes: []const u8, out: *const Out
     var retry: u32 = 0;
     while (retry <= constants.interrupt_retries_max) : (retry += 1) {
         const rc = c.sendmsg(descriptor, &header, 0);
-        if (rc >= 0) return Receive.done(@intCast(rc));
+        if (rc >= 0) return Answer.done(@intCast(rc));
         if (answer_of(posix.errno(rc))) |answer| return answer;
     }
-    return Receive.refused(.would_block);
+    return Answer.refused(.would_block);
 }
 
 fn write_control(buffer: *[control_bytes_max]u8, out: *const Outbound) ?usize {
@@ -356,8 +356,8 @@ test "the packet info macOS reports names the address the datagram was sent to" 
 
 test "EINTR makes the call again, and EAGAIN waits for readiness" {
     // A signal cannot be made to land inside a non-blocking call, so the errno is fabricated.
-    try testing.expectEqual(@as(?Receive, null), answer_of(.INTR));
-    try testing.expectEqual(@as(?Receive, Receive.not_ready), answer_of(.AGAIN));
+    try testing.expectEqual(@as(?Answer, null), answer_of(.INTR));
+    try testing.expectEqual(@as(?Answer, Answer.not_ready), answer_of(.AGAIN));
 }
 
 test "a datagram call's errno carries the code core's datagram map gives it" {

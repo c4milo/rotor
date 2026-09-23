@@ -18,12 +18,10 @@ const mix_shift_second: u6 = 27;
 const mix_shift_third: u6 = 31;
 
 pub const Random = struct {
-    /// The seed this generator was initialised with, kept so a failing test can name it.
-    seed: u64,
     state: u64,
 
     pub fn init(seed: u64) Random {
-        return .{ .seed = seed, .state = seed };
+        return .{ .state = seed };
     }
 
     /// One uniform 64-bit value.

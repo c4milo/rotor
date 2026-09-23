@@ -28,10 +28,6 @@ const flags_passed: u32 = linux.IORING_CQE_F_BUFFER | linux.IORING_CQE_F_MORE |
     (buffer_id_mask << linux.IORING_CQE_BUFFER_SHIFT);
 const buffer_id_mask: u32 = std.math.maxInt(u16);
 
-/// A handle's generation is the high half of its 64 bits. A completion whose `user_data` has a
-/// zero generation is one the backend submitted for itself.
-const handle_generation_shift = 32;
-
 comptime {
     const Flags = Event.Flags;
     assert(@as(u32, 1) << @bitOffsetOf(Flags, "buffer") == linux.IORING_CQE_F_BUFFER);
@@ -61,11 +57,10 @@ pub fn reap(loop: *Loop, events: []Event) u32 {
 /// The event one completion entry yields, or null when it yields none.
 pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (cqe.res < 0) return complete_negative(loop, cqe);
-    if (cqe.user_data >> handle_generation_shift == 0) return null;
     const handle = Handle.from_bits(cqe.user_data);
-    const slot = loop.tables.table.at(handle.index);
-    assert(slot.generation == handle.generation);
-    assert(slot.state == .submitted);
+    // A completion that names no operation is one the backend submitted for itself.
+    if (handle.is_none()) return null;
+    const slot = submitted_slot(loop, handle);
     const event: Event = .{
         .user_data = slot.user_data,
         // A datagram's completion counts the prefix in front of it too, so the result the caller
@@ -78,16 +73,23 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     return event;
 }
 
+/// The slot a completion's handle names. It still holds that operation: its final event has not
+/// been handed over, so its generation has not moved.
+fn submitted_slot(loop: *Loop, handle: Handle) *Slot {
+    const slot = loop.tables.table.at(handle.index);
+    assert(slot.generation == handle.generation);
+    assert(slot.state == .submitted);
+    return slot;
+}
+
 /// A result below zero: a message another loop posted, a completion the backend consumes, or an
 /// operation that failed. Kept out of `complete` so the path of a success stays short.
 fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     assert(cqe.res < 0);
     if (cqe.res < -constants.errno_max) return message_of(cqe);
-    if (cqe.user_data >> handle_generation_shift == 0) return null;
     const handle = Handle.from_bits(cqe.user_data);
-    const slot = loop.tables.table.at(handle.index);
-    assert(slot.generation == handle.generation);
-    assert(slot.state == .submitted);
+    if (handle.is_none()) return null;
+    const slot = submitted_slot(loop, handle);
     const errno = errno_module.errno_of(cqe.res);
     if (should_retry(slot, errno)) {
         slot.retries += 1;

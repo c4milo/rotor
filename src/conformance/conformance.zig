@@ -1,11 +1,11 @@
 //! The conformance suite (decision 10, point 2): scenarios written against the surface every
 //! backend carries, run against the real kernel. The build hands this module one backend as its
-//! `backend` import, so the same file tests `uring` under Linux and `kqueue` under macOS, and
-//! both passing is what shows that they present the caller one behaviour (decision 5).
+//! `backend` import, so the same file tests `uring` and `epoll` under Linux and `kqueue` under
+//! macOS, and all three passing is what shows that they present the caller one behaviour
+//! (decision 5).
 //!
 //! A scenario uses nothing but the backend's public surface: `Loop`, `Registry`, and the
 //! synchronous calls of `sync`. On a host the backend cannot run on, every scenario skips.
-const std = @import("std");
 const core = @import("core");
 const backend = @import("backend");
 

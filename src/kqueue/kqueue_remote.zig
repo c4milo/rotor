@@ -24,7 +24,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const core = @import("core");
-const constants = @import("constants.zig");
 const queue_module = @import("kqueue_queue.zig");
 
 const Registry = core.mailbox.Registry;

@@ -95,8 +95,9 @@ fn expire(loop: *Loop) void {
 }
 
 /// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that
-/// produced nothing (decision 9, rule 4).
-fn clock_ns() u64 {
+/// produced nothing (decision 9, rule 4). `kqueue_testing.zig` hands it to the tests, so a test
+/// measures with the clock the tick reads.
+pub fn clock_ns() u64 {
     var now: std.c.timespec = undefined;
     const rc = std.c.clock_gettime(.MONOTONIC, &now);
     assert(rc == 0);
@@ -141,7 +142,7 @@ const poll_attempts = 10;
 /// event: a poll that found one would be timing something else.
 fn poll_burst_ns(loop: *Loop, events: []Event) !u64 {
     const poll_polls = 500;
-    const before = @import("kqueue_testing.zig").monotonic_ns();
+    const before = clock_ns();
     for (0..poll_polls) |_| try testing.expectEqual(@as(u32, 0), try loop.tick(events, 0));
-    return @import("kqueue_testing.zig").monotonic_ns() - before;
+    return clock_ns() - before;
 }

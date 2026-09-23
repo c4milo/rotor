@@ -7,14 +7,10 @@ const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
 
-/// The entry of a loop that has not started or has stopped.
-pub const descriptor_none: core.Descriptor = -1;
-
-/// The entry of a `Remote`: an id a thread claimed so its messages can name a sender, which runs no
-/// loop and receives nothing (decision 4). It is distinct from `descriptor_none` so that claiming an
-/// id twice is caught, and negative so that every `post` to it is already answered `loop_not_found`
-/// by the check each backend makes on a target's descriptor.
-pub const descriptor_remote: core.Descriptor = -2;
+/// The entry of a loop that has not started or has stopped, and of a `Remote`: the values the
+/// readiness backends' registry uses, which `core/mailbox.zig` defines and explains.
+pub const descriptor_none = core.mailbox.descriptor_none;
+pub const descriptor_remote = core.mailbox.descriptor_remote;
 
 pub const Registry = struct {
     descriptors: [core.constants.loops_max]std.atomic.Value(core.Descriptor),

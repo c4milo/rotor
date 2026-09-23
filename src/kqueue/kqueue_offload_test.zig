@@ -6,7 +6,7 @@
 //! submit path, and neither compiles for Linux. ThreadSanitizer cannot be built on macOS at all, so
 //! `zig build test-race` sees none of this.
 //!
-//! What that gate does see is the ordering itself: `core/mailbox_test.zig` holds a test of the
+//! What that gate does see is the ordering itself: `kqueue_mailbox_test.zig` holds a test of the
 //! offload's sleep handshake written against a bare `Mailbox` and a bare flag, which compiles for
 //! Linux like the rest of that file. So the primitive is sanitized and the path around it is not,
 //! and `docs/decisions/0018-a-caller-supplied-thread-pool.md` records the split rather than leaving
@@ -15,7 +15,7 @@
 //! No test here opens a kqueue. The loop comes up through `init_tables`, so `loop.queue` is never
 //! valid, and nothing may call `Queue.wake`. That holds as long as `offload_asleep` stays false,
 //! which it is after `init_tables` and which these tests never change: a loop that is awake is
-//! never woken. The sleep handshake itself is `core/mailbox_test.zig`'s subject, with a
+//! never woken. The sleep handshake itself is `kqueue_mailbox_test.zig`'s subject, with a
 //! `std.Io.Event` standing in for the kernel.
 //!
 //! The descriptor every operation names is closed, so every `pread` answers `EBADF`, which this
@@ -24,7 +24,6 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
-const constants = @import("constants.zig");
 const offload_module = @import("kqueue_offload.zig");
 const submit_module = @import("kqueue_submit.zig");
 const kqueue = @import("kqueue.zig");
@@ -253,13 +252,13 @@ const handshake_rounds: u32 = 20_000;
 const handshake_turns_max: u32 = 1 << 20;
 
 /// How long the consumer waits for a wake before it calls one lost, and how many returns of the
-/// event it tolerates before the deadline. The same shape `core/mailbox_test.zig` uses.
+/// event it tolerates before the deadline. The same shape `kqueue_mailbox_test.zig` uses.
 const wake_timeout_s: i64 = 10;
 const spurious_returns_max: u32 = 64;
 
 /// One ring, one flag, and the loop's blocking wait, which a `std.Io.Event` stands in for exactly
-/// as `core/mailbox_test.zig` does: the consumer blocks on it where a loop blocks in `kevent`, and
-/// the producer sets it where a worker calls `Queue.wake`.
+/// as `kqueue_mailbox_test.zig` does: the consumer blocks on it where a loop blocks in `kevent`,
+/// and the producer sets it where a worker calls `Queue.wake`.
 const Handshake = struct {
     ring: Mailbox align(core.constants.mailbox_index_alignment) = undefined,
     /// What `Loop.offload_asleep` is: written by the consumer, read by the producer.

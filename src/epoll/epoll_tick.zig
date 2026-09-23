@@ -80,8 +80,9 @@ fn expire(loop: *Loop) void {
 }
 
 /// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that
-/// produced nothing (decision 9, rule 4).
-fn clock_ns() u64 {
+/// produced nothing (decision 9, rule 4). `epoll_testing.zig` hands it to the tests, so a test
+/// measures with the clock the tick reads.
+pub fn clock_ns() u64 {
     var now: linux.timespec = undefined;
     const rc = linux.clock_gettime(.MONOTONIC, &now);
     assert(linux.errno(rc) == .SUCCESS);

@@ -117,17 +117,6 @@ pub const SlotTable = struct {
         return &table.slots[index];
     }
 
-    /// The index of `slot`, which must be one of this table's slots: the inverse of `at`. The
-    /// distance between two addresses inside the table does not depend on where the table sits.
-    pub fn index_of(table: *const SlotTable, slot: *const Slot) u32 {
-        const base = @intFromPtr(table.slots.ptr);
-        const address = @intFromPtr(slot);
-        assert(address >= base);
-        const index = (address - base) / constants.slot_bytes;
-        assert(index < table.slots.len);
-        return @intCast(index);
-    }
-
     /// How many slots the table holds: the most operations the loop may hold in flight.
     pub fn capacity(table: *const SlotTable) u32 {
         assert(table.slots.len >= 1);
@@ -174,8 +163,6 @@ pub const SlotTable = struct {
 comptime {
     assert(@sizeOf(SlotTable) == @sizeOf([]Slot) + @sizeOf(u32) + @sizeOf(u32));
     assert(@alignOf(SlotTable) == @alignOf([]Slot));
-    // `index_of` divides by the size of a slot.
-    assert(@sizeOf(Slot) == constants.slot_bytes);
     // `next_none` ends a list, so it must never be the index of a slot.
     assert(constants.operations_max <= next_none);
 }
@@ -321,13 +308,12 @@ test "lookup refuses the none handle, a free slot and a generation that differs"
     try testing.expectEqual(@as(?*Slot, null), table.lookup(ahead));
 }
 
-test "index_of inverts at for every slot" {
+test "at names the slot at every index" {
     var slots: [test_slots]Slot = undefined;
     var table = table_over(&slots);
     for (0..test_slots) |position| {
         const index: u32 = @intCast(position);
         try testing.expectEqual(&slots[position], table.at(index));
-        try testing.expectEqual(index, table.index_of(table.at(index)));
     }
 }
 
@@ -451,7 +437,6 @@ const Model = struct {
         const slot = table.at(index);
         const current: Handle = .{ .index = index, .generation = model.generations[index] };
         try model.expect(slot.generation == current.generation, "a generation differs");
-        try model.expect(table.index_of(slot) == index, "index_of does not invert at");
         try model.expect(table.lookup(model.stale[index]) == null, "a stale handle matched");
         if (model.in_use[index]) {
             try model.expect(slot.state == .queued, "a claimed slot is not queued");

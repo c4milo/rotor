@@ -7,7 +7,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
-const constants = @import("constants.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const submit_module = @import("kqueue_submit.zig");

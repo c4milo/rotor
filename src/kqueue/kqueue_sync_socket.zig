@@ -9,7 +9,6 @@
 //! Each errno map is a function of the errno alone, so its test runs on every host. Every other
 //! test enters the kernel and runs under macOS alone.
 const std = @import("std");
-const builtin = @import("builtin");
 const assert = std.debug.assert;
 const c = std.c;
 const posix = std.posix;

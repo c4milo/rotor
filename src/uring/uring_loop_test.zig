@@ -7,7 +7,6 @@ const builtin = @import("builtin");
 const testing = std.testing;
 const linux = std.os.linux;
 const core = @import("core");
-const constants = @import("constants.zig");
 const uring = @import("uring.zig");
 
 const Loop = uring.Loop;
@@ -114,11 +113,7 @@ test "a timer does not fire before its delay" {
     try testing.expectEqual(@as(u64, 1), events[0].user_data);
 }
 
-fn monotonic_ns() u64 {
-    var now: linux.timespec = undefined;
-    _ = linux.clock_gettime(.MONOTONIC, &now);
-    return @as(u64, @intCast(now.sec)) * core.constants.ns_per_s + @as(u64, @intCast(now.nsec));
-}
+const monotonic_ns = @import("uring_tick.zig").clock_ns;
 
 test "a tick that waits wakes for the nearest deadline, long before its own wait is over" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;

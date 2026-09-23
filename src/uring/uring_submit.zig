@@ -14,6 +14,7 @@ const uring = @import("uring.zig");
 const datagram = @import("uring_datagram.zig");
 
 const Loop = uring.Loop;
+const Handle = core.Handle;
 const Slot = core.Slot;
 
 /// What `prepare` needs beside the slot, because the slot cannot hold it.
@@ -109,7 +110,7 @@ fn connect_extra(loop: *Loop, slot: *const Slot) Extra {
 /// Fills `sqe` from `slot`. Every field of the entry is written: the ring hands out entries
 /// that still hold what their last use left.
 pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extra: Extra) void {
-    assert(user_data >> handle_generation_shift != 0);
+    assert(!Handle.from_bits(user_data).is_none());
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
     sqe.user_data = user_data;
     sqe.fd = slot.descriptor;
@@ -163,9 +164,6 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
     }
 }
 
-/// A handle's generation is the high half of its 64 bits, and it is never 0.
-const handle_generation_shift = 32;
-
 fn prepare_accept(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
     sqe.opcode = .ACCEPT;
     sqe.rw_flags = linux.SOCK.CLOEXEC;
@@ -203,7 +201,7 @@ fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
 /// The entry that asks the kernel to cancel the operation whose `user_data` is `target`. The
 /// backend consumes its completion: the target's final event is the answer (decision 5, rule 2).
 pub fn prepare_cancel(sqe: *linux.io_uring_sqe, target: u64) void {
-    assert(target >> handle_generation_shift != 0);
+    assert(!Handle.from_bits(target).is_none());
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
     sqe.opcode = .ASYNC_CANCEL;
     sqe.fd = -1;
