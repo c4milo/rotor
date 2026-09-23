@@ -39,8 +39,13 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     produced += loop.drain_mailboxes(events[produced..]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
-    if (wait == null) arm_poll(loop);
     const room = @min(events.len - produced, constants.readiness_max);
+    // Only a poll with room to take the trigger's event arms it. A trigger the call applies and
+    // cannot deliver stays set, because `EV_CLEAR` clears an event as it is delivered, and it ends
+    // the next tick that waits at once. That is what a tick whose events were already full did
+    // until 2026-09-22, which the conformance suite's multishot accept caught once a second loop
+    // made its late connection. Whether such a tick parks as a poll with room does is not measured.
+    if (wait == null and room != 0) arm_poll(loop);
     const changes = loop.changes[0..loop.changes_used];
     const ready = loop.queue.exchange(changes, loop.readiness[0..room], wait);
     loop.changes_used = 0;

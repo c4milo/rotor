@@ -196,11 +196,17 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 
     // Nobody accepts any more. A connection that arrives now yields no event, and it must not
-    // keep the loop from sleeping: a tick that waits takes its whole wait.
+    // keep the loop from sleeping: a tick that waits takes its whole wait. A second loop makes the
+    // connection, so this one does not tick between the cancel and the tick that is measured: a
+    // tick of its own in between could tidy up what the cancel left behind and hide it.
+    var other: Harness = undefined;
+    try other.init(1, null);
+    defer other.deinit();
     const late = try sync.open_socket(.ipv4);
     defer sync.close_now(late);
-    try harness.submit(&.{connect(99, late, &listener.address)}, &.{});
-    try harness.collect(&last);
+    try other.submit(&.{connect(99, late, &listener.address)}, &.{});
+    try other.collect(&last);
+    try testing.expectEqual(@as(u32, 0), try last[0].outcome());
     const before = backend.testing.monotonic_ns();
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&last, quiet_wait_ns));
     const waited = backend.testing.monotonic_ns() - before;
