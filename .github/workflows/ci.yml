@@ -197,6 +197,17 @@ jobs:
         run: ./zig-out/bin/timers_runner
       - name: One cross-core message
         run: ./zig-out/bin/crosscore_runner
+      # The two measurements `bench/calls/` made on `orbstack`, taken here too. On 2026-09-22 this
+      # runner showed rotor's group and accumulate shapes level, where `orbstack` showed the whole-
+      # pool group well behind. The CPU table says which of two causes holds: a client that is the
+      # limit of the run, or a cache large enough to hold the pool. They run when an echo row above
+      # fails its baseline, because they explain such a row.
+      - name: CPU per echo, server and client
+        if: ${{ !cancelled() }}
+        run: BIN=zig-out/bin sh bench/calls/cpu_per_echo.sh
+      - name: Kernel calls per echo
+        if: ${{ !cancelled() }}
+        run: sudo BIN=zig-out/bin sh bench/calls/count_calls.sh
 
   commits:
     name: Commit messages

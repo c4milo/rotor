@@ -10,16 +10,20 @@
 # out through `trace_pipe`, and awk counts. A run whose buffer overflowed says so in its overruns
 # column, and its counts are then not to be used.
 #
-# Run it in a privileged container, which may mount tracefs and may use io_uring, with the echo
-# programs built for that container mounted at /b:
+# Run it as root where tracefs and io_uring are allowed, with the echo programs in BIN, which is /b
+# by default. In a privileged container, with the programs built for it mounted there:
 #
 #     zig build bench-echo -Dtarget=aarch64-linux-gnu --prefix /tmp/calls
 #     zig build bench-alternatives -Dalternatives -Dtarget=aarch64-linux-gnu --prefix /tmp/calls
 #     docker run --rm --privileged -v /tmp/calls/bin:/b:ro \
 #       -v "$PWD/bench/calls/count_calls.sh:/count.sh:ro" <image> sh /count.sh
 #
+# On a Linux host, as the comparison job of `.github/workflows/ci.yml` runs it:
+#
+#     sudo BIN=zig-out/bin sh bench/calls/count_calls.sh
+#
 # The image needs a shell, awk and cat; the Linux gates' debian image has them. rotor's echo server
-# on the epoll backend is counted too when /b holds `rotor_epoll`, which the build does not make:
+# on the epoll backend is counted too when BIN holds `rotor_epoll`, which the build does not make:
 #
 #     zig build-exe -target aarch64-linux-gnu -O ReleaseSafe \
 #       --dep core --dep backend --dep harness -Mroot=bench/echo/rotor_echo.zig \
@@ -35,6 +39,7 @@
 # and the script turns every event off and restores the buffer's default size when it exits,
 # whatever happened. Left on, a system-wide tracepoint costs every process on the machine.
 set -u
+BIN=${BIN:-/b}
 T=/sys/kernel/tracing
 mount -t tracefs nodev "$T" 2>/dev/null
 EVENTS="raw_syscalls/sys_enter io_uring/io_uring_submit_req io_uring/io_uring_poll_arm \
@@ -118,9 +123,9 @@ row() {
 # measure LABEL PAYLOAD PROGRAM [ARGS...]
 measure() {
   label=$1; payload=$2; program=$3; shift 3
-  if [ ! -x "/b/$program" ]; then return; fi
+  if [ ! -x "$BIN/$program" ]; then return; fi
   PORT=$((PORT + 1))
-  "/b/$program" "$PORT" "$@" >/dev/null 2>&1 &
+  "$BIN/$program" "$PORT" "$@" >/dev/null 2>&1 &
   server=$!
   sleep 1
   reset
@@ -131,7 +136,7 @@ measure() {
   cat "$T/trace_pipe" > /tmp/events.txt &
   reader=$!
   echo 1 > "$T/tracing_on"
-  /b/echo_client "$PORT" --connections "$CONNECTIONS" --payload "$payload" \
+  "$BIN/echo_client" "$PORT" --connections "$CONNECTIONS" --payload "$payload" \
     --seconds "$SECONDS_PER_RUN" --warmup 0 > /tmp/client.json 2>&1
   echo 0 > "$T/tracing_on"
   sleep 1
