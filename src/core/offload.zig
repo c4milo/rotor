@@ -145,10 +145,9 @@ test "the offloadable operations are the three that block, and no others" {
     try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
 }
 
-/// A `Mailbox` is aligned to 128 and `layout.Layout` carves to 64, which is why the registry
-/// carries the same constant: the caller's memory is aligned to 64 like every other memory rotor
-/// takes, and `init_rings` skips forward to the first address a ring can sit at.
-const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
+/// A `Mailbox` is aligned to 128 and the caller's memory to 64, so `init_rings` may skip this many
+/// bytes to the first address a ring can sit at: the registry's slack, for the same reason.
+const alignment_slack_bytes = mailbox_module.alignment_slack_bytes;
 
 /// The bytes the offload's rings need for `workers`, to be passed as `Loop.Options.offload_memory`.
 ///

@@ -158,6 +158,16 @@ pub fn payload_capacity(buffer_bytes: u32, options: GroupOptions) u32 {
 /// One received datagram: what it carries, and the bytes themselves.
 pub const Delivery = struct { from: Received, bytes: []u8 };
 
+/// The kernel's `in_pktinfo`, which `IP_PKTINFO` reports and takes, laid out the same on Linux and
+/// on Darwin (`netinet/in.h`). The two addresses are not interchangeable and the direction picks
+/// which one: a **send** sets `spec_dst`, the source to send from, and a **receive** reports the
+/// header's destination in `addr`. Writing one and reading the other is silent, because both are
+/// four zeroed bytes when unset. rotor names it here and nowhere in its surface.
+pub const InPktinfo = extern struct { ifindex: u32, spec_dst: u32, addr: u32 };
+
+/// The kernel's `in6_pktinfo`, laid out the same on Linux and on Darwin.
+pub const In6Pktinfo = extern struct { addr: [Address.ipv6_bytes]u8, ifindex: u32 };
+
 comptime {
     assert(@sizeOf(Received) == metadata_bytes);
     assert(@sizeOf(Outbound) == metadata_bytes);

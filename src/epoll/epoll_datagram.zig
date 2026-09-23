@@ -41,14 +41,8 @@ pub fn control_space(payload_bytes: usize) usize {
     return align_control(@sizeOf(linux.cmsghdr)) + align_control(payload_bytes);
 }
 
-/// The kernel's in_pktinfo. The two addresses are not interchangeable and the direction picks
-/// which one: a **send** sets `spec_dst`, the source to send from, and a **receive** reports the
-/// header's destination in `addr`. Writing one and reading the other is silent, because both are
-/// four zeroed bytes when unset.
-const InPktinfo = extern struct { ifindex: u32, spec_dst: u32, addr: u32 };
-
-/// The kernel's in6_pktinfo.
-const In6Pktinfo = extern struct { addr: [Address.ipv6_bytes]u8, ifindex: u32 };
+const InPktinfo = core.datagram.InPktinfo;
+const In6Pktinfo = core.datagram.In6Pktinfo;
 
 /// What one `recvmsg` or `sendmsg` came to: a result, or the answer that the socket is not ready.
 pub const Answer = struct {

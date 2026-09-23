@@ -38,9 +38,10 @@ pub const remote_entries: u16 = 1;
 /// that is stopped or starved. After it, the post is `Unanswered` and the message may still land.
 pub const remote_wait_ns: u64 = 1 * @import("core").constants.ns_per_s;
 
-/// The largest errno Linux returns. A completion's result in [-errno_max, -1] is an operation
-/// that failed; a result below that range is a message another loop posted.
-pub const errno_max: i32 = 4095;
+/// The largest errno Linux returns, `core`'s, as the signed result a completion carries. A
+/// completion's result in [-errno_max, -1] is an operation that failed; a result below that range is
+/// a message another loop posted.
+pub const errno_max: i32 = @import("core").constants.errno_max;
 
 /// The bit a `post` sets in the 32 bits io_uring delivers as the message's result, above the tag.
 /// It makes the result negative and below `-errno_max` for every tag `core` admits, so the reap

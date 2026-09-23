@@ -119,7 +119,7 @@ pub const buffer_ring_entry_bytes = 16;
 pub const socket_buffer_bytes_max: u32 = std.math.maxInt(i32);
 
 /// The largest errno Linux returns, so the most negative result an operation can have.
-const errno_max: u32 = 4095;
+pub const errno_max: u32 = 4095;
 
 comptime {
     const assert = std.debug.assert;

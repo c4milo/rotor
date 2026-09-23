@@ -169,7 +169,7 @@ const Entry = extern struct {
 };
 
 /// The bytes `init` may have to skip to reach an address aligned for a `Mailbox`.
-const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
+pub const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
 
 comptime {
     assert(@sizeOf(Message) == 16);

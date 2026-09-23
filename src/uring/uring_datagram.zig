@@ -53,15 +53,8 @@ pub fn control_space(payload_bytes: usize) usize {
     return align_control(@sizeOf(linux.cmsghdr)) + align_control(payload_bytes);
 }
 
-/// The kernel's in_pktinfo, which `IP_PKTINFO` reports and takes. rotor names it here and
-/// nowhere in its surface. The two addresses are not interchangeable and the direction picks
-/// which one: a **send** sets `spec_dst`, the source to send from, and a **receive** reports the
-/// header's destination in `addr`. Writing one and reading the other is silent, because both are
-/// four zeroed bytes when unset.
-const InPktinfo = extern struct { ifindex: u32, spec_dst: u32, addr: u32 };
-
-/// The kernel's in6_pktinfo.
-const In6Pktinfo = extern struct { addr: [Address.ipv6_bytes]u8, ifindex: u32 };
+const InPktinfo = core.datagram.InPktinfo;
+const In6Pktinfo = core.datagram.In6Pktinfo;
 
 /// Fills `message` for a receive and points `sqe` at it. Only the two lengths are read by the
 /// kernel: it writes the name and the control block into the provided buffer, not through these.
