@@ -143,24 +143,31 @@ fn connect_outcome(slot: *const Slot) Attempt {
     return Attempt.failed(errno);
 }
 
+/// The buffer a receive writes into: its own, or one taken from its group. Null when the group has
+/// none left, which ends the operation with `buffers_exhausted`.
+const Target = struct { bytes: []u8, buffer_id: ?u16 };
+
+fn target_of(loop: *Loop, slot: *const Slot) ?Target {
+    if (!slot.flags.buffer_group) return .{ .bytes = slot.bytes(), .buffer_id = null };
+    const group = &loop.groups[slot.buffer_index];
+    const buffer_id = group.take() orelse return null;
+    return .{ .bytes = group.bytes_of(buffer_id), .buffer_id = buffer_id };
+}
+
+/// Gives a group's buffer back when nothing was received into it.
+fn release(loop: *Loop, slot: *const Slot, target: Target) void {
+    if (target.buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
+}
+
 fn attempt_receive(loop: *Loop, slot: *Slot) Attempt {
-    var buffer_id: ?u16 = null;
-    var bytes: []u8 = undefined;
-    if (slot.flags.buffer_group) {
-        const group = &loop.groups[slot.buffer_index];
-        buffer_id = group.take() orelse {
-            return Attempt.done(core.event.result_of(.buffers_exhausted));
-        };
-        bytes = group.bytes_of(buffer_id.?);
-    } else {
-        bytes = slot.bytes();
-    }
-    const result = receive_into(slot.descriptor, bytes);
+    const target = target_of(loop, slot) orelse {
+        return Attempt.done(core.event.result_of(.buffers_exhausted));
+    };
+    const result = receive_into(slot.descriptor, target.bytes);
     if (result.outcome == .done and result.result >= 0) {
-        return .{ .outcome = .done, .result = result.result, .buffer_id = buffer_id };
+        return .{ .outcome = .done, .result = result.result, .buffer_id = target.buffer_id };
     }
-    // Nothing was received, so the buffer goes back to its group.
-    if (buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
+    release(loop, slot, target);
     return result;
 }
 
@@ -181,26 +188,15 @@ fn receive_into(descriptor: core.Descriptor, bytes: []u8) Attempt {
 /// datagram, so the result is the datagram's own bytes and no prefix is subtracted later: the
 /// uring backend gets that layout from the kernel and this one writes it (decision 15).
 fn attempt_receive_from(loop: *Loop, slot: *Slot) Attempt {
-    var buffer_id: ?u16 = null;
-    var bytes: []u8 = undefined;
-    if (slot.flags.buffer_group) {
-        const group = &loop.groups[slot.buffer_index];
-        buffer_id = group.take() orelse {
-            return Attempt.done(core.event.result_of(.buffers_exhausted));
-        };
-        bytes = group.bytes_of(buffer_id.?);
-    } else {
-        bytes = slot.bytes();
+    const target = target_of(loop, slot) orelse {
+        return Attempt.done(core.event.result_of(.buffers_exhausted));
+    };
+    const answer = datagram.receive_into(slot.descriptor, target.bytes, loop.datagram_group);
+    if (!answer.would_block and answer.result >= 0) {
+        return .{ .outcome = .done, .result = answer.result, .buffer_id = target.buffer_id };
     }
-    const answer = datagram.receive_into(slot.descriptor, bytes, loop.datagram_group);
-    if (answer.would_block) {
-        if (buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
-        return .{ .outcome = .wait_read };
-    }
-    if (answer.result >= 0) {
-        return .{ .outcome = .done, .result = answer.result, .buffer_id = buffer_id };
-    }
-    if (buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
+    release(loop, slot, target);
+    if (answer.would_block) return .{ .outcome = .wait_read };
     return Attempt.done(answer.result);
 }
 

@@ -37,6 +37,7 @@ const constants = @import("constants.zig");
 const errno_module = @import("uring_errno.zig");
 const registry_module = @import("uring_registry.zig");
 const ring_module = @import("uring_ring.zig");
+const submit_module = @import("uring_submit.zig");
 
 const Registry = registry_module.Registry;
 const Ring = ring_module.Ring;
@@ -84,8 +85,9 @@ pub const Remote = struct {
         remote.ring.deinit();
     }
 
-    /// Sends one message to the loop `target` runs, or says why it could not. The entry is what
-    /// `uring_submit.zig` builds for a loop's own post, so the target's reap reads it the same way.
+    /// Sends one message to the loop `target` runs, or says why it could not. The entry is built by
+    /// `uring_submit.prepare_message`, as a loop's own post is, so the target's reap reads it the
+    /// same way.
     pub fn post(remote: *Remote, target: core.LoopId, message: core.Message) PostError!void {
         remote.assert_owner();
         assert(target != remote.id);
@@ -101,11 +103,7 @@ pub const Remote = struct {
         assert(remote.ring.cq_ready() == 0);
         const sqe = remote.ring.get_sqe().?;
         sqe.* = std.mem.zeroes(linux.io_uring_sqe);
-        sqe.opcode = .MSG_RING;
-        sqe.fd = target_ring;
-        sqe.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
-        sqe.len = message.tag | constants.message_result_flag;
-        sqe.off = message.payload;
+        submit_module.prepare_message(sqe, target_ring, message);
         return remote.answer(constants.remote_wait_ns);
     }
 

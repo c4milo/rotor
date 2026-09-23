@@ -140,12 +140,8 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             sqe.rw_flags = linux.IORING_FSYNC_DATASYNC;
         },
         .post => {
-            assert(extra.target_ring >= 0);
-            sqe.opcode = .MSG_RING;
-            sqe.fd = extra.target_ring;
-            sqe.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
-            sqe.len = slot.len | constants.message_result_flag;
-            sqe.off = slot.buffer;
+            const message: core.Message = .{ .payload = slot.buffer, .tag = slot.len };
+            prepare_message(sqe, extra.target_ring, message);
         },
         .nop => sqe.opcode = .NOP,
         .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
@@ -196,6 +192,21 @@ fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
     } else {
         sqe.opcode = if (is_read) .READ else .WRITE;
     }
+}
+
+/// Makes `sqe` send `message` to the loop that owns `target_ring`, where `uring_reap.zig`'s
+/// `message_of` reads it back. A loop's own post and a `Remote`'s post both build it here.
+pub fn prepare_message(
+    sqe: *linux.io_uring_sqe,
+    target_ring: core.Descriptor,
+    message: core.Message,
+) void {
+    assert(target_ring >= 0);
+    sqe.opcode = .MSG_RING;
+    sqe.fd = target_ring;
+    sqe.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
+    sqe.len = message.tag | constants.message_result_flag;
+    sqe.off = message.payload;
 }
 
 /// The entry that asks the kernel to cancel the operation whose `user_data` is `target`. The
