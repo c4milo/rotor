@@ -8,10 +8,11 @@
 # `--write-baseline yes` and keep the `processor` line and the `echo ...` lines it prints.
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
-# rotor. Both sections were taken on 2026-09-22 from the `comparison` job of
+# rotor. Every section was taken on 2026-09-22 from the `comparison` job of
 # .github/workflows/ci.yml, on GitHub-hosted ubuntu-24.04 runners, io_uring, one core, three runs
-# per row, every row's spread under 10 percent and none flagged, with rotor's buffer group sized per
-# connection. `bench/results/` holds both runs.
+# per row, with rotor's buffer group sized per connection. A section leaves out a row whose runs
+# disagreed, and a row another step of the same job contradicts, and its comment names each. A run
+# reports a row its section lacks and does not gate it. `bench/results/` holds every run.
 
 # Run 35811462374, commit 86a7ade.
 processor AMD EPYC 9V74 80-Core Processor
@@ -101,3 +102,47 @@ echo 64 65536 rotor (accumulate) 1006
 echo 64 65536 libuv 1057
 echo 64 65536 libxev 1008
 echo 64 65536 std.Io.Threaded 739
+
+# Run 35815517826, commit 5e0fac2. Four rows are left out. The runs disagreed on libxev at 16
+# connections and 4 KiB, and on libuv at 16 connections and 64 KiB. At 64 KiB this run put libxev
+# near half of rotor, where the CPU and kernel-call steps of the same job measured the two level at
+# 16 connections, so neither libxev row at 64 KiB is kept.
+# `bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md` has all three measurements.
+processor AMD EPYC 7763 64-Core Processor
+# workload connections payload candidate ratio
+echo 16 4096 rotor 1000
+echo 16 4096 rotor (accumulate) 943
+echo 16 4096 libuv 866
+echo 16 4096 std.Io.Threaded 515
+echo 16 8192 rotor 1000
+echo 16 8192 rotor (accumulate) 952
+echo 16 8192 libuv 868
+echo 16 8192 libxev 892
+echo 16 8192 std.Io.Threaded 504
+echo 16 16384 rotor 1000
+echo 16 16384 rotor (accumulate) 951
+echo 16 16384 libuv 880
+echo 16 16384 libxev 907
+echo 16 16384 std.Io.Threaded 516
+echo 16 65536 rotor 1000
+echo 16 65536 rotor (accumulate) 993
+echo 16 65536 std.Io.Threaded 662
+echo 64 4096 rotor 1000
+echo 64 4096 rotor (accumulate) 936
+echo 64 4096 libuv 851
+echo 64 4096 libxev 925
+echo 64 4096 std.Io.Threaded 533
+echo 64 8192 rotor 1000
+echo 64 8192 rotor (accumulate) 939
+echo 64 8192 libuv 861
+echo 64 8192 libxev 930
+echo 64 8192 std.Io.Threaded 535
+echo 64 16384 rotor 1000
+echo 64 16384 rotor (accumulate) 950
+echo 64 16384 libuv 874
+echo 64 16384 libxev 933
+echo 64 16384 std.Io.Threaded 546
+echo 64 65536 rotor 1000
+echo 64 65536 rotor (accumulate) 1000
+echo 64 65536 libuv 960
+echo 64 65536 std.Io.Threaded 648

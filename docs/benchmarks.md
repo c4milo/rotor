@@ -24,11 +24,11 @@ alternative.
 | machine | processor | system | backend |
 |---|---|---|---|
 | `mac` | Apple M1 Pro | macOS 26.6.2 | kqueue |
-| `github` | a GitHub-hosted runner, 4 virtual x86-64 CPUs: an AMD EPYC 9V74 on one run, an Intel Xeon 6973P-C on another | Linux 6.17 | io_uring |
+| `github` | a GitHub-hosted runner, 4 virtual x86-64 CPUs: an AMD EPYC 9V74, an Intel Xeon 6973P-C or an AMD EPYC 7763, whichever the run was given | Linux 6.17 | io_uring |
 
 The GitHub runner pool hands out a different processor from run to run, and the ratios between
 the candidates move with it: on the same code, a candidate's rate as a share of rotor's differed by
-up to 22 percentage points between the two processors below. Its rows show what rotor does on
+up to 22 percentage points between the processors below. Its rows show what rotor does on
 x86-64, and not how it performs on any one machine. The Linux machine rotor is meant to run on in
 production has not been chosen, so no number is taken on it yet.
 
@@ -96,6 +96,31 @@ payloads and `std.Io.Threaded`.
 | 64 | 64 KiB | libuv | 60,983 | 1,040 | 1,237 | 8 | 8.68 |
 | 64 | 64 KiB | libxev | 58,140 | 1,098 | 1,384 | 2 | 8.68 |
 
+### `github` on an AMD EPYC 7763, io_uring, 2026-09-22
+
+[run](../bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md). The run also measured 8 and
+16 KiB payloads and `std.Io.Threaded`.
+
+| connections | payload | candidate | messages per second | p50 µs | p99 µs | spread % | peak memory MB |
+|---:|---:|---|---:|---:|---:|---|---:|
+| 16 | 4 KiB | rotor | 127,386 | 123 | 150 | 2 | 3.92 |
+| 16 | 4 KiB | libuv | 110,321 | 130 | 281 | 0 | 3.24 |
+| 16 | 4 KiB | libxev | 113,508 | 137 | 197 | 10 **RUNS DISAGREE** | 3.25 |
+| 16 | 64 KiB | rotor | 43,718 | 360 | 412 | 0 | 6.12 |
+| 16 | 64 KiB | libuv | 42,108 | 375 | 627 | 26 **RUNS DISAGREE** | 4.26 |
+| 16 | 64 KiB | libxev | 23,255 | 692 | 909 | 6 | 4.26 |
+| 64 | 4 KiB | rotor | 131,810 | 483 | 524 | 0 | 8.51 |
+| 64 | 4 KiB | libuv | 112,214 | 561 | 1,114 | 0 | 8.51 |
+| 64 | 4 KiB | libxev | 122,047 | 522 | 668 | 0 | 8.51 |
+| 64 | 64 KiB | rotor | 43,938 | 1,458 | 1,532 | 1 | 12.41 |
+| 64 | 64 KiB | libuv | 42,209 | 1,376 | 2,851 | 0 | 8.81 |
+| 64 | 64 KiB | libxev | 26,182 | 2,458 | 2,867 | 6 | 8.81 |
+
+libxev's two rows at 64 KiB are not confirmed. Two later steps of the same job ran the same
+servers at 16 connections with another client, and measured libxev within 6 percent of rotor.
+[The run's record](../bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md#libxev-at-64-kib)
+has the three measurements.
+
 rotor's server holds more memory at 64 KiB than the others, because its buffer group holds two
 64 KiB buffers per connection where the others hold one.
 [`bench/alternatives/README.md`](../bench/alternatives/README.md#rotor-loses-the-64-kib-row-on-io_uring-on-clean-rows)
@@ -120,14 +145,18 @@ spread.
 | 64 | libxev | 35,855 | 1 |
 
 On `mac`, seven of the eight storm rows disagree by 17 to 84 percent, so the storm decides nothing
-there ([run](../bench/results/storm-mac-2026-09-22.md)).
+there ([run](../bench/results/storm-mac-2026-09-22.md)). On an AMD EPYC 7763, five of the eight
+disagree ([run](../bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md#accept-storm)).
 
-## Timer churn on `mac`
+## Timer churn
 
 Timers on a 1 ms period, each library in its cheapest mode: rotor's and libuv's own repeating
-timer, and libxev's callback re-arming its timer
-([run](../bench/results/timers-modes-mac-2026-09-22.md)). Lateness is how long after its deadline
-a timer fired.
+timer, and libxev's callback re-arming its timer. Lateness is how long after its deadline a timer
+fired.
+
+### `mac`, kqueue, 2026-09-22
+
+[run](../bench/results/timers-modes-mac-2026-09-22.md)
 
 | timers | candidate | fires per second | p50 late µs | p99 late µs | spread % |
 |---:|---|---:|---:|---:|---|
@@ -138,22 +167,49 @@ a timer fired.
 | 4,096 | libxev | 3,252,874 | 53 | 1,051 | 2 |
 | 4,096 | libuv (repeating) | 2,024,570 | 1,089 | 1,353 | 3 |
 
-Each timer is asked for 1,000 fires per second, and only rotor keeps that rate. libxev fires closer
-to its deadline. A rotor timer is scheduled from its previous deadline, so it never drops a period;
-the others schedule the next fire from the clock when a timer fires, so they fire less often, and
-each fire is less late.
+### `github` on an AMD EPYC 7763, io_uring, 2026-09-22
 
-## One cross-core message on `mac`
+[run](../bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md#timer-churn)
 
-Two loops on two cores send a message back and forth, each waiting in its tick for the other's
-([run](../bench/results/crosscore-mac-2026-09-22-after.md)). One message is half a round trip.
-rotor's message carries a 16-byte payload; libuv's and libxev's carry none.
+| timers | candidate | fires per second | p50 late µs | p99 late µs | spread % |
+|---:|---|---:|---:|---:|---|
+| 256 | rotor (repeating) | 255,989 | 52 | 67 | 0 |
+| 256 | libxev | 245,749 | 41 | 71 | 0 |
+| 256 | libuv (repeating) | 229,178 | 101 | 1,175 | 0 |
+| 4,096 | rotor (repeating) | 4,094,544 | 598 | 658 | 0 |
+| 4,096 | libuv (repeating) | 2,085,173 | 999 | 1,171 | 3 |
+| 4,096 | libxev | 1,143,936 | 2,608 | 4,662 | 0 |
+
+Each timer is asked for 1,000 fires per second, and on both machines only rotor keeps that rate. A
+rotor timer is scheduled from its previous deadline, so it never drops a period. The others
+schedule the next fire from the clock when a timer fires, so they fire less often, and each fire
+can be less late: on `mac` at 4,096 timers, libxev's fires were less late than rotor's.
+
+## One cross-core message
+
+Two loops on two cores send a message back and forth, each waiting in its tick for the other's.
+One message is half a round trip. rotor's message carries a 16-byte payload; libuv's and libxev's
+carry none.
+
+### `mac`, kqueue, 2026-09-22
+
+[run](../bench/results/crosscore-mac-2026-09-22-after.md)
 
 | candidate | messages per second | p50 ns | p99 ns | spread % |
 |---|---:|---:|---:|---|
 | rotor | 384,127 | 2,007 | 8,031 | 14 **RUNS DISAGREE** |
 | libuv | 518,732 | 1,500 | 6,000 | 4 |
 | libxev | 434,027 | 2,007 | 8,031 | 8 |
+
+### `github` on an AMD EPYC 7763, io_uring, 2026-09-22
+
+[run](../bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md#one-cross-core-message)
+
+| candidate | messages per second | p50 ns | p99 ns | spread % |
+|---|---:|---:|---:|---|
+| rotor | 68,653 | 16,127 | 17,791 | 7 |
+| libuv | 61,367 | 16,330 | 16,976 | 1 |
+| libxev | 61,981 | 16,191 | 16,895 | 1 |
 
 ## File reads and writes on `mac`
 
