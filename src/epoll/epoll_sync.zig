@@ -4,12 +4,13 @@
 //!
 //! This file is the surface, and `uring_sync.zig` and `kqueue_sync.zig` are its twins name for
 //! name and type for type, because the conformance suite calls `backend.sync` on whichever backend
-//! the build hands it (decision 10). The calls are in `epoll_sync_socket.zig` and
-//! `epoll_sync_file.zig`, each with its own tests.
+//! the build hands it (decision 10). The calls are `linux_shared`'s, shared with the uring backend:
+//! the sockets through `epoll_sync_socket.zig`, which passes this backend's socket flags, and the
+//! files as they are.
 const std = @import("std");
 const core = @import("core");
 const socket_calls = @import("epoll_sync_socket.zig");
-const file_calls = @import("epoll_sync_file.zig");
+const file_calls = @import("linux_shared").sync_file;
 
 pub const SocketError = socket_calls.SocketError;
 pub const ListenError = socket_calls.ListenError;

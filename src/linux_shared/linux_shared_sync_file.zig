@@ -1,20 +1,17 @@
-//! The synchronous file calls of decision 2: a file opened with O_DIRECT, measured, preallocated,
-//! and a directory synced. They run at start-up, never per transfer, so they are plain: one raw
-//! syscall at a time, every return value checked, every errno mapped to a named error, with
-//! `Unexpected` for the rest.
+//! The synchronous file calls of decision 2, for both Linux backends: a file opened with O_DIRECT,
+//! measured, preallocated, and a directory synced. A file opens, sizes and syncs the same way
+//! whichever backend reads it afterwards, and O_NONBLOCK means nothing for a regular file. They run
+//! at start-up, never per transfer, so they are plain: one raw syscall at a time, every return
+//! value checked, every errno mapped to a named error, with `Unexpected` for the rest.
 //!
 //! Each map is a function of the errno alone, so a test on any host covers the refusals the kernel
 //! will not produce on demand (decision 10, point 3). Every other test runs under Linux alone.
-//!
-//! This is `src/uring/uring_sync_file.zig`, copied: a file opens, sizes and syncs the same way
-//! whichever Linux backend reads it afterwards, and O_NONBLOCK means nothing for a regular file.
-//! The graph has no module the two Linux backends share (`epoll_address.zig` says why).
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
-const socket_calls = @import("epoll_sync_socket.zig");
+const socket_calls = @import("linux_shared_sync_socket.zig");
 
 const Descriptor = core.Descriptor;
 
@@ -173,7 +170,7 @@ fn open_flags(descriptor: Descriptor) !linux.O {
 /// The kernel hands out the lowest free descriptor, so two probes with no descriptor opened and
 /// left open between them get one number.
 fn probe_descriptor() !Descriptor {
-    const probe = try socket_calls.open_socket(.ipv4);
+    const probe = try socket_calls.open_socket(.ipv4, linux.SOCK.CLOEXEC);
     close_now(probe);
     return probe;
 }

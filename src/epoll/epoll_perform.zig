@@ -190,7 +190,7 @@ fn attempt_receive_from(loop: *Loop, slot: *const Slot) Attempt {
 }
 
 /// One datagram out. Unlike the kqueue backend, a segmented send is carried: Linux has
-/// `UDP_SEGMENT`, and `epoll_datagram.zig` attaches it.
+/// `UDP_SEGMENT`, and `linux_shared_datagram.zig` writes it into the control block.
 fn attempt_send_to(slot: *const Slot) Attempt {
     const out = slot.outbound();
     const answer = datagram.send_from(slot.descriptor, slot.bytes(), out);
