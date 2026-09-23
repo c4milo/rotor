@@ -1,7 +1,7 @@
 //! rotor_post: one cross-core message on its own, the rotor side of the cross-core comparison.
 //!
 //! Run:  rotor_post [--mode waiting|spinning|spin-then-wait] [--samples N] [--warmup N]
-//!                  [--cpu N] [--peer-cpu N]
+//!                  [--cpu N] [--peer-cpu N] [--burst N]
 //!
 //! Decision 4 calls the threading model rotor's main claim and names its unit of cost as one
 //! cross-core message; rows C17 to C19 of `docs/costs.md` are that unit measured against the
@@ -18,6 +18,11 @@
 //! alone: `spinning` never blocks, and `spin-then-wait` polls for a budget before it blocks.
 //! `bench/uring/post.zig` measures the same three with rotor on both ends. Neither extra mode is
 //! a comparison; both are rotor against itself, and a row from one says so in its candidate name.
+//!
+//! `--burst N` sends N pings in one submit, so one tick's flush posts all of them, and the peer
+//! answers the N with one pong. It measures what a burst of posts to a loop that sleeps costs, which
+//! decision 12, point 6 says should be one wake. It is rotor against itself, as the two extra modes
+//! are, and its row says so. The default of 1 is the ping-pong above.
 //!
 //! **A round trip is two messages, so one message is half of it.** The two directions run the
 //! same mechanism over the same pair of loops, so halving is a fair split and not an average over
@@ -71,8 +76,9 @@ const spin_budget_ns: u64 = 50 * std.time.ns_per_us;
 /// Events one tick may hand over. A side has one message in flight and its own post's completion.
 const events_max = 4;
 
-/// The messages one round trip carries: the ping and the pong.
-const messages_per_round_trip = 2;
+/// The most pings one burst may carry. Each holds a slot until its own completion, and a slot is
+/// left for the answer.
+const burst_max: u32 = 32;
 
 const options_template: Loop.Options = .{
     .operations = operations,
@@ -122,7 +128,17 @@ const Options = struct {
     /// is what a host that cannot pin reports.
     cpu: ?usize = placement.first_cpu,
     peer_cpu: ?usize = placement.second_cpu,
+    /// Pings per round trip, all in one submit. A round trip carries them and one pong.
+    burst: u32 = 1,
+
+    fn messages_per_round_trip(options: Options) u32 {
+        return options.burst + 1;
+    }
 };
+
+comptime {
+    std.debug.assert(burst_max < operations);
+}
 
 var registry: backend.Registry = undefined;
 const registry_bytes = backend.Registry.memory_bytes(loops);
@@ -138,22 +154,26 @@ const Side = struct {
     memory: [memory_bytes]u8 align(core.layout.memory_alignment) = undefined,
     loop: Loop = undefined,
 
-    /// Posts one message to `target`. Its own completion arrives as an event too, and `receive`
-    /// skips it: an event is the peer's message only when `flags.message` says so.
-    fn post(side: *Side, target: core.LoopId, tag: u32) void {
-        const taken = side.loop.submit(&.{.{ .user_data = 0, .kind = .{ .post = .{
-            .target = target,
-            .message = .{ .payload = 0, .tag = tag },
-        } } }}, &.{});
-        std.debug.assert(taken == 1);
+    /// Posts `count` messages to `target` in one submit, so one flush posts them all. Each one's
+    /// own completion arrives as an event too, and `receive` skips it: an event is the peer's
+    /// message only when `flags.message` says so.
+    fn post(side: *Side, target: core.LoopId, tag: u32, count: u32) void {
+        std.debug.assert(count >= 1 and count <= burst_max);
         std.debug.assert(tag == tag_ping or tag == tag_pong or tag == tag_stop);
+        var batch: [burst_max]core.Operation = undefined;
+        const message: core.Message = .{ .payload = 0, .tag = tag };
+        for (batch[0..count]) |*operation| operation.* = core.Operation.post(0, target, message);
+        const taken = side.loop.submit(batch[0..count], &.{});
+        std.debug.assert(taken == count);
     }
 
-    /// Ticks until the peer's message arrives, and returns its tag.
-    fn receive(side: *Side, mode: Mode) !i32 {
+    /// Ticks until `wanted` of the peer's messages have arrived, or a stop has, and returns the
+    /// tag of the last.
+    fn receive(side: *Side, mode: Mode, wanted: u32) !i32 {
         var events: [events_max]Event = undefined;
         const spin_ns = mode.spin();
         const spin_until_ns = if (spin_ns == 0) 0 else now_ns() + spin_ns;
+        var received: u32 = 0;
         while (true) {
             // No clock read when there is no spin: libuv and libxev read none inside the round
             // trip, and one here would be timed as part of rotor's message.
@@ -161,7 +181,9 @@ const Side = struct {
             const count = try side.loop.tick(&events, if (polling) 0 else mode.wait());
             std.debug.assert(count <= events_max);
             for (events[0..count]) |event| {
-                if (event.flags.message) return event.result;
+                if (!event.flags.message) continue;
+                received += 1;
+                if (event.result == tag_stop or received == wanted) return event.result;
             }
         }
     }
@@ -179,6 +201,7 @@ const Peer = struct {
     side: Side = .{},
     mode: Mode,
     cpu: ?usize,
+    burst: u32,
     failure: ?anyerror = null,
 
     fn run(peer: *Peer) void {
@@ -196,7 +219,9 @@ const Peer = struct {
         defer peer.side.loop.deinit();
         std.debug.assert(peer.side.loop.in_flight() == 0);
 
-        while (try peer.side.receive(peer.mode) != tag_stop) peer.side.post(id_first, tag_pong);
+        while (try peer.side.receive(peer.mode, peer.burst) != tag_stop) {
+            peer.side.post(id_first, tag_pong, 1);
+        }
         try peer.side.drain(peer.mode);
     }
 };
@@ -209,12 +234,12 @@ fn ping_pong(options: Options) !u64 {
     var span_ns: u64 = 0;
     while (round < options.warmup + options.samples) : (round += 1) {
         const before = now_ns();
-        first.post(id_second, tag_ping);
-        const tag = try first.receive(options.mode);
+        first.post(id_second, tag_ping, options.burst);
+        const tag = try first.receive(options.mode, 1);
         std.debug.assert(tag == tag_pong);
         const elapsed = now_ns() - before;
         if (round >= options.warmup) {
-            latencies.record(elapsed / messages_per_round_trip);
+            latencies.record(elapsed / options.messages_per_round_trip());
             span_ns += elapsed;
         }
     }
@@ -233,7 +258,7 @@ fn measure(options: Options) !Result {
     try first.loop.init(&first.memory, loop_options);
     defer first.loop.deinit();
 
-    var peer: Peer = .{ .mode = options.mode, .cpu = options.peer_cpu };
+    var peer: Peer = .{ .mode = options.mode, .cpu = options.peer_cpu, .burst = options.burst };
     const thread = try std.Thread.spawn(.{}, Peer.run, .{&peer});
 
     // The peer publishes its ring when its thread reaches `init`, and not before.
@@ -242,7 +267,7 @@ fn measure(options: Options) !Result {
 
     const span_ns = try ping_pong(options);
 
-    first.post(id_second, tag_stop);
+    first.post(id_second, tag_stop, 1);
     try first.drain(options.mode);
     thread.join();
     if (peer.failure) |err| return err;
@@ -250,7 +275,7 @@ fn measure(options: Options) !Result {
     const pinned = own.names_a_core() and peer_placement.names_a_core();
     return .init(.{
         .workload = "cross-core",
-        .candidate = options.mode.candidate(),
+        .candidate = if (options.burst == 1) options.mode.candidate() else burst_candidate,
         .candidate_version = "this tree",
         .configuration = .{
             // Two cores only when both threads were actually pinned to one each. A host that
@@ -263,11 +288,14 @@ fn measure(options: Options) !Result {
             .load = .even,
         },
         .duration_ns = @max(span_ns, 1),
-        .operations = @as(u64, options.samples) * messages_per_round_trip,
+        .operations = @as(u64, options.samples) * options.messages_per_round_trip(),
     }, &latencies);
 }
 
 const output_buffer_bytes = 4096;
+
+/// The candidate name of a run with bursts: rotor against itself, as the two extra modes are.
+const burst_candidate = "rotor (burst of posts, not a comparison)";
 
 pub fn main(init: std.process.Init) !void {
     const options = try parse(init);
@@ -292,8 +320,14 @@ fn parse(init: std.process.Init) !Options {
         if (index + 1 >= arguments.len) return error.MissingValue;
         try apply(&options, arguments[index], arguments[index + 1]);
     }
-    if (options.samples == 0 or options.samples > samples_max) return error.SampleCount;
+    try validate(options);
     return options;
+}
+
+/// Refuses a run that measures nothing or that asks for more than the slots hold.
+fn validate(options: Options) !void {
+    if (options.samples == 0 or options.samples > samples_max) return error.SampleCount;
+    if (options.burst == 0 or options.burst > burst_max) return error.BurstSize;
 }
 
 fn apply(options: *Options, name: []const u8, value: []const u8) !void {
@@ -307,6 +341,8 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.cpu = try parse_cpu(value);
     } else if (std.mem.eql(u8, name, "--peer-cpu")) {
         options.peer_cpu = try parse_cpu(value);
+    } else if (std.mem.eql(u8, name, "--burst")) {
+        options.burst = try std.fmt.parseInt(u32, value, 10);
     } else {
         return error.UnknownArgument;
     }
@@ -365,8 +401,22 @@ test "a core is a number or the word none, and nothing else" {
     try testing.expectError(error.Overflow, parse_cpu("-1"));
 }
 
-test "a round trip is two messages, so the operation count is twice the samples" {
-    // The constant is what `measure` multiplies by and what `ping_pong` divides by. A change to
-    // one without the other would make the throughput and the percentiles disagree.
-    try testing.expectEqual(@as(u64, 2), messages_per_round_trip);
+test "a round trip is its pings and one pong, so a ping-pong is two messages" {
+    // The count is what `measure` multiplies by and what `ping_pong` divides by. A change to one
+    // without the other would make the throughput and the percentiles disagree.
+    const ping_pong_options: Options = .{};
+    try testing.expectEqual(@as(u32, 2), ping_pong_options.messages_per_round_trip());
+    const burst_options: Options = .{ .burst = 16 };
+    try testing.expectEqual(@as(u32, 17), burst_options.messages_per_round_trip());
+}
+
+test "a burst is at least one ping and at most what the slots hold" {
+    var options: Options = .{};
+    try apply(&options, "--burst", "16");
+    try testing.expectEqual(@as(u32, 16), options.burst);
+    try testing.expectError(error.InvalidCharacter, apply(&options, "--burst", "many"));
+    try validate(options);
+    try validate(.{ .burst = burst_max });
+    try testing.expectError(error.BurstSize, validate(.{ .burst = 0 }));
+    try testing.expectError(error.BurstSize, validate(.{ .burst = burst_max + 1 }));
 }
