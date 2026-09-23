@@ -180,12 +180,19 @@ const Side = struct {
             const polling = spin_until_ns != 0 and now_ns() < spin_until_ns;
             const count = try side.loop.tick(&events, if (polling) 0 else mode.wait());
             std.debug.assert(count <= events_max);
-            for (events[0..count]) |event| {
-                if (!event.flags.message) continue;
-                received += 1;
-                if (event.result == tag_stop or received == wanted) return event.result;
-            }
+            if (count_messages(events[0..count], &received, wanted)) |tag| return tag;
         }
+    }
+
+    /// Counts the peer's messages among `events` into `received`, and answers the tag that ends the
+    /// wait: a stop, or the message that makes `wanted`. Null while the wait goes on.
+    fn count_messages(events: []const Event, received: *u32, wanted: u32) ?i32 {
+        for (events) |event| {
+            if (!event.flags.message) continue;
+            received.* += 1;
+            if (event.result == tag_stop or received.* == wanted) return event.result;
+        }
+        return null;
     }
 
     /// Ticks until nothing this side submitted is still in flight.
