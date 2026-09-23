@@ -8,7 +8,8 @@
 //! kernel's own call rather than `F_FULLFSYNC`.
 //!
 //! EINTR transferred nothing, so the call is made again, a bounded number of times. Every other
-//! errno is the operation's result, through `core.errno.code_of`.
+//! errno is the operation's result, through `core.errno.code_of`. A file operation's call is
+//! `epoll_file_call.zig`'s, which the offload's worker makes too.
 //!
 //! Everything here enters the kernel, so it is tested under Linux alone, through the loop.
 const std = @import("std");
@@ -16,6 +17,7 @@ const assert = std.debug.assert;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
+const file_call = @import("epoll_file_call.zig");
 const address_module = @import("epoll_address.zig");
 const datagram = @import("epoll_datagram.zig");
 const socket_calls = @import("epoll_sync_socket.zig");
@@ -74,9 +76,7 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
         .receive => attempt_receive(loop, slot),
         .send => attempt_send(slot),
         .shutdown => attempt_shutdown(slot),
-        .read => attempt_file(loop, slot, .read),
-        .write => attempt_file(loop, slot, .write),
-        .fdatasync => attempt_sync(loop, slot),
+        .read, .write, .fdatasync => attempt_file(loop, slot),
         .nop => Attempt.done(0),
         .receive_from => attempt_receive_from(loop, slot),
         .send_to => attempt_send_to(slot),
@@ -254,8 +254,6 @@ fn attempt_shutdown(slot: *const Slot) Attempt {
     return Attempt.failed(linux.errno(rc));
 }
 
-const Transfer = enum { read, write };
-
 /// What the loop's policy says to do with a file operation (decision 18). `refuse` is the default,
 /// because a stall nobody asked for is the complaint that record answers.
 fn policy_attempt(loop: *const Loop) ?Attempt {
@@ -266,42 +264,12 @@ fn policy_attempt(loop: *const Loop) ?Attempt {
     };
 }
 
-/// A file transfer under the `blocking` policy runs inline and blocks the loop for its duration
-/// (decisions 2 and 20). Under `refuse` it never runs, and under `offload` a worker runs it.
-fn attempt_file(loop: *const Loop, slot: *const Slot, transfer: Transfer) Attempt {
+/// A file operation under the `blocking` policy runs inline and blocks the loop for its duration
+/// (decisions 2 and 20). Under `refuse` it never runs, and under `offload` a worker runs it through
+/// the same `file_call.result`.
+fn attempt_file(loop: *const Loop, slot: *const Slot) Attempt {
     if (policy_attempt(loop)) |decided| return decided;
-    const bytes = slot.bytes();
-    const offset: i64 = @intCast(slot.offset);
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = switch (transfer) {
-            .read => linux.pread(slot.descriptor, bytes.ptr, bytes.len, offset),
-            .write => linux.pwrite(slot.descriptor, bytes.ptr, bytes.len, offset),
-        };
-        switch (answer_of(rc)) {
-            .retry => continue,
-            // A regular file never answers EAGAIN; a descriptor that does is not a file, and
-            // waiting for it is not what a file operation promises.
-            .would_block => return Attempt.done(core.event.result_of(.would_block)),
-            .errno => |errno| return Attempt.failed(errno),
-            .value => |count| return Attempt.done(@intCast(count)),
-        }
-    }
-    return Attempt.done(core.event.result_of(.would_block));
-}
-
-fn attempt_sync(loop: *const Loop, slot: *const Slot) Attempt {
-    if (policy_attempt(loop)) |decided| return decided;
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = linux.fdatasync(slot.descriptor);
-        switch (linux.errno(rc)) {
-            .SUCCESS => return Attempt.done(0),
-            .INTR => continue,
-            else => |errno| return Attempt.failed(errno),
-        }
-    }
-    return Attempt.done(core.event.result_of(.would_block));
+    return Attempt.done(file_call.result(core.file_call.request_of_slot(slot)));
 }
 
 comptime {

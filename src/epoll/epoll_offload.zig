@@ -25,10 +25,9 @@
 //! sees the ring non-empty.
 const std = @import("std");
 const assert = std.debug.assert;
-const linux = std.os.linux;
 const core = @import("core");
 const queue_module = @import("epoll_queue.zig");
-const constants = @import("constants.zig");
+const file_call = @import("epoll_file_call.zig");
 const epoll = @import("epoll.zig");
 
 const Loop = epoll.Loop;
@@ -117,7 +116,9 @@ fn run(work: *Work, worker: u16) void {
     // ReleaseSafe, where the bounds check is on. An `assert` of the index stood here until
     // 2026-09-22; no halt scenario could prove it, because this bounds check halts as well.
     const ring = &loop.completions[worker];
-    const result = perform(work);
+    // The call the inline attempt of `epoll_perform.zig` makes too, so the policy changes which
+    // thread makes it and nothing else.
+    const result = file_call.result(core.file_call.request_of_work(work));
 
     // The ring holds `mailbox_messages` per worker. A caller that hands one worker more operations
     // than that without letting the loop run has overrun it, and dropping the message would owe an
@@ -142,44 +143,6 @@ fn tag_of(result: i32) u32 {
 
 fn result_of_tag(tag: u32) i32 {
     return @bitCast(tag);
-}
-
-/// The system call, on the worker's thread. These are the same calls `epoll_perform.zig` makes
-/// inline, so the policy changes which thread runs them and nothing else.
-fn perform(work: *const Work) i32 {
-    return switch (work.code) {
-        .read, .write => transfer(work),
-        .fdatasync => sync(work.descriptor),
-    };
-}
-
-fn transfer(work: *const Work) i32 {
-    const buffer: [*]u8 = @ptrFromInt(work.buffer);
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = switch (work.code) {
-            .read => linux.pread(work.descriptor, buffer, work.length, @intCast(work.offset)),
-            .write => linux.pwrite(work.descriptor, buffer, work.length, @intCast(work.offset)),
-            .fdatasync => unreachable,
-        };
-        const errno = linux.errno(rc);
-        if (errno == .SUCCESS) return @intCast(rc);
-        if (errno != .INTR) return core.event.result_of(core.errno.code_of(errno));
-    }
-    return core.event.result_of(.would_block);
-}
-
-/// Linux has `fdatasync` itself, so there is no `F_FULLFSYNC` dance as on macOS: the operation's
-/// name and the system call's name are the same thing here.
-fn sync(descriptor: core.Descriptor) i32 {
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = linux.fdatasync(descriptor);
-        const errno = linux.errno(rc);
-        if (errno == .SUCCESS) return 0;
-        if (errno != .INTR) return core.event.result_of(core.errno.code_of(errno));
-    }
-    return core.event.result_of(.would_block);
 }
 
 /// Moves every result the workers pushed into the loop's finished list, on the loop thread. The

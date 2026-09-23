@@ -378,6 +378,7 @@ comptime {
 }
 
 test {
+    _ = @import("epoll_file_call.zig");
     _ = @import("epoll_loop_test.zig");
     _ = constants;
     _ = address;

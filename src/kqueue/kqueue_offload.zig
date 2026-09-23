@@ -25,10 +25,9 @@
 //! sees the ring non-empty.
 const std = @import("std");
 const assert = std.debug.assert;
-const posix = std.posix;
 const core = @import("core");
 const queue_module = @import("kqueue_queue.zig");
-const constants = @import("constants.zig");
+const file_call = @import("kqueue_file_call.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
@@ -117,7 +116,9 @@ fn run(work: *Work, worker: u16) void {
     // ReleaseSafe, where the bounds check is on. An `assert` of the index stood here until
     // 2026-09-22; no halt scenario could prove it, because this bounds check halts as well.
     const ring = &loop.completions[worker];
-    const result = perform(work);
+    // The call the inline attempt of `kqueue_perform.zig` makes too, so the policy changes which
+    // thread makes it and nothing else.
+    const result = file_call.result(core.file_call.request_of_work(work));
 
     // The ring holds `mailbox_messages` per worker. A caller that hands one worker more operations
     // than that without letting the loop run has overrun it, and dropping the message would owe an
@@ -141,41 +142,6 @@ fn tag_of(result: i32) u32 {
 
 fn result_of_tag(tag: u32) i32 {
     return @bitCast(tag);
-}
-
-/// The system call, on the worker's thread. These are the same calls `kqueue_perform.zig` makes
-/// inline, so the policy changes which thread runs them and nothing else.
-fn perform(work: *const Work) i32 {
-    return switch (work.code) {
-        .read, .write => transfer(work),
-        .fdatasync => sync(work.descriptor),
-    };
-}
-
-fn transfer(work: *const Work) i32 {
-    const buffer: [*]u8 = @ptrFromInt(work.buffer);
-    const offset: i64 = @intCast(work.offset);
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = switch (work.code) {
-            .read => std.c.pread(work.descriptor, buffer, work.length, offset),
-            .write => std.c.pwrite(work.descriptor, buffer, work.length, offset),
-            .fdatasync => unreachable,
-        };
-        if (rc >= 0) return @intCast(rc);
-        switch (posix.errno(rc)) {
-            .INTR => continue,
-            else => |code| return core.event.result_of(core.errno.code_of(code)),
-        }
-    }
-    return core.event.result_of(.would_block);
-}
-
-/// `F_FULLFSYNC` gives `fdatasync` its meaning on macOS, as the inline path does.
-fn sync(descriptor: core.Descriptor) i32 {
-    if (std.c.fcntl(descriptor, std.c.F.FULLFSYNC, @as(c_int, 0)) == 0) return 0;
-    if (std.c.fsync(descriptor) == 0) return 0;
-    return core.event.result_of(core.errno.code_of(posix.errno(-1)));
 }
 
 /// Moves every result the workers pushed into the loop's finished list, on the loop thread. The

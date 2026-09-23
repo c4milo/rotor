@@ -8,6 +8,7 @@ pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
 pub const errno = @import("errno.zig");
 pub const event = @import("event.zig");
+pub const file_call = @import("file_call.zig");
 pub const handle = @import("handle.zig");
 pub const layout = @import("layout.zig");
 pub const mailbox = @import("mailbox.zig");
@@ -43,6 +44,7 @@ test {
     _ = datagram;
     _ = errno;
     _ = event;
+    _ = file_call;
     _ = handle;
     _ = layout;
     _ = mailbox;

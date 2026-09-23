@@ -374,6 +374,7 @@ test {
     _ = testing;
     _ = tick_module;
     _ = offload_module;
+    _ = @import("kqueue_file_call.zig");
     _ = @import("kqueue_mailbox_test.zig");
     _ = @import("kqueue_offload_test.zig");
     _ = @import("kqueue_perform_test.zig");

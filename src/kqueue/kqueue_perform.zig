@@ -3,7 +3,8 @@
 //! and says what came of it: a result, or a filter to wait on because the call would block.
 //!
 //! EINTR transferred nothing, so the call is made again, a bounded number of times. Every other
-//! errno is the operation's result, through `core.errno.code_of`.
+//! errno is the operation's result, through `core.errno.code_of`. A file operation's call is
+//! `kqueue_file_call.zig`'s, which the offload's worker makes too.
 //!
 //! Everything here enters the kernel, so it is tested under macOS alone, through the loop.
 const std = @import("std");
@@ -12,6 +13,7 @@ const posix = std.posix;
 const core = @import("core");
 const datagram = @import("kqueue_datagram.zig");
 const constants = @import("constants.zig");
+const file_call = @import("kqueue_file_call.zig");
 const address_module = @import("kqueue_address.zig");
 const sync = @import("kqueue_sync.zig");
 const socket_calls = @import("kqueue_sync_socket.zig");
@@ -70,9 +72,7 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
         .receive => attempt_receive(loop, slot),
         .send => attempt_send(slot),
         .shutdown => attempt_shutdown(slot),
-        .read => attempt_file(loop, slot, .read),
-        .write => attempt_file(loop, slot, .write),
-        .fdatasync => attempt_sync(loop, slot),
+        .read, .write, .fdatasync => attempt_file(loop, slot),
         .nop => Attempt.done(0),
         .receive_from => attempt_receive_from(loop, slot),
         .send_to => attempt_send_to(slot),
@@ -234,8 +234,6 @@ fn attempt_shutdown(slot: *const Slot) Attempt {
     return Attempt.failed(posix.errno(rc));
 }
 
-const Transfer = enum { read, write };
-
 /// What the loop's policy says to do with a file operation (decision 18). `refuse` is the default,
 /// because a stall nobody asked for is the complaint that record answers.
 fn policy_attempt(loop: *const Loop) ?Attempt {
@@ -246,37 +244,12 @@ fn policy_attempt(loop: *const Loop) ?Attempt {
     };
 }
 
-/// A file transfer under the `blocking` policy runs inline and blocks the loop for its duration
-/// (decisions 2 and 12). Under `refuse` it never runs, and under `offload` a worker runs it.
-fn attempt_file(loop: *const Loop, slot: *const Slot, transfer: Transfer) Attempt {
+/// A file operation under the `blocking` policy runs inline and blocks the loop for its duration
+/// (decisions 2 and 12). Under `refuse` it never runs, and under `offload` a worker runs it through
+/// the same `file_call.result`.
+fn attempt_file(loop: *const Loop, slot: *const Slot) Attempt {
     if (policy_attempt(loop)) |decided| return decided;
-    const bytes = slot.bytes();
-    const offset: i64 = @intCast(slot.offset);
-    var retry: u32 = 0;
-    while (retry <= constants.interrupt_retries_max) : (retry += 1) {
-        const rc = switch (transfer) {
-            .read => std.c.pread(slot.descriptor, bytes.ptr, bytes.len, offset),
-            .write => std.c.pwrite(slot.descriptor, bytes.ptr, bytes.len, offset),
-        };
-        switch (answer_of(rc)) {
-            .retry => continue,
-            .would_block => return Attempt.done(core.event.result_of(.would_block)),
-            .errno => |errno| return Attempt.failed(errno),
-            .value => |count| return Attempt.done(@intCast(count)),
-        }
-    }
-    return Attempt.done(core.event.result_of(.would_block));
-}
-
-/// `F_FULLFSYNC` is what makes the promise of `fdatasync` true on macOS: a plain fsync leaves
-/// the bytes in the drive's cache. A filesystem that does not know it gets a plain fsync.
-fn attempt_sync(loop: *const Loop, slot: *const Slot) Attempt {
-    if (policy_attempt(loop)) |decided| return decided;
-    const full = std.c.fcntl(slot.descriptor, std.c.F.FULLFSYNC, @as(c_int, 0));
-    if (full == 0) return Attempt.done(0);
-    const rc = std.c.fsync(slot.descriptor);
-    if (rc == 0) return Attempt.done(0);
-    return Attempt.failed(posix.errno(rc));
+    return Attempt.done(file_call.result(core.file_call.request_of_slot(slot)));
 }
 
 comptime {
