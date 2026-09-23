@@ -84,7 +84,8 @@ const Side = struct {
         // The spin, when there is one: tick without waiting until the budget is spent.
         const spin_until_ns = if (mode.spin_ns == 0) 0 else now_ns() + mode.spin_ns;
         while (true) {
-            const spinning = now_ns() < spin_until_ns;
+            // No clock read when there is no spin, so the waiting mode times the message alone.
+            const spinning = spin_until_ns != 0 and now_ns() < spin_until_ns;
             const count = try side.loop.tick(&events, if (spinning) 0 else mode.wait_ns);
             for (events[0..count]) |event| {
                 if (event.flags.message) return event.result;

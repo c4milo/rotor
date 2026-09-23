@@ -155,7 +155,9 @@ const Side = struct {
         const spin_ns = mode.spin();
         const spin_until_ns = if (spin_ns == 0) 0 else now_ns() + spin_ns;
         while (true) {
-            const polling = now_ns() < spin_until_ns;
+            // No clock read when there is no spin: libuv and libxev read none inside the round
+            // trip, and one here would be timed as part of rotor's message.
+            const polling = spin_until_ns != 0 and now_ns() < spin_until_ns;
             const count = try side.loop.tick(&events, if (polling) 0 else mode.wait());
             std.debug.assert(count <= events_max);
             for (events[0..count]) |event| {
