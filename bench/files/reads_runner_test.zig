@@ -10,7 +10,6 @@ const Numbers = runner.Numbers;
 const Options = runner.Options;
 const argv_max = runner.argv_max;
 const candidates = runner.candidates;
-const configurations_max = runner.configurations_max;
 const patterns = runner.patterns;
 const transfers = runner.transfers;
 const testing = std.testing;
@@ -24,16 +23,6 @@ test "a block size O_DIRECT cannot use is refused" {
     try runner.check_block_bytes(512);
     try runner.check_block_bytes(4096);
     try runner.check_block_bytes(65536);
-}
-
-test "a depth list is read, and an empty or oversized one is refused" {
-    var buffer: [configurations_max]u32 = undefined;
-    try testing.expectEqualSlices(u32, &.{ 1, 32 }, try runner.parse_list("1,32", &buffer));
-    try testing.expectError(error.InvalidCharacter, runner.parse_list("", &buffer));
-    try testing.expectError(error.EmptyConfiguration, runner.parse_list("1,0", &buffer));
-
-    var small: [1]u32 = undefined;
-    try testing.expectError(error.TooManyValues, runner.parse_list("1,32", &small));
 }
 
 test "the two rotor candidates differ only in registration, and both name it" {

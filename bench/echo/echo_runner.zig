@@ -348,19 +348,6 @@ const memory_reported_here = switch (@import("builtin").os.tag) {
     else => false,
 };
 
-fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
-    var count: usize = 0;
-    var pieces = std.mem.splitScalar(u8, text, ',');
-    while (pieces.next()) |piece| {
-        if (count == buffer.len) return error.TooManyValues;
-        buffer[count] = try std.fmt.parseInt(u32, piece, 10);
-        if (buffer[count] == 0) return error.EmptyConfiguration;
-        count += 1;
-    }
-    if (count == 0) return error.EmptyConfiguration;
-    return buffer[0..count];
-}
-
 fn parse(init: std.process.Init) !Options {
     const arguments = try init.minimal.args.toSlice(init.arena.allocator());
     var options: Options = .{};
@@ -392,9 +379,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     } else if (std.mem.eql(u8, name, "--directory")) {
         options.directory = value;
     } else if (std.mem.eql(u8, name, "--connections")) {
-        options.connections = try parse_list(value, &setup.connections_buffer);
+        options.connections = try harness.candidates.parse_list(value, &setup.connections_buffer);
     } else if (std.mem.eql(u8, name, "--payloads")) {
-        options.payloads = try parse_list(value, &setup.payloads_buffer);
+        options.payloads = try harness.candidates.parse_list(value, &setup.payloads_buffer);
     } else if (std.mem.eql(u8, name, "--baseline")) {
         options.baseline_path = value;
     } else if (std.mem.eql(u8, name, "--write-baseline")) {

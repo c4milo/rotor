@@ -297,7 +297,7 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     if (std.mem.eql(u8, name, "--rounds")) {
         options.rounds = try std.fmt.parseInt(u32, value, 10);
     } else if (std.mem.eql(u8, name, "--timers")) {
-        options.timers = try parse_list(value, &timers_buffer);
+        options.timers = try harness.candidates.parse_list(value, &timers_buffer);
     } else if (std.mem.eql(u8, name, "--period-us")) {
         options.period_us = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--seconds")) {
@@ -321,24 +321,6 @@ fn check_period(period_us: u64) !void {
     if (period_us % period_us_min != 0) return error.PeriodNotWholeMilliseconds;
 }
 
-/// Reads a comma-separated list of counts into `buffer`.
-///
-/// An empty list refuses itself: `splitScalar` yields one empty piece for the empty string, and
-/// `parseInt` refuses that as `InvalidCharacter`. So the count is never 0 on return, and a guard
-/// for it would be a branch nothing can reach. `bench/echo/echo_runner.zig` carries such a guard.
-fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
-    var count: usize = 0;
-    var pieces = std.mem.splitScalar(u8, text, ',');
-    while (pieces.next()) |piece| {
-        if (count == buffer.len) return error.TooManyValues;
-        buffer[count] = try std.fmt.parseInt(u32, piece, 10);
-        if (buffer[count] == 0) return error.EmptyConfiguration;
-        count += 1;
-    }
-    std.debug.assert(count >= 1);
-    return buffer[0..count];
-}
-
 const testing = std.testing;
 
 test "a period libuv cannot state exactly is refused, not rounded" {
@@ -353,23 +335,6 @@ test "a period libuv cannot state exactly is refused, not rounded" {
     try check_period(1000);
     try check_period(2000);
     try check_period(1_000_000);
-}
-
-test "a timer list is read, and an empty or oversized one is refused" {
-    var buffer: [configurations_max]u32 = undefined;
-    try testing.expectEqualSlices(u32, &.{ 16, 256 }, try parse_list("16,256", &buffer));
-    try testing.expectEqualSlices(u32, &.{64}, try parse_list("64", &buffer));
-
-    // The empty list is refused as a bad number and not as an empty configuration: the split
-    // yields one empty piece, and `parseInt` refuses that first.
-    try testing.expectError(error.InvalidCharacter, parse_list("", &buffer));
-    try testing.expectError(error.EmptyConfiguration, parse_list("16,0", &buffer));
-    try testing.expectError(error.EmptyConfiguration, parse_list("0", &buffer));
-    try testing.expectError(error.InvalidCharacter, parse_list("16,many", &buffer));
-    try testing.expectError(error.InvalidCharacter, parse_list("16,", &buffer));
-
-    var small: [1]u32 = undefined;
-    try testing.expectError(error.TooManyValues, parse_list("16,256", &small));
 }
 
 test "every candidate has a distinct name, and its arguments come in pairs" {

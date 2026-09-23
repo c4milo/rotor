@@ -137,6 +137,24 @@ pub fn render_row(
     return true;
 }
 
+/// Reads a comma-separated list of counts into `buffer`, the form every runner takes its
+/// connection counts, payloads, timer counts, depths and block sizes in. A 0 is refused, because a
+/// configuration of nothing measures nothing. The empty list refuses itself: `splitScalar` yields
+/// one empty piece for the empty string, and `parseInt` refuses that as `InvalidCharacter`, so the
+/// count is never 0 on return.
+pub fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
+    var count: usize = 0;
+    var pieces = std.mem.splitScalar(u8, text, ',');
+    while (pieces.next()) |piece| {
+        if (count == buffer.len) return error.TooManyValues;
+        buffer[count] = try std.fmt.parseInt(u32, piece, 10);
+        if (buffer[count] == 0) return error.EmptyConfiguration;
+        count += 1;
+    }
+    assert(count >= 1);
+    return buffer[0..count];
+}
+
 /// True when a program is on disk at `path`.
 pub fn installed(io: std.Io, path: []const u8) bool {
     assert(path.len >= 1);
@@ -221,6 +239,23 @@ test "a candidate without enough runs of one series gets a line and no row, and 
     writer = std.Io.Writer.fixed(&buffer);
     try testing.expect(!try render_row(&writer, "timers_runner", "libuv", &mixed, .empty));
     try testing.expect(std.mem.indexOf(u8, writer.buffered(), "not one series") != null);
+}
+
+test "a list of counts is read, and an empty, zero or oversized one is refused" {
+    var buffer: [4]u32 = undefined;
+    try testing.expectEqualSlices(u32, &.{ 16, 256 }, try parse_list("16,256", &buffer));
+    try testing.expectEqualSlices(u32, &.{64}, try parse_list("64", &buffer));
+
+    // The empty list is refused as a bad number and not as an empty configuration: the split
+    // yields one empty piece, and `parseInt` refuses that first.
+    try testing.expectError(error.InvalidCharacter, parse_list("", &buffer));
+    try testing.expectError(error.EmptyConfiguration, parse_list("16,0", &buffer));
+    try testing.expectError(error.EmptyConfiguration, parse_list("0", &buffer));
+    try testing.expectError(error.InvalidCharacter, parse_list("16,many", &buffer));
+    try testing.expectError(error.InvalidCharacter, parse_list("16,", &buffer));
+
+    var small: [1]u32 = undefined;
+    try testing.expectError(error.TooManyValues, parse_list("16,256", &small));
 }
 
 test "a path is the directory and the program, and a full buffer is an error" {

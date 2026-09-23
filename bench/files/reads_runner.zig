@@ -385,9 +385,9 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     if (std.mem.eql(u8, name, "--rounds")) {
         options.rounds = try std.fmt.parseInt(u32, value, 10);
     } else if (std.mem.eql(u8, name, "--depths")) {
-        options.depths = try parse_list(value, &depths_buffer);
+        options.depths = try harness.candidates.parse_list(value, &depths_buffer);
     } else if (std.mem.eql(u8, name, "--blocks")) {
-        options.blocks = try parse_list(value, &blocks_buffer);
+        options.blocks = try harness.candidates.parse_list(value, &blocks_buffer);
     } else if (std.mem.eql(u8, name, "--seconds")) {
         options.seconds = try std.fmt.parseInt(u64, value, 10);
     } else if (std.mem.eql(u8, name, "--file-bytes")) {
@@ -399,21 +399,6 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
     } else {
         return error.UnknownArgument;
     }
-}
-
-/// Reads a comma-separated list of counts into `buffer`. The empty list refuses itself: the split
-/// yields one empty piece and `parseInt` refuses that.
-pub fn parse_list(text: []const u8, buffer: []u32) ![]const u32 {
-    var count: usize = 0;
-    var pieces = std.mem.splitScalar(u8, text, ',');
-    while (pieces.next()) |piece| {
-        if (count == buffer.len) return error.TooManyValues;
-        buffer[count] = try std.fmt.parseInt(u32, piece, 10);
-        if (buffer[count] == 0) return error.EmptyConfiguration;
-        count += 1;
-    }
-    std.debug.assert(count >= 1);
-    return buffer[0..count];
 }
 
 test {
