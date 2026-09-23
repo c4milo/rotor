@@ -75,6 +75,84 @@ test "a repeating timer fires again and again, and a cancel ends it with one fin
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }
 
+/// Ticks the scenarios below wait for a cancelled timer's final event, each up to a period. A timer
+/// whose cancel was lost fires with `more` in every one of them.
+const final_rounds_max = 8;
+
+/// Submits two repeating timers in one batch, so one flush arms both for the same deadline, and
+/// ticks with room for one event until a fire arrives. Both are due in that tick, and the tick
+/// hands over one: the other timer's fire stays queued in the loop for the next tick. Answers the
+/// position in `handles` of the timer whose fire was not handed over.
+fn one_fire_left_queued(harness: *Harness, handles: *[2]core.Handle) !usize {
+    try harness.submit(&.{
+        repeating(21, period_ns, period_ns),
+        repeating(22, period_ns, period_ns),
+    }, handles);
+    var one: [1]Event = undefined;
+    try harness.collect(&one);
+    try testing.expect(one[0].flags.more);
+    try testing.expectEqual(@as(u32, 2), harness.loop.in_flight());
+    return if (one[0].user_data == 21) 1 else 0;
+}
+
+/// Ticks until the event for `user_data` that says no `more` arrives, and answers it, with how many
+/// events for `user_data` came before it. Fails when it has not come in `final_rounds_max` ticks.
+fn await_final(harness: *Harness, user_data: u64, before: *u32) !Event {
+    var events: [4]Event = undefined;
+    var round: u32 = 0;
+    while (round < final_rounds_max) : (round += 1) {
+        const count = try harness.loop.tick(&events, period_ns);
+        for (events[0..count]) |event| {
+            if (event.user_data != user_data) continue;
+            if (!event.flags.more) return event;
+            before.* += 1;
+        }
+    }
+    return error.FinalEventMissing;
+}
+
+test "a cancel of a repeating timer whose fire is queued and not handed over still ends it" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+
+    var handles: [2]core.Handle = undefined;
+    const left = try one_fire_left_queued(&harness, &handles);
+    const left_user_data: u64 = if (left == 0) 21 else 22;
+
+    // The cancel comes between the tick that queued the fire and the tick that hands it over.
+    // Decision 5, rule 2 answers it with the timer's final event. The cancel replaces the queued
+    // fire, by the owner's ruling of 2026-09-23: the next event is that final one, and it says
+    // `canceled` (decision 14, rule 5).
+    harness.loop.cancel(handles[left]);
+    var before: u32 = 0;
+    const final = try await_final(&harness, left_user_data, &before);
+    try testing.expectEqual(@as(u32, 0), before);
+    try testing.expectError(error.Canceled, final.outcome());
+    // The other timer still repeats, and nothing else of the cancelled one is left in the loop.
+    try testing.expectEqual(@as(u32, 1), harness.loop.in_flight());
+
+    harness.loop.cancel(handles[1 - left]);
+    var events: [4]Event = undefined;
+    try harness.loop.drain(&events);
+}
+
+test "cancel_all and drain end a repeating timer whose fire is queued and not handed over" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+
+    var handles: [2]core.Handle = undefined;
+    _ = try one_fire_left_queued(&harness, &handles);
+    // Decision 5, rule 7: every operation ends, the one whose fire is queued among them.
+    harness.loop.cancel_all();
+    var events: [4]Event = undefined;
+    try harness.loop.drain(&events);
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+}
+
 /// Periods a held-off loop misses before it ticks again.
 const missed = 4;
 

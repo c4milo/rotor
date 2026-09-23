@@ -4,6 +4,10 @@ Status: accepted on 2026-09-20, by the owner, after the timer churn benchmark sh
 absence costs. Decision 2's scope table says "timers: arm, cancel", and nothing in any record
 chose to leave a repeat out; it was never considered.
 
+Amended on 2026-09-23, by the owner: a cancel of a repeating timer whose fire is queued in the loop
+and not yet handed over replaces that fire, and rule 5 says so. The Lean model found that such a
+cancel was dropped and the timer kept firing (`proofs/README.md`, "What the proofs found").
+
 ## What the benchmark showed
 
 `bench/timers/rotor_timers.zig` keeps N timers armed and re-arms each as it fires, because that
@@ -53,7 +57,11 @@ pub const Timer = struct { after_ns: u64, repeat_ns: u64 = 0 };
    is the kind of difference that is otherwise found in production.
 5. **Cancel is what it already is**: synchronous, raceless, and answered with one final event
    (decision 5, rule 5). A repeating timer that is cancelled stops; its final event says
-   `canceled`.
+   `canceled`. A tick can queue a fire and leave it for the next tick, when the caller's events
+   have no room for it. A cancel between those ticks replaces the queued fire: that event becomes
+   the final one and says `canceled`, and the fire is not handed over. A cancel of a timer whose
+   deadline passed before the loop expired it drops that fire the same way, so the caller gets one
+   answer whichever happened first.
 
 ## What it costs in memory: nothing
 
@@ -103,6 +111,10 @@ Every check is on the real kernel, on both backends: rotor has no simulator (dec
 5. Mutations, reported `CAUGHT` or `NOT CAUGHT`: the next deadline taken from the clock instead
    of the last deadline, the `more` flag left off, the `more` flag left on for the final event,
    the slot released on a fire, a missed deadline skipped, `repeat_ns` of 0 treated as repeating.
+6. Two scenarios for rule 5's queued fire: two repeating timers come due together, and a tick has
+   room for one event. A cancel of the timer whose fire was left queued is answered by its next
+   event, final and `canceled`. A second scenario reaches the same state, and `cancel_all` then
+   `drain` empties the loop.
 
 ## What it does not change
 

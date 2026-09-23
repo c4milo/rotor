@@ -297,6 +297,23 @@ fn size_the_rings_for_more_workers_than_the_limit() void {
     _ = core.offload.memory_bytes(core.constants.offload_workers_max + 1);
 }
 
+/// A backend reaches `request_cancel` through `cancellable` or `next_cancellable`, and both refuse
+/// a finishing slot unless it is a repeating timer whose fire is queued. This one-shot timer's
+/// final event is queued, so a cancel must not reach it: with the assertion gone, the cancel
+/// would overwrite the result the caller is owed.
+fn cancel_a_slot_whose_final_event_is_queued() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, .{});
+    const timer = [_]core.Operation{
+        .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
+    };
+    _ = tables.submit(&timer, &.{});
+    const index = tables.pending.pop(tables.table.slots).?;
+    tables.finish_local(index, 0);
+    scenario.reached_violation();
+    _ = tables.request_cancel(index, tables.table.at(index));
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "slot_table: release a free slot", .run = release_a_free_slot },
     .{
@@ -375,6 +392,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "offload: size the rings for more workers than the limit",
         .run = size_the_rings_for_more_workers_than_the_limit,
+    },
+    .{
+        .name = "tables: cancel a slot whose final event is queued",
+        .run = cancel_a_slot_whose_final_event_is_queued,
     },
 };
 

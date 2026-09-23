@@ -12,8 +12,10 @@ alone:
   under a new generation, so no later event can carry the old handle (decision 5, rule 1).
 - `cancel_submitted`: a cancel of an armed timer ends it at once, and its next event is final and
   says canceled (decision 5, rules 2 and 5).
-- `lost_cancel`: a cancel of a repeating timer whose fire is queued and not yet handed over is
-  dropped, and the timer fires again. It contradicts decision 5, rule 2 and decision 14, rule 5.
+- `cancel_finishing`: a cancel of a repeating timer whose fire is queued and not yet handed over
+  replaces that fire with `canceled`, and changes nothing else.
+- `cancel_not_lost`: in the state where such a cancel used to be dropped, the next tick hands over
+  the timer's final event, and it says canceled (decision 5, rule 2 and decision 14, rule 5).
 -/
 
 namespace Rotor.Timers
@@ -113,25 +115,38 @@ theorem cancel_submitted (t : Tables) (h : Handle) (hs : (t.slots h.index).state
     finishLocal, set_slots_same, repeats, Bool.not_true, Bool.and_false]
   refine ⟨?_, ?_, ?_, ?_, ?_⟩ <;> first | trivial | rfl
 
-/-- **A cancel can be lost.** Two fires are queued, and a tick has room to hand over one: the
-first is handed over, and the second timer's slot stays `finishing`. `cancellable` refuses a
-finishing slot, so a cancel of the second timer between the ticks changes nothing, and the next
-tick hands its fire over with `more` and arms it again. The caller asked for the timer to stop,
-and decision 5, rule 2 answers a cancel with the operation's final event; none comes, and the
-timer keeps firing.
+/-- A cancel, through a current handle, of a repeating timer whose fire is queued and not yet
+handed over: the slot is marked and its result becomes `canceled`, and nothing else changes. It
+stays `finishing` in its place on the finished list, and the heap does not hold it. -/
+theorem cancel_finishing (t : Tables) (h : Handle) (hs : (t.slots h.index).state = .finishing)
+    (hg : (t.slots h.index).generation = h.generation)
+    (hrep : repeats (t.slots h.index) = true) :
+    cancel t h =
+      t.set h.index { t.slots h.index with cancelRequested := true, result := canceled } := by
+  have hnot : (t.slots h.index).cancelRequested = false := by
+    simp only [repeats, Bool.and_eq_true, Bool.not_eq_true'] at hrep; exact hrep.2
+  have hc : cancellable t h = true := by simp [cancellable, hs, hg, hrep]
+  simp only [cancel, hc, ↓reduceIte, requestCancel, hnot, Bool.false_eq_true, hs, reduceCtorEq]
 
-It needs only that the two queued fires are of different slots, and that the second repeats. A
-tick queues a fire for every timer that is due, and hands over as many as its events have room
-for, so any loop with more timers due at once than its tick's events hold reaches this state. -/
-theorem lost_cancel (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ b)
+/-- **A cancel of a queued fire is not lost.** Two fires are queued, and a tick has room to hand
+over one: the first is handed over, and the second timer's slot stays `finishing`. A cancel of the
+second timer between the ticks replaces its queued fire with `canceled`. The next tick hands that
+event over as the timer's final one: it says canceled and no `more`, and the slot is free under a
+new generation, so no later event carries the handle.
+
+Until the owner's ruling of 2026-09-23 this theorem was `lost_cancel`, and it proved the opposite:
+`cancellable` refused a finishing slot, so the cancel changed nothing, and the next tick handed the
+fire over with `more` and armed the timer again. -/
+theorem cancel_not_lost (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ b)
     (hfin : t.finished = a :: b :: rest) (hb : (t.slots b).state = .finishing)
     (hrep : repeats (t.slots b) = true) :
     let first := drain t 1
     let h : Handle := ⟨b, (t.slots b).generation⟩
-    let cancelled := cancel first.1 h
-    cancelled = first.1 ∧
-      (drain cancelled 1).2.map (·.more) = [true] ∧
-      ((drain cancelled 1).1.slots b).state = .submitted := by
+    let second := drain (cancel first.1 h) 1
+    second.2 = [{ handle := h, userData := (t.slots b).userData, result := canceled,
+                  more := false }] ∧
+      (second.1.slots b).state = .free ∧
+      (second.1.slots b).generation = (t.slots b).generation + 1 := by
   have hba : b ≠ a := Ne.symm hab
   -- After the first tick's drain, b is still finishing and heads the finished list.
   have hfirst : (drain t 1).1.finished = b :: rest ∧ (drain t 1).1.slots b = t.slots b := by
@@ -141,16 +156,22 @@ theorem lost_cancel (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ b)
     · simp only [ha, Bool.false_eq_true, ↓reduceIte, drain, release_finished,
         release_other _ hba, and_self]
   simp only
-  have hdrop : cancel (drain t 1).1 ⟨b, (t.slots b).generation⟩ = (drain t 1).1 := by
-    have : cancellable (drain t 1).1 ⟨b, (t.slots b).generation⟩ = false := by
-      simp [cancellable, hfirst.2, hb]
-    simp [cancel, this]
-  rw [hdrop]
-  have hrep' : repeats ((drain t 1).1.slots b) = true := by rw [hfirst.2]; exact hrep
-  have := drain_repeating (drain t 1).1 b rest hfirst.1 hrep'
-  simp only at this
-  refine ⟨rfl, ?_, this.2.1⟩
-  rw [this.1]
-  rfl
+  -- The cancel reaches b, and only marks it and replaces its result.
+  have hs1 : ((drain t 1).1.slots b).state = .finishing := by rw [hfirst.2]; exact hb
+  have hr1 : repeats ((drain t 1).1.slots b) = true := by rw [hfirst.2]; exact hrep
+  rw [cancel_finishing (drain t 1).1 ⟨b, (t.slots b).generation⟩ hs1 (by rw [hfirst.2]) hr1]
+  simp only
+  -- The next drain hands b's event over as its final one.
+  have hfin' : ((drain t 1).1.set b
+      { (drain t 1).1.slots b with cancelRequested := true, result := canceled }).finished =
+      b :: rest := by rw [set_finished]; exact hfirst.1
+  have hfinal : repeats (((drain t 1).1.set b
+      { (drain t 1).1.slots b with cancelRequested := true, result := canceled }).slots b) =
+      false := by
+    simp [repeats]
+  have := drain_final _ b rest hfin' hfinal
+  simp only [set_slots_same] at this
+  simp only [hfirst.2] at this ⊢
+  exact this
 
 end Rotor.Timers

@@ -101,12 +101,17 @@ theorem cancel_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (h : 
     · rename_i hnot
       split
       · rename_i hq
-        exact ⟨m, mark_good t m g h.index (by rw [hq]; decide), rfl⟩
+        exact ⟨m, mark_good t m g h.index _ (by rw [hq]; decide) (Or.inl rfl), rfl⟩
       · rename_i hnq
-        have hsub : (t.slots h.index).state = .submitted := by
-          simp only [cancellable, Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at hc
-          cases hst : (t.slots h.index).state <;> simp_all
-        exact ⟨_, cancelSubmitted_good t m g h.index hsub, rfl⟩
+        split
+        · rename_i hf
+          exact ⟨m, mark_good t m g h.index canceled (by rw [hf]; decide)
+            (Or.inr (by simp [canceled])), rfl⟩
+        · rename_i hnf
+          have hsub : (t.slots h.index).state = .submitted := by
+            simp only [cancellable, Bool.and_eq_true, bne_iff_ne, ne_eq, beq_iff_eq] at hc
+            cases hst : (t.slots h.index).state <;> simp_all
+          exact ⟨_, cancelSubmitted_good t m g h.index hsub, rfl⟩
   · exact ⟨m, g, rfl⟩
 
 /-! ## tick -/
@@ -203,8 +208,11 @@ theorem cancel_genLe (t : Tables) (h : Handle) : GenLe t (cancel t h) := by
     · exact GenLe.refl t
     · split
       · exact set_genLe t h.index { t.slots h.index with cancelRequested := true } (Nat.le_refl _)
-      · exact (set_genLe t h.index { t.slots h.index with cancelRequested := true }
-          (Nat.le_refl _)).trans (finishLocal_genLe _ _ _)
+      · split
+        · exact set_genLe t h.index
+            { t.slots h.index with cancelRequested := true, result := canceled } (Nat.le_refl _)
+        · exact (set_genLe t h.index { t.slots h.index with cancelRequested := true }
+            (Nat.le_refl _)).trans (finishLocal_genLe _ _ _)
   · exact GenLe.refl t
 
 theorem tick_genLe (t : Tables) (now room : Nat) : GenLe t (tick t now room).1 :=

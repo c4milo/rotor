@@ -361,14 +361,17 @@ theorem release_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i :
     have hsi : s ≠ i := by intro e; subst e; rw [self] at hf; cases hf
     rw [other s hsi] at hf hr ⊢; exact g.due s hf hr
 
-/-- Marking a slot cancelled keeps everything: the mark only ever excuses a result. -/
-theorem mark_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat)
-    (hns : (t.slots i).state ≠ .submitted) :
-    Good (t.set i { t.slots i with cancelRequested := true }) m := by
-  have other : ∀ s, s ≠ i → (t.set i { t.slots i with cancelRequested := true }).slots s = t.slots s :=
-    fun s h => set_slots_other t _ h
-  have self : (t.set i { t.slots i with cancelRequested := true }).slots i =
-      { t.slots i with cancelRequested := true } := set_slots_same t i _
+/-- Marking a slot cancelled, and giving it the result `r`, keeps everything: the mark only ever
+excuses a result, and `r` is the slot's own or a cancel's, which is not 0. `request_cancel` keeps
+the result of a queued slot, and gives a repeating timer whose fire is queued `canceled`. -/
+theorem mark_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat) (r : Int)
+    (hns : (t.slots i).state ≠ .submitted) (hr : r = (t.slots i).result ∨ r ≠ 0) :
+    Good (t.set i { t.slots i with cancelRequested := true, result := r }) m := by
+  let t' := t.set i { t.slots i with cancelRequested := true, result := r }
+  have other : ∀ s, s ≠ i → t'.slots s = t.slots s := fun s h => set_slots_other t _ h
+  have self : t'.slots i = { t.slots i with cancelRequested := true, result := r } :=
+    set_slots_same t i _
+  show Good t' m
   constructor
   · exact g.valid
   · intro s x hm
@@ -405,10 +408,14 @@ theorem mark_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Na
     by_cases hsi : s = i
     · subst hsi; rw [self] at hc; simp at hc
     · rw [other s hsi] at hf hc ⊢; exact g.fired_result s hf hc
-  · intro s hf hr
+  · intro s hf hzero
     by_cases hsi : s = i
-    · subst hsi; rw [self] at hf hr ⊢; exact g.due s hf hr
-    · rw [other s hsi] at hf hr ⊢; exact g.due s hf hr
+    · subst hsi; rw [self] at hf hzero ⊢
+      have hz : r = 0 := hzero
+      rcases hr with hr | hr
+      · rw [hr] at hz; exact g.due s hf hz
+      · exact absurd hz hr
+    · rw [other s hsi] at hf hzero ⊢; exact g.due s hf hzero
 
 /-- `request_cancel` of a submitted timer: the slot is marked and finishes at once with
 `canceled`, and its heap entry is gone. -/

@@ -43,6 +43,13 @@ const Fixture = struct {
         return .{ .user_data = user_data, .kind = .{ .timer = .{ .after_ns = after_ns } } };
     }
 
+    fn repeating(user_data: u64, after_ns: u64, repeat_ns: u64) Operation {
+        return .{ .user_data = user_data, .kind = .{ .timer = .{
+            .after_ns = after_ns,
+            .repeat_ns = repeat_ns,
+        } } };
+    }
+
     fn receive(fixture: *Fixture, user_data: u64, timeout_ns: u64) Operation {
         return .{ .user_data = user_data, .timeout_ns = timeout_ns, .kind = .{ .receive = .{
             .socket = 3,
@@ -245,6 +252,42 @@ test "next_cancellable walks the slots a cancel can still reach, and skips the f
     const high = @max(submitted, queued);
     try testing.expectEqualSlices(u32, &.{ low, high }, reached[0..count]);
     try testing.expectEqual(@as(?u32, null), tables.next_cancellable(tables.table.capacity()));
+}
+
+test "a cancel replaces a repeating timer's queued fire, and that event is its final one" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    var handles: [2]Handle = undefined;
+    _ = tables.submit(&.{ Fixture.repeating(1, 5, 5), Fixture.timer(2, 5) }, &handles);
+    const repeating_index = fixture.hand_to_kernel();
+    _ = fixture.hand_to_kernel();
+    // Both are due: each fire waits on `finished`, and no drain has handed either over.
+    tables.now_ns = 5;
+    try testing.expectEqual(@as(?u32, null), tables.next_expired());
+
+    // The one-shot timer's final event is queued, so no cancel reaches it. The repeating timer's
+    // queued fire says `more`, so a cancel and `cancel_all` both reach it (decision 5, rule 7).
+    try testing.expectEqual(@as(?*Slot, null), tables.cancellable(handles[1]));
+    try testing.expectEqual(@as(?u32, repeating_index), tables.next_cancellable(0));
+    try testing.expectEqual(@as(?u32, null), tables.next_cancellable(repeating_index + 1));
+    const slot = tables.cancellable(handles[0]).?;
+    try testing.expectEqual(CancelAction.none, tables.request_cancel(repeating_index, slot));
+    try testing.expectEqual(Slot.State.finishing, slot.state);
+    try testing.expectEqual(event_module.result_of(.canceled), slot.result);
+    try testing.expectEqual(@as(?*Slot, null), tables.cancellable(handles[0]));
+    try testing.expectEqual(@as(?u32, null), tables.next_cancellable(0));
+
+    // Equal deadlines leave the heap in the order they were armed.
+    var events: [2]Event = undefined;
+    try testing.expectEqual(@as(u32, 2), tables.drain_finished(&events));
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectError(error.Canceled, events[0].outcome());
+    try testing.expect(!events[0].flags.more);
+    try testing.expectEqual(@as(u64, 2), events[1].user_data);
+    try testing.expectEqual(@as(u32, 0), try events[1].outcome());
+    try testing.expectEqual(@as(u32, 0), tables.timers.count);
+    tables.assert_empty();
 }
 
 /// How long the loop in `counted` has been running when it takes its first operation.

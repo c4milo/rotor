@@ -13,8 +13,9 @@ The theorems below hold of all of them:
   and the timer is armed next for exactly one period later, so none is skipped (rules 3 and 4).
 - `expire_queues_every_due`: a tick queues a fire for every timer that is due.
 - `cancel_stops`: a cancel of an armed timer, through its handle, disarms it and makes its next
-  event final (decision 5, rules 2 and 5), unlike `lost_cancel` in `Local.lean`, whose timer was
-  not armed but waiting to be handed over.
+  event final (decision 5, rules 2 and 5).
+- `cancel_ends_queued`: a cancel of a repeating timer whose fire is queued and not yet handed over
+  makes that queued event its final one, and it says canceled (decision 14, rule 5).
 - `final_is_last`: after an operation's final event, no event of any later tick carries its
   handle (decision 5, rule 1).
 -/
@@ -105,6 +106,26 @@ theorem cancel_stops {t : Tables} (r : Reachable t) (h : Handle)
   have hcs := cancel_submitted t h hs hg hnot
   simp only at hcs
   refine ⟨m', g', g'.unarmed (by rw [hcs.1]; decide), hcs.1, hcs.2.1, hcs.2.2.1⟩
+
+/-- **Decision 5, rule 2 and decision 14, rule 5.** A cancel, through its current handle, of a
+repeating timer whose fire is queued and not yet handed over makes that queued event its final one:
+the slot stays on the finished list and out of the heap, its event will not say `more`, and it says
+canceled. The owner ruled on 2026-09-23 that the cancel replaces the queued fire. -/
+theorem cancel_ends_queued {t : Tables} (r : Reachable t) (h : Handle)
+    (hfin : h.index ∈ t.finished) (hrep : repeats (t.slots h.index) = true)
+    (hg : (t.slots h.index).generation = h.generation) :
+    ∃ m', Good (cancel t h) m' ∧ m' h.index = none ∧ h.index ∈ (cancel t h).finished ∧
+      ((cancel t h).slots h.index).result = canceled ∧
+      repeats ((cancel t h).slots h.index) = false := by
+  obtain ⟨m, g⟩ := r.good
+  obtain ⟨m', g', _⟩ := cancel_good t m g h
+  have hs : (t.slots h.index).state = .finishing := g.finished _ hfin
+  have hcf := cancel_finishing t h hs hg hrep
+  refine ⟨m', g', g'.unarmed ?_, ?_, ?_, ?_⟩
+  · rw [hcf, set_slots_same]; simp [hs]
+  · rw [hcf, set_finished]; exact hfin
+  · rw [hcf, set_slots_same]
+  · rw [hcf, set_slots_same]; simp [repeats]
 
 /-- One step a loop can take after another. -/
 inductive Later : Tables → Tables → Prop where

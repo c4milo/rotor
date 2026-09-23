@@ -231,11 +231,22 @@ pub const Tables = struct {
     /// the heap, so its cancel is synchronous and has no race (decision 5, rule 5). A queued
     /// slot is ended by the backend's flush, which finds the mark before the kernel sees the
     /// operation. The loop calls this itself when a deadline passes, with `timed_out` set.
+    ///
+    /// A finishing slot reaches here only as a repeating timer whose fire is queued and not yet
+    /// handed over. The cancel replaces that fire with `canceled`, so the event already waiting
+    /// on `finished` is the timer's final one. That is what a cancel of a timer whose deadline
+    /// passed before the loop expired it already hands over, and the owner chose it on
+    /// 2026-09-23 (decision 14, rule 5).
     pub fn request_cancel(tables: *Tables, index: u32, slot: *Slot) CancelAction {
-        assert(slot.state != .free and slot.state != .finishing);
+        assert(slot.state != .free);
+        assert(slot.state != .finishing or repeats(slot));
         if (slot.flags.cancel_requested) return .none;
         slot.flags.cancel_requested = true;
         if (slot.state == .queued) return .none;
+        if (slot.state == .finishing) {
+            slot.result = event_module.result_of(cancel_code(slot));
+            return .none;
+        }
         if (slot.code != .timer) return .backend;
         tables.timers.disarm(index);
         tables.finish_local(index, event_module.result_of(cancel_code(slot)));
@@ -247,8 +258,7 @@ pub const Tables = struct {
     pub fn next_cancellable(tables: *Tables, from: u32) ?u32 {
         var index = from;
         while (index < tables.table.capacity()) : (index += 1) {
-            const state = tables.table.at(index).state;
-            if (state == .queued or state == .submitted) return index;
+            if (reachable(tables.table.at(index))) return index;
         }
         return null;
     }
@@ -257,7 +267,18 @@ pub const Tables = struct {
     /// which is legal (decision 5, rule 2), or the final event is already queued.
     pub fn cancellable(tables: *Tables, handle: Handle) ?*Slot {
         const slot = tables.table.lookup(handle) orelse return null;
-        return if (slot.state == .finishing) null else slot;
+        return if (reachable(slot)) slot else null;
+    }
+
+    /// True when a cancel can still change how `slot` ends. A finishing slot holds its final
+    /// event, unless it is a repeating timer whose queued fire says `more`: that timer has no
+    /// final event yet, and a cancel that skipped it would leave it repeating.
+    fn reachable(slot: *const Slot) bool {
+        return switch (slot.state) {
+            .free => false,
+            .queued, .submitted => true,
+            .finishing => repeats(slot),
+        };
     }
 
     /// Finishes every timer that is due, and returns the next operation whose deadline passed,

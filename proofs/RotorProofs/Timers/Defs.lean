@@ -168,20 +168,26 @@ def drain (t : Tables) : Nat → Tables × List Event
       let next := drain (if again then rearm t1 i else release t1 i) room
       (next.1, event :: next.2)
 
-/-- `Tables.request_cancel` for a timer: once, and a timer that is not still queued finishes at
-once, because it lives in the heap and its cancel has no race (decision 5, rule 5). -/
+/-- `Tables.request_cancel` for a timer: once. A queued timer is left for the flush to end. A
+repeating timer whose fire is queued and not yet handed over has that fire replaced with
+`canceled`, so the event already on the finished list is its final one: the owner's ruling of
+2026-09-23 (decision 14, rule 5). Any other timer finishes at once, because it lives in the heap
+and its cancel has no race (decision 5, rule 5). -/
 def requestCancel (t : Tables) (i : Nat) : Tables :=
   let s := t.slots i
   if s.cancelRequested then t
   else
     let marked := t.set i { s with cancelRequested := true }
-    if s.state = .queued then marked else finishLocal marked i canceled
+    if s.state = .queued then marked
+    else if s.state = .finishing then t.set i { s with cancelRequested := true, result := canceled }
+    else finishLocal marked i canceled
 
-/-- `Tables.cancellable`: the slot a handle names when a cancel can still reach it. A stale handle,
-and a slot whose final event is already queued, give none. -/
+/-- `Tables.cancellable`, with `reachable`: the slot a handle names when a cancel can still reach
+it. A stale handle gives none, and so does a slot whose final event is already queued. A repeating
+timer whose queued fire says `more` has no final event yet, and a cancel reaches it. -/
 def cancellable (t : Tables) (h : Handle) : Bool :=
   let s := t.slots h.index
-  s.state != .free && s.generation == h.generation && s.state != .finishing
+  s.state != .free && s.generation == h.generation && (s.state != .finishing || repeats s)
 
 /-- A backend's `cancel` for a timer. -/
 def cancel (t : Tables) (h : Handle) : Tables :=
