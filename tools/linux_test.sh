@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# linux_test: runs the io_uring probe and then every test executable that `zig build test-linux`
-# installed under zig-out/linux/, each in a Linux container, and stops at the first one that
-# exits non-zero.
+# linux_test: runs the io_uring probe, then every test executable that `zig build test-linux`
+# installed under zig-out/linux/, then the halt check on every halt scenario executable it
+# installed, each in a Linux container, and stops at the first one that fails.
 #
 #     zig build test-linux && bash tools/linux_test.sh
 #
@@ -20,6 +20,15 @@
 # The script runs the probe by name and the tests by the manifest `zig build test-linux` writes,
 # one name per line. It never runs what it merely finds in the directory, so an executable an
 # earlier build left behind is not run, and a listed executable that is missing fails the run.
+#
+# The halt check (tools/halt_check.zig) proves that an assertion halts: it runs each scenario of an
+# executable in a child process that must die by a signal. `zig build halt-check` runs it on the
+# host, which is a Mac. A scenario whose path, with its assertion deleted, makes a Linux system call
+# cannot be proved there, because macOS runs some other call in its place (build/halt.zig). Those
+# scenarios run here, on the kernel they were written for. The script runs the check by name and
+# the scenario executables by a second manifest, one per line, each name followed by the
+# arguments the check takes after it. The canary is listed there too, so the run also proves that
+# the check built for Linux reports a scenario that did not halt.
 #
 # Every executable runs in a container of its own, so a test cannot leave a file or a socket
 # behind for the next one. It is copied from the read-only bind mount to the container's own
@@ -48,7 +57,7 @@ readonly security_option='seccomp=unconfined'
 # the conformance suite against it. The epoll backend exists for a container nobody relaxed
 # (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these tests would prove nothing: they
 # must pass in the environment that refuses io_uring.
-readonly confined_tests=' epoll conformance-epoll '
+readonly confined_executables=' epoll conformance-epoll '
 # The executables that run twice, once each way. The public module chooses its backend when the
 # process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
 # open question 5). Each run takes the other branch, so each is tested where it is chosen.
@@ -59,6 +68,11 @@ readonly install_directory='zig-out/linux'
 readonly stamp_name='.test-linux-stamp'
 # The file that lists the installed test executables, one name per line, in run order.
 readonly manifest_name='tests.manifest'
+# The file that lists the installed halt scenario executables, one per line, in run order, each
+# name followed by the arguments the halt check takes after it.
+readonly halt_manifest_name='halt.manifest'
+# The halt check, which runs on every executable the halt manifest lists.
+readonly halt_check_name='halt_check'
 # The io_uring probe, which runs before any test.
 readonly probe_name='uring_probe'
 # Every path that holds a source of an installed executable, relative to the top of the work
@@ -75,6 +89,7 @@ cd "$(dirname "$0")/.."
 readonly out="$PWD/$install_directory"
 readonly stamp="$out/$stamp_name"
 readonly manifest="$out/$manifest_name"
+readonly halt_manifest="$out/$halt_manifest_name"
 
 # Prints why the run cannot go on, and ends it.
 fail() {
@@ -85,13 +100,17 @@ fail() {
 # Refuses an install that is missing, incomplete, or older than a source.
 require_fresh_install() {
   local required stale
-  for required in "$stamp" "$manifest" "$out/$probe_name"; do
+  for required in "$stamp" "$manifest" "$halt_manifest" "$out/$probe_name" \
+    "$out/$halt_check_name"; do
     if [[ ! -f "$required" ]]; then
       fail "$required is missing; run 'zig build test-linux' first"
     fi
   done
   if [[ ! -s "$manifest" ]]; then
     fail "$manifest lists no test executable"
+  fi
+  if [[ ! -s "$halt_manifest" ]]; then
+    fail "$halt_manifest lists no halt scenario executable"
   fi
   stale="$(find "${source_paths[@]}" -type f \( -name '*.zig' -o -name '*.zon' \) \
     -newer "$stamp" -print -quit)"
@@ -135,12 +154,41 @@ run() {
     run_with in_container "$name"
     echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
     run_with in_default_container "$name"
-  elif [[ "$confined_tests" == *" $name "* ]]; then
+  elif [[ "$confined_executables" == *" $name "* ]]; then
     echo "linux_test: $name, under Docker's default seccomp profile, which refuses io_uring"
     run_with in_default_container "$name"
   else
     echo "linux_test: $name"
     run_with in_container "$name"
+  fi
+}
+
+# Runs the halt check on one scenario executable in a container of the runner's kind. The check
+# and the scenario executable are copied in together, and the arguments after the name go to the
+# check. The inner script takes its paths and names as arguments, as run_with's does.
+halt_with() {
+  local runner="$1"
+  local name="$2"
+  shift 2
+  # shellcheck disable=SC2016
+  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && directory="$2" &&
+    check="$3" && scenarios="$4" && shift 4 &&
+    exec "$directory/$check" "$directory/$scenarios" "$@"' \
+    sh "$mount_point" "$run_directory" "$halt_check_name" "$name" "$@"; then
+    fail "the halt check failed on $name; nothing after it was run"
+  fi
+}
+
+# Runs the halt check on one installed scenario executable, relaxed or confined as the lists above
+# say. The arguments after the name go to the check.
+run_halt() {
+  local name="$1"
+  if [[ "$confined_executables" == *" $name "* ]]; then
+    echo "linux_test: halt check on $name, under Docker's default seccomp profile"
+    halt_with in_default_container "$@"
+  else
+    echo "linux_test: halt check on $name"
+    halt_with in_container "$@"
   fi
 }
 
@@ -164,5 +212,14 @@ while IFS= read -r name; do
   fi
   run "$name"
 done <"$manifest"
+
+# The same for the halt manifest. Each line is a name and then the check's arguments, so it is
+# read as words.
+while read -r -a words; do
+  if [[ ${#words[@]} -eq 0 ]]; then
+    continue
+  fi
+  run_halt "${words[@]}"
+done <"$halt_manifest"
 
 echo "linux_test: all passed"

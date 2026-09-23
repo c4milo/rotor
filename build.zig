@@ -7,9 +7,9 @@
 //! points this clone's core.hooksPath at .githooks; neither is part of `zig build test`, because
 //! commit shape is a property of the history, not of the code.
 //!
-//! `zig build test-linux` builds the test executables and the io_uring probe for Linux under
-//! zig-out/linux/ and runs none of them; tools/linux_test.sh runs them in Docker
-//! (build/linux.zig).
+//! `zig build test-linux` builds the test executables, the io_uring probe and the halt check with
+//! the scenarios only Linux can prove, for Linux under zig-out/linux/, and runs none of them;
+//! tools/linux_test.sh runs them in Docker (build/linux.zig).
 //!
 //! The library has no dependencies. The tools take one: pepegrillo, a lazy package in
 //! build.zig.zon that only the root build requests, so a project depending on rotor never fetches

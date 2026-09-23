@@ -101,7 +101,14 @@ pub fn provide(
     loop.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
     assert(loop.groups[group_id].ring == null);
-    assert_aligned(memory);
+    // The parameter's type says `align(group_alignment)`, which the compiler checks at the call
+    // site and cannot check for memory whose alignment a caller asserted rather than declared: an
+    // `@alignCast` in a build without safety checks passes anything. rotor's assertions stay on in
+    // production (CLAUDE.md non-negotiable 1), so this catches what the caller's build did not.
+    // Without it a misaligned group cost a consumer a day: io_uring answers EINVAL, which was
+    // mapped to `Unexpected`, and the kqueue backend never enters the kernel at all and would read
+    // its ring through a misaligned pointer (2026-09-22).
+    assert(std.mem.isAligned(@intFromPtr(memory.ptr), group_alignment));
     assert(count >= 1);
     assert(count <= core.constants.buffers_per_group_max);
     assert(memory.len >= group_bytes(count, buffer_bytes));
@@ -138,23 +145,6 @@ pub fn provide(
         IoUring.buf_ring_add(group.ring.?, group.bytes_of(buffer_id), buffer_id, mask, buffer_id);
     }
     IoUring.buf_ring_advance(group.ring.?, count);
-}
-
-/// Halts when `memory` does not start on `group_alignment`.
-///
-/// The parameter's type says `align(group_alignment)`, which the compiler checks at the call site
-/// and cannot check for memory whose alignment a caller asserted rather than declared: an
-/// `@alignCast` in a build without safety checks passes anything. rotor's assertions stay on in
-/// production (CLAUDE.md non-negotiable 1), so this catches what the caller's build did not.
-/// Without it a misaligned group cost a consumer a day: io_uring answers EINVAL, which was mapped
-/// to `Unexpected`, and the kqueue backend never enters the kernel at all and would read its ring
-/// through a misaligned pointer (2026-09-22).
-///
-/// It is a function of its own so that the halt check can call it alone. After it, `provide` calls
-/// `io_uring_register`, and on macOS that runs some other system call, so a scenario that went
-/// through `provide` could halt with this check deleted (`tools/halt/uring_scenarios.zig`).
-pub fn assert_aligned(memory: []align(group_alignment) u8) void {
-    assert(std.mem.isAligned(@intFromPtr(memory.ptr), group_alignment));
 }
 
 /// Hands buffer `buffer_id` of group `group_id` back to the kernel, after the caller has read the
