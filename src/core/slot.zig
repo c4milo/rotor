@@ -15,6 +15,10 @@ const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 
 const Operation = operation_module.Operation;
+const Address = operation_module.Address;
+const LoopId = operation_module.LoopId;
+const Message = operation_module.Message;
+const Outbound = @import("datagram.zig").Outbound;
 
 /// `heap_position` of a slot that has no entry in the timer heap.
 pub const heap_position_none: u32 = std.math.maxInt(u32);
@@ -211,6 +215,32 @@ pub const Slot = extern struct {
         const pointer: [*]u8 = @ptrFromInt(slot.buffer);
         return pointer[0..slot.len];
     }
+
+    /// The address a `connect` names, which `fill` put in `buffer`.
+    pub fn address(slot: *const Slot) *const Address {
+        assert(slot.code == .connect);
+        assert(slot.buffer != 0);
+        return @ptrFromInt(slot.buffer);
+    }
+
+    /// The outbound block a `send_to` names, which `fill` put in `offset`.
+    pub fn outbound(slot: *const Slot) *const Outbound {
+        assert(slot.code == .send_to);
+        assert(slot.offset != 0);
+        return @ptrFromInt(slot.offset);
+    }
+
+    /// The loop a `post` goes to, which `fill` put in `descriptor`.
+    pub fn post_target(slot: *const Slot) LoopId {
+        assert(slot.code == .post);
+        return @intCast(slot.descriptor);
+    }
+
+    /// The message a `post` carries, which `fill` put in `buffer` and `len`.
+    pub fn message(slot: *const Slot) Message {
+        assert(slot.code == .post);
+        return .{ .payload = slot.buffer, .tag = slot.len };
+    }
 };
 
 comptime {
@@ -258,6 +288,31 @@ test "fill flattens a read: descriptor, buffer, length, offset, deadline, regist
     try testing.expectEqual(heap_position_none, slot.heap_position);
     try testing.expectEqual(@as([]u8, &buffer).ptr, slot.bytes().ptr);
     try testing.expectEqual(constants.generation_first, slot.generation);
+}
+
+test "the accessors read back what fill put in a connect, a datagram send and a post" {
+    const address = Address.ipv4(.{ 127, 0, 0, 1 }, 9);
+    var slot = claimed();
+    slot.fill(&Operation.connect(1, 3, &address));
+    try testing.expectEqual(&address, slot.address());
+
+    var bytes = [_]u8{0} ** 8;
+    const out: Outbound = .{
+        .peer = address,
+        .local = address,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    slot = claimed();
+    slot.fill(&Operation.send_to(2, 3, &bytes, &out));
+    try testing.expectEqual(&out, slot.outbound());
+
+    slot = claimed();
+    slot.fill(&Operation.post(3, 5, .{ .payload = 0xABCD, .tag = 77 }));
+    try testing.expectEqual(@as(LoopId, 5), slot.post_target());
+    try testing.expectEqual(@as(u64, 0xABCD), slot.message().payload);
+    try testing.expectEqual(@as(u32, 77), slot.message().tag);
 }
 
 test "fill flattens a multishot receive from a group, a post and a timer" {

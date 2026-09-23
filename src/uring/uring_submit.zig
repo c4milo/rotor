@@ -103,7 +103,7 @@ fn connect_extra(loop: *Loop, slot: *const Slot) Extra {
     assert(loop.addresses_used < loop.addresses.len);
     const storage = &loop.addresses[loop.addresses_used];
     loop.addresses_used += 1;
-    const address: *const core.Address = @ptrFromInt(slot.buffer);
+    const address = slot.address();
     const len = address_module.to_kernel(address, storage);
     return .{ .address = @intFromPtr(storage), .address_len = len };
 }
@@ -140,14 +140,11 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             ring_module.set_opcode(sqe, .FSYNC);
             sqe.rw_flags = linux.IORING_FSYNC_DATASYNC;
         },
-        .post => {
-            const message: core.Message = .{ .payload = slot.buffer, .tag = slot.len };
-            prepare_message(sqe, extra.target_ring, message);
-        },
+        .post => prepare_message(sqe, extra.target_ring, slot.message()),
         .nop => ring_module.set_opcode(sqe, .NOP),
         .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
         .send_to => {
-            const out: *const core.datagram.Outbound = @ptrFromInt(slot.offset);
+            const out = slot.outbound();
             // `assert_send_to` bounds what a caller may ask for, so the control block fits.
             assert(datagram.prepare_send(sqe, extra.message.?, slot, out));
         },

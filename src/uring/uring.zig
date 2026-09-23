@@ -325,7 +325,7 @@ pub const Loop = struct {
     pub fn registry_descriptor(loop: *const Loop, slot: *const Slot) core.Descriptor {
         assert(slot.code == .post);
         const registry = loop.registry orelse return registry_module.descriptor_none;
-        const target: core.LoopId = @intCast(slot.descriptor);
+        const target = slot.post_target();
         assert(target != loop.tables.id);
         return registry.get(target);
     }

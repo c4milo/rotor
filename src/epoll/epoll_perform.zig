@@ -135,7 +135,7 @@ fn connection_already_gone(errno: linux.E) bool {
 fn attempt_connect(slot: *Slot) Attempt {
     if (slot.retries != 0) return connect_outcome(slot);
     slot.retries = 1;
-    const address: *const core.Address = @ptrFromInt(slot.buffer);
+    const address = slot.address();
     var storage: address_module.Storage = undefined;
     const len = address_module.to_kernel(address, &storage);
     const rc = linux.connect(slot.descriptor, @ptrCast(&storage), len);
@@ -226,7 +226,7 @@ fn attempt_receive_from(loop: *Loop, slot: *const Slot) Attempt {
 /// One datagram out. Unlike the kqueue backend, a segmented send is carried: Linux has
 /// `UDP_SEGMENT`, and `epoll_datagram.zig` attaches it.
 fn attempt_send_to(slot: *const Slot) Attempt {
-    const out: *const core.datagram.Outbound = @ptrFromInt(slot.offset);
+    const out = slot.outbound();
     const answer = datagram.send_from(slot.descriptor, slot.bytes(), out);
     if (answer.would_block) return .{ .outcome = .wait_write };
     return Attempt.done(answer.result);

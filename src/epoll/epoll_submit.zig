@@ -109,9 +109,8 @@ pub fn register(loop: *Loop, descriptor: core.Descriptor) queue_module.ControlEr
 /// write wakes. The result is the post's own final event.
 fn post(loop: *Loop, slot: *const Slot) i32 {
     const registry = loop.registry orelse return core.event.result_of(.loop_not_found);
-    const target: core.LoopId = @intCast(slot.descriptor);
-    const message: core.Message = .{ .payload = slot.buffer, .tag = slot.len };
-    const wake = core.remote.send(registry, loop.tables.id, target, message) catch |err| {
+    const target = slot.post_target();
+    const wake = core.remote.send(registry, loop.tables.id, target, slot.message()) catch |err| {
         return core.event.result_of(core.remote.code_of(err));
     };
     if (wake) |descriptor| queue_module.Queue.wake(descriptor);
