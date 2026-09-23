@@ -24,10 +24,27 @@
 //! clock function in Zig 0.16. It is kept as a raw prefix because those types are a step towards
 //! reading a clock, and because Zig may put the function back.
 //!
-//! The kernel backends, `src/uring/` and `src/kqueue/`, are exempt: reading the monotonic clock
-//! for a timer is their job. `bench/` is outside `src/` and is not read.
+//! **A clock read through an alias was a hole until 2026-09-22.** The rule matched a chain as
+//! written, so `const linux = std.os.linux;` followed by `linux.clock_gettime(...)` passed. So did
+//! the same read through `std.posix`, `std.c`, `std.Io`, `std.os`, and an alias of
+//! `@import("std")` itself. Aliases of `std.time` and `std.Random` were never a hole: the alias's
+//! own value starts with a forbidden prefix, so the declaration is reported. pepegrillo's
+//! `resolve_file_aliases` closes it: the rule also reads a chain through every top-level `const`
+//! of the file whose value is a chain or `@import("std")`. The alias fixture below pins each shape
+//! that was missed.
 //!
-//! What the rule cannot see: a clock reached through a parameter. That is the shape rotor wants.
+//! The kernel backends, `src/uring/`, `src/kqueue/` and `src/epoll/`, are exempt: reading the
+//! monotonic clock for a timer is their job. `bench/` is outside `src/` and is not read.
+//!
+//! What the rule cannot see:
+//!
+//! - a clock reached through a parameter. That is the shape rotor wants;
+//! - an alias declared inside a function or inside a container below the top level;
+//! - an alias whose value is not a plain chain: `if (a) std.c else std.os.linux`,
+//!   `@field(std, "c")`;
+//! - `@import("std").os.linux` written in place of `std`;
+//! - a namespace another file exports: `other.linux.clock_gettime`, where `other.zig` declares
+//!   `pub const linux = std.os.linux;`.
 //!
 //! The rule is pepegrillo's `forbidden_references`. This file holds rotor's configuration of it
 //! and the fixtures that pin that configuration.
@@ -68,6 +85,7 @@ pub const config: forbidden_references.Config = .{
     },
     .prefixes = &forbidden_prefixes,
     .raw_prefixes = &forbidden_raw_prefixes,
+    .resolve_file_aliases = true,
     .reason = reason,
 };
 
@@ -116,6 +134,55 @@ test "determinism flags every clock it names, and the PRNG" {
         "reference to std.c.clock_gettime: " ++ reason,
         "reference to std.os.linux.clock_gettime: " ++ reason,
         "reference to std.Io.Clock.Timestamp.fromNow: " ++ reason,
+    });
+}
+
+/// Each clock that a top-level alias hid until 2026-09-22, one alias of an alias among them.
+const aliased_fixture: [:0]const u8 =
+    \\const std = @import("std");
+    \\const zig_std = @import("std");
+    \\const linux = std.os.linux;
+    \\const posix = std.posix;
+    \\const c = std.c;
+    \\const Io = std.Io;
+    \\const os = std.os;
+    \\const kernel = os.linux;
+    \\pub fn read(io: Io, now: *linux.timespec) void {
+    \\    _ = linux.clock_gettime(.MONOTONIC, now);
+    \\    _ = posix.clock_gettime(.MONOTONIC);
+    \\    _ = c.clock_gettime(.MONOTONIC, now);
+    \\    _ = Io.Clock.Timestamp.fromNow(io, .{});
+    \\    _ = kernel.clock_gettime(.MONOTONIC, now);
+    \\    _ = zig_std.time.nanoTimestamp();
+    \\}
+;
+
+test "determinism flags a clock read through a top-level alias" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const findings = try harness.run(arena, Rule, "src/core/sample.zig", aliased_fixture);
+    try harness.expect_messages(findings, &.{
+        "reference to std.os.linux.clock_gettime through linux: " ++ reason,
+        "reference to std.posix.clock_gettime through posix: " ++ reason,
+        "reference to std.c.clock_gettime through c: " ++ reason,
+        "reference to std.Io.Clock.Timestamp.fromNow through Io: " ++ reason,
+        "reference to std.os.linux.clock_gettime through kernel: " ++ reason,
+        "reference to std.time.nanoTimestamp through zig_std: " ++ reason,
+    });
+}
+
+test "determinism reports an alias of the clock or the PRNG where it is declared" {
+    var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena_state.deinit();
+    const findings = try harness.run(arena_state.allocator(), Rule, "src/core/sample.zig",
+        \\const std = @import("std");
+        \\const time = std.time;
+        \\const Random = std.Random;
+    );
+    try harness.expect_messages(findings, &.{
+        "reference to std.time: " ++ reason,
+        "reference to std.Random: " ++ reason,
     });
 }
 
