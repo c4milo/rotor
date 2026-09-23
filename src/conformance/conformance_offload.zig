@@ -47,6 +47,9 @@ const Pool = struct {
     handed: std.atomic.Value(?*Work),
     stopping: std.atomic.Value(bool),
     thread: std.Thread,
+    /// Set by the first `stop`, so a scenario can join the worker before it reads `served` and
+    /// leave the same call in its `defer`.
+    joined: bool,
     /// How many operations the worker ran. Written by the worker, read after it is joined.
     ///
     /// Without it a scenario cannot tell an offload from an inline read, because both end with the
@@ -61,10 +64,13 @@ const Pool = struct {
         pool.stopping = .init(false);
         pool.served = .init(0);
         pool.holding = .init(false);
+        pool.joined = false;
         pool.thread = try std.Thread.spawn(.{}, serve, .{pool});
     }
 
     fn stop(pool: *Pool) void {
+        if (pool.joined) return;
+        pool.joined = true;
         pool.stopping.store(true, .release);
         pool.thread.join();
         // Work left here would be an operation whose final event never came, which decision 5,
@@ -209,8 +215,10 @@ test "the offload policy completes a file read on the caller's own thread" {
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
     defer {
-        loop_fixture.deinit();
+        // The pool stops first: a worker still inside `run` reads the loop after its result is
+        // visible, so the loop must outlive it (decision 18).
         worker_pool.stop();
+        loop_fixture.deinit();
     }
 
     var into: [block_bytes]u8 align(block_bytes) = @splat(0xaa);
@@ -221,6 +229,9 @@ test "the offload policy completes a file read on the caller's own thread" {
     try testing.expectEqual(@as(u32, 0), loop_fixture.loop.in_flight());
     // The worker ran it. Without this check the scenario would also pass on a loop that performed
     // the read inline, which is the `blocking` policy.
+    // Read after the join, as `Pool.served` says: the worker adds to it after the loop
+    // already has the result, so a read before the join can come up one short.
+    worker_pool.stop();
     try testing.expectEqual(@as(u32, 1), worker_pool.served.load(.monotonic));
 }
 
@@ -230,8 +241,10 @@ test "an offloaded read of every block completes, so the ring is drained and reu
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
     defer {
-        loop_fixture.deinit();
+        // The pool stops first: a worker still inside `run` reads the loop after its result is
+        // visible, so the loop must outlive it (decision 18).
         worker_pool.stop();
+        loop_fixture.deinit();
     }
 
     // Several operations in turn, so the ring's head and tail both advance. A ring that held only
@@ -244,6 +257,9 @@ test "an offloaded read of every block completes, so the ring is drained and reu
     }
     try testing.expectEqual(@as(u32, 0), loop_fixture.loop.in_flight());
     // All of them went to the worker, and none was performed inline.
+    // Read after the join, as `Pool.served` says: the worker adds to it after the loop
+    // already has the result, so a read before the join can come up one short.
+    worker_pool.stop();
     try testing.expectEqual(completed, worker_pool.served.load(.monotonic));
 }
 
@@ -253,8 +269,10 @@ test "an offloaded result lands in the tick that waited for it, not the one afte
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
     defer {
-        loop_fixture.deinit();
+        // The pool stops first: a worker still inside `run` reads the loop after its result is
+        // visible, so the loop must outlive it (decision 18).
         worker_pool.stop();
+        loop_fixture.deinit();
     }
 
     var into: [block_bytes]u8 align(block_bytes) = undefined;
@@ -281,8 +299,10 @@ test "an offloaded read that is cancelled still ends with exactly one final even
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
     defer {
-        loop_fixture.deinit();
+        // The pool stops first: a worker still inside `run` reads the loop after its result is
+        // visible, so the loop must outlive it (decision 18).
         worker_pool.stop();
+        loop_fixture.deinit();
     }
 
     // Hold the worker, so the operation is out on a thread when the cancel arrives. A `pread`
@@ -325,8 +345,10 @@ test "the offload policy leaves a socket operation's cancel alone" {
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
     defer {
-        loop_fixture.deinit();
+        // The pool stops first: a worker still inside `run` reads the loop after its result is
+        // visible, so the loop must outlive it (decision 18).
         worker_pool.stop();
+        loop_fixture.deinit();
     }
 
     // A socket is never handed to an offload, because kqueue reports its readiness and it does not
@@ -355,7 +377,9 @@ test "the offload policy leaves a socket operation's cancel alone" {
     try testing.expectEqual(@as(u64, 13), events[0].user_data);
     try testing.expectError(error.Canceled, events[0].outcome());
     try testing.expectEqual(@as(u32, 0), loop_fixture.loop.in_flight());
-    // The worker was given nothing, because a socket is not an offload's work.
+    // The worker was given nothing, because a socket is not an offload's work. Read after the
+    // join, as `Pool.served` says of every read.
+    worker_pool.stop();
     try testing.expectEqual(@as(u32, 0), worker_pool.served.load(.monotonic));
 }
 

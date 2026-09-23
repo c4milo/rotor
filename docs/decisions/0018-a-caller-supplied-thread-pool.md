@@ -115,9 +115,15 @@ primitive. libxev instead shares one Vyukov MPSC queue between its pool threads
 of the choice is memory: a ring is 4,352 bytes, so 64 workers is about 279 KiB, and the caller owns
 that memory because the caller's threads write it.
 
-**A caller must keep its offload running until the loop is drained.** An operation out on a worker
-can only be ended by that worker, so a caller that stops its threads first leaves an operation that
-never ends, and `drain` reports `StillInFlight` rather than hanging.
+**A caller must keep its offload running until the loop is drained, and stop it before `deinit`.**
+An operation out on a worker can only be ended by that worker, so a caller that stops its threads
+first leaves an operation that never ends, and `drain` reports `StillInFlight` rather than hanging.
+The second half was added on 2026-09-22: a worker's `run` pushes its result and then reads the loop
+once more, to learn whether it must wake a loop that sleeps. So a worker can still be inside `run`
+after the loop has taken its result and been drained. A loop torn down then has its wake descriptor
+read by that worker, and possibly written to after it was closed and its number reused.
+ThreadSanitizer reported it in the race gate the first time the epoll suite ran there, from a
+scenario that deinitialised the loop before it stopped its pool; kqueue's `run` has the same shape.
 
 ## Alternatives it beat
 
