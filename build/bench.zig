@@ -132,9 +132,11 @@ const tested = [_]Tested{
         .root = "bench/echo/storm.zig",
         .needs_loop = true,
     },
+    // `rotor_echo.zig` is at its 500 lines, so its tests live beside it. The file imports the
+    // server, which imports `rotor_echo_pieces.zig`, so this runs that file's tests too.
     .{
         .name = "bench-rotor-echo-tests",
-        .root = "bench/echo/rotor_echo.zig",
+        .root = "bench/echo/rotor_echo_test.zig",
         .needs_loop = true,
     },
     .{

@@ -9,11 +9,11 @@
 //! - One multishot accept for the whole run: one submission for every connection there will be.
 //! - One multishot receive per connection, from a provided-buffer group: the bytes land in a
 //!   buffer the loop picked, and no receive is submitted per message.
-//! - The echo is one send of the buffer the receive named. The buffer goes back to its group
-//!   when that send completes, which is the one place this file has to be careful: the buffer
-//!   belongs to the loop until then (decision 5, rule 3).
+//! - Each piece is echoed with one send of the buffer the receive named, one send per connection
+//!   at a time. The buffer goes back to its group when its send completes, which is the one place
+//!   this file has to be careful: the buffer belongs to the loop until then (decision 5, rule 3).
 //!
-//! A connection therefore costs one send entry per message and nothing else. The receive side is
+//! A connection therefore costs one send entry per piece and nothing else. The receive side is
 //! free after the first submission, which is what a multishot receive is for.
 //!
 //! **The group's size is its working set on io_uring.** The kernel hands buffers out in ring order,
@@ -35,6 +35,8 @@ const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const placement = @import("harness").placement;
+const pieces_module = @import("rotor_echo_pieces.zig");
+const Pieces = pieces_module.Pieces;
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -55,7 +57,7 @@ const entries = 4096;
 const events_max = 1024;
 
 /// The provided-buffer group the multishot receives draw from.
-const group_id = 0;
+pub const group_id = 0;
 
 /// The group's memory, cut into `--buffer-bytes` pieces. Fixed, so a larger buffer means fewer
 /// of them: a provided-buffer pool trades the size of a buffer against how many are free at once.
@@ -86,7 +88,7 @@ const Kind = enum(u32) { accept, receive, send, close };
 
 const kind_shift = 32;
 
-fn user_data_of(kind: Kind, descriptor: core.Descriptor) u64 {
+pub fn user_data_of(kind: Kind, descriptor: core.Descriptor) u64 {
     const low: u32 = @bitCast(descriptor);
     return (@as(u64, @intFromEnum(kind)) << kind_shift) | low;
 }
@@ -99,20 +101,18 @@ fn descriptor_of(user_data: u64) core.Descriptor {
     return @bitCast(@as(u32, @truncate(user_data)));
 }
 
-/// The send in flight for a descriptor: which provided buffer it is echoing out of, how much of
-/// it has gone, and how much there is. A send may be short, so the rest has to follow it before
-/// the buffer goes back to the group; sending less than arrived would silently drop bytes out of
-/// the middle of the stream.
-const Sending = struct {
-    buffer_id: u16,
-    sent: u32,
-    len: u32,
-};
-
-var sending: [connections_max]Sending align(@alignOf(Sending)) = undefined;
+/// The pieces each connection has received and not yet echoed.
+var pieces: [connections_max]Pieces align(@alignOf(Pieces)) = undefined;
 
 /// True while the descriptor is one this server accepted.
 var open: [connections_max]bool = undefined;
+
+/// Starts every connection empty: at start, and before each test.
+pub fn forget_connections() void {
+    open = @splat(false);
+    pieces = @splat(.empty);
+    accumulated = @splat(0);
+}
 
 /// How the server reads (decision 3, and the question `bench/alternatives/README.md` names as the
 /// first thing to settle before any 64 KiB claim).
@@ -191,7 +191,7 @@ fn buffers_of() !u16 {
 /// The count a group gets: `most` when nothing was asked for, and otherwise what was asked for,
 /// which must be a power of two, as a buffer ring's size is, and no more than `most`. A count too
 /// large is refused rather than cut down, so a run never measures a group it did not ask for.
-fn group_buffers_from(wanted: ?u16, most: u16) !u16 {
+pub fn group_buffers_from(wanted: ?u16, most: u16) !u16 {
     std.debug.assert(std.math.isPowerOfTwo(most));
     const asked = wanted orelse return most;
     if (asked == 0 or !std.math.isPowerOfTwo(asked)) return error.GroupBuffersNotPowerOfTwo;
@@ -201,8 +201,7 @@ fn group_buffers_from(wanted: ?u16, most: u16) !u16 {
 
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);
-    open = @splat(false);
-    accumulated = @splat(0);
+    forget_connections();
     group_buffers = try buffers_of();
 
     // One listener per loop, all bound before any of them serves, so a client that connects on
@@ -319,7 +318,7 @@ fn set_buffer_bytes(wanted: u32) !void {
     buffer_bytes = wanted;
 }
 
-fn handle(loop: *Loop, event: Event) void {
+pub fn handle(loop: *Loop, event: Event) void {
     switch (kind_of(event.user_data)) {
         .accept => handle_accept(loop, event),
         .receive => handle_receive(loop, event),
@@ -341,6 +340,8 @@ fn handle_accept(loop: *Loop, event: Event) void {
     // does not match is measuring the socket option and not the loop. A connection this fails
     // on is refused rather than served, so a run cannot quietly mix the two shapes.
     sync.set_no_delay(descriptor, true) catch return sync.close_now(descriptor);
+    // The close of the connection that last had this number came after all of its sends.
+    std.debug.assert(pieces[@intCast(descriptor)].count == 0);
     open[@intCast(descriptor)] = true;
     arm_receive(loop, descriptor);
 }
@@ -390,18 +391,15 @@ fn handle_receive(loop: *Loop, event: Event) void {
         // The group emptied. That ends the multishot receive and is transient back-pressure, not
         // the connection's fault: another receive is armed rather than a client dropped because
         // the pool was momentarily empty. Closing here reads as throughput at connection counts
-        // above the buffer count, which is exactly where the harness is asked to go.
-        if (failure == error.BuffersExhausted) return arm_receive(loop, descriptor);
+        // above the buffer count, which is exactly where the harness is asked to go. A connection
+        // already closing is not read again: its close ends what is in flight.
+        const again = failure == error.BuffersExhausted and open[@intCast(descriptor)];
+        if (again) return arm_receive(loop, descriptor);
         return close(loop, descriptor);
     };
     if (received == 0) return close(loop, descriptor);
     if (shape == .accumulate) return accumulate_received(loop, descriptor, received);
-    sending[@intCast(descriptor)] = .{
-        .buffer_id = event.flags.buffer_id,
-        .sent = 0,
-        .len = received,
-    };
-    send_rest(loop, descriptor);
+    hold(loop, descriptor, .{ .buffer_id = event.flags.buffer_id, .len = received });
 }
 
 /// Bytes arrived into this connection's own buffer. A whole message is echoed with one send;
@@ -411,23 +409,35 @@ fn accumulate_received(loop: *Loop, descriptor: core.Descriptor, received: u32) 
     have.* += received;
     std.debug.assert(have.* <= buffer_bytes);
     if (have.* < buffer_bytes) return arm_accumulating_receive(loop, descriptor);
-    sending[@intCast(descriptor)] = .{ .buffer_id = 0, .sent = 0, .len = have.* };
     have.* = 0;
-    send_rest(loop, descriptor);
+    hold(loop, descriptor, .{ .buffer_id = 0, .len = buffer_bytes });
 }
 
-/// Submits what is left of this descriptor's echo.
+/// Holds a piece until its echo is out, and starts its send when no other send is in flight. A
+/// piece goes straight back when its connection is closing, and when the connection already holds
+/// more than the harness's client can make, which closes it.
+fn hold(loop: *Loop, descriptor: core.Descriptor, piece: pieces_module.Piece) void {
+    const held = &pieces[@intCast(descriptor)];
+    if (!open[@intCast(descriptor)] or held.full()) {
+        release(loop, piece.buffer_id);
+        return close(loop, descriptor);
+    }
+    if (held.push(piece)) send_rest(loop, descriptor);
+}
+
+/// Submits what is left of the oldest piece this descriptor holds.
 fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
-    const state = &sending[@intCast(descriptor)];
+    const held = &pieces[@intCast(descriptor)];
+    const piece = held.oldest();
     const buffer = if (shape == .accumulate)
         accumulator_of(descriptor)
     else
-        loop.provided_buffer(group_id, state.buffer_id);
+        loop.provided_buffer(group_id, piece.buffer_id);
     submit_one(loop, .{
         .user_data = user_data_of(.send, descriptor),
         .kind = .{ .send = .{
             .socket = descriptor,
-            .buffer = .{ .bytes = buffer[state.sent..state.len] },
+            .buffer = .{ .bytes = buffer[held.sent..piece.len] },
         } },
     });
 }
@@ -437,17 +447,23 @@ fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
 /// caller's stream missing a piece in the middle, which no test that sends small messages sees.
 fn handle_send(loop: *Loop, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
-    const state = &sending[@intCast(descriptor)];
-    const sent = event.outcome() catch {
-        release(loop, state.buffer_id);
-        return close(loop, descriptor);
-    };
-    state.sent += sent;
-    if (state.sent < state.len) return send_rest(loop, descriptor);
-    release(loop, state.buffer_id);
+    const held = &pieces[@intCast(descriptor)];
+    const sent = event.outcome() catch return drop(loop, descriptor);
+    // Closing: the close ended this send, or came after it, and nothing more goes out.
+    if (!open[@intCast(descriptor)]) return drop(loop, descriptor);
+    const done = held.advance(sent) orelse return send_rest(loop, descriptor);
+    release(loop, done.buffer_id);
+    if (held.count != 0) return send_rest(loop, descriptor);
     // The single-shot shapes read again themselves: nothing is armed for this connection until
     // the echo is out.
     if (shape != .group) arm_receive(loop, descriptor);
+}
+
+/// Gives back every piece this connection holds, and closes it. The send that just ended was its
+/// only one in flight, so no send reads any of these buffers now.
+fn drop(loop: *Loop, descriptor: core.Descriptor) void {
+    while (pieces[@intCast(descriptor)].pop()) |piece| release(loop, piece.buffer_id);
+    close(loop, descriptor);
 }
 
 /// Gives a provided buffer back, which the accumulate shape has none of: its buffer is the
@@ -457,13 +473,14 @@ fn release(loop: *Loop, buffer_id: u16) void {
     loop.give_back_buffer(group_id, buffer_id);
 }
 
-/// The close's own completion. It carries no buffer and there is nothing to give back: the send
-/// that was in flight, if any, gave its buffer back when it failed.
+/// The close's own completion. It carries no buffer: the close ended the send in flight first, and
+/// that send's event gave back every piece (decision 5, rule 6).
 fn handle_close(event: Event) void {
+    std.debug.assert(pieces[@intCast(descriptor_of(event.user_data))].count == 0);
     _ = event.outcome() catch {};
 }
 
-fn close(loop: *Loop, descriptor: core.Descriptor) void {
+pub fn close(loop: *Loop, descriptor: core.Descriptor) void {
     if (descriptor < 0 or descriptor >= connections_max) return;
     if (!open[@intCast(descriptor)]) return;
     open[@intCast(descriptor)] = false;
@@ -473,20 +490,11 @@ fn close(loop: *Loop, descriptor: core.Descriptor) void {
     });
 }
 
-test "a group gets the count asked for, or the most the pool holds, and nothing else" {
-    const most = 512;
-    try std.testing.expectEqual(@as(u16, most), try group_buffers_from(null, most));
-    try std.testing.expectEqual(@as(u16, 32), try group_buffers_from(32, most));
-    try std.testing.expectEqual(@as(u16, most), try group_buffers_from(most, most));
-    try std.testing.expectEqual(@as(u16, 1), try group_buffers_from(1, most));
-    try std.testing.expectError(error.GroupBuffersBeyondPool, group_buffers_from(most * 2, most));
-    try std.testing.expectError(error.GroupBuffersNotPowerOfTwo, group_buffers_from(48, most));
-    try std.testing.expectError(error.GroupBuffersNotPowerOfTwo, group_buffers_from(0, most));
-}
-
 comptime {
     std.debug.assert(std.math.isPowerOfTwo(group_buffers_max));
     std.debug.assert(group_buffers_max <= core.constants.buffers_per_group_max);
     std.debug.assert(group_bytes % buffer_bytes_max == 0);
     std.debug.assert(connections_max < operations);
+    // A connection holds the pieces of one message: the largest, in the smallest buffers.
+    std.debug.assert(pieces_module.pieces_max >= 2 * buffer_bytes_max / buffer_bytes_min);
 }

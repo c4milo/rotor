@@ -352,6 +352,105 @@ Both bugs are the caller's to make, which is the argument the API complaint rest
 a partial transfer to the caller and gives it one `user_data` word to tell its own operations
 apart, and a candidate written carefully got both wrong.
 
+## A third bug in rotor_echo: a second piece overwrote the first piece's send
+
+Found on 2026-09-24 by reading the file, then reproduced and fixed the same day.
+
+`rotor_echo` kept one record per connection for the send in flight: the buffer, the bytes sent,
+and the bytes to send. In the `group` shape every receive event wrote that record and submitted a
+send. TCP can deliver the second piece of a message before the send of the first piece completes.
+The second piece's event then overwrote the first piece's record, and the server did three wrong
+things:
+
+- The first send's completion counted its bytes against the second piece, and gave the second
+  piece's buffer back.
+- The second send's completion gave the same buffer back again.
+- The first piece's buffer was never given back.
+
+Neither io_uring's buffer ring nor the free stack of kqueue and epoll checks whether an id is
+already there. So the group then held one id twice and had lost another. Two receives could land in
+one buffer while a send was still reading it.
+
+**Reproduced** with a temporary check in the server that tracked which buffer ids it held. Each
+server was sized as `echo_runner` sizes it: 32 buffers, each the size of the payload. 16
+connections, three seconds after a one-second warm-up. The check reported every 20,000 receives,
+so each row covers most of its run, not all of it.
+
+| backend | machine | payload | receives | receives with a send in flight | receives into a buffer still held |
+|---|---|---:|---:|---:|---:|
+| io_uring | `orbstack` | 4 KiB | 320,000 | 0 | 0 |
+| io_uring | `orbstack` | 8 KiB | 220,000 | 0 | 0 |
+| io_uring | `orbstack` | 16 KiB | 180,000 | 0 | 0 |
+| io_uring | `orbstack` | 64 KiB | 40,000 | 6 | 2,704 |
+| epoll | `orbstack` | 64 KiB | 120,000 | 0 | 0 |
+| kqueue | `mac` | 64 KiB | 60,000 | 0 | 0 |
+
+epoll at 4, 8 and 16 KiB and kqueue at 4 and 16 KiB also showed 0 in both columns. The container
+reported Linux 7.0.14. The machine's load average was near 190, which changes how often two pieces
+overlap. So the table shows that the bug happens, not how often it happens on a quiet machine.
+
+- **A few overlaps corrupt much of the run.** In a four-second run at 16 connections and 64 KiB,
+  37 of 60,000 receives came with a send in flight, and by then 17,679 receives had landed in a
+  buffer the server still held. An id given back twice stays in the ring, so the damage grows.
+- **Only io_uring's 64 KiB rows overlap at the runner's sizing.** Linux loopback's MTU is 65,536
+  bytes, so a 65,536-byte message crosses as a 65,483-byte segment and a 53-byte one. The first
+  overlap the check saw was a 53-byte piece. At 16 KiB and below, a message crosses in one segment.
+  kqueue and epoll try the first piece's send when the next tick starts, before that tick reads
+  the next piece, so the send's event comes first.
+- **kqueue overlaps too when a buffer is smaller than the payload.** `rotor_echo --buffer-bytes
+  8192` against 64 KiB messages on `mac` overlapped on the second receive, and gave a buffer back
+  twice right after it.
+
+**Which rows this touches.**
+
+- Every io_uring row of rotor's `group` shape at 64 KiB: the `orbstack` rows in "Kernel calls per
+  echo" above, and the 64 KiB rows of every section of `bench/baseline/echo.txt`. The
+  `comparison` job takes those on GitHub's runners with io_uring.
+- The 8 KiB row of "The buffer a candidate holds" above, which cut 64 KiB messages into 8 KiB
+  buffers.
+- Not the `mac` rows at the runner's sizing: the check saw no overlap there. Not the
+  `accumulate` or `group_single` shapes either: each holds one piece at a time.
+
+The client of every run above counted the bytes it got back and did not compare them with what it
+sent. So no run failed, and a corrupted echo counted as an echo.
+
+**The fix.** `bench/echo/rotor_echo_pieces.zig` keeps each piece with its own buffer and length,
+in a ring per connection, and the server sends one piece at a time, oldest first. One send at a
+time also keeps the stream in order: a short send's rest has to go before the next piece, and two
+sends in flight on one socket can put their bytes on the stream in either order. A connection that
+holds more than 64 pieces is closed; the harness's client cannot make that many. Once a close is
+submitted, the server gives back every piece that arrives and starts nothing more on that
+descriptor. `bench/echo/rotor_echo_test.zig` runs the server's own handlers on a real loop and a
+real connection. Against the old server, the second message came back with its last piece's bytes
+where its first piece's bytes belonged.
+
+**Whether the fix moves the 64 KiB numbers: on `orbstack` the runs point down, and the old rows
+were fast for a wrong reason.** Measured the same day, old and new servers alternating, 13 rounds
+(`bench/results/echo-pieces-fix-orbstack-2026-09-24.md`). The machine was busy and every row's
+spread was far above 10 percent, so no number here is a speed claim. The pairs show a direction:
+
+| connections | payload | pairs | pairs in which old was faster |
+|---:|---:|---:|---:|
+| 16 | 64 KiB | 13 | 12 |
+| 64 | 64 KiB | 13 | 6 |
+| 16 | 4 KiB | 5 | 3 |
+
+In the four calmest pairs at 16 connections and 64 KiB, new ran at 0.70 to 0.79 of old. Each
+overlap lost one buffer id and put another in the ring twice, so the old server cycled through
+fewer buffers as a run went on: a counter saw 32 distinct ids in the first 20,000 receives and 12
+in the ninth, where the fixed server saw 32 in every window. A smaller group is a smaller working
+set, which "Kernel calls per echo" above shows is much cheaper per 64 KiB echo on `orbstack`. This
+points to the old 64 KiB rows on `orbstack` being fast because of the corruption. It was not
+measured on its own: no run set the old server against a correct one holding 12 buffers. On
+`github` that section measured a large group costing no more than a small one, so the fix may move
+the baseline's 64 KiB rows less. The nightly `comparison` job will show whether it moves them past
+the margin.
+
+`bench/baseline/echo.txt` is unchanged. Its rows are the owner's to retake.
+
+This is the third bug of the kind the section above names. rotor hands the caller one buffer per
+piece, and leaves the order of the caller's sends to the caller.
+
 ## What the accept storm measured, and what it could not
 
 A run is one burst: `connections` sockets opened and connected at once, each sending a byte and
