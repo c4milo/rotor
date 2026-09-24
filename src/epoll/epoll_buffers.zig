@@ -6,6 +6,7 @@
 //! `register` records nothing: epoll pins no pages, so there is nothing to save.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const core = @import("core");
 const epoll = @import("epoll.zig");
 
@@ -46,7 +47,7 @@ pub fn provide(
 /// receive event named.
 pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
     loop.tables.assert_owner();
-    assert(group_id < core.constants.buffer_groups_max);
+    assert_class_a(group_id < core.constants.buffer_groups_max);
     loop.groups[group_id].give_back(buffer_id);
 }
 

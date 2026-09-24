@@ -274,7 +274,7 @@ pub const Tables = struct {
     /// produced the result (decision 5, rule 2).
     pub fn finish_local(tables: *Tables, index: u32, result: i32) void {
         // A receive from a group that succeeded took a buffer, which `finish_local_buffer` records.
-        assert(result < 0 or !names_buffer(tables.table.at(index)));
+        assert_class_a(result < 0 or !names_buffer(tables.table.at(index)));
         tables.finish_now(index, result);
     }
 
@@ -291,7 +291,7 @@ pub const Tables = struct {
 
     fn finish_now(tables: *Tables, index: u32, result: i32) void {
         const slot = tables.table.at(index);
-        assert(slot.state == .queued or slot.state == .submitted);
+        assert_class_a(slot.state == .queued or slot.state == .submitted);
         if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
         slot.state = .finishing;
         slot.result = result;
@@ -305,7 +305,7 @@ pub const Tables = struct {
         while (produced < events.len) : (produced += 1) {
             const index = tables.finished.pop(tables.table.slots) orelse break;
             const slot = tables.table.at(index);
-            assert(slot.state == .finishing);
+            assert_class_a(slot.state == .finishing);
             // A repeating timer that was not cancelled has more to come: its event says so and
             // its slot stays the loop's (decision 14, rule 2).
             const again = repeats(slot);

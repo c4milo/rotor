@@ -215,6 +215,21 @@ jobs:
               done
             done
           done
+      # The same on epoll, the backend a process runs where the kernel refuses io_uring
+      # (decision 20). `post_epoll` is `rotor_post` built against it, by `zig build bench-linux`.
+      - name: Decision 13's idle case on epoll, three rounds alternating
+        run: |
+          set -euo pipefail
+          zig build bench-linux
+          for round in 1 2 3; do
+            echo "== epoll, round $round"
+            for gap in 0 20 100 1000 1500; do
+              for mode in waiting spin-then-wait spin-budget spinning; do
+                ./zig-out/linux-bench/post_epoll --mode "$mode" --gap-us "$gap" --samples 2000 \
+                  --warmup 200 | grep -E '^rotor_post:|^[{]'
+              done
+            done
+          done
       # Decision 8's echo half: rotor's echo server at 4 KiB with class A compiled out, against the
       # one rotor ships. Both are named `rotor`, and the runner alternates candidates only inside
       # one run, so the two runs alternate here, three times each, each on its own ports.
@@ -230,6 +245,21 @@ jobs:
             echo "== round $round, class A off"
             ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
               --port-base $((20100 + round * 200)) --directory zig-out/no-class-a
+          done
+      # The same on epoll (decision 20): both servers are built on epoll, class A on and off. The
+      # runner's own client stays on io_uring for both.
+      - name: Decision 8's echo half on epoll, three rounds alternating
+        run: |
+          set -euo pipefail
+          zig build bench-echo bench-echo-epoll-class-a
+          ls -l zig-out/epoll-class-a/rotor_echo zig-out/epoll-no-class-a/rotor_echo
+          for round in 1 2 3; do
+            echo "== epoll, round $round, class A on"
+            ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
+              --port-base $((22000 + round * 200)) --directory zig-out/epoll-class-a
+            echo "== epoll, round $round, class A off"
+            ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
+              --port-base $((22100 + round * 200)) --directory zig-out/epoll-no-class-a
           done
 
   # Every night, and when started by hand. It compares rotor on io_uring against libuv and libxev

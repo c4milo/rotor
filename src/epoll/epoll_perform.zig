@@ -14,6 +14,7 @@
 //! Everything here enters the kernel, so it is tested under Linux alone, through the loop.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
@@ -33,9 +34,9 @@ pub const filter_of = core.attempt.filter_of;
 
 /// Makes the operation's system call once.
 pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
-    assert(slot.state == .queued or slot.state == .submitted);
+    assert_class_a(slot.state == .queued or slot.state == .submitted);
     // The flush swapped a registered index for its descriptor before it came here.
-    assert(!slot.flags.descriptor_registered);
+    assert_class_a(!slot.flags.descriptor_registered);
     return switch (slot.code) {
         .accept => attempt_accept(slot),
         .connect => attempt_connect(slot),

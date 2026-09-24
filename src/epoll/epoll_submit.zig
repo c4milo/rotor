@@ -10,6 +10,7 @@
 //! no bound of its own for that reason; the pending list it walks is the bound.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const core = @import("core");
 const descriptors_module = @import("epoll_descriptors.zig");
 const offload_module = @import("epoll_offload.zig");
@@ -40,7 +41,7 @@ pub fn flush(loop: *Loop) void {
 }
 
 fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) void {
-    assert(slot.state == .queued);
+    assert_class_a(slot.state == .queued);
     const tables = &loop.tables;
     switch (slot.code) {
         .post => tables.finish_local(index, post(loop, slot, wakes)),

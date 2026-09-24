@@ -10,6 +10,7 @@
 //! `give_back`) stay in each backend. What is here takes no loop and names no kernel type.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 
 pub const RegisterError = error{ SystemResources, Unexpected };
@@ -90,23 +91,23 @@ pub const Group = struct {
 
     /// The bytes of buffer `buffer_id`.
     pub fn bytes_of(group: *const Group, buffer_id: u16) []u8 {
-        assert(group.buffer_bytes != 0);
-        assert(buffer_id < group.count);
+        assert_class_a(group.buffer_bytes != 0);
+        assert_class_a(buffer_id < group.count);
         const start = @as(usize, buffer_id) * group.buffer_bytes;
         return group.buffers[start..][0..group.buffer_bytes];
     }
 
     /// Takes a free buffer's id, or null when every buffer is with the caller.
     pub fn take(group: *Group) ?u16 {
-        assert(group.buffer_bytes != 0);
+        assert_class_a(group.buffer_bytes != 0);
         if (group.free_count == 0) return null;
         group.free_count -= 1;
         return group.free[group.free_count];
     }
 
     pub fn give_back(group: *Group, buffer_id: u16) void {
-        assert(buffer_id < group.count);
-        assert(group.free_count < group.count);
+        assert_class_a(buffer_id < group.count);
+        assert_class_a(group.free_count < group.count);
         group.free[group.free_count] = buffer_id;
         group.free_count += 1;
     }

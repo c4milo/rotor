@@ -212,8 +212,8 @@ pub const Slot = extern struct {
 
     /// The bytes of a transfer, as the backend that performs it sees them.
     pub fn bytes(slot: *const Slot) []u8 {
-        assert(slot.len >= 1);
-        assert(slot.buffer != 0);
+        assert_class_a(slot.len >= 1);
+        assert_class_a(slot.buffer != 0);
         const pointer: [*]u8 = @ptrFromInt(slot.buffer);
         return pointer[0..slot.len];
     }

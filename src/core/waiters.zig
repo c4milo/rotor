@@ -18,6 +18,7 @@
 //! a probe ends at the first vacant entry.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
@@ -144,7 +145,7 @@ pub const Waiters = struct {
     }
 
     fn home(waiters: *const Waiters, descriptor: Descriptor) u32 {
-        assert(descriptor >= 0);
+        assert_class_a(descriptor >= 0);
         const key: u32 = @intCast(descriptor);
         const bits = std.math.log2_int(usize, waiters.entries.len);
         if (bits == 0) return 0;

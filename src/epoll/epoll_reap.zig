@@ -25,6 +25,7 @@
 //!   ticks it saved (decision 20, "A readiness serves one operation per direction").
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
@@ -109,10 +110,10 @@ fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
     const tables = &loop.tables;
     const index = loop.waiters.first(descriptor, filter) orelse return null;
     const slot = tables.table.at(index);
-    assert(slot.state == .submitted);
+    assert_class_a(slot.state == .submitted);
     const attempt = perform.attempt(loop, slot);
     // A file never waits, so nothing that reaches the reap is handed to an offload.
-    assert(attempt.outcome != .offloaded);
+    assert_class_a(attempt.outcome != .offloaded);
     // Not ready after all. The registration is level triggered and stays, so it reports again.
     if (attempt.outcome != .done) return null;
     var event: Event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{} };
