@@ -8,11 +8,12 @@
 # `--write-baseline yes` and keep the `processor` line and the `echo ...` lines it prints.
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
-# rotor. Every section was taken on 2026-09-22 from the `comparison` job of
-# .github/workflows/ci.yml, on GitHub-hosted ubuntu-24.04 runners, io_uring, one core, three runs
-# per row, with rotor's buffer group sized per connection. A section leaves out a row whose runs
-# disagreed, and a row another step of the same job contradicts, and its comment names each. A run
-# reports a row its section lacks and does not gate it. `bench/results/` holds every run.
+# rotor. Every section was taken from the `comparison` job of .github/workflows/ci.yml, on
+# 2026-09-22 but the EPYC 9V45's, taken on 2026-09-24, on GitHub-hosted ubuntu-24.04 runners,
+# io_uring, one core, three runs per row, with rotor's buffer group sized per connection. A section
+# leaves out a row whose runs disagreed, and a row another step of the same job contradicts, and
+# its comment names each. A run reports a row its section lacks and does not gate it.
+# `bench/results/` holds every run.
 
 # Run 35811462374, commit 86a7ade.
 processor AMD EPYC 9V74 80-Core Processor
@@ -146,3 +147,49 @@ echo 64 65536 rotor 1000
 echo 64 65536 rotor (accumulate) 1000
 echo 64 65536 libuv 960
 echo 64 65536 std.Io.Threaded 648
+
+# Run 35989885034, commit 8cde9a6, on 2026-09-24. No row is left out: the runs agreed on every one,
+# and no step of the job contradicted one. `bench/results/echo-github-epyc-9v45-2026-09-24.md`
+# holds the run.
+processor AMD EPYC 9V45 96-Core Processor
+# workload connections payload candidate ratio
+echo 16 4096 rotor 1000
+echo 16 4096 rotor (accumulate) 943
+echo 16 4096 libuv 870
+echo 16 4096 libxev 925
+echo 16 4096 std.Io.Threaded 653
+echo 16 8192 rotor 1000
+echo 16 8192 rotor (accumulate) 949
+echo 16 8192 libuv 885
+echo 16 8192 libxev 928
+echo 16 8192 std.Io.Threaded 654
+echo 16 16384 rotor 1000
+echo 16 16384 rotor (accumulate) 931
+echo 16 16384 libuv 878
+echo 16 16384 libxev 921
+echo 16 16384 std.Io.Threaded 642
+echo 16 65536 rotor 1000
+echo 16 65536 rotor (accumulate) 974
+echo 16 65536 libuv 969
+echo 16 65536 libxev 975
+echo 16 65536 std.Io.Threaded 800
+echo 64 4096 rotor 1000
+echo 64 4096 rotor (accumulate) 947
+echo 64 4096 libuv 874
+echo 64 4096 libxev 946
+echo 64 4096 std.Io.Threaded 657
+echo 64 8192 rotor 1000
+echo 64 8192 rotor (accumulate) 948
+echo 64 8192 libuv 867
+echo 64 8192 libxev 941
+echo 64 8192 std.Io.Threaded 649
+echo 64 16384 rotor 1000
+echo 64 16384 rotor (accumulate) 943
+echo 64 16384 libuv 869
+echo 64 16384 libxev 923
+echo 64 16384 std.Io.Threaded 649
+echo 64 65536 rotor 1000
+echo 64 65536 rotor (accumulate) 986
+echo 64 65536 libuv 991
+echo 64 65536 libxev 994
+echo 64 65536 std.Io.Threaded 748
