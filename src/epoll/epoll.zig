@@ -248,10 +248,12 @@ pub const Loop = struct {
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
-        if (!core.spin.applies(loop.tables.spin_budget_ns, wait_ns)) {
-            return tick_module.tick(loop, events, wait_ns);
-        }
-        return tick_module.spin_then_wait(loop, events, wait_ns);
+        const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
+            try tick_module.spin_then_wait(loop, events, wait_ns)
+        else
+            try tick_module.tick(loop, events, wait_ns);
+        loop.tables.spin.note_handed_over(produced, loop.tables.now_ns);
+        return produced;
     }
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends

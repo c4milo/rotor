@@ -17,6 +17,7 @@ const slot_module = @import("slot.zig");
 const slot_list_module = @import("slot_list.zig");
 const slot_table_module = @import("slot_table.zig");
 const statistics_module = @import("statistics.zig");
+const spin_module = @import("spin.zig");
 const timer_heap_module = @import("timer_heap.zig");
 const waiters_module = @import("waiters.zig");
 
@@ -73,9 +74,8 @@ pub const Tables = struct {
     /// Buffers the loop registered: 0 until `note_buffers`.
     buffers_registered: u16,
     id: LoopId,
-    /// How long a tick polls without waiting before it blocks, from the options: 0, the default,
-    /// never polls (decision 13, `spin.zig`).
-    spin_budget_ns: u64,
+    /// The spin budget from the options, and when the loop last handed over an event (decision 13).
+    spin: spin_module.Window,
 
     pub const Options = struct {
         id: LoopId = 0,
@@ -107,7 +107,7 @@ pub const Tables = struct {
         tables.descriptors_registered = 0;
         tables.buffers_registered = 0;
         tables.id = options.id;
-        tables.spin_budget_ns = options.spin_budget_ns;
+        tables.spin = .{ .budget_ns = options.spin_budget_ns, .active_ns = 0 };
     }
 
     /// Records that the backend registered `count` descriptors: once per loop, before an
