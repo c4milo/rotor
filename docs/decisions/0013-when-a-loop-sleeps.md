@@ -227,13 +227,16 @@ owner's question at the end of "What would accept this record". The owner answer
 ## Built, 2026-09-24
 
 - `spin_budget_ns` is an option of every backend's `Loop` and of the public module's, 0 by default
-  and at most `core.constants.spin_budget_ns_max`, 1 ms. `core.Tables` holds it.
+  and at most `core.constants.spin_budget_ns_max`, 1 ms. `core.Tables` holds it, in a
+  `spin.Window` beside the clock of the last tick that handed over an event.
 - `src/core/spin.zig` holds the rules, as functions of the budget, the caller's wait, the clock the
-  tick read and the nearest timer. `applies` is point 2's first half: a tick spins only when the
-  loop has a budget and the caller's wait is longer than it. `Spin.begin` is its second half: a
-  timer due inside the budget stops the spin before it starts, and the tick sleeps until the
-  timer. `Spin.more` ends the spin when the clock the last poll read passes the budget, or after
-  `spin_rounds_max` polls if the clock stood still.
+  tick read, the last event and the nearest timer. `applies` is point 2's first half: a tick spins
+  only when the loop has a budget and the caller's wait is longer than it. `Spin.begin` sets the
+  window as the proposal's first sentence does: the loop stays awake until one budget after its
+  last event. A tick after that window does not spin, and nor does one with a timer due inside it,
+  which is point 2's second half: that tick sleeps until the timer. `Spin.more` ends the spin when
+  the clock the last poll read passes the window, or after `spin_rounds_max` polls if the clock
+  stood still.
 - Each backend's `Loop.tick` asks `applies`, and when it holds calls its tick file's
   `spin_then_wait`. That is point 3: a poll is the backend's own `tick` with a zero wait, repeated,
   and then one `tick` for what is left of the caller's wait. No other path changed. The function is
@@ -247,12 +250,13 @@ How it is checked, point by point of "How it is checked, if it is built":
    `ROTOR_CONFORMANCE_SPIN_NS`: `zig build test` for the host's backend and `tools/linux_test.sh`
    for io_uring and epoll. Every scenario passed both ways on all three backends.
 2. `src/conformance/conformance_spin.zig` checks what the budget changes, by the CPU time of the
-   loop's thread: a loop with a budget polls for it and then sleeps out the rest of the wait; a tick
-   given no wait, or a wait no longer than the budget, does not poll; and a timer due inside the
-   budget is slept until, not polled for.
+   loop's thread: a loop with a budget polls for it after its last event and then sleeps out the
+   rest of the wait; a loop that has handed over nothing since its budget ran out sleeps at once; a
+   tick given no wait, or a wait no longer than the budget, does not poll; and a timer due inside
+   the budget is slept until, not polled for.
 3. `bench/crosscore/rotor_post.zig` gained `--mode spin-budget`, which gives both loops the budget
    in their options where `spin-then-wait` polls in the program. The CI job `costs` runs it beside
-   the other modes.
+   the other modes. What it measured is below.
 4. Mutations, measured on the kqueue backend's copy and on `core`:
 
 | mutation | caught by | result |
@@ -265,6 +269,67 @@ How it is checked, point by point of "How it is checked, if it is built":
 | a wait equal to the budget spun | `test-conformance-kqueue` | CAUGHT |
 | what is left of the wait not reduced by the spin | `test-core` | CAUGHT |
 | a budget over `spin_budget_ns_max` accepted | `zig build halt-check` | CAUGHT |
+| the window run from the tick, not from the last event | `test-conformance-kqueue`, `test-core` | CAUGHT |
+| the last event never recorded | `test-conformance-kqueue` | CAUGHT |
 
-The race gate, whose suites include the scenarios of point 2, reported no race. No speed claim is made for the built
-option: `--mode spin-budget` has not yet run on a named machine.
+The first eight were measured on the first build and again on the second; the last two only on
+the second.
+
+The race gate, whose suites include the scenarios of point 2, reported no race.
+
+### The first build spun on every tick, and was fixed the same day
+
+The first build, commit `a31f1a4`, started the window at every tick given a wait. A loop whose
+work had stopped, and whose caller kept ticking with a 1 ms wait, then spent its budget every
+millisecond: 5 percent of a core for as long as it stayed idle. The proposal's first sentence says
+a loop stays awake "after its last completion", which is once. Commit `dfebaa5` starts the window at
+the last tick that handed over an event, and the conformance scenario "a loop that has handed over
+nothing since its budget ran out sleeps at once" holds it there. A measurement found the question,
+as the next section says, but the measurement did not show this fix: the gaps the benchmark runs do
+not make a loop tick twice with nothing to hand over while its window is open.
+
+### Measured, 2026-09-24, `github`
+
+`rotor_post` ran the four modes on io_uring nine times, in three sets of three
+(`bench/results/decision-13-spin-budget-github-2026-09-24.md`). The runs of the current loop, set 3,
+all on AMD EPYC 7763: per round trip, in µs, the median and the range of the three runs' medians.
+
+| gap | CPU, waiting | CPU, program's spin | CPU, loop's budget | round trip, waiting | round trip, program's spin | round trip, loop's budget |
+|---|---|---|---|---|---|---|
+| none | 14.2 (12.4 to 14.8) | 4.6 (4.6 to 4.6) | 4.5 (4.5 to 4.5) | 29.2 (25.2 to 32.5) | 4.3 (4.3 to 4.3) | 4.2 (4.2 to 4.2) |
+| 20 µs | 15.1 (13.6 to 16.0) | 24.8 (24.8 to 24.9) | 24.6 (24.6 to 24.7) | 31.9 (29.2 to 32.3) | 4.3 (4.3 to 4.3) | 4.2 (4.2 to 4.2) |
+| 100 µs | 16.6 (13.1 to 17.0) | 59.7 (59.5 to 59.8) | 59.7 (59.5 to 59.7) | 32.5 (29.4 to 32.6) | 17.1 (16.2 to 17.1) | 16.9 (16.0 to 16.9) |
+| 1,000 µs | 20.4 (16.8 to 20.4) | 60.4 (60.1 to 60.7) | 64.1 (63.9 to 64.6) | 28.5 (20.9 to 28.7) | 18.3 (17.1 to 18.4) | 25.3 (24.4 to 25.5) |
+| 1,500 µs | 29.9 (26.6 to 30.5) | 72.0 (71.3 to 72.5) | 72.1 (71.5 to 72.6) | 33.8 (30.8 to 34.0) | 18.3 (17.3 to 18.4) | 18.2 (17.1 to 18.4) |
+
+On the two AMD EPYC 9V45 runs of set 2, the same loop:
+
+| gap | CPU, program's spin | CPU, loop's budget | round trip, program's spin | round trip, loop's budget |
+|---|---|---|---|---|
+| none | 2.9 (2.9 to 3.0) | 2.9 (2.9 to 2.9) | 2.8 (2.8 to 2.8) | 2.7 (2.7 to 2.7) |
+| 20 µs | 23.1 (23.0 to 23.1) | 23.0 (23.0 to 23.1) | 2.8 (2.8 to 2.8) | 2.7 (2.7 to 2.7) |
+| 100 µs | 55.4 (55.3 to 55.4) | 55.4 (55.3 to 55.4) | 11.0 (10.9 to 11.1) | 11.0 (10.9 to 11.1) |
+| 1,000 µs | 55.9 (55.8 to 55.9) | 57.4 (57.3 to 57.5) | 11.3 (11.2 to 11.4) | 12.3 (12.2 to 12.3) |
+
+What the runs say:
+
+- **The loop's own budget does what the program's spin did.** At no gap, and at gaps of 20, 100
+  and 1,500 µs, the two agree to within 0.2 µs of CPU and of round trip on the EPYC 7763. The EPYC
+  9V45 ran no 1,500 µs gap, and at the other three the two agree there to within 0.1 µs.
+- **They differ at a gap of 1,000 µs, which is the program's own 1 ms wait.** There the loop's
+  budget costs 3.7 µs more CPU and 7 µs more per round trip on the EPYC 7763, and 1.5 µs and 1 µs
+  more on the EPYC 9V45. The program's spin blocks for a whole 1 ms after it; the loop blocks for
+  what is left of the caller's 1 ms, so its wait ends at about the time the next ping arrives. At
+  1,500 µs no wait ends near a ping, and the two agree. That is what this explanation predicted
+  before set 3 ran. How the wait's end costs the extra time is not measured.
+- **The fix of `dfebaa5` did not move the 1,000 µs row**, which is how the explanation above was
+  found:
+
+| build | runs | CPU, program's spin | CPU, loop's budget | round trip, program's spin | round trip, loop's budget |
+|---|---|---|---|---|---|
+| `a31f1a4`, spin per tick | 3 | 61.1 (61.1 to 61.2) | 66.7 (66.7 to 66.9) | 19.8 (19.3 to 20.0) | 27.5 (26.8 to 27.5) |
+| `dfebaa5`, window from the last event | 1 | 61.1 | 65.4 | 19.2 | 26.9 |
+| `5b441cc`, the same code | 3 | 60.4 (60.1 to 60.7) | 64.1 (63.9 to 64.6) | 18.3 (17.1 to 18.4) | 25.3 (24.4 to 25.5) |
+
+None of this changes what the record measured in the idle case: after the budget, a message costs
+40 to 47 µs more CPU than waiting.

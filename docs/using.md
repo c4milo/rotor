@@ -82,12 +82,13 @@ and `offload_memory` for files on macOS and on epoll (below).
 `spin_budget_ns` is 0 by default, and then a tick that is given a wait blocks at once, as it always
 has. With a budget, at most `rotor.constants.spin_budget_ns_max`, a tick given a longer wait first
 ticks without waiting for up to that long, and blocks for the rest of the wait only if nothing came
-(decision 13). A message another loop posts inside the budget then arrives without the kernel waking
-this one. In that record's measurement on io_uring, where the benchmark polled 50 µs itself, a round
-trip took 3 to 5 µs against 16 to 32 µs waiting
-(`bench/results/decision-13-idle-github-2026-09-24.md`). The cost is the CPU: each wait that
-outlasts the budget spends the budget polling, which at one message every 100 µs was about half a
-core. A tick given no wait, or a wait no longer than the budget, never polls, and nor
+(decision 13). The window runs from the loop's last event, so a loop whose work has stopped spends
+its budget once and then sleeps. A message another loop posts inside the budget arrives without the
+kernel waking this one. In that record's measurement on io_uring, loops with a 50 µs budget, each
+message 20 µs after the last, made a round trip in 2.7 to 4.2 µs against 18 to 32 µs for loops
+that waited (`bench/results/decision-13-spin-budget-github-2026-09-24.md`). The cost is the CPU:
+each message that comes after the budget costs the budget in polling, which at one message every
+100 µs was about half a core (`bench/results/decision-13-idle-github-2026-09-24.md`). A tick given no wait, or a wait no longer than the budget, never polls, and nor
 does one whose next timer is due inside the budget.
 
 ## Submit and tick
