@@ -7,17 +7,24 @@
 # and prints its own `processor` line and rows in this format, ready to add. Retake a section with
 # `--write-baseline yes` and keep the `processor` line and the `echo ...` lines it prints.
 #
-# A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
-# rotor. Every section was taken from the `comparison` job of .github/workflows/ci.yml, on
-# GitHub-hosted ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer
-# group sized per connection: on 2026-09-22, but the EPYC 9V74's, the EPYC 9V45's and the Xeon
-# 8370C's, taken on 2026-09-24. Every section but the Xeon 8370C's was first taken before `db9e39e`
-# fixed a server that gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`,
-# "A third bug in rotor_echo"). On 2026-09-24 the EPYC 9V74's section was retaken whole, and the
-# other sections' 64 KiB rows were retaken, from runs made after that fix and after `34763cc` made
-# the client compare what comes back; each section's comment names its runs. A section leaves out a
-# row whose runs disagreed, and a row another step of the same job contradicts, and its comment
-# names each. A run reports a row its section lacks and does not gate it.
+# A row is: workload connections payload candidate ratio. The ratio has no unit of its own. It is
+# the candidate's throughput in thousandths of rotor's, both measured in the same run and the same
+# configuration. Throughput is echoes per second: round trips the client completed, each a whole
+# payload sent and read back, as the median of the row's runs. The ratio is the candidate's median
+# times 1000 divided by rotor's, rounded down. So rotor's own row is 1000, 952 means 95.2 percent of
+# rotor's rate, and above 1000 the candidate was ahead of rotor. A run fails a row when its ratio is
+# more than `margin_thousandths`, 50, above the row.
+#
+# Every section was taken from the `comparison` job of .github/workflows/ci.yml, on GitHub-hosted
+# ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer group sized per
+# connection: on 2026-09-22, but the EPYC 9V74's, the EPYC 9V45's and the Xeon 8370C's, taken on
+# 2026-09-24. Every section but the Xeon 8370C's was first taken before `db9e39e` fixed a server
+# that gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`, "A third bug in
+# rotor_echo"). On 2026-09-24 the EPYC 9V74's section was retaken whole, and the other sections'
+# 64 KiB rows were retaken, from runs made after that fix and after `34763cc` made the client
+# compare what comes back; each section's comment names its runs. A section leaves out a row whose
+# runs disagreed, and a row another step of the same job contradicts, and its comment names each. A
+# run reports a row its section lacks and does not gate it.
 # `bench/results/` holds every run.
 
 # Run 36032383576, commit 5b441cc, on 2026-09-24: the first comparison on this processor with the
