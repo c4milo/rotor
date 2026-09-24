@@ -185,6 +185,36 @@ Four things outside this backend, each fixed or recorded where it belongs:
   is deleted, reaches one (`tools/halt/epoll_scenarios.zig`). Since 2026-09-22 the Linux gate runs
   a halt check of its own for such scenarios (`tools/halt/epoll_linux_scenarios.zig`).
 
+## A readiness serves one operation per direction
+
+Since 2026-09-23 kqueue's reap serves a readiness until the amount in its `data` is used: the
+connections a listener has waiting, or the bytes a socket can read or send (decision 12, point 3).
+The same change was built for epoll and measured the same day, and it was dropped.
+
+epoll's readiness carries no amount, so that change served a direction until a call would block,
+fails, or moves nothing. The last attempt of every readiness was then a call that answered EAGAIN.
+The measurement is `rotor_datagram_epoll` on `orbstack`, under Docker's default seccomp profile,
+five rounds of 2 seconds each, alternating the two builds
+(`bench/results/datagram-reap-orbstack-2026-09-23.md`):
+
+| in flight | build | median round trips per second | spread percent | median p50 µs | ticks per round trip |
+|---:|---|---:|---:|---:|---:|
+| 1 | one operation per direction | 373,866 | 6 | 2.4 | 2.000 |
+| 1 | until a call would block | 326,534 | 12 | 2.8 | 2.000 |
+| 64 | one operation per direction | 413,925 | 4 | 142.1 | 1.000 |
+| 64 | until a call would block | 434,462 | 10 | 126.9 | 0.031 |
+
+- **At 1 in flight the change lost 13 percent**, and every one of its runs was slower than every
+  run of the build before it. Each readiness had one datagram, so the change made the same calls
+  and one more that answered EAGAIN.
+- **At 64 in flight it served 32 datagrams per readiness where the build before served one**, and
+  gained 5 percent, which is inside its 10 percent spread.
+
+The `mac` machine's load average was about 11 during the run, so these times are not a claim. They
+decided this anyway, because one message at a time is the common case and the loss was in every
+round. Open question 2 makes the same argument against edge triggering, which also needs a call
+that answers EAGAIN. A later attempt needs a way to know a socket is empty without that call.
+
 ## Open questions
 
 Each has a proposed answer, and the implementation follows it until the owner rules otherwise.

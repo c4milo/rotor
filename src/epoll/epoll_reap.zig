@@ -2,8 +2,8 @@
 //! that is ready and has an operation waiting, the oldest one is tried again, and its event is
 //! written straight into the caller's events.
 //!
-//! This is `kqueue_reap.zig` with two differences, both from epoll reporting a descriptor and not a
-//! filter:
+//! This is `kqueue_reap.zig` with three differences. The first two come from epoll reporting a
+//! descriptor and not a filter:
 //!
 //! - **One readiness can serve both directions.** It carries every bit that is set, so a socket
 //!   that is readable and writable at once yields up to two events. The reap stops serving when the
@@ -19,6 +19,10 @@
 //!   cancel does (`epoll_cancel.zig`), because nothing follows it. And a direction the kernel
 //!   reports ready with nobody waiting on it is taken out here, or it would be reported on every
 //!   wait.
+//! - **A readiness serves one operation per direction.** kqueue's readiness carries the amount that
+//!   is ready, and its reap serves until that is used. epoll's carries no amount, so serving more
+//!   ends with a call that answers EAGAIN, and at one message in flight that cost more than the
+//!   ticks it saved (decision 20, "A readiness serves one operation per direction").
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;

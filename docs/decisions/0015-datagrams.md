@@ -258,7 +258,9 @@ is only ever written as 0. That is rotor's own code and a later record may fix i
 
 **Fixed on 2026-09-23.** The reap now serves a readiness until the amount in `data` is used
 (decision 12, point 3). `bench/datagram/rotor_datagram.zig` reports the ticks a run took, which
-shows how many datagrams one readiness served.
+shows how many datagrams one readiness served. epoll's reap still serves one operation per
+direction: its readiness carries no amount, and decision 20 records the measurement that kept it
+that way.
 
 ## Alternatives it beat
 
