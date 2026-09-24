@@ -500,9 +500,11 @@ known: neither server reads the bytes, and on `mac` the two clients measured rot
 (`bench/results/echo-client-check-mac-2026-09-24.md`). The EPYC 7763 section left its libxev rows
 at 64 KiB out on 2026-09-22 for the same symptom; they are back.
 
-The EPYC 9V74 section's rows below 64 KiB no longer fit that processor. The three jobs on it since
-the fix put libuv 141 to 230 below them. A lower ratio does not fail the gate, so those rows hold
-nothing. Retaking them is the owner's call.
+The EPYC 9V74 section's rows below 64 KiB no longer fit that processor either. The three jobs on it
+since the fix put libuv 141 to 230 below them, and a lower ratio does not fail the gate, so those
+rows held nothing. At the owner's request the whole section was retaken from run 36032383576, the
+run its 64 KiB rows came from. Every spread in it was 4 percent or under, its CPU step agreed at
+4 KiB as well, and the second job with the check, 36034642821, came within 33 of every row.
 
 This is the third bug of the kind the section above names. rotor hands the caller one buffer per
 piece, and leaves the order of the caller's sends to the caller.

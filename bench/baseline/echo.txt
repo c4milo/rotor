@@ -9,60 +9,59 @@
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
 # rotor. Every section was taken from the `comparison` job of .github/workflows/ci.yml, on
-# 2026-09-22 but the EPYC 9V45's and the Xeon 8370C's, taken on 2026-09-24, on GitHub-hosted
-# ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer group sized per
-# connection. Every section but the Xeon 8370C's was first taken before `db9e39e` fixed a server
-# that gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`, "A third bug in
-# rotor_echo"). Their 64 KiB rows were retaken on 2026-09-24 from runs made after that fix and after
-# `34763cc` made the client compare what comes back; each section's comment names its run. A
-# section leaves out a row whose runs disagreed, and a row another step of the same job
-# contradicts, and its comment names each. A run reports a row its section lacks and does not gate
-# it.
+# GitHub-hosted ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer
+# group sized per connection: on 2026-09-22, but the EPYC 9V74's, the EPYC 9V45's and the Xeon
+# 8370C's, taken on 2026-09-24. Every section but the Xeon 8370C's was first taken before `db9e39e`
+# fixed a server that gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`,
+# "A third bug in rotor_echo"). On 2026-09-24 the EPYC 9V74's section was retaken whole, and the
+# other sections' 64 KiB rows were retaken, from runs made after that fix and after `34763cc` made
+# the client compare what comes back; each section's comment names its runs. A section leaves out a
+# row whose runs disagreed, and a row another step of the same job contradicts, and its comment
+# names each. A run reports a row its section lacks and does not gate it.
 # `bench/results/` holds every run.
 
-# Run 35811462374, commit 86a7ade, but the 64 KiB rows, which run 36032383576 on commit 5b441cc
-# retook on 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its check. No
-# 64 KiB row is left out: the runs agreed on every one, and the job's CPU step agreed with them.
-# The rows below 64 KiB no longer fit this processor: libuv's ratios there came out 146 to 230
-# lower in that run, and 145 to 212 lower in run 36030652152 on dfebaa5.
-# `bench/results/echo-checked-github-epyc-9v74-2026-09-24.md` holds the retake.
+# Run 36032383576, commit 5b441cc, on 2026-09-24: the first comparison on this processor with the
+# fix of db9e39e and the client check of 34763cc. No row is left out: the runs agreed on every one,
+# and the job's CPU step agreed with the 4 KiB and 64 KiB rows. The section it replaced, from run
+# 35811462374 on 86a7ade, put libuv 141 to 230 above what every run since the fix measured below
+# 64 KiB. `bench/results/echo-checked-github-epyc-9v74-2026-09-24.md` holds the run.
 processor AMD EPYC 9V74 80-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 1002
-echo 16 4096 libuv 959
-echo 16 4096 libxev 894
-echo 16 4096 std.Io.Threaded 610
+echo 16 4096 rotor (accumulate) 946
+echo 16 4096 libuv 795
+echo 16 4096 libxev 898
+echo 16 4096 std.Io.Threaded 577
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 1007
-echo 16 8192 libuv 1031
-echo 16 8192 libxev 926
-echo 16 8192 std.Io.Threaded 646
+echo 16 8192 rotor (accumulate) 958
+echo 16 8192 libuv 801
+echo 16 8192 libxev 901
+echo 16 8192 std.Io.Threaded 577
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 997
-echo 16 16384 libuv 989
-echo 16 16384 libxev 942
-echo 16 16384 std.Io.Threaded 672
+echo 16 16384 rotor (accumulate) 976
+echo 16 16384 libuv 823
+echo 16 16384 libxev 931
+echo 16 16384 std.Io.Threaded 589
 echo 16 65536 rotor 1000
 echo 16 65536 rotor (accumulate) 1023
 echo 16 65536 libuv 952
 echo 16 65536 libxev 1011
 echo 16 65536 std.Io.Threaded 712
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 1003
-echo 64 4096 libuv 954
-echo 64 4096 libxev 964
-echo 64 4096 std.Io.Threaded 622
+echo 64 4096 rotor (accumulate) 954
+echo 64 4096 libuv 808
+echo 64 4096 libxev 944
+echo 64 4096 std.Io.Threaded 580
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 999
-echo 64 8192 libuv 983
-echo 64 8192 libxev 956
-echo 64 8192 std.Io.Threaded 653
+echo 64 8192 rotor (accumulate) 971
+echo 64 8192 libuv 834
+echo 64 8192 libxev 960
+echo 64 8192 std.Io.Threaded 599
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 1004
-echo 64 16384 libuv 990
-echo 64 16384 libxev 981
-echo 64 16384 std.Io.Threaded 702
+echo 64 16384 rotor (accumulate) 956
+echo 64 16384 libuv 832
+echo 64 16384 libxev 949
+echo 64 16384 std.Io.Threaded 597
 echo 64 65536 rotor 1000
 echo 64 65536 rotor (accumulate) 1053
 echo 64 65536 libuv 918

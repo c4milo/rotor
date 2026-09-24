@@ -8,7 +8,8 @@ row. The runner reported an AMD EPYC 9V74 80-Core Processor, 4 processors and Li
 The run includes the fix of `db9e39e`, in which each piece of a connection's stream keeps its own
 buffer, and the client check of `34763cc`: a span fails when a connection ends early, and each
 connection compares its first round and one round in 64 with the bytes it sent. No run failed, so
-every echo the check sampled came back intact. Its 64 KiB rows became the section's 64 KiB rows.
+every echo the check sampled came back intact. Its rows became the whole section, first its
+64 KiB rows and then the rest.
 
 ```text
 | workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
