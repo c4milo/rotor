@@ -262,7 +262,9 @@ was about to push.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
   request. Six jobs, each the command a developer runs by hand: `zig build test` on macOS, the
   Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` on Ubuntu, the call gate
-  on Ubuntu, and `zig build lint-commits` on a pull request. Zig is downloaded from ziglang.org
+  on Ubuntu, and `zig build lint-commits` on a pull request. The x86-64 comparison against libuv
+  and libxev, held to `bench/baseline/echo.txt`, runs every night at 06:17 UTC and when started by
+  hand; the cost probes run only by hand. Zig is downloaded from ziglang.org
   and Lean from its GitHub release, each checked against a pinned SHA-256; no third-party action
   runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.

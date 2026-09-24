@@ -13,6 +13,9 @@
 #   - `calls`: the kernel calls rotor's echo servers make per echo, counted by the kernel's
 #     tracepoints three times and held to `bench/baseline/calls.txt` by `calls_gate`.
 #
+# Two more jobs run only when asked: `comparison`, every night and by hand, which holds rotor's
+# echo throughput against libuv and libxev to `bench/baseline/echo.txt`, and `costs`, by hand.
+#
 # **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
 # both the macOS and the Linux job bound the loop's own work: a poll, a timer fire and a submit.
 # Each bound is checked against the best of twenty attempts and sits an order of magnitude above
@@ -34,6 +37,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Every night at 06:17 UTC, for the comparison job below; every other job runs then too. The
+  # minute is off the hour, when GitHub starts fewer scheduled runs late.
+  schedule:
+    - cron: "17 6 * * *"
 
 permissions:
   contents: read
@@ -188,9 +195,9 @@ jobs:
             ./zig-out/linux-bench/uring_nop_fast
           done
 
-  # Also started by hand. The comparison against libuv and libxev has never been run on io_uring
-  # anywhere: the rows in `bench/alternatives/README.md` marked io_uring were withdrawn, and every
-  # row since was taken on macOS. This job is where that changes.
+  # Every night, and when started by hand. It compares rotor on io_uring against libuv and libxev
+  # in one run on one runner, and holds the echo rows to `bench/baseline/echo.txt`, whose sections
+  # were taken from this job on 2026-09-22.
   #
   # It leaves the file workload out. Those rows read a file on an Azure cloud volume, which is what
   # keeps C12 and C13 out of the `github` column of `docs/costs.md`, and a number from it would
@@ -198,7 +205,7 @@ jobs:
   comparison:
     name: Linux x86-64, the comparison
     runs-on: ubuntu-24.04
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
       - uses: actions/checkout@v4
       - name: Install Zig
@@ -225,8 +232,9 @@ jobs:
       # candidates of one run, never throughputs, and one section of them per processor, because
       # this pool hands out a different processor each time and the ratios move with it
       # (`bench/harness/baseline.zig`). A run on a processor the file does not name is held to
-      # nothing and prints its section instead. This job is dispatched by hand, so the gate runs
-      # when a comparison runs; putting it on every push is a question of CI minutes, not of trust.
+      # nothing and prints its section instead. It runs every night rather than on every push: the
+      # comparison takes about half an hour of a runner, and the calls job catches an added call per
+      # echo on every push already.
       - name: Echo, against the baseline
         run: ./zig-out/bin/echo_runner --baseline bench/baseline/echo.txt
       # The steps below measure other workloads, so they run whatever the echo gate decided.
