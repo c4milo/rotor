@@ -394,7 +394,9 @@ value, and `rotor_echo` keeps `--cpu` and `--loops` for a person running it by h
 
 **The `mac` machine is busy.** An attempt on 2026-09-20 met a load average of 30 from another
 project's CBMC run, and was not recorded: `orbstack` runs on this machine's cores, so its numbers
-are only as quiet as this machine is.
+are only as quiet as this machine is. GitHub's hosted macOS runners were tried as a stand-in on
+2026-09-24 and were no quieter: the cross-core comparison's rounds spread by 9 to 96 percent there.
+They are not a named machine, and kqueue is measured on `mac` when it is quiet.
 
 A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
 of 46 and was thrown away.
