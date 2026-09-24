@@ -14,6 +14,14 @@
 //! baseline does not name is printed in the baseline's format and not judged, so a new candidate
 //! can be added by copying its lines.
 //!
+//! One column is derived, and `count_calls.sh` does not print it: `untried`, the `epoll_ctl` calls
+//! per echo beyond the reads that found nothing, `ctl - max(reads - 1, 0)`. It is taken within
+//! each round, before the smallest is kept, because the two counts mean something only together. A
+//! readiness backend tries an operation before it registers it (decision 20), so a registration
+//! follows a read that answered EAGAIN, and this stays near 0. An operation that waits without being
+//! tried first adds about one per echo. On 2026-09-24 the runners read -0.05 to 0.06 for the tree,
+//! on every epoll row, and 1.04 to 1.97 with E4 undone, where `ctl` alone overlapped between the two.
+//!
 //! A count per echo depends on the machine as well as the code: how often a receive finds its
 //! bytes already there depends on how fast the client and the server run. So the ceilings come
 //! from the runners this gate runs on, never from `orbstack` or `mac`, and they leave room for the
@@ -23,8 +31,9 @@
 //! argument, a file or a line cannot be read.
 const std = @import("std");
 
-/// The columns of `count_calls.sh`'s table that count calls, by the name a baseline line uses, in
-/// the order the table prints them after `payload`, `candidate`, `echoes` and `overruns`.
+/// The columns a baseline line may name: the nine of `count_calls.sh`'s table that count calls, in
+/// the order the table prints them after `payload`, `candidate`, `echoes` and `overruns`, then
+/// `untried`, which the gate derives from them.
 pub const columns = [_][]const u8{
     "enter",
     "requests",
@@ -35,7 +44,11 @@ pub const columns = [_][]const u8{
     "ctl",
     "waits",
     "other",
+    "untried",
 };
+
+/// The columns read from the table. The rest are derived.
+const table_columns = columns.len - 1;
 
 /// Cells before the first counted column: payload, candidate, echoes, overruns.
 const leading_cells = 4;
@@ -74,15 +87,15 @@ pub const Ceiling = struct {
 pub fn read_round(text: []const u8, rows: []Row, used: *usize) ParseError!void {
     var lines = std.mem.splitScalar(u8, text, '\n');
     while (lines.next()) |line| {
-        var cells: [leading_cells + columns.len + 1][]const u8 = undefined;
+        var cells: [leading_cells + table_columns + 1][]const u8 = undefined;
         const count = split_row(line, &cells) orelse continue;
-        if (count < leading_cells + columns.len) continue;
+        if (count < leading_cells + table_columns) continue;
         const payload = std.fmt.parseInt(u32, cells[0], 10) catch continue;
         const echoes = std.fmt.parseInt(u64, cells[2], 10) catch return error.Malformed;
         const overruns = std.fmt.parseInt(u64, cells[3], 10) catch return error.Malformed;
         if (echoes == 0 or overruns != 0) continue;
         const row = try find_or_add(rows, used, payload, cells[1]);
-        try merge(row, cells[leading_cells..][0..columns.len]);
+        merge(row, try counts_of(cells[leading_cells..][0..table_columns]));
     }
 }
 
@@ -115,10 +128,21 @@ fn find_or_add(rows: []Row, used: *usize, payload: u32, candidate: []const u8) P
     return &rows[used.* - 1];
 }
 
-/// Keeps the smaller of each count this round gives `row`.
-fn merge(row: *Row, cells: []const []const u8) ParseError!void {
+/// One round's counts of one row: the table's, then the derived `untried`.
+fn counts_of(cells: []const []const u8) ParseError![columns.len]f64 {
+    var counts: [columns.len]f64 = undefined;
     for (cells, 0..) |cell, index| {
-        const value = std.fmt.parseFloat(f64, cell) catch return error.Malformed;
+        counts[index] = std.fmt.parseFloat(f64, cell) catch return error.Malformed;
+    }
+    const reads = counts[column_index("reads").?];
+    const ctl = counts[column_index("ctl").?];
+    counts[column_index("untried").?] = ctl - @max(reads - 1, 0);
+    return counts;
+}
+
+/// Keeps the smaller of each count this round gives `row`.
+fn merge(row: *Row, counts: [columns.len]f64) void {
+    for (counts, 0..) |value, index| {
         row.counts[index] = if (row.rounds == 0) value else @min(row.counts[index], value);
     }
     row.rounds += 1;
@@ -296,6 +320,34 @@ test "each cell keeps the smallest value any round gave it" {
     try testing.expectEqual(@as(f64, 1.206), rows[0].counts[column_index("reads").?]);
     try testing.expectEqual(@as(f64, 0.364), rows[0].counts[column_index("ctl").?]);
     try testing.expectEqual(@as(f64, 0.490), rows[1].counts[column_index("enter").?]);
+}
+
+test "untried is epoll_ctl beyond the reads that found nothing, taken within each round" {
+    // Round one tried and registered 0.9 of its receives, round two 0.2. Taken across the rounds
+    // cell by cell, the smallest ctl and the smallest reads would come from different rounds.
+    const tried = header ++
+        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.900 | 1 | 0.900 | 0.5 | 0 |  |
+        \\| 4096 | rotor | 1000 | 0 | 0.5 | 1 | 0 | 0 | 0.000 | 0 | 0.000 | 0 | 0 |  |
+        \\
+    ;
+    const partly = header ++
+        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.200 | 1 | 0.300 | 0.5 | 0 |  |
+        \\
+    ;
+    const untried = column_index("untried").?;
+    var storage: [rows_max]Row = undefined;
+    const rows = try rows_of(&.{ tried, partly }, &storage);
+    try testing.expectApproxEqAbs(@as(f64, 0.0), rows[0].counts[untried], 1e-9);
+    // io_uring reads nothing, so none of its registrations is counted.
+    try testing.expectEqual(@as(f64, 0.0), rows[1].counts[untried]);
+
+    // Every receive registered with no read before it: one untried call per echo.
+    const waited = header ++
+        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.000 | 1 | 1.300 | 0.5 | 0 |  |
+        \\
+    ;
+    const alone = try rows_of(&.{waited}, &storage);
+    try testing.expectApproxEqAbs(@as(f64, 1.3), alone[0].counts[untried], 1e-9);
 }
 
 test "a round whose trace lost events, or that completed no echo, is not used" {

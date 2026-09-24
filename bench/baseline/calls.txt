@@ -4,7 +4,8 @@
 #
 # A line is: payload column ceiling candidate. The columns are the table's, by short name:
 # enter (io_uring_enter), requests (io_uring requests), arms (poll arms), workers (io-wq jobs),
-# reads, writes, ctl (epoll_ctl), waits (epoll waits) and other (other calls).
+# reads, writes, ctl (epoll_ctl), waits (epoll waits) and other (other calls). The gate derives
+# untried, the epoll_ctl calls beyond the reads that found nothing, which calls_gate.zig explains.
 #
 # Every ceiling comes from six runs of the job on 2026-09-24, five on AMD EPYC 7763 runners and
 # one on an Intel Xeon Platinum 8370C, each the smallest of three rounds. It follows one of three
@@ -29,6 +30,7 @@
 4096 ctl 0.05 rotor
 4096 waits 0.05 rotor
 4096 other 0.05 rotor
+4096 untried 0.05 rotor
 
 # rotor at 65536 bytes
 65536 enter 0.50 rotor
@@ -40,6 +42,7 @@
 65536 ctl 0.05 rotor
 65536 waits 0.05 rotor
 65536 other 0.05 rotor
+65536 untried 0.05 rotor
 
 # rotor (accumulate) at 4096 bytes
 4096 enter 1.05 rotor (accumulate)
@@ -51,6 +54,7 @@
 4096 ctl 0.05 rotor (accumulate)
 4096 waits 0.05 rotor (accumulate)
 4096 other 0.05 rotor (accumulate)
+4096 untried 0.05 rotor (accumulate)
 
 # rotor (accumulate) at 65536 bytes
 65536 enter 0.70 rotor (accumulate)
@@ -62,6 +66,7 @@
 65536 ctl 0.05 rotor (accumulate)
 65536 waits 0.05 rotor (accumulate)
 65536 other 0.05 rotor (accumulate)
+65536 untried 0.05 rotor (accumulate)
 
 # rotor on epoll at 4096 bytes
 4096 enter 0.05 rotor on epoll
@@ -73,6 +78,7 @@
 4096 ctl 0.05 rotor on epoll
 4096 waits 0.85 rotor on epoll
 4096 other 0.05 rotor on epoll
+4096 untried 0.05 rotor on epoll
 
 # rotor on epoll at 65536 bytes
 65536 enter 0.05 rotor on epoll
@@ -84,6 +90,7 @@
 65536 ctl 0.05 rotor on epoll
 65536 waits 0.80 rotor on epoll
 65536 other 0.05 rotor on epoll
+65536 untried 0.10 rotor on epoll
 
 # rotor on epoll (accumulate) at 4096 bytes
 4096 enter 0.05 rotor on epoll (accumulate)
@@ -95,6 +102,7 @@
 4096 ctl 1.35 rotor on epoll (accumulate)
 4096 waits 1.10 rotor on epoll (accumulate)
 4096 other 0.05 rotor on epoll (accumulate)
+4096 untried 0.05 rotor on epoll (accumulate)
 
 # rotor on epoll (accumulate) at 65536 bytes
 65536 enter 0.05 rotor on epoll (accumulate)
@@ -106,6 +114,7 @@
 65536 ctl 1.10 rotor on epoll (accumulate)
 65536 waits 0.80 rotor on epoll (accumulate)
 65536 other 0.05 rotor on epoll (accumulate)
+65536 untried 0.10 rotor on epoll (accumulate)
 
 # rotor on epoll (group single) at 4096 bytes
 4096 enter 0.05 rotor on epoll (group single)
@@ -117,6 +126,7 @@
 4096 ctl 1.25 rotor on epoll (group single)
 4096 waits 0.65 rotor on epoll (group single)
 4096 other 0.05 rotor on epoll (group single)
+4096 untried 0.05 rotor on epoll (group single)
 
 # rotor on epoll (group single) at 65536 bytes
 65536 enter 0.05 rotor on epoll (group single)
@@ -128,3 +138,4 @@
 65536 ctl 1.20 rotor on epoll (group single)
 65536 waits 0.80 rotor on epoll (group single)
 65536 other 0.05 rotor on epoll (group single)
+65536 untried 0.13 rotor on epoll (group single)
