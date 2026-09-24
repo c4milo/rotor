@@ -68,6 +68,15 @@ pub fn used(code: operation.Operation.Code, result: i32) u32 {
     };
 }
 
+/// Whether a multishot operation goes on after an attempt that ended with `result`. It goes on after
+/// a success and ends at its first failure. A stream receive also ends at 0, the end of the stream,
+/// where io_uring ends it with a final event (decision 5). A datagram receive's 0 is an empty
+/// datagram and an accept's 0 is descriptor 0, so both go on.
+pub fn goes_on(code: operation.Operation.Code, result: i32) bool {
+    if (code == .receive) return result > 0;
+    return result >= 0;
+}
+
 /// What the loop's policy says to do with a file operation (decision 18), or null when it is to be
 /// made inline. `refuse` is the default, because a stall nobody asked for is the complaint that
 /// record answers.
@@ -111,6 +120,18 @@ test "an accept uses one connection, a transfer its bytes, and a failure or a co
     try testing.expectEqual(@as(u32, 0), used(.connect, 0));
     try testing.expectEqual(@as(u32, 0), used(.receive, event.result_of(.connection_reset)));
     try testing.expectEqual(@as(u32, 0), used(.accept, event.result_of(.would_block)));
+}
+
+test "a multishot operation goes on after a success, and a stream receive ends at 0" {
+    try testing.expect(goes_on(.receive, 1));
+    try testing.expect(!goes_on(.receive, 0));
+    try testing.expect(!goes_on(.receive, event.result_of(.connection_reset)));
+    // An empty datagram carries nothing, and the socket goes on receiving.
+    try testing.expect(goes_on(.receive_from, 0));
+    try testing.expect(!goes_on(.receive_from, event.result_of(.buffers_exhausted)));
+    // Descriptor 0 is a connection like any other.
+    try testing.expect(goes_on(.accept, 0));
+    try testing.expect(!goes_on(.accept, event.result_of(.canceled)));
 }
 
 test "the file policy refuses, runs inline, or hands the operation out" {

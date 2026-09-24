@@ -143,7 +143,8 @@ fn target_of(loop: *Loop, slot: *const Slot) ?Target {
     return .{ .bytes = group.bytes_of(buffer_id), .buffer_id = buffer_id };
 }
 
-/// Gives a group's buffer back when nothing was received into it.
+/// Gives a group's buffer back when nothing was received into it: the call failed, would block,
+/// or met the end of the stream. io_uring answers the end of a stream without a buffer too.
 fn release(loop: *Loop, slot: *const Slot, target: Target) void {
     if (target.buffer_id) |id| loop.groups[slot.buffer_index].give_back(id);
 }
@@ -153,7 +154,7 @@ fn attempt_receive(loop: *Loop, slot: *const Slot) Attempt {
         return Attempt.done(core.event.result_of(.buffers_exhausted));
     };
     const result = receive_into(slot.descriptor, target.bytes);
-    if (result.outcome == .done and result.result >= 0) {
+    if (result.outcome == .done and result.result > 0) {
         return .{ .outcome = .done, .result = result.result, .buffer_id = target.buffer_id };
     }
     release(loop, slot, target);

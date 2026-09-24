@@ -152,7 +152,7 @@ Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registe
 |---|---|---|
 | `accept` | a listener, `multishot` | the accepted socket, one event per connection when multishot |
 | `connect` | a socket and an `*const Address` | 0 |
-| `receive` | a socket and a target: a buffer, or a provided-buffer group; `multishot` with a group | bytes received, 0 at end of stream |
+| `receive` | a socket and a target: a buffer, or a provided-buffer group; `multishot` with a group | bytes received, 0 at end of stream, which ends a multishot receive |
 | `send` | a socket and a buffer | bytes sent; a short send is a result under the buffer's length |
 | `shutdown` | a socket and `how` | 0 |
 | `close` | a descriptor of the process | 0 |
@@ -199,7 +199,8 @@ Three ways to hand the loop memory for bytes:
   carries `flags.buffer` and `buffer_id`, and `loop.provided_buffer(group_id, buffer_id)` is its
   bytes. The buffer is the caller's from that event until `loop.give_back_buffer(group_id,
   buffer_id)`, whether or not the receive has ended. A group that runs out ends a multishot
-  receive with `buffers_exhausted`: give buffers back and submit it again. At most
+  receive with `buffers_exhausted`: give buffers back and submit it again. The end of the stream
+  ends it too, with a final event of 0 that names no buffer. At most
   `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
 
   **Check the alignment you got, do not assume it.** io_uring requires the 64 KiB of

@@ -111,6 +111,10 @@ pub const Operation = struct {
     /// socket may complete in either order: io_uring wakes them in an order of its own. A caller
     /// that needs the bytes in order keeps one receive in flight per socket, which a multishot
     /// receive does by itself.
+    ///
+    /// A multishot receive ends at the end of the stream: its event of 0 is its final one, as
+    /// io_uring's kernel ends it (decision 5). An event of 0 names no buffer, and the group keeps
+    /// the buffer the receive would have used.
     pub const Receive = struct { socket: Descriptor, target: Target, multishot: bool = false };
 
     /// Where received bytes land: a buffer the caller names, or a buffer the kernel picks from

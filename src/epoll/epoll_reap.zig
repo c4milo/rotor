@@ -120,8 +120,9 @@ fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
         event.flags.buffer = true;
         event.flags.buffer_id = buffer_id;
     }
-    // A multishot operation goes on after a success, and ends at its first failure.
-    if (slot.flags.multishot and attempt.result >= 0) {
+    // A multishot operation goes on after a success, and ends at its first failure or at the end
+    // of its stream.
+    if (slot.flags.multishot and core.attempt.goes_on(slot.code, attempt.result)) {
         event.flags.more = true;
         return event;
     }

@@ -348,3 +348,42 @@ test "a multishot receive names the provided buffer of each event and ends when 
     try testing.expectError(error.BuffersExhausted, last.outcome());
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }
+
+test "a multishot receive ends with one final 0 when the peer shuts its sending side" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+
+    // One buffer, so a receive that kept it would leave the group empty for the next receive.
+    const group_bytes = comptime backend.buffers.group_bytes(1, group_buffer_bytes);
+    var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
+    try harness.loop.provide_buffers(group_id, &group_memory, 1, group_buffer_bytes);
+    try harness.submit(&.{
+        Operation.receive_group(1, pair[1], group_id), Operation.send(2, pair[0], "last"),
+    }, &.{});
+    var events: [2]Event = undefined;
+    try harness.collect(&events);
+    const received = try Harness.find(&events, 1);
+    try testing.expect(received.flags.more and received.flags.buffer);
+    try testing.expectEqual(@as(u32, 4), try received.outcome());
+    harness.loop.give_back_buffer(group_id, received.flags.buffer_id);
+
+    // The end of the stream ends the receive: its event of 0 is final and names no buffer.
+    try harness.submit(&.{Operation.shutdown(3, pair[0], .send)}, &.{});
+    try harness.collect(&events);
+    const ended = try Harness.find(&events, 1);
+    try testing.expect(ended.is_final() and !ended.flags.buffer);
+    try testing.expectEqual(@as(u32, 0), try ended.outcome());
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+
+    // The buffer is still the group's: a receive submitted now finds it, and ends the same way.
+    try harness.submit(&.{Operation.receive_group(4, pair[1], group_id)}, &.{});
+    try harness.collect(events[0..1]);
+    try testing.expect(events[0].is_final() and !events[0].flags.buffer);
+    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
+}
