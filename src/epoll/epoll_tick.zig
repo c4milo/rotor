@@ -44,10 +44,15 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
     const room = @min(events.len - produced, constants.readiness_max);
     // A tick whose events are already full asks the kernel nothing: what is ready now is ready at
-    // the next tick too, because every registration is level triggered.
+    // the next tick too, because every registration is level triggered. Nor does a poll with no
+    // operation waiting for readiness: the kernel could report only this loop's own eventfd, and
+    // what a wake announces is read from its ring above and below. A wake another loop wrote stays
+    // readable for the next call that waits, which then ends at once, as decision 12, point 6
+    // allows.
+    const idle = wait == null and loop.waiters.used == 0;
     const nothing: TickError!u32 = 0;
     const readiness = loop.readiness[0..room];
-    const ready = if (room == 0) nothing else loop.queue.wait(readiness, wait orelse 0);
+    const ready = if (room == 0 or idle) nothing else loop.queue.wait(readiness, wait orelse 0);
     loop.wake_up();
     const ready_count = try ready;
 
@@ -69,3 +74,35 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
 
 /// The monotonic clock both Linux backends read (`linux_shared_clock.zig`).
 const clock_ns = @import("linux_shared").clock.clock_ns;
+
+const testing = std.testing;
+
+test "a tick with a message to hand over and nothing waiting on a socket polls nothing" {
+    if (!epoll.supported) return error.SkipZigTest;
+    const loops = 2;
+    const receiver: core.LoopId = 1;
+    const sender: core.LoopId = 0;
+    var registry_memory: [epoll.Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: epoll.Registry = undefined;
+    registry.init(&registry_memory, loops);
+    const sizing: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    defer loop.deinit();
+
+    // Another loop posts, and wakes this one as a post to a loop that sleeps does.
+    try testing.expect(registry.mailbox(sender, receiver).push(.{ .tag = 7, .payload = 1 }));
+    queue_module.Queue.wake(loop.queue.wake_descriptor);
+
+    // The message is handed over. No operation waits for readiness, so the kernel could report
+    // only the wake, and the tick does not ask it: the wake stays unread for the next tick that
+    // waits. A tick that polled would have read the wake's counter back to 0.
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expect(events[0].flags.message);
+    var counter: u64 = 0;
+    const read = linux.read(loop.queue.wake_descriptor, std.mem.asBytes(&counter), @sizeOf(u64));
+    try testing.expectEqual(@as(usize, @sizeOf(u64)), read);
+}

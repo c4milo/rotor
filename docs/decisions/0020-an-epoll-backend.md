@@ -207,6 +207,21 @@ Four things outside this backend, each fixed or recorded where it belongs:
   is deleted, reaches one (`tools/halt/epoll_scenarios.zig`). Since 2026-09-22 the Linux gate runs
   a halt check of its own for such scenarios (`tools/halt/epoll_linux_scenarios.zig`).
 
+## A tick with events and nothing waiting polls nothing
+
+Since 2026-09-24, a tick that already has events to hand over, and has no operation waiting for
+readiness, does not call `epoll_pwait2`. The call could report only the loop's own wake, and what a
+wake announces is read from the mailbox rings anyway. A wake left unread ends the next tick that
+waits at once, which decision 12, point 6 allows. A loop that only posts, such as the cross-core
+ping-pong, made two waits per message, one of them this poll. Counted with
+`bench/calls/count_post.sh` on `orbstack`, three alternating rounds each
+(`bench/results/calls-crosscore-epoll-orbstack-2026-09-24.md`):
+
+| build | calls per message | `epoll_pwait2` per message |
+|---|---:|---:|
+| the poll made | 4.05 to 4.17 | 2.05 to 2.09 |
+| the poll skipped | 3.147 to 3.150 | 1.049 to 1.050 |
+
 ## A readiness serves one operation per direction
 
 Since 2026-09-23 kqueue's reap serves a readiness until the amount in its `data` is used: the
