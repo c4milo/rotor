@@ -6,6 +6,10 @@ So this record states a provisional rule, the experiment that confirms or change
 thresholds, all fixed before the numbers exist. Milestones 2 and 3 run the experiment and report
 the numbers, and the rule is then ratified or amended here.
 
+Measured in part on 2026-09-24: class A's own cost on the `nop` path, on `github`, is under the 2
+percent threshold in the median of four runs on one processor, by a small margin. The last section
+reads it. Class B alone, the echo workload and step 3's counts are still not measured.
+
 Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
 no simulator for them to run in.
 
@@ -130,7 +134,8 @@ Two things this says, and one it cannot:
 - The comptime flag of step 2, which compiles class A out alone, is not built: the benchmark build
   offers ReleaseSafe and ReleaseFast and nothing between. The thresholds stay as fixed, and the
   experiment waits for the `linux` machine and for that flag. Until then the provisional rule
-  stands, unmeasured.
+  stands, unmeasured. The flag was built on 2026-09-24, and the last section reads what it
+  measured.
 
 `docs/costs.md` measured a miss to memory (C3) at 128 to 185 ns against a per-entry budget (C8) of
 52 ns, so the dividing line above, memory and not count, holds with more room than the priors gave
@@ -164,3 +169,71 @@ class A in total — is still untested.
 It is still not built, so the thresholds stand as fixed and the provisional rule stands unmeasured.
 What changed on 2026-09-22 is that building the flag is now worth the work: before, on the only
 Linux available, the answer would have been lost in the noise.
+
+## Results, 2026-09-24, `github`: what class A costs alone
+
+Step 2 is built. `src/core/assertion_class.zig` holds the switch, `build/modules.zig` generates it
+as `core`'s `assertion_options` import (an edge the owner approved on 2026-09-24), and one build
+turns it off: `uring_nop_no_class_a`, which is ReleaseSafe with class A compiled out and every
+other assertion and safety check kept. build.zig offers no option for it.
+
+The switch covers the 35 class A sites a `nop` passes through on io_uring: in `core`'s
+`operation.zig`, `slot_table.zig`, `slot.zig`, `statistics.zig`, `tables.zig`, `slot_list.zig`
+and `handle.zig`, and in `uring`'s `uring_ring.zig`, `uring_submit.zig` and `uring_reap.zig`. The
+per-operation assertions of every other kind still call `std.debug.assert`. So this measures the
+`nop` path, which is the path the 2 percent threshold is set on, and nothing wider.
+
+The CI job `costs` ran `uring_nop_safe`, `uring_nop_fast` and `uring_nop_no_class_a` in turn, five
+rounds each, and was started five times. Each start got its own runner: four AMD EPYC 7763 and
+one AMD EPYC 9V45 (`bench/results/decision-8-class-a-github-2026-09-24.md`). At batch 32, the
+median and the range of a round's time over the five rounds, in ns:
+
+| run | processor | ReleaseSafe | class A off | ReleaseFast | class A costs | every check costs |
+|---|---|---|---|---|---|---|
+| 1 | EPYC 7763 | 3,856 (3,847 to 3,877) | 3,797 (3,787 to 3,827) | 3,657 | 1.5 percent | 5.2 percent |
+| 2 | EPYC 7763 | 3,917 (3,888 to 3,957) | 3,817 (3,797 to 3,888) | 3,666 | 2.6 percent | 6.4 percent |
+| 3 | EPYC 7763 | 3,877 (3,848 to 4,017) | 3,797 (3,787 to 3,798) | 3,647 | 2.1 percent | 5.9 percent |
+| 4 | EPYC 9V45 | 3,105 (3,025 to 3,235) | 3,104 (3,075 to 3,175) | 3,044 | 0.0 percent | 2.0 percent |
+| 5 | EPYC 7763 | 3,857 (3,857 to 3,867) | 3,807 (3,778 to 3,808) | 3,656 | 1.3 percent | 5.2 percent |
+
+What class A costs at the other batch sizes, in percent of the ReleaseSafe round:
+
+| run | processor | batch 8 | batch 64 | batch 128 |
+|---|---|---|---|---|
+| 1 | EPYC 7763 | 0.1 | 1.4 | 1.6 |
+| 2 | EPYC 7763 | 0.1 | 2.2 | 1.7 |
+| 3 | EPYC 7763 | 0.0 | 1.5 | 1.4 |
+| 4 | EPYC 9V45 | -2.0 | 2.5 | -1.5 |
+| 5 | EPYC 7763 | 0.8 | 1.4 | 1.6 |
+
+Batch 1 is left out: this runner's clock moves in steps of about 10 ns, and a round of one `nop`
+takes about 550 ns, so a 2 percent difference is one step.
+
+What the runs say:
+
+- **On the EPYC 7763, class A is measured.** At batch 32 to 128, the five rounds with class A and
+  the five without do not overlap in 11 of 12 cells. The exception is run 2 at batch 32, where
+  the two ranges meet at 3,888 ns.
+- **It sits at the threshold, and under it in the median.** The median of the four runs is 1.8
+  percent at batch 32, 1.45 at batch 64 and 1.6 at batch 128. Three cells of twelve are above 2
+  percent: run 2 at batch 32 and 64, and run 3 at batch 32. At batch 8 class A costs less than
+  the spread of the rounds.
+- **Class A is about a third of every check.** On the same processor ReleaseFast saves 3.8 to 6.4
+  percent at batch 8 to 128, so the other two thirds are class B and the bounds and overflow
+  checks together.
+- **The processor changes the answer.** Every check costs 7.4 to 10.4 percent on the Xeon Platinum
+  8370C of 2026-09-22, 3.8 to 6.4 on the EPYC 7763 and 1.0 to 3.3 on the EPYC 9V45, at batch 8 to
+  128. No run landed on the Xeon, so class A is not measured there. The EPYC 9V45 run cannot
+  resolve class A: its rounds of one mode differ by up to 7 percent.
+
+By the threshold fixed on 2026-09-19, class A passes on the `nop` path on the EPYC 7763, and no
+assertion moves. The margin is 0.2 percentage points at batch 32, and three cells were over it.
+The owner has not ruled whether this ratifies the provisional rule.
+
+Still not measured:
+
+- Class B alone. Step 2 asks for it the same way, and it has no switch.
+- The echo workload, the realistic case. It needs the class A sites of `send` and `receive`
+  switched too.
+- Step 3's `perf stat` counts of branches, branch misses and L1 misses. They were not taken.
+- kqueue and epoll. The `nop` benchmark runs on io_uring only.

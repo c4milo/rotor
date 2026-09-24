@@ -366,7 +366,9 @@ machine that day: the only x86-64 this project has measured on, filled by a CI j
 and replaced whole rather than cell by cell because the pool gives whichever processor it has. On
 it decision 8's experiment is decidable, where `orbstack`'s 25 percent noise had swallowed it:
 ReleaseSafe costs 9 to 10 percent against ReleaseFast, which is the upper bound over every class
-and every safety check, and class A's own share still needs the comptime flag that record asks for.
+and every safety check. Class A's own share was measured on 2026-09-24 with the switch that record
+asks for: on the `nop` path on an EPYC 7763, 1.3 to 2.6 percent at batch 32 over four runs, median
+1.8, against a threshold of 2.
 The `linux` column is the deployment target, needs a machine of the family stompy builds for, and
 that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 (`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;
