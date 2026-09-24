@@ -9,8 +9,11 @@
 #
 # A row is: workload connections payload candidate ratio. Above 1000 the candidate was ahead of
 # rotor. Every section was taken from the `comparison` job of .github/workflows/ci.yml, on
-# 2026-09-22 but the EPYC 9V45's, taken on 2026-09-24, on GitHub-hosted ubuntu-24.04 runners,
-# io_uring, one core, three runs per row, with rotor's buffer group sized per connection. A section
+# 2026-09-22 but the EPYC 9V45's and the Xeon 8370C's, taken on 2026-09-24, on GitHub-hosted
+# ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer group sized per
+# connection. Every section but the Xeon 8370C's was taken before `db9e39e` fixed a server that
+# gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`, "A third bug in
+# rotor_echo"), so their 64 KiB rows measured a server with a damaged group. A section
 # leaves out a row whose runs disagreed, and a row another step of the same job contradicts, and
 # its comment names each. A run reports a row its section lacks and does not gate it.
 # `bench/results/` holds every run.
@@ -193,3 +196,49 @@ echo 64 65536 rotor (accumulate) 986
 echo 64 65536 libuv 991
 echo 64 65536 libxev 994
 echo 64 65536 std.Io.Threaded 748
+
+# Run 36028154840, commit a31f1a4, on 2026-09-24: the first comparison after db9e39e. No row is
+# left out: the runs agreed on every one, and the job's CPU step agreed with the 64 KiB rows.
+# `bench/results/echo-github-xeon-8370c-2026-09-24.md` holds the run.
+processor Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
+# workload connections payload candidate ratio
+echo 16 4096 rotor 1000
+echo 16 4096 rotor (accumulate) 946
+echo 16 4096 libuv 835
+echo 16 4096 libxev 900
+echo 16 4096 std.Io.Threaded 508
+echo 16 8192 rotor 1000
+echo 16 8192 rotor (accumulate) 952
+echo 16 8192 libuv 819
+echo 16 8192 libxev 897
+echo 16 8192 std.Io.Threaded 505
+echo 16 16384 rotor 1000
+echo 16 16384 rotor (accumulate) 969
+echo 16 16384 libuv 804
+echo 16 16384 libxev 915
+echo 16 16384 std.Io.Threaded 494
+echo 16 65536 rotor 1000
+echo 16 65536 rotor (accumulate) 999
+echo 16 65536 libuv 990
+echo 16 65536 libxev 998
+echo 16 65536 std.Io.Threaded 742
+echo 64 4096 rotor 1000
+echo 64 4096 rotor (accumulate) 977
+echo 64 4096 libuv 853
+echo 64 4096 libxev 958
+echo 64 4096 std.Io.Threaded 505
+echo 64 8192 rotor 1000
+echo 64 8192 rotor (accumulate) 958
+echo 64 8192 libuv 836
+echo 64 8192 libxev 958
+echo 64 8192 std.Io.Threaded 503
+echo 64 16384 rotor 1000
+echo 64 16384 rotor (accumulate) 949
+echo 64 16384 libuv 873
+echo 64 16384 libxev 948
+echo 64 16384 std.Io.Threaded 530
+echo 64 65536 rotor 1000
+echo 64 65536 rotor (accumulate) 974
+echo 64 65536 libuv 1017
+echo 64 65536 libxev 983
+echo 64 65536 std.Io.Threaded 709

@@ -443,10 +443,23 @@ set, which "Kernel calls per echo" above shows is much cheaper per 64 KiB echo o
 points to the old 64 KiB rows on `orbstack` being fast because of the corruption. It was not
 measured on its own: no run set the old server against a correct one holding 12 buffers. On
 `github` that section measured a large group costing no more than a small one, so the fix may move
-the baseline's 64 KiB rows less. The nightly `comparison` job will show whether it moves them past
-the margin.
+the baseline's 64 KiB rows less.
 
-`bench/baseline/echo.txt` is unchanged. Its rows are the owner's to retake.
+The first `comparison` job after the fix, run 36028154840, drew an Intel Xeon Platinum 8370C, a
+processor the baseline had no section for, so it gated nothing
+(`bench/results/echo-github-xeon-8370c-2026-09-24.md`). Its 64 KiB rows put rotor level with libuv
+and libxev, every spread at 5 percent or under:
+
+| connections | payload | rotor per second | rotor (accumulate) | libuv | libxev | `std.Io.Threaded` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 64 KiB | 49,517 | 999 | 990 | 998 | 742 |
+| 64 | 64 KiB | 50,005 | 974 | 1017 | 983 | 709 |
+
+The other columns are thousandths of rotor's rate. There is no run on that processor from before
+the fix, so this does not say whether the fix moved GitHub's numbers. The ratios fall inside the
+range the other processors' sections hold at 64 KiB. The owner approved adding the run as the
+baseline's Xeon 8370C section, the only section taken after the fix. The other sections are
+unchanged.
 
 This is the third bug of the kind the section above names. rotor hands the caller one buffer per
 piece, and leaves the order of the caller's sends to the caller.
