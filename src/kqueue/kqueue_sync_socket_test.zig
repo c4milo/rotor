@@ -55,7 +55,7 @@ const send_tries_max = 200;
 const send_retry_ms = 1;
 
 /// SIGPIPE signals this process took while `count_sigpipes` was installed.
-var sigpipes = std.atomic.Value(u32).init(0);
+var sigpipes: std.atomic.Value(u32) align(@alignOf(std.atomic.Value(u32))) = .init(0);
 
 fn count_sigpipe(_: c.SIG) callconv(.c) void {
     _ = sigpipes.fetchAdd(1, .monotonic);

@@ -112,7 +112,7 @@ and its mutation is measured against the Linux gate.
   unless the variable declares it. LLVM places it right either way. A comptime assert cannot see
   this: the type's alignment is correct and only the address is wrong. `Layout.take` checks the
   address at run time and halts. Found on 2026-09-23, when a new static moved a conformance fixture
-  off its boundary.
+  off its boundary. The lint's static-alignment rule, pepegrillo's, reports a static that omits it.
 - Write all prose in **simple English**, in active voice, with plain words: short sentences with
   one idea each, terms defined before use, lists for list-like content, no metaphors. Name what
   literally happens.
@@ -215,7 +215,8 @@ was about to push.
   offered, because assertions stay on in production.
 - Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src` and `tools`,
   then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import, markdown,
-  file-length and magic-numbers. A canary tree in `build/lint.zig` proves every rule runs.
+  file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
+  rule runs.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on), the halt check, the tools' own tests, the bench
   executables' compile, the hook check and the format check. Every change passes it before it

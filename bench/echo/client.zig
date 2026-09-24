@@ -103,10 +103,10 @@ var loop_memory: [
     })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
-var connections: [connections_max]Connection = undefined;
+var connections: [connections_max]Connection align(@alignOf(Connection)) = undefined;
 var payload: [payload_bytes_max]u8 = undefined;
 var received_bytes: [connections_max * payload_bytes_max]u8 = undefined;
-var latencies: Histogram = Histogram.empty;
+var latencies: Histogram align(@alignOf(Histogram)) = Histogram.empty;
 
 /// The state the event handlers share, so a handler takes one pointer and not eight.
 const Client = struct {
@@ -125,7 +125,7 @@ const Client = struct {
 /// candidate per round without allocating.
 /// What the last run's placement was, so `echo_client` can print it beside the row. A row that
 /// claims a core count without a pin is the failure this exists to make visible.
-pub var last_placement: harness.Placement = .scheduler_default;
+pub var last_placement: harness.Placement align(@alignOf(harness.Placement)) = .scheduler_default;
 
 pub fn run(options: Options) !Result {
     // Placed before the loop is built: `Loop.init` asks to run on the thread that will own it,

@@ -60,7 +60,7 @@ const Armed = struct {
     due_ns: u64 = 0,
 };
 
-var armed: [timers_max]Armed = undefined;
+var armed: [timers_max]Armed align(@alignOf(Armed)) = undefined;
 var lateness_ns: [samples_max]u64 = undefined;
 
 var period_ns: u64 = 0;

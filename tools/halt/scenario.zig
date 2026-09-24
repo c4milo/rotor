@@ -28,7 +28,7 @@ pub const exit_usage = 2;
 const output_bytes = 256;
 
 var stdout_buffer: [output_bytes]u8 = undefined;
-var stdout_writer: ?Io.File.Writer = null;
+var stdout_writer: ?Io.File.Writer align(@alignOf(Io.File.Writer)) = null;
 
 /// Prints the marker and flushes it, so it is on the pipe before the process dies.
 pub fn reached_violation() void {

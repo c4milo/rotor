@@ -25,6 +25,7 @@ const canary_rules = [_][]const u8{
     "magic-numbers",
     "defer-order",
     "unreleased-acquire",
+    "static-alignment",
 };
 
 /// The most lines a hand-written file may hold (tools/lint/file_length.zig).
@@ -35,6 +36,7 @@ const file_length_max_lines = 500;
 const canary_source =
     \\const std = @import("std");
     \\const other = @import("/canary/other.zig");
+    \\var canary_allocator: std.mem.Allocator = undefined;
     \\pub fn canary(allocator: std.mem.Allocator) !void {
     \\    _ = allocator;
     \\    _ = std.time;

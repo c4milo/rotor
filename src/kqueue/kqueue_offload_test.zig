@@ -75,7 +75,7 @@ const Fixture = struct {
 
     /// A `Pool` pointer is needed to size the memory at comptime, and the size does not depend on
     /// which pointer it is.
-    var dummy_pool: Pool = .{};
+    var dummy_pool: Pool align(@alignOf(Pool)) = .{};
 
     fn options_for(pool: *Pool) Loop.Options {
         return .{

@@ -13,8 +13,8 @@ const TimerHeap = core.timer_heap.TimerHeap;
 
 const slots_count = 4;
 
-var slots: [slots_count]Slot = undefined;
-var entries: [slots_count]TimerHeap.Entry = undefined;
+var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
+var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
 
 fn table() SlotTable {

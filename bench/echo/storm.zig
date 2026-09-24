@@ -93,9 +93,9 @@ var loop_memory: [
     Loop.memory_bytes(.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
-var connections: [connections_max]Connection = undefined;
+var connections: [connections_max]Connection align(@alignOf(Connection)) = undefined;
 var bytes: [connections_max]u8 = undefined;
-var latencies: Histogram = Histogram.empty;
+var latencies: Histogram align(@alignOf(Histogram)) = Histogram.empty;
 
 const Storm = struct {
     loop: *Loop,

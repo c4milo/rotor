@@ -166,8 +166,8 @@ const remote_ids: u16 = 2;
 const remote_registry_bytes = kqueue.Registry.memory_bytes(remote_ids);
 var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
     undefined;
-var remote_registry: kqueue.Registry = undefined;
-var remote_one: kqueue.Remote = undefined;
+var remote_registry: kqueue.Registry align(@alignOf(kqueue.Registry)) = undefined;
+var remote_one: kqueue.Remote align(@alignOf(kqueue.Remote)) = undefined;
 
 /// Two remotes claiming one id would put two producers on a single-producer ring.
 fn claim_one_id_with_two_remotes() void {
@@ -247,9 +247,10 @@ fn provide_a_group_that_is_not_aligned() void {
 // backend. The queue holds a descriptor no process has open, so with a check deleted
 // the tick's `kevent` call fails and `tick` returns the error.
 
-var no_events: [0]core.Event = .{};
-var too_many_events: [core.constants.batch_max + 1]core.Event = undefined;
-var one_event: [1]core.Event = undefined;
+var no_events: [0]core.Event align(@alignOf(core.Event)) = .{};
+var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(core.Event)) =
+    undefined;
+var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn init_with_a_closed_queue() void {
     loop.init_tables(&memory, options);

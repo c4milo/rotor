@@ -42,7 +42,7 @@ const cpu_second = 1;
 const options_first: Loop.Options = .{ .operations = operations, .entries = entries, .id = 0 };
 const memory_bytes = Loop.memory_bytes(options_first);
 
-var registry: uring.Registry = undefined;
+var registry: uring.Registry align(@alignOf(uring.Registry)) = undefined;
 const registry_bytes = uring.Registry.memory_bytes(2);
 var registry_memory: [registry_bytes]u8 align(core.layout.memory_alignment) = undefined;
 var round_trip_ns: [samples]u64 = undefined;

@@ -195,8 +195,8 @@ const remote_ids: u16 = 2;
 const remote_registry_bytes = uring.Registry.memory_bytes(remote_ids);
 var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
     undefined;
-var remote_registry: uring.Registry = undefined;
-var remote: uring.Remote = undefined;
+var remote_registry: uring.Registry align(@alignOf(uring.Registry)) = undefined;
+var remote: uring.Remote align(@alignOf(uring.Remote)) = undefined;
 
 /// With the owner check deleted, `deinit` gives the id back and closes the remote's ring from the
 /// second thread, which the kernel allows, and returns.
@@ -219,9 +219,10 @@ const one_timer = [_]core.Operation{
     .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
 };
 
-var no_events: [0]core.Event = .{};
-var too_many_events: [core.constants.batch_max + 1]core.Event = undefined;
-var one_event: [1]core.Event = undefined;
+var no_events: [0]core.Event align(@alignOf(core.Event)) = .{};
+var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(core.Event)) =
+    undefined;
+var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn tick_with_no_room_for_an_event() void {
     loop.init(&memory, options) catch return;

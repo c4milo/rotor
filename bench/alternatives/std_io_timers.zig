@@ -84,7 +84,7 @@ var lateness_ns: [samples_max]u64 = undefined;
 ///
 /// It is atomic because every fire happens on its own thread. `Group.await` makes the stores
 /// visible to the thread that sorts them: a task's completion releases and the await acquires.
-var fired: std.atomic.Value(u64) = .init(0);
+var fired: std.atomic.Value(u64) align(@alignOf(std.atomic.Value(u64))) = .init(0);
 
 const Backend = enum { uring, threaded };
 

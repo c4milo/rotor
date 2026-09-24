@@ -221,7 +221,7 @@ pub const Options = struct {
     payloads: []const u32 = &payloads_default,
 };
 
-pub var results: [results_max]Result = undefined;
+pub var results: [results_max]Result align(@alignOf(Result)) = undefined;
 pub var connections_buffer: [configurations_max]u32 = undefined;
 pub var payloads_buffer: [configurations_max]u32 = undefined;
 

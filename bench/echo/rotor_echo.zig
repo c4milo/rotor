@@ -109,7 +109,7 @@ const Sending = struct {
     len: u32,
 };
 
-var sending: [connections_max]Sending = undefined;
+var sending: [connections_max]Sending align(@alignOf(Sending)) = undefined;
 
 /// True while the descriptor is one this server accepted.
 var open: [connections_max]bool = undefined;
@@ -130,7 +130,7 @@ var open: [connections_max]bool = undefined;
 /// The first pair is the experiment. It needs no kernel above decision 2's floor and no record
 /// amended: the surface already offers a receive into a buffer the caller names.
 const Shape = enum { group, accumulate, group_single };
-var shape: Shape = .group;
+var shape: Shape align(@alignOf(Shape)) = .group;
 
 /// The core this server pins to, from `--cpu`, or null to let the scheduler place it.
 var cpu: ?usize = null;

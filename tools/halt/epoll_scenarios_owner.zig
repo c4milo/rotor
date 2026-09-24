@@ -42,7 +42,7 @@ fn submit_on_this_thread() void {
 
 /// The handle names a timer still queued, so with the check deleted the cancel marks it and
 /// returns: the next flush would end it.
-var timer_handle: [1]core.Handle = undefined;
+var timer_handle: [1]core.Handle align(@alignOf(core.Handle)) = undefined;
 
 fn cancel_from_another_thread() void {
     loop.init_tables(&memory, options);
@@ -158,8 +158,8 @@ const remote_ids: u16 = 2;
 const remote_registry_bytes = epoll.Registry.memory_bytes(remote_ids);
 var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
     undefined;
-var remote_registry: epoll.Registry = undefined;
-var remote: epoll.Remote = undefined;
+var remote_registry: epoll.Registry align(@alignOf(epoll.Registry)) = undefined;
+var remote: epoll.Remote align(@alignOf(epoll.Remote)) = undefined;
 
 /// A remote used from a thread that did not create it: two producers on one ring. With the check
 /// deleted, `post` answers `LoopNotFound`, because no loop holds id 0.

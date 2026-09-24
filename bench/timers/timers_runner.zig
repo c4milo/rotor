@@ -113,11 +113,11 @@ const Options = struct {
     directory: []const u8 = directory_default,
 };
 
-var results: [rounds_max * candidates.len]Result = undefined;
+var results: [rounds_max * candidates.len]Result align(@alignOf(Result)) = undefined;
 var present: [candidates.len]bool = @splat(false);
 /// The other work on the machine while each candidate's runs were taken, one window per candidate. `collect`
 /// empties them: a window belongs to one configuration, as `counts` does.
-var other_work: [candidates.len]OtherWork = @splat(.empty);
+var other_work: [candidates.len]OtherWork align(@alignOf(OtherWork)) = @splat(.empty);
 var path_buffer: [candidates.len][std.fs.max_path_bytes]u8 = undefined;
 var timers_buffer: [configurations_max]u32 = undefined;
 

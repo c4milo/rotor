@@ -251,8 +251,8 @@ const remote_ids: u16 = 2;
 const remote_registry_bytes = epoll.Registry.memory_bytes(remote_ids);
 var remote_registry_memory: [remote_registry_bytes]u8 align(core.layout.memory_alignment) =
     undefined;
-var remote_registry: epoll.Registry = undefined;
-var remote_one: epoll.Remote = undefined;
+var remote_registry: epoll.Registry align(@alignOf(epoll.Registry)) = undefined;
+var remote_one: epoll.Remote align(@alignOf(epoll.Remote)) = undefined;
 
 /// Two remotes claiming one id would put two producers on a single-producer ring.
 fn claim_one_id_with_two_remotes() void {

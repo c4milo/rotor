@@ -145,7 +145,7 @@ test "a flush wakes each loop it noted once, however often, and none that stoppe
     // Records each descriptor it is given. A loop woken twice would need a second entry, so the
     // log has room for one per loop and a wake past that halts on the bound.
     const WakeLog = struct {
-        var woken: [loop_count]Descriptor = undefined;
+        var woken: [loop_count]Descriptor align(@alignOf(Descriptor)) = undefined;
         var count: usize = 0;
 
         fn wake(descriptor: Descriptor) void {

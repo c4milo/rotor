@@ -103,7 +103,7 @@ var latency_ns: [samples_max]u64 = undefined;
 /// Where the client sends, and where the server answers. Both live for the whole run, which is
 /// what decision 5's rule 3 asks of an `Outbound` an operation names.
 var to_server: Outbound align(@alignOf(Outbound)) = undefined;
-var to_client: [in_flight_max]Outbound = undefined;
+var to_client: [in_flight_max]Outbound align(@alignOf(Outbound)) = undefined;
 
 const Options = struct {
     in_flight: u32 = 64,

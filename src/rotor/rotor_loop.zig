@@ -49,7 +49,7 @@ const modules = struct {
 };
 
 /// The process's choice, as a `Tag`'s value, or `undecided` before anything asked.
-var linux_choice: std.atomic.Value(u8) = .init(undecided);
+var linux_choice: std.atomic.Value(u8) align(@alignOf(std.atomic.Value(u8))) = .init(undecided);
 const undecided: u8 = std.math.maxInt(u8);
 
 /// The backend this process runs. On Linux it asks the kernel the first time, the way a uring loop

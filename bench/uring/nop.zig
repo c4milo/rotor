@@ -36,8 +36,8 @@ const options: Loop.Options = .{ .operations = operations, .entries = entries };
 
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
-var batch: [batch_max]core.Operation = undefined;
-var events: [batch_max]core.Event = undefined;
+var batch: [batch_max]core.Operation align(@alignOf(core.Operation)) = undefined;
+var events: [batch_max]core.Event align(@alignOf(core.Event)) = undefined;
 var round_ns: [samples]u64 = undefined;
 
 fn now_ns() u64 {

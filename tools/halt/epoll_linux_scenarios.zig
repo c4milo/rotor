@@ -60,9 +60,10 @@ const one_timer = [_]core.Operation{
     .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
 };
 
-var no_events: [0]core.Event = .{};
-var too_many_events: [core.constants.batch_max + 1]core.Event = undefined;
-var one_event: [1]core.Event = undefined;
+var no_events: [0]core.Event align(@alignOf(core.Event)) = .{};
+var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(core.Event)) =
+    undefined;
+var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn tick_with_no_room_for_an_event() void {
     loop.init(&memory, options) catch return;

@@ -140,14 +140,14 @@ comptime {
     std.debug.assert(burst_max < operations);
 }
 
-var registry: backend.Registry = undefined;
+var registry: backend.Registry align(@alignOf(backend.Registry)) = undefined;
 const registry_bytes = backend.Registry.memory_bytes(loops);
 var registry_memory: [registry_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 var latencies: Histogram align(harness.histogram.alignment_bytes) = .empty;
 
 /// What the peer thread reports back about itself: it cannot return a value, so it writes one.
-var peer_placement: placement.Placement = .scheduler_default;
+var peer_placement: placement.Placement align(@alignOf(placement.Placement)) = .scheduler_default;
 
 /// One loop with its memory, and the two things both threads do with it.
 const Side = struct {
@@ -233,7 +233,7 @@ const Peer = struct {
     }
 };
 
-var first: Side = .{};
+var first: Side align(@alignOf(Side)) = .{};
 
 /// Runs the ping-pong and fills `latencies`, returning the measured span.
 fn ping_pong(options: Options) !u64 {

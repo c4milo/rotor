@@ -260,7 +260,7 @@ test "bytes that arrive while nobody receives do not keep the loop from sleeping
 const sends_to_a_closed_peer_max = 64;
 
 /// SIGPIPEs this process received while the scenario below counted them.
-var broken_pipe_signals = std.atomic.Value(u32).init(0);
+var broken_pipe_signals: std.atomic.Value(u32) align(@alignOf(std.atomic.Value(u32))) = .init(0);
 
 fn count_broken_pipe_signal(signal: std.posix.SIG) callconv(.c) void {
     _ = signal;

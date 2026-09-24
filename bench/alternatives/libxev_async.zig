@@ -85,10 +85,10 @@ var second: Side align(@alignOf(Side)) = undefined;
 var latencies: Histogram align(harness.histogram.alignment_bytes) = .empty;
 
 /// Set when the measuring side has taken its last sample, so the peer stops after one more wake.
-var stopping: std.atomic.Value(bool) = .init(false);
+var stopping: std.atomic.Value(bool) align(@alignOf(std.atomic.Value(bool))) = .init(false);
 /// Set once the peer's loop and notifier exist, because the measuring side may not notify before.
-var peer_ready: std.atomic.Value(bool) = .init(false);
-var peer_placement: placement.Placement = .scheduler_default;
+var peer_ready: std.atomic.Value(bool) align(@alignOf(std.atomic.Value(bool))) = .init(false);
+var peer_placement: placement.Placement align(@alignOf(placement.Placement)) = .scheduler_default;
 var peer_failure: ?anyerror = null;
 
 /// The peer: it answers every notification with one of its own until it is told to stop.
