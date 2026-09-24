@@ -20,7 +20,12 @@ pub const Listener = struct {
     address: core.Address,
 
     pub fn open() !Listener {
-        const descriptor = try sync.listen(&loopback, .{ .backlog = backlog, .reuse_port = false });
+        return open_on(&loopback);
+    }
+
+    /// A listener on `wanted`, whose port is normally 0 so the kernel chooses one.
+    pub fn open_on(wanted: *const core.Address) !Listener {
+        const descriptor = try sync.listen(wanted, .{ .backlog = backlog, .reuse_port = false });
         errdefer sync.close_now(descriptor);
         const address = try sync.local_address(descriptor);
         if (address.port == 0) return error.PortNotAssigned;
@@ -28,9 +33,10 @@ pub const Listener = struct {
     }
 };
 
-/// Connects one client to `listener` through the loop, and returns both ends.
+/// Connects one client of the listener's family to `listener` through the loop, and returns both
+/// ends.
 pub fn connected_pair(harness: *Harness, listener: *const Listener) ![2]core.Descriptor {
-    const client = try sync.open_socket(.ipv4);
+    const client = try sync.open_socket(listener.address.family);
     errdefer sync.close_now(client);
     try harness.submit(&.{
         Operation.accept(100, listener.descriptor, false),

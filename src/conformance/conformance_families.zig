@@ -1,6 +1,7 @@
 //! Scenarios over both address families. The surface names IPv4 and IPv6 (`core.Address`), and
 //! every backend converts both, but until 2026-09-23 no scenario drove a loop over IPv6, so a
-//! backend could have broken it unseen (decision 10).
+//! backend could have broken it unseen (decision 10). The TCP scenario here is the IPv6 twin of
+//! `conformance_tcp.zig`'s first one.
 //!
 //! The datagram scenarios run over both families, because no other scenario checks what a
 //! datagram's control messages carry: the local address it was sent to, and its ECN codepoint.
@@ -14,6 +15,7 @@ const testing = std.testing;
 const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
+const tcp = @import("conformance_tcp.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
@@ -30,6 +32,36 @@ const loopback6: Address = blk: {
     break :blk Address.ipv6(octets, 0, 0);
 };
 const loopback4 = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+
+test "accept, connect, and bytes both ways over IPv6 loopback" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open_on(&loopback6);
+    defer sync.close_now(listener.descriptor);
+    try testing.expectEqual(Address.Family.ipv6, listener.address.family);
+    const pair = try tcp.connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+    // Both ends are IPv6, and the accepted one is bound where the listener is.
+    try testing.expectEqual(Address.Family.ipv6, (try sync.local_address(pair[0])).family);
+    const accepted = try sync.local_address(pair[1]);
+    try testing.expectEqualSlices(u8, &loopback6.bytes, &accepted.bytes);
+    try testing.expectEqual(listener.address.port, accepted.port);
+
+    var to_server: [16]u8 = @splat(0);
+    var to_client: [16]u8 = @splat(0);
+    try harness.submit(&.{
+        Operation.receive(1, pair[1], &to_server), Operation.send(2, pair[0], "ping"),
+        Operation.receive(3, pair[0], &to_client), Operation.send(4, pair[1], "pong!"),
+    }, &.{});
+    var events: [4]Event = undefined;
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u32, 4), try (try Harness.find(&events, 1)).outcome());
+    try testing.expectEqual(@as(u32, 5), try (try Harness.find(&events, 3)).outcome());
+    try testing.expectEqualStrings("ping", to_server[0..4]);
+    try testing.expectEqualStrings("pong!", to_client[0..5]);
+}
 
 /// One group per socket, because a group serves one socket's receives and both sockets receive.
 const receiver_group = 1;
