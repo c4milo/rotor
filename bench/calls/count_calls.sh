@@ -18,6 +18,9 @@
 #     docker run --rm --privileged -v /tmp/calls/bin:/b:ro \
 #       -v "$PWD/bench/calls/count_calls.sh:/count.sh:ro" <image> sh /count.sh
 #
+# `rotor_epoll`, the echo server built against the epoll backend, comes from `zig build bench-linux`
+# in zig-out/linux-bench/, and is copied beside the others. A program that is missing is skipped.
+#
 # On a Linux host, as the comparison job of `.github/workflows/ci.yml` runs it:
 #
 #     sudo BIN=zig-out/bin sh bench/calls/count_calls.sh
@@ -170,6 +173,8 @@ for payload in 65536 4096; do
   measure libxev "$payload" libxev_echo
   measure "rotor on epoll" "$payload" rotor_epoll --buffer-bytes "$buffer"
   measure "rotor on epoll (accumulate)" "$payload" rotor_epoll --shape accumulate \
+    --buffer-bytes "$buffer"
+  measure "rotor on epoll (group single)" "$payload" rotor_epoll --shape group_single \
     --buffer-bytes "$buffer"
 done
 

@@ -122,10 +122,14 @@ var open: [connections_max]bool = undefined;
 ///     each piece is echoed with a send of its own.
 ///   - `accumulate`: a receive into this connection's own buffer, re-armed into what is left
 ///     until a whole message has arrived, then one send.
+///   - `group_single`: a single-shot receive from the group, armed again once its echo is out, as
+///     `accumulate` arms its receive. Each completion takes a whole buffer, as in `group`. It is how
+///     a caller reads one piece at a time and still lets the loop pick the buffer, and it is the
+///     only shape whose receives a readiness backend's flush can try with a buffer from the group.
 ///
-/// The pair is the experiment. It needs no kernel above decision 2's floor and no record
+/// The first pair is the experiment. It needs no kernel above decision 2's floor and no record
 /// amended: the surface already offers a receive into a buffer the caller names.
-const Shape = enum { group, accumulate };
+const Shape = enum { group, accumulate, group_single };
 var shape: Shape = .group;
 
 /// The core this server pins to, from `--cpu`, or null to let the scheduler place it.
@@ -341,7 +345,8 @@ fn handle_accept(loop: *Loop, event: Event) void {
     arm_receive(loop, descriptor);
 }
 
-/// One multishot receive for this connection, which serves it until it ends or the group empties.
+/// One receive from the group for this connection. In `group` it is multishot and serves the
+/// connection until it ends or the group empties. In `group_single` it serves one piece.
 fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
     if (shape == .accumulate) return arm_accumulating_receive(loop, descriptor);
     submit_one(loop, .{
@@ -349,7 +354,7 @@ fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
         .kind = .{ .receive = .{
             .socket = descriptor,
             .target = .{ .group = group_id },
-            .multishot = true,
+            .multishot = shape == .group,
         } },
     });
 }
@@ -440,9 +445,9 @@ fn handle_send(loop: *Loop, event: Event) void {
     state.sent += sent;
     if (state.sent < state.len) return send_rest(loop, descriptor);
     release(loop, state.buffer_id);
-    // The accumulate shape reads again itself: its receive is single-shot, so nothing is armed
-    // for this connection until the echo is out.
-    if (shape == .accumulate) arm_receive(loop, descriptor);
+    // The single-shot shapes read again themselves: nothing is armed for this connection until
+    // the echo is out.
+    if (shape != .group) arm_receive(loop, descriptor);
 }
 
 /// Gives a provided buffer back, which the accumulate shape has none of: its buffer is the

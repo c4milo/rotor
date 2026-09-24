@@ -70,6 +70,8 @@ const programs = [_]Program{
     .{ .name = "rotor_reads", .root = "bench/files/rotor_reads.zig" },
     // The echo programs too, so the placement path that only Linux can take is run.
     .{ .name = "rotor_echo", .root = "bench/echo/rotor_echo.zig" },
+    // The echo server on epoll, which `bench/calls/count_calls.sh` counts as `rotor_epoll`.
+    .{ .name = "rotor_epoll", .root = "bench/echo/rotor_echo.zig", .backend = .epoll },
     .{ .name = "echo_client", .root = "bench/echo/echo_client.zig" },
 };
 
