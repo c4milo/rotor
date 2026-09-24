@@ -222,15 +222,19 @@ header and not the kernel, and rotor passes the level and name as integers alrea
   arrives as; `IPV6_RECVPKTINFO`, 61, is what turns the report on. The backend set 46 with
   `setsockopt`, got EINVAL, ignored it, and reported no packet info on IPv6 at all. No test could
   have caught it: the suite's scenarios are IPv4, and the failure was silent by construction.
-- **The type-of-service byte does not survive macOS loopback.** A datagram sent with TOS 0x2A
-  arrives with TOS 0. Not the codepoint alone: the whole byte. So **a QUIC stack on macOS runs
-  without ECN**, and rotor reports `not_ect` there however the sender marked it. Whether a real
-  interface differs is unmeasured, because this tree measures loopback.
+- **The type-of-service byte survives macOS loopback.** A datagram sent with TOS 0x2A arrives with
+  TOS 0x2A, so its codepoint does too, and an IPv6 datagram keeps its traffic class. Measured on
+  macOS 26.6.2 on 2026-09-23.
 
-The second is a finding and not a fault: nothing in the suite may assert an ECN codepoint on that
-host. What it is not, since decision 2's amendment of 2026-09-22, is a reason to treat macOS as a
-rehearsal. It is a property of macOS loopback, measured there and nowhere else, so a congestion
-controller that needs ECN needs a real interface to be tested on — on either kernel.
+**Corrected on 2026-09-23.** The second finding used to read the other way: that the byte does not
+survive macOS loopback, so a QUIC stack on macOS runs without ECN. That came from rotor's own
+code. The probe and the backend both declared `IP_TOS` as 1, which is Linux's number and macOS's
+`IP_OPTIONS`; the header this record cites, `netinet/in.h:407`, says 3. So the probe never set the
+type of service, and every IPv4 datagram kqueue marked carried an `IP_OPTIONS` control message
+instead. The probe also compared the codepoint it read with the whole byte it sent, so it could
+not have passed. `src/conformance/conformance_families.zig` found it: its IPv4 datagram scenario
+sends ECT(0) and requires ECT(0) back, on every backend, and failed on kqueue until the number was
+3. The suite now asserts the codepoint on every host, for both families.
 
 **What macOS does not have is segmentation.** `netinet/udp.h` defines exactly one option,
 `UDP_NOCKSUM`. There is no GSO and no GRO. So:

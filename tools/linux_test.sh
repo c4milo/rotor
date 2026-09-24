@@ -53,6 +53,10 @@ readonly image='alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be1216
 # Docker's default seccomp profile refuses io_uring_setup with EPERM, so an io_uring container runs
 # without that profile. Without this option the probe reports the refusal and the run fails.
 readonly security_option='seccomp=unconfined'
+# The scenarios of src/conformance/conformance_families.zig run over IPv6 loopback and do not skip
+# without it. Docker may start a container with IPv6 switched off, which removes `::1`, so every
+# container here switches it on. The setting is the container's own network namespace's.
+readonly ipv6_option='net.ipv6.conf.all.disable_ipv6=0'
 # The executables that run under Docker's DEFAULT profile instead: the epoll module's own tests,
 # the conformance suite against it, and its halt scenarios. The epoll backend exists for a container
 # nobody relaxed (docs/decisions/0020-an-epoll-backend.md), so relaxing it for these would prove
@@ -122,14 +126,14 @@ require_fresh_install() {
 # Runs one command in a fresh container with the install directory mounted read-only, and with the
 # seccomp profile relaxed so io_uring works.
 in_container() {
-  docker run --rm --security-opt "$security_option" \
+  docker run --rm --security-opt "$security_option" --sysctl "$ipv6_option" \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 
 # The same, under Docker's default seccomp profile: no --security-opt at all. This is where
 # io_uring_setup is refused, and where the epoll backend has to work.
 in_default_container() {
-  docker run --rm \
+  docker run --rm --sysctl "$ipv6_option" \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 

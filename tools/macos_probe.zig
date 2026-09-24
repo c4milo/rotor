@@ -24,7 +24,7 @@ const posix = std.posix;
 const ip_pktinfo = 26;
 const ip_recvtos = 27;
 const ip_dontfrag = 28;
-const ip_tos = 1;
+const ip_tos = 3;
 const ipv6_recvtclass = 35;
 const ipv6_tclass = 36;
 const ipv6_pktinfo = 46;
@@ -235,7 +235,10 @@ fn check_codepoint(report: *Report) !void {
         find_control(written, c.IPPROTO.IP, ip_tos);
     const whole: ?u8 = if (carried) |slice| slice[0] else null;
     const codepoint: ?u8 = if (whole) |byte| byte & ecn_mask else null;
-    const kept = codepoint != null and codepoint.? == @as(u8, @intCast(marked_codepoint));
+    // The mark is a whole type-of-service byte, and the codepoint is its low two bits. Until
+    // 2026-09-23 this compared the codepoint with the whole byte, so it could never pass.
+    const sent_codepoint = @as(u8, @intCast(marked_codepoint)) & ecn_mask;
+    const kept = codepoint != null and codepoint.? == sent_codepoint;
     try report.verdict(
         "IP_TOS and IP_RECVTOS carry the codepoint",
         kept,

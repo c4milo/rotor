@@ -23,6 +23,10 @@ set -euo pipefail
 readonly image='debian@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251'
 # Docker's default seccomp profile refuses io_uring_setup, which the uring suite needs.
 readonly security_option='seccomp=unconfined'
+# The scenarios of src/conformance/conformance_families.zig run over IPv6 loopback and do not skip
+# without it. Docker may start a container with IPv6 switched off, which removes `::1`, so every
+# container here switches it on. The setting is the container's own network namespace's.
+readonly ipv6_option='net.ipv6.conf.all.disable_ipv6=0'
 readonly install_directory='zig-out/race'
 readonly stamp_name='.test-race-stamp'
 readonly manifest_name='tests.manifest'
@@ -59,7 +63,7 @@ require_fresh_install() {
 }
 
 in_container() {
-  docker run --rm --security-opt "$security_option" \
+  docker run --rm --security-opt "$security_option" --sysctl "$ipv6_option" \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 

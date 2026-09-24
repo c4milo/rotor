@@ -33,7 +33,7 @@ pub const ip_recvtos = 27;
 /// `netinet/in.h:436`: do not fragment, which path MTU discovery needs.
 pub const ip_dontfrag = 28;
 /// `netinet/in.h:407`: the type of service, whose low two bits are the codepoint.
-pub const ip_tos = 1;
+pub const ip_tos = 3;
 /// `netinet6/in6.h:438` and `:439`, both unconditional in the SDK.
 pub const ipv6_recvtclass = 35;
 pub const ipv6_tclass = 36;
