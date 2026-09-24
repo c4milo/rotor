@@ -458,8 +458,51 @@ and libxev, every spread at 5 percent or under:
 The other columns are thousandths of rotor's rate. There is no run on that processor from before
 the fix, so this does not say whether the fix moved GitHub's numbers. The ratios fall inside the
 range the other processors' sections hold at 64 KiB. The owner approved adding the run as the
-baseline's Xeon 8370C section, the only section taken after the fix. The other sections are
-unchanged.
+baseline's Xeon 8370C section, the only section taken after the fix.
+
+**The other sections' 64 KiB rows were retaken on 2026-09-24**, at the owner's request, each from
+the first `comparison` job on its processor that had both the fix and the client check of
+`34763cc`. Those jobs were gated, so they printed tables and not baseline rows. Each ratio is the
+table's median per second, times 1000, divided by rotor's in the same configuration, rounded down.
+That is `bench/harness/baseline.zig`'s own formula, and it reproduces all 40 rows that run
+36028154840 printed. No 64 KiB row is left out: every spread was 6 percent or under, and each job's
+CPU step put libxev within 6 percent of the table's ratio.
+
+| processor | run | connections | rotor (accumulate) | libuv | libxev | `std.Io.Threaded` |
+|---|---|---:|---:|---:|---:|---:|
+| EPYC 9V74 | 36032383576 | 16 | 1023 | 952 | 1011 | 712 |
+| EPYC 9V74 | 36032383576 | 64 | 1053 | 918 | 1043 | 687 |
+| EPYC 7763 | 36032373559 | 16 | 984 | 955 | 961 | 629 |
+| EPYC 7763 | 36032373559 | 64 | 1000 | 966 | 986 | 638 |
+| EPYC 9V45 | 36032363409 | 16 | 1000 | 975 | 981 | 801 |
+| EPYC 9V45 | 36032363409 | 64 | 994 | 986 | 986 | 794 |
+| Xeon 6973P-C | 36034661578 | 16 | 1017 | 997 | 949 | 644 |
+| Xeon 6973P-C | 36034661578 | 64 | 1007 | 1075 | 1027 | 736 |
+
+A second job with the check on the EPYC 9V74, run 36034642821, and one on the EPYC 7763, run
+36034652291, came within 26 of every row above. `bench/results/echo-checked-github-*-2026-09-24.md`
+holds the four runs the rows came from.
+
+Against the old rows the fix moved little on the EPYC 9V45: the largest change there is
+`std.Io.Threaded` at 64 connections, from 748 to 794. Two of the jobs with the check failed the old
+rows, both on a candidate that gained on rotor at 64 KiB: rotor (accumulate) at 64 connections on
+the EPYC 9V74, 1070 against 1003, and libxev at 16 connections on the Xeon 6973P-C, 949 against 890.
+
+**The client before `34763cc` put libxev near half of rotor at 64 KiB on some AMD runners.** Six
+jobs ran with the fix and without the check. Four drew an EPYC 7763 and one an EPYC 9V74, and each
+of those five put libxev at 535 to 645 of rotor at 64 KiB wherever its runs agreed. Each job's CPU
+step, which runs `echo_client` against one server at a time, measured the two level. libuv at 16
+connections and 64 KiB had a spread of 30 percent or more in all five. The sixth drew the Xeon
+8370C, and there libxev was level with rotor. The five jobs with the check on AMD runners put
+libxev at 961 to 1065, and libuv's spread in that row at 2 percent or under. Between those commits
+the echo workload changed only in its client. Which part of the client change did it is not
+known: neither server reads the bytes, and on `mac` the two clients measured rotor alike
+(`bench/results/echo-client-check-mac-2026-09-24.md`). The EPYC 7763 section left its libxev rows
+at 64 KiB out on 2026-09-22 for the same symptom; they are back.
+
+The EPYC 9V74 section's rows below 64 KiB no longer fit that processor. The three jobs on it since
+the fix put libuv 141 to 230 below them. A lower ratio does not fail the gate, so those rows hold
+nothing. Retaking them is the owner's call.
 
 This is the third bug of the kind the section above names. rotor hands the caller one buffer per
 piece, and leaves the order of the caller's sends to the caller.

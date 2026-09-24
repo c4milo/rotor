@@ -11,14 +11,21 @@
 # rotor. Every section was taken from the `comparison` job of .github/workflows/ci.yml, on
 # 2026-09-22 but the EPYC 9V45's and the Xeon 8370C's, taken on 2026-09-24, on GitHub-hosted
 # ubuntu-24.04 runners, io_uring, one core, three runs per row, with rotor's buffer group sized per
-# connection. Every section but the Xeon 8370C's was taken before `db9e39e` fixed a server that
-# gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`, "A third bug in
-# rotor_echo"), so their 64 KiB rows measured a server with a damaged group. A section
-# leaves out a row whose runs disagreed, and a row another step of the same job contradicts, and
-# its comment names each. A run reports a row its section lacks and does not gate it.
+# connection. Every section but the Xeon 8370C's was first taken before `db9e39e` fixed a server
+# that gave a provided buffer back twice at 64 KiB (`bench/alternatives/README.md`, "A third bug in
+# rotor_echo"). Their 64 KiB rows were retaken on 2026-09-24 from runs made after that fix and after
+# `34763cc` made the client compare what comes back; each section's comment names its run. A
+# section leaves out a row whose runs disagreed, and a row another step of the same job
+# contradicts, and its comment names each. A run reports a row its section lacks and does not gate
+# it.
 # `bench/results/` holds every run.
 
-# Run 35811462374, commit 86a7ade.
+# Run 35811462374, commit 86a7ade, but the 64 KiB rows, which run 36032383576 on commit 5b441cc
+# retook on 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its check. No
+# 64 KiB row is left out: the runs agreed on every one, and the job's CPU step agreed with them.
+# The rows below 64 KiB no longer fit this processor: libuv's ratios there came out 146 to 230
+# lower in that run, and 145 to 212 lower in run 36030652152 on dfebaa5.
+# `bench/results/echo-checked-github-epyc-9v74-2026-09-24.md` holds the retake.
 processor AMD EPYC 9V74 80-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
@@ -37,10 +44,10 @@ echo 16 16384 libuv 989
 echo 16 16384 libxev 942
 echo 16 16384 std.Io.Threaded 672
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 1017
-echo 16 65536 libuv 990
-echo 16 65536 libxev 1084
-echo 16 65536 std.Io.Threaded 852
+echo 16 65536 rotor (accumulate) 1023
+echo 16 65536 libuv 952
+echo 16 65536 libxev 1011
+echo 16 65536 std.Io.Threaded 712
 echo 64 4096 rotor 1000
 echo 64 4096 rotor (accumulate) 1003
 echo 64 4096 libuv 954
@@ -57,13 +64,17 @@ echo 64 16384 libuv 990
 echo 64 16384 libxev 981
 echo 64 16384 std.Io.Threaded 702
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1003
-echo 64 65536 libuv 978
-echo 64 65536 libxev 1101
-echo 64 65536 std.Io.Threaded 831
+echo 64 65536 rotor (accumulate) 1053
+echo 64 65536 libuv 918
+echo 64 65536 libxev 1043
+echo 64 65536 std.Io.Threaded 687
 
-# Run 35813656107, commit ba273fd. Its libuv row at 64 connections and 64 KiB is the one that
-# failed the EPYC section, and it is why the file is split by processor.
+# Run 35813656107, commit ba273fd, but the 64 KiB rows, which run 36034661578 on commit b50e91a
+# retook on 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its check. No
+# 64 KiB row is left out: the runs agreed on every one, and the job's CPU step agreed with them.
+# The old libuv row at 64 connections and 64 KiB is the one that failed the EPYC section, and it
+# is why the file is split by processor.
+# `bench/results/echo-checked-github-xeon-6973p-c-2026-09-24.md` holds the retake.
 processor Intel(R) Xeon(R) 6973P-C
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
@@ -82,10 +93,10 @@ echo 16 16384 libuv 812
 echo 16 16384 libxev 826
 echo 16 16384 std.Io.Threaded 524
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 984
-echo 16 65536 libuv 954
-echo 16 65536 libxev 890
-echo 16 65536 std.Io.Threaded 624
+echo 16 65536 rotor (accumulate) 1017
+echo 16 65536 libuv 997
+echo 16 65536 libxev 949
+echo 16 65536 std.Io.Threaded 644
 echo 64 4096 rotor 1000
 echo 64 4096 rotor (accumulate) 1008
 echo 64 4096 libuv 830
@@ -102,16 +113,18 @@ echo 64 16384 libuv 873
 echo 64 16384 libxev 958
 echo 64 16384 std.Io.Threaded 474
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1006
-echo 64 65536 libuv 1057
-echo 64 65536 libxev 1008
-echo 64 65536 std.Io.Threaded 739
+echo 64 65536 rotor (accumulate) 1007
+echo 64 65536 libuv 1075
+echo 64 65536 libxev 1027
+echo 64 65536 std.Io.Threaded 736
 
-# Run 35815517826, commit 5e0fac2. Four rows are left out. The runs disagreed on libxev at 16
-# connections and 4 KiB, and on libuv at 16 connections and 64 KiB. At 64 KiB this run put libxev
-# near half of rotor, where the CPU and kernel-call steps of the same job measured the two level at
-# 16 connections, so neither libxev row at 64 KiB is kept.
-# `bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md` has all three measurements.
+# Run 35815517826, commit 5e0fac2, but the 64 KiB rows, which run 36032373559 on commit 5b441cc
+# retook on 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its check. One
+# row is left out: the runs of 35815517826 disagreed on libxev at 16 connections and 4 KiB. That
+# run also put libxev near half of rotor at 64 KiB, where its own CPU step measured the two level.
+# The retake put libxev at 961 and 986, its CPU step within 6 percent, so both rows are back.
+# `bench/results/echo-sized-pool-github-epyc-7763-2026-09-22.md` and
+# `bench/results/echo-checked-github-epyc-7763-2026-09-24.md` hold the two runs.
 processor AMD EPYC 7763 64-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
@@ -129,8 +142,10 @@ echo 16 16384 libuv 880
 echo 16 16384 libxev 907
 echo 16 16384 std.Io.Threaded 516
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 993
-echo 16 65536 std.Io.Threaded 662
+echo 16 65536 rotor (accumulate) 984
+echo 16 65536 libuv 955
+echo 16 65536 libxev 961
+echo 16 65536 std.Io.Threaded 629
 echo 64 4096 rotor 1000
 echo 64 4096 rotor (accumulate) 936
 echo 64 4096 libuv 851
@@ -148,12 +163,15 @@ echo 64 16384 libxev 933
 echo 64 16384 std.Io.Threaded 546
 echo 64 65536 rotor 1000
 echo 64 65536 rotor (accumulate) 1000
-echo 64 65536 libuv 960
-echo 64 65536 std.Io.Threaded 648
+echo 64 65536 libuv 966
+echo 64 65536 libxev 986
+echo 64 65536 std.Io.Threaded 638
 
-# Run 35989885034, commit 8cde9a6, on 2026-09-24. No row is left out: the runs agreed on every one,
-# and no step of the job contradicted one. `bench/results/echo-github-epyc-9v45-2026-09-24.md`
-# holds the run.
+# Run 35989885034, commit 8cde9a6, but the 64 KiB rows, which run 36032363409 on commit 5b441cc
+# retook the same day, 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its
+# check. No row is left out: in each run the runs agreed on every row, and no step of the job
+# contradicted one. `bench/results/echo-github-epyc-9v45-2026-09-24.md` and
+# `bench/results/echo-checked-github-epyc-9v45-2026-09-24.md` hold the two runs.
 processor AMD EPYC 9V45 96-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
@@ -172,10 +190,10 @@ echo 16 16384 libuv 878
 echo 16 16384 libxev 921
 echo 16 16384 std.Io.Threaded 642
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 974
-echo 16 65536 libuv 969
-echo 16 65536 libxev 975
-echo 16 65536 std.Io.Threaded 800
+echo 16 65536 rotor (accumulate) 1000
+echo 16 65536 libuv 975
+echo 16 65536 libxev 981
+echo 16 65536 std.Io.Threaded 801
 echo 64 4096 rotor 1000
 echo 64 4096 rotor (accumulate) 947
 echo 64 4096 libuv 874
@@ -192,10 +210,10 @@ echo 64 16384 libuv 869
 echo 64 16384 libxev 923
 echo 64 16384 std.Io.Threaded 649
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 986
-echo 64 65536 libuv 991
-echo 64 65536 libxev 994
-echo 64 65536 std.Io.Threaded 748
+echo 64 65536 rotor (accumulate) 994
+echo 64 65536 libuv 986
+echo 64 65536 libxev 986
+echo 64 65536 std.Io.Threaded 794
 
 # Run 36028154840, commit a31f1a4, on 2026-09-24: the first comparison after db9e39e. No row is
 # left out: the runs agreed on every one, and the job's CPU step agreed with the 64 KiB rows.
