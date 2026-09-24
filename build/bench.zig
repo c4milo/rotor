@@ -9,6 +9,7 @@
 const std = @import("std");
 const alternatives = @import("alternatives.zig");
 const modules = @import("modules.zig");
+const bench_class_a = @import("bench_class_a.zig");
 
 pub const Steps = struct {
     /// Compiles every bench executable, so `zig build test` fails when one stops building.
@@ -64,13 +65,15 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
     const graph = modules.add(b, target, .ReleaseSafe);
     const echo_smoke = add_echo_smoke(b);
     add_echo(b, target, graph, compile_all, echo_smoke.run);
+    const program_tests = add_program_tests(b, target, graph);
+    bench_class_a.add(b, target, program_tests);
 
     alternatives.add(b, target);
 
     return .{
         .compile = compile_all,
         .harness_tests = run_harness_tests,
-        .program_tests = add_program_tests(b, target, graph),
+        .program_tests = program_tests,
         .echo_smoke = echo_smoke.step,
     };
 }

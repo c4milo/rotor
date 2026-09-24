@@ -13,6 +13,7 @@
 //! `core/buffer_group.zig`'s, so a caller sizes one block for any backend.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const IoUring = linux.IoUring;
 const core = @import("core");
@@ -44,8 +45,8 @@ pub const Group = struct {
 
     /// The bytes of buffer `buffer_id`.
     pub fn bytes_of(group: *const Group, buffer_id: u16) []u8 {
-        assert(group.ring != null);
-        assert(buffer_id < group.count);
+        assert_class_a(group.ring != null);
+        assert_class_a(buffer_id < group.count);
         const start = @as(usize, buffer_id) * group.buffer_bytes;
         return group.buffers[start..][0..group.buffer_bytes];
     }
@@ -134,7 +135,7 @@ pub fn provide(
 /// bytes the receive event named. One ring entry written, and no system call.
 pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
     loop.assert_owner();
-    assert(group_id < core.constants.buffer_groups_max);
+    assert_class_a(group_id < core.constants.buffer_groups_max);
     const group = &loop.groups[group_id];
     const ring = group.ring.?;
     const mask = IoUring.buf_ring_mask(group.count);

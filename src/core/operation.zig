@@ -311,14 +311,14 @@ pub const Operation = struct {
     }
 
     fn assert_receive(kind: Receive) void {
-        assert(kind.socket >= 0);
+        assert_class_a(kind.socket >= 0);
         switch (kind.target) {
             .buffer => |buffer| {
-                assert(!kind.multishot);
+                assert_class_a(!kind.multishot);
                 assert_transfer(kind.socket, buffer.bytes.len);
                 assert_socket_buffer(buffer.registered);
             },
-            .group => |group| assert(group < constants.buffer_groups_max),
+            .group => |group| assert_class_a(group < constants.buffer_groups_max),
         }
     }
 
@@ -329,7 +329,7 @@ pub const Operation = struct {
     /// buffers and named one got an ordinary transfer against an unregistered pointer and no
     /// word of it. A caller that wants a registered buffer wants it on a file.
     fn assert_socket_buffer(registered: ?u16) void {
-        assert(registered == null);
+        assert_class_a(registered == null);
     }
 
     /// A datagram receive names an open socket and a buffer group below `buffer_groups_max`.
@@ -356,9 +356,9 @@ pub const Operation = struct {
     }
 
     fn assert_transfer(file_or_socket: Descriptor, len: usize) void {
-        assert(file_or_socket >= 0);
-        assert(len >= 1);
-        assert(len <= constants.transfer_bytes_max);
+        assert_class_a(file_or_socket >= 0);
+        assert_class_a(len >= 1);
+        assert_class_a(len <= constants.transfer_bytes_max);
     }
 };
 

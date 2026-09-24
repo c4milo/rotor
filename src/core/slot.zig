@@ -198,8 +198,8 @@ pub const Slot = extern struct {
         transfer: []const u8,
         registered: ?u16,
     ) void {
-        assert(transfer.len >= 1);
-        assert(transfer.len <= constants.transfer_bytes_max);
+        assert_class_a(transfer.len >= 1);
+        assert_class_a(transfer.len <= constants.transfer_bytes_max);
         slot.descriptor = descriptor;
         slot.buffer = @intFromPtr(transfer.ptr);
         slot.len = @intCast(transfer.len);

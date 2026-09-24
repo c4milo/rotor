@@ -46,15 +46,15 @@ pub const Modules = struct {
 };
 
 /// Which of decision 8's assertion classes a graph compiles. Every graph compiles all of them
-/// except the graph of `uring_nop_no_class_a`, which measures what class A costs (decision 8, The
-/// experiment, step 2). build.zig offers no option for this, so a consumer cannot turn an
-/// assertion off.
+/// except the graphs of `uring_nop_no_class_a` and of the `rotor_echo` that `bench-echo-no-class-a`
+/// builds, which measure what class A costs (decision 8, The experiment, step 2). build.zig offers
+/// no option for this, so a consumer cannot turn an assertion off.
 pub const Assertions = struct {
     /// The assertions `src/core/assertion_class.zig` names class A.
     class_a: bool = true,
 };
 
-/// The graph every build but that one benchmark uses.
+/// The graph every build but those two benchmarks uses.
 pub fn add(
     b: *std.Build,
     target: std.Build.ResolvedTarget,

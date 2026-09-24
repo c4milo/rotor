@@ -9,6 +9,7 @@
 //! no lock and starts no thread (decision 4).
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const core = @import("core");
 
 pub const constants = @import("constants.zig");
@@ -316,7 +317,7 @@ pub const Loop = struct {
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
     pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
-        assert(group_id < core.constants.buffer_groups_max);
+        assert_class_a(group_id < core.constants.buffer_groups_max);
         return loop.groups[group_id].bytes_of(buffer_id);
     }
 

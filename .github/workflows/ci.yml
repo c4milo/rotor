@@ -213,6 +213,22 @@ jobs:
               done
             done
           done
+      # Decision 8's echo half: rotor's echo server at 4 KiB with class A compiled out, against the
+      # one rotor ships. Both are named `rotor`, and the runner alternates candidates only inside
+      # one run, so the two runs alternate here, three times each, each on its own ports.
+      - name: Decision 8's echo half, three rounds alternating
+        run: |
+          set -euo pipefail
+          zig build bench-echo bench-echo-no-class-a
+          ls -l zig-out/bin/rotor_echo zig-out/no-class-a/rotor_echo
+          for round in 1 2 3; do
+            echo "== round $round, class A on"
+            ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
+              --port-base $((20000 + round * 200))
+            echo "== round $round, class A off"
+            ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
+              --port-base $((20100 + round * 200)) --directory zig-out/no-class-a
+          done
 
   # Every night, and when started by hand. It compares rotor on io_uring against libuv and libxev
   # in one run on one runner, and holds the echo rows to `bench/baseline/echo.txt`, whose sections

@@ -12,6 +12,7 @@
 //! type.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 
 /// Why an operation failed. The values are positive and fit `u8`; `Event.result` holds the
@@ -126,7 +127,7 @@ pub const Event = extern struct {
 
     /// The result as a Zig error union: the count, or the error its code names.
     pub fn outcome(event: Event) Error!u32 {
-        assert(!event.flags.message);
+        assert_class_a(!event.flags.message);
         if (event.result >= 0) return @intCast(event.result);
         return error_of(code_of(event.result));
     }
