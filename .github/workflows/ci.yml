@@ -67,6 +67,65 @@ jobs:
       - name: The whole local gate
         run: zig build test
 
+  # Started by hand. Whether a GitHub-hosted macOS runner is quiet enough to measure kqueue on: the
+  # `mac` machine is busy, and `docs/costs.md` names no other Mac. Each step runs a measurement
+  # several times so its spread shows. It is a check of the runner, and no number from it enters a
+  # record unless the owner names the runner a machine.
+  macos-noise:
+    name: macOS, how noisy a runner is
+    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-macos-${ZIG_VERSION}.tar.xz"
+          sha="b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | shasum -a 256 -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-aarch64-macos-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: What this runner is
+        run: |
+          sysctl -n machdep.cpu.brand_string hw.ncpu hw.memsize vm.loadavg
+          sw_vers
+      - name: Build rotor's programs and the pinned alternatives
+        run: |
+          set -euo pipefail
+          zig build bench-echo
+          zig build bench-crosscore
+          zig build bench-alternatives
+      # The measurement E1's kqueue half waits for: one cross-core message, rotor against libuv and
+      # libxev. Three runs of the runner, each five rounds, so both spreads show.
+      - name: The cross-core comparison, three times
+        run: |
+          set -euo pipefail
+          for run in 1 2 3; do
+            echo "== run $run"
+            ./zig-out/bin/crosscore_runner | grep '^|'
+          done
+      - name: Decision 13's idle case on kqueue, three rounds alternating
+        run: |
+          set -euo pipefail
+          for round in 1 2 3; do
+            echo "== kqueue, round $round"
+            for gap in 0 20 100 1000 1500; do
+              for mode in waiting spin-then-wait spin-budget spinning; do
+                ./zig-out/bin/rotor_post --mode "$mode" --gap-us "$gap" --samples 2000 --warmup 200 \
+                  | grep -E '^rotor_post:|^[{]'
+              done
+            done
+          done
+      - name: Echo, rotor alone, three times
+        run: |
+          set -euo pipefail
+          for run in 1 2 3; do
+            echo "== run $run"
+            ./zig-out/bin/echo_runner --candidates rotor --payloads 4096 \
+              --port-base $((20000 + run * 200)) | grep '^|'
+          done
+
   linux:
     name: Linux, io_uring
     runs-on: ubuntu-24.04
