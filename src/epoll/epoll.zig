@@ -116,6 +116,11 @@ pub const Loop = struct {
         entries: u16 = 0,
         /// How often the loop measures an operation (decision 9, rule 2).
         sampling: core.statistics.Options = .{},
+        /// How long a tick polls without waiting before it blocks, in nanoseconds, at most
+        /// `core.constants.spin_budget_ns_max` (decision 13). 0, the default, never polls. A loop
+        /// with a budget answers a message that comes inside it without being woken, and spends
+        /// the budget in CPU on every wait that outlasts it.
+        spin_budget_ns: u64 = 0,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         registry: ?*Registry = null,
@@ -194,6 +199,7 @@ pub const Loop = struct {
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
             .sampling = options.sampling,
+            .spin_budget_ns = options.spin_budget_ns,
         });
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};
@@ -242,7 +248,10 @@ pub const Loop = struct {
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
-        return tick_module.tick(loop, events, wait_ns);
+        if (!core.spin.applies(loop.tables.spin_budget_ns, wait_ns)) {
+            return tick_module.tick(loop, events, wait_ns);
+        }
+        return tick_module.spin_then_wait(loop, events, wait_ns);
     }
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends

@@ -52,6 +52,17 @@ pub const generation_first: u32 = 1;
 /// The longest one `tick` may block, in nanoseconds.
 pub const wait_ns_max: u64 = 10 * ns_per_s;
 
+/// The longest spin budget a loop may be given, in nanoseconds: how long a tick may poll without
+/// waiting before it blocks (decision 13). A millisecond is twenty times the 50 µs that record
+/// measured, and a thousand times what a cross-core message costs a loop that is awake (C19), so a
+/// longer budget buys nothing but burnt CPU.
+pub const spin_budget_ns_max: u64 = ns_per_ms;
+
+/// The most polls one spin makes. Each poll is a whole tick without a wait, which reads the clock at
+/// least once, so a spin as long as `spin_budget_ns_max` makes far fewer than this. The bound keeps
+/// the loop finite if the clock stood still.
+pub const spin_rounds_max: u32 = 100_000;
+
 /// The longest deadline an operation may carry and the longest timer, in nanoseconds: one day. A
 /// longer wait is the application's to build from shorter ones, and the bound keeps every
 /// deadline sum far below what 64 bits hold.
@@ -143,6 +154,8 @@ comptime {
     assert(std.math.isPowerOfTwo(mailbox_index_alignment));
     assert(generation_first >= 1);
     assert(timeout_ns_max >= wait_ns_max);
+    assert(spin_budget_ns_max < wait_ns_max);
+    assert(spin_rounds_max >= 1);
     assert(transfer_bytes_max <= std.math.maxInt(i32));
     assert(loops_max >= 2);
     assert(message_tag_max < 1 << 31);

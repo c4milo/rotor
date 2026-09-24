@@ -66,6 +66,13 @@ readonly confined_executables=' epoll conformance-epoll epoll_linux_scenarios li
 # process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
 # open question 5). Each run takes the other branch, so each is tested where it is chosen.
 readonly both_ways_tests=' rotor '
+# The executables that run a second time with every harness loop given a spin budget, as
+# `zig build test` runs the host's (decision 13). Each run keeps its seccomp profile.
+readonly spinning_tests=' conformance-uring conformance-epoll '
+# What that second run sets: the 50 us budget decision 13 measured, in nanoseconds.
+readonly spin_environment='ROTOR_CONFORMANCE_SPIN_NS=50000'
+# The environment a container is given: empty, except for the second run above.
+environment_options=()
 # The directory `zig build test-linux` installs into, relative to the top of the work tree.
 readonly install_directory='zig-out/linux'
 # The file `zig build test-linux` touches after its last install (build/linux.zig).
@@ -126,14 +133,15 @@ require_fresh_install() {
 # Runs one command in a fresh container with the install directory mounted read-only, and with the
 # seccomp profile relaxed so io_uring works.
 in_container() {
-  docker run --rm --security-opt "$security_option" --sysctl "$ipv6_option" \
+  docker run --rm ${environment_options[@]+"${environment_options[@]}"} \
+    --security-opt "$security_option" --sysctl "$ipv6_option" \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 
 # The same, under Docker's default seccomp profile: no --security-opt at all. This is where
 # io_uring_setup is refused, and where the epoll backend has to work.
 in_default_container() {
-  docker run --rm --sysctl "$ipv6_option" \
+  docker run --rm ${environment_options[@]+"${environment_options[@]}"} --sysctl "$ipv6_option" \
     --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
 }
 
@@ -150,8 +158,21 @@ run_with() {
   fi
 }
 
-# Runs one installed executable: relaxed, confined, or both, as the lists above say.
+# Runs one installed executable: relaxed, confined, or both, as the lists above say, and all of
+# that a second time with a spin budget for an executable `spinning_tests` names.
 run() {
+  local name="$1"
+  run_once "$name"
+  if [[ "$spinning_tests" == *" $name "* ]]; then
+    echo "linux_test: $name again, with $spin_environment"
+    environment_options=(--env "$spin_environment")
+    run_once "$name"
+    environment_options=()
+  fi
+}
+
+# Runs one installed executable once: relaxed, confined, or both, as the lists above say.
+run_once() {
   local name="$1"
   if [[ "$both_ways_tests" == *" $name "* ]]; then
     echo "linux_test: $name, with io_uring"

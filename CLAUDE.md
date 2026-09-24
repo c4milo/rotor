@@ -221,7 +221,8 @@ was about to push.
   file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
   rule runs.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
-  skips on a host its backend cannot run on), the halt check, the tools' own tests, the bench
+  skips on a host its backend cannot run on, and runs a second time with every harness loop given a
+  50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
   executables' compile, the hook check and the format check. Every change passes it before it
   is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
@@ -232,7 +233,8 @@ was about to push.
   failure. The two epoll executables, `epoll` and `conformance-epoll`, run under Docker's default
   seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for.
   `rotor`, the public module's tests, runs both ways, because the module chooses io_uring or epoll
-  by what the kernel allows, and each run takes the other branch. It prints the kernel release the container sees, because decision 2 sets the floor at
+  by what the kernel allows, and each run takes the other branch. `conformance-uring` and
+  `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. Last, the script runs the halt check, built for Linux, on the scenarios a Mac
   cannot prove (`tools/halt/*_linux_scenarios.zig`) and on the canary: uring's with
@@ -349,9 +351,10 @@ fifth: the public module's `register_descriptors` and `register_buffers` did not
 because nothing there named them.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
-has code for it, except three. Decision 13 the owner accepted on 2026-09-24, after its idle case was
-measured, with the spin budget off by default; it is not built yet. Decision 16 the owner declined
-that day. Decision 17 is proposed and names a component this repository does not hold. The cost probes cover every
+has code for it, except two. Decision 13 the owner accepted on 2026-09-24, after its idle case was
+measured, with the spin budget off by default, and it was built the same day: `spin_budget_ns` in a
+loop's options, and `core/spin.zig`. Decision 16 the owner declined that day. Decision 17 is
+proposed and names a component this repository does not hold. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
 
 Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it

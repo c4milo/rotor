@@ -253,7 +253,7 @@ the machines, and the commands to take every number again.
 | [10](docs/decisions/0010-no-simulator.md) | no simulator: the real kernel is the test | accepted |
 | [11](docs/decisions/0011-uring-internals.md) | inside the io_uring backend | accepted |
 | [12](docs/decisions/0012-kqueue-internals.md) | inside the kqueue backend | accepted |
-| [13](docs/decisions/0013-when-a-loop-sleeps.md) | when a loop sleeps | accepted, not built yet |
+| [13](docs/decisions/0013-when-a-loop-sleeps.md) | when a loop sleeps | accepted |
 | [14](docs/decisions/0014-repeating-timers.md) | repeating timers | accepted |
 | [15](docs/decisions/0015-datagrams.md) | datagrams | accepted |
 | [16](docs/decisions/0016-c-abi-for-c-consumers.md) | a C ABI | declined |

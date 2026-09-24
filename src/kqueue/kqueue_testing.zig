@@ -23,6 +23,16 @@ pub fn remove_file(path: [*:0]const u8) void {
 /// The clock the tick reads, for a scenario that measures how long a tick waited.
 pub const monotonic_ns = @import("kqueue_tick.zig").clock_ns;
 
+/// The CPU time the calling thread has used, in nanoseconds, for a scenario that tells a tick that
+/// polled from one that slept (decision 13): polling spends the thread's CPU, and sleeping does
+/// not.
+pub fn thread_cpu_ns() u64 {
+    var now: std.c.timespec = undefined;
+    assert(std.c.clock_gettime(.THREAD_CPUTIME_ID, &now) == 0);
+    assert(now.sec >= 0 and now.nsec >= 0);
+    return @as(u64, @intCast(now.sec)) * std.time.ns_per_s + @as(u64, @intCast(now.nsec));
+}
+
 /// True when `descriptor` closes on exec: what the suite checks of an accepted socket.
 pub fn closes_on_exec(descriptor: i32) bool {
     const flags = std.c.fcntl(descriptor, std.c.F.GETFD, @as(c_int, 0));

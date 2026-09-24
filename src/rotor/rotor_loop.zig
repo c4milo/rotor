@@ -177,6 +177,11 @@ pub const Loop = struct {
         entries: u16 = 0,
         /// How often the loop measures an operation (decision 9).
         sampling: core.statistics.Options = .{},
+        /// How long a tick polls without waiting before it blocks, in nanoseconds, at most
+        /// `constants.spin_budget_ns_max` (decision 13). 0, the default, never polls. A loop with a
+        /// budget answers a message that comes inside it without being woken, and spends the budget
+        /// in CPU on every wait that outlasts it.
+        spin_budget_ns: u64 = 0,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         /// Where loops find each other, for `post`. Null for a loop that posts to none and that
@@ -207,6 +212,7 @@ pub const Loop = struct {
                 .operations = options.operations,
                 .entries = options.entries,
                 .sampling = options.sampling,
+                .spin_budget_ns = options.spin_budget_ns,
                 .id = options.id,
                 .registry = null,
                 .file_policy = options.file_policy,

@@ -6,6 +6,7 @@
 //!
 //! A scenario uses nothing but the backend's public surface: `Loop`, `Registry`, and the
 //! synchronous calls of `sync`. On a host the backend cannot run on, every scenario skips.
+const std = @import("std");
 const core = @import("core");
 const backend = @import("backend");
 
@@ -21,6 +22,21 @@ const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = e
 /// The most rounds `Harness.collect` ticks before it gives up: with a 10 ms wait each, 2 s.
 pub const collect_rounds_max = 200;
 const collect_wait_ns = 10 * core.constants.ns_per_ms;
+
+/// The environment variable that gives every harness loop a spin budget, in nanoseconds. The build
+/// runs the suite once without it and once with it, so every scenario also runs on a loop that
+/// polls before it blocks, and has to hand over the same events (decision 13, "How it is checked",
+/// point 1).
+pub const spin_variable = "ROTOR_CONFORMANCE_SPIN_NS";
+
+/// The spin budget the environment asks for, or 0 when it asks for none. A value that is not a
+/// budget halts the run: a second run that quietly spun for nothing would prove nothing.
+pub fn spin_budget_ns() u64 {
+    const text = std.testing.environ.getPosix(spin_variable) orelse return 0;
+    const budget_ns = std.fmt.parseInt(u64, text, 10) catch @panic(spin_variable ++ " is not a number");
+    if (budget_ns > core.constants.spin_budget_ns_max) @panic(spin_variable ++ " is over the most");
+    return budget_ns;
+}
 
 /// One loop over static memory, and the waiting every scenario needs.
 pub const Harness = struct {
@@ -45,6 +61,7 @@ pub const Harness = struct {
             .id = id,
             .registry = registry,
             .file_policy = .blocking,
+            .spin_budget_ns = spin_budget_ns(),
         });
     }
 
@@ -61,6 +78,17 @@ pub const Harness = struct {
             .id = id,
             .registry = registry,
             .sampling = sampling,
+            .spin_budget_ns = spin_budget_ns(),
+        });
+    }
+
+    /// A loop with the spin budget `budget_ns`, whatever the environment asks, for the scenarios
+    /// that check what a budget does (decision 13).
+    pub fn init_spin(harness: *Harness, budget_ns: u64) !void {
+        try harness.loop.init(&harness.memory, .{
+            .operations = operations,
+            .entries = entries,
+            .spin_budget_ns = budget_ns,
         });
     }
 
@@ -108,6 +136,7 @@ pub fn unsupported() bool {
 
 test {
     _ = @import("conformance_cost.zig");
+    _ = @import("conformance_spin.zig");
     _ = @import("conformance_loop.zig");
     _ = @import("conformance_offload.zig");
     _ = @import("conformance_tcp.zig");

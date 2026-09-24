@@ -66,6 +66,27 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     return produced;
 }
 
+/// Decision 13: polls with ticks that do not wait, for the loop's spin budget, and blocks for what
+/// is left of `wait_ns` only if nothing came. A poll is `tick` with a zero wait and nothing else, so
+/// what arrives while the loop polls is handed over as a blocking tick would hand it. A timer due
+/// inside the budget ends the spin before it starts, and the tick blocks until it. `Loop.tick`
+/// calls this only when `core.spin.applies`.
+pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+    const tables = &loop.tables;
+    assert(core.spin.applies(tables.spin_budget_ns, wait_ns));
+    const first = try tick(loop, events, 0);
+    if (first != 0) return first;
+    const start_ns = tables.now_ns;
+    const earliest_ns = tables.timers.earliest_ns();
+    var spin = core.spin.Spin.begin(tables.spin_budget_ns, start_ns, earliest_ns) orelse
+        return tick(loop, events, wait_ns);
+    while (spin.more(tables.now_ns)) {
+        const produced = try tick(loop, events, 0);
+        if (produced != 0) return produced;
+    }
+    return tick(loop, events, core.spin.remaining_ns(wait_ns, start_ns, tables.now_ns));
+}
+
 /// A poll carries the loop's own wake trigger in its changelist. On macOS a `kevent` that finds
 /// nothing ready parks the thread through the scheduler even with a zero timeout: 12 µs, against
 /// 444 ns when one event is ready, measured on 2026-09-22 on macOS 26.6.2

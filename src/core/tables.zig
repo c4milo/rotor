@@ -73,10 +73,14 @@ pub const Tables = struct {
     /// Buffers the loop registered: 0 until `note_buffers`.
     buffers_registered: u16,
     id: LoopId,
+    /// How long a tick polls without waiting before it blocks, from the options: 0, the default,
+    /// never polls (decision 13, `spin.zig`).
+    spin_budget_ns: u64,
 
     pub const Options = struct {
         id: LoopId = 0,
         sampling: statistics_module.Options = .{},
+        spin_budget_ns: u64 = 0,
     };
 
     /// Must run on the thread that will own the loop. `starts` holds one nanosecond stamp per
@@ -89,6 +93,7 @@ pub const Tables = struct {
         options: Options,
     ) void {
         assert(options.id < constants.loops_max);
+        assert(options.spin_budget_ns <= constants.spin_budget_ns_max);
         assert(entries.len == slots.len);
         assert(starts.len == slots.len);
         tables.table.init(slots);
@@ -102,6 +107,7 @@ pub const Tables = struct {
         tables.descriptors_registered = 0;
         tables.buffers_registered = 0;
         tables.id = options.id;
+        tables.spin_budget_ns = options.spin_budget_ns;
     }
 
     /// Records that the backend registered `count` descriptors: once per loop, before an

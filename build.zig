@@ -106,7 +106,16 @@ pub fn build(b: *std.Build) void {
         install_step.dependOn(&unit_tests.step);
         const run = &b.addRunArtifact(unit_tests).step;
         test_step.dependOn(run);
-        add_narrow_test_step(b, entry.name).dependOn(run);
+        const narrow = add_narrow_test_step(b, entry.name);
+        narrow.dependOn(run);
+        // A conformance suite runs a second time with every harness loop polling before it blocks,
+        // and has to hand over the same events (decision 13). tools/linux_test.sh does the same.
+        if (std.mem.startsWith(u8, entry.name, "conformance-")) {
+            const spinning = b.addRunArtifact(unit_tests);
+            spinning.setEnvironmentVariable("ROTOR_CONFORMANCE_SPIN_NS", conformance_spin_ns);
+            test_step.dependOn(&spinning.step);
+            narrow.dependOn(&spinning.step);
+        }
     }
 
     // The tools verify the tree, so they run on the host in Debug: a tool never ships.
@@ -166,6 +175,10 @@ fn add_macos_probe(b: *std.Build, pepegrillo: *std.Build.Module) *std.Build.Step
 /// `zig build test-<name>`: the tests of one module, or of the tools, with nothing else in the
 /// graph. `zig build test` is the check that must pass; these steps are the inner loop of a
 /// mutation, which is run against the narrowest target that can catch it.
+/// The spin budget the second run of each conformance suite gives its loops, in nanoseconds: the
+/// 50 µs decision 13 measured.
+const conformance_spin_ns = "50000";
+
 fn add_narrow_test_step(b: *std.Build, name: []const u8) *std.Build.Step {
     return b.step(
         b.fmt("test-{s}", .{name}),

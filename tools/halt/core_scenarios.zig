@@ -6,6 +6,7 @@ const std = @import("std");
 const core = @import("core");
 const scenario = @import("scenario.zig");
 const finish = @import("core_scenarios_finish.zig");
+const spin = @import("core_scenarios_spin.zig");
 
 const Slot = core.Slot;
 const SlotTable = core.slot_table.SlotTable;
@@ -487,7 +488,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "file_call: hand a sync bytes to transfer",
         .run = hand_a_sync_bytes_to_transfer,
     },
-} ++ finish.scenarios;
+} ++ finish.scenarios ++ spin.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

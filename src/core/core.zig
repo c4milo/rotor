@@ -24,6 +24,7 @@ pub const shutdown = @import("shutdown.zig");
 pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
+pub const spin = @import("spin.zig");
 pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
 pub const sync = @import("sync.zig");
@@ -65,6 +66,7 @@ test {
     _ = slot;
     _ = slot_list;
     _ = slot_table;
+    _ = spin;
     _ = statistics;
     _ = @import("statistics_test.zig");
     _ = surface;

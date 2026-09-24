@@ -4,8 +4,8 @@ Status: **accepted** by the owner on 2026-09-24, with the spin budget off by def
 on 2026-09-20, from measurement. On 2026-09-24 the owner first chose to leave it proposed until the
 idle case was measured on a named machine. The same day its figures were brought up to date with
 what `docs/costs.md` and `bench/results/` now hold, the idle case was measured on `github` for
-io_uring (the last section), and the owner accepted it. "Ruling" below says what was accepted. It
-is not built yet.
+io_uring, and the owner accepted it. "Ruling" below says what was accepted. It was built the same
+day; "Built" at the end says what and how it is checked.
 
 Decision 4 prices a cross-core message and never prices the sleep it interrupts. The measurements
 below say the sleep is almost the whole cost, so the record that governs it should exist.
@@ -223,3 +223,48 @@ The measurement this record asked for now exists for io_uring. It prices the bud
 decide it: whether a rotor loop may spend up to 50 µs of a core per message it was not given is the
 owner's question at the end of "What would accept this record". The owner answered it on
 2026-09-24, in "Ruling" above.
+
+## Built, 2026-09-24
+
+- `spin_budget_ns` is an option of every backend's `Loop` and of the public module's, 0 by default
+  and at most `core.constants.spin_budget_ns_max`, 1 ms. `core.Tables` holds it.
+- `src/core/spin.zig` holds the rules, as functions of the budget, the caller's wait, the clock the
+  tick read and the nearest timer. `applies` is point 2's first half: a tick spins only when the
+  loop has a budget and the caller's wait is longer than it. `Spin.begin` is its second half: a
+  timer due inside the budget stops the spin before it starts, and the tick sleeps until the
+  timer. `Spin.more` ends the spin when the clock the last poll read passes the budget, or after
+  `spin_rounds_max` polls if the clock stood still.
+- Each backend's `Loop.tick` asks `applies`, and when it holds calls its tick file's
+  `spin_then_wait`. That is point 3: a poll is the backend's own `tick` with a zero wait, repeated,
+  and then one `tick` for what is left of the caller's wait. No other path changed. The function is
+  written three times, once per backend, because a function that takes a `*Loop` stays in the
+  backend (CLAUDE.md, Layout).
+- The budget reads no statistic (point 4).
+
+How it is checked, point by point of "How it is checked, if it is built":
+
+1. The conformance suite runs a second time with every harness loop given a 50 µs budget, through
+   `ROTOR_CONFORMANCE_SPIN_NS`: `zig build test` for the host's backend and `tools/linux_test.sh`
+   for io_uring and epoll. Every scenario passed both ways on all three backends.
+2. `src/conformance/conformance_spin.zig` checks what the budget changes, by the CPU time of the
+   loop's thread: a loop with a budget polls for it and then sleeps out the rest of the wait; a tick
+   given no wait, or a wait no longer than the budget, does not poll; and a timer due inside the
+   budget is slept until, not polled for.
+3. `bench/crosscore/rotor_post.zig` gained `--mode spin-budget`, which gives both loops the budget
+   in their options where `spin-then-wait` polls in the program. The CI job `costs` runs it beside
+   the other modes.
+4. Mutations, measured on the kqueue backend's copy and on `core`:
+
+| mutation | caught by | result |
+|---|---|---|
+| the budget ignored | `test-conformance-kqueue` | CAUGHT |
+| the budget applied to a tick asked not to block | `test-conformance-kqueue`, `test-core` | CAUGHT |
+| the budget applied past a nearer deadline | `test-conformance-kqueue`, `test-core` | CAUGHT |
+| the clock read once, not per poll | `test-conformance-kqueue` | CAUGHT |
+| no sleep for the rest of the wait after the spin | `test-conformance-kqueue` | CAUGHT |
+| a wait equal to the budget spun | `test-conformance-kqueue` | CAUGHT |
+| what is left of the wait not reduced by the spin | `test-core` | CAUGHT |
+| a budget over `spin_budget_ns_max` accepted | `zig build halt-check` | CAUGHT |
+
+The race gate, whose suites include the scenarios of point 2, reported no race. No speed claim is made for the built
+option: `--mode spin-budget` has not yet run on a named machine.
