@@ -63,7 +63,10 @@ pub fn main() !void {
     for (&batch, 0..) |*operation, index| operation.* = .{ .user_data = index, .kind = .nop };
 
     const mode = @tagName(builtin.mode);
-    const class_a = if (core.assertion_class.enabled) "class A on" else "class A off";
+    // ReleaseFast checks no assertion, whatever the switch says.
+    const class_a = if (builtin.mode == .ReleaseFast)
+        "no assertions"
+    else if (core.assertion_class.enabled) "class A on" else "class A off";
     const header = "uring nop, {s}, {s}, {d} samples per batch size\n";
     std.debug.print(header, .{ mode, class_a, samples });
     std.debug.print("| batch | round median ns | round p99 ns | per operation ns |\n", .{});
