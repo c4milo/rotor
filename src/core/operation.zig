@@ -3,7 +3,9 @@
 //! kind fails its exhaustive switch.
 //!
 //! Every buffer and every `Address` an operation names belongs to the loop from `submit` until
-//! the operation's final event is reaped (decision 5, rule 3).
+//! the operation's final event is reaped (decision 5, rule 3). A buffer of a provided-buffer group
+//! is the exception: it becomes the caller's at the event that names it, and the loop's again at
+//! `give_back_buffer` (decision 5's amendment to rule 3).
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");

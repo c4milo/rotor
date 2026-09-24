@@ -256,13 +256,14 @@ the machines, and the commands to take every number again.
 | [13](docs/decisions/0013-when-a-loop-sleeps.md) | when a loop sleeps | proposed |
 | [14](docs/decisions/0014-repeating-timers.md) | repeating timers | accepted |
 | [15](docs/decisions/0015-datagrams.md) | datagrams | accepted |
-| [16](docs/decisions/0016-c-abi-for-c-consumers.md) | a C ABI | proposed |
+| [16](docs/decisions/0016-c-abi-for-c-consumers.md) | a C ABI | declined |
 | [17](docs/decisions/0017-the-layer-that-owns-the-loop.md) | the layer that owns the loop | proposed |
 | [18](docs/decisions/0018-a-caller-supplied-thread-pool.md) | a caller-supplied thread pool for file operations | accepted |
 | [19](docs/decisions/0019-the-comparison-measures-one-core.md) | the comparison measures one core | accepted |
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
 
-A proposed record describes something not yet built.
+A proposed record describes something not yet built. A declined record describes something rotor
+will not build, and why.
 
 </details>
 

@@ -53,6 +53,9 @@ the operation's buffer. Calling `cancel` changes nothing about that. This is the
 covers a completion whose operation is already in the kernel: the kernel may still write into
 the buffer after `cancel` returns, and only the final event says it has stopped.
 
+A buffer from a provided-buffer group follows a different rule, which the amendment below sets out:
+it becomes the caller's at the event that names it, before the final event.
+
 rotor cannot assert this rule on the real backends, since it cannot see what the caller does
 with its memory. The simulator can: it poisons a cancelled operation's buffer until the final
 event and fails the run if the caller's checksum of it changes early.
@@ -136,9 +139,10 @@ Simulator tests for each rule, each proved by a mutation reported `CAUGHT` or `N
 On the real backends, a test cancels a receive on an idle socket and a read that has already
 completed, and checks both outcomes.
 
-## Proposed amendment to rule 3, 2026-09-22: a provided buffer changes hands at the event that names it
+## Amendment to rule 3, 2026-09-22: a provided buffer changes hands at the event that names it
 
-Status: proposed, not ruled on. `0017-the-layer-that-owns-the-loop.md` found the gap: rule 3 says the
+Status: accepted by the owner on 2026-09-24. Proposed on 2026-09-22.
+`0017-the-layer-that-owns-the-loop.md` found the gap: rule 3 says the
 buffer belongs to the loop until the final event, and a multishot `receive` from a provided-buffer
 group has no final event while its `more` events flow, yet each of those events hands the caller a
 buffer it must read, and `give_back_buffer` exists for the caller to return it. The code does that;
@@ -152,13 +156,22 @@ the rule does not say so. The amendment writes down what is built:
   or not the operation that received into it has ended, until the caller passes it to
   `give_back_buffer`; then it is the loop's again and may be named by any later event. Reading it
   after `give_back_buffer` is the error rule 3 already forbids.
-- A group whose buffers are all out ends a multishot receive with `buffers_exhausted`, which is
-  that receive's final event. The caller gives buffers back and submits the receive again.
+- A receive from a group ends with `buffers_exhausted` when it has bytes to receive and no buffer of
+  its group is free. That event is the receive's final event. For a multishot receive, it ends the
+  flow of `more` events. The caller gives buffers back and submits the receive again.
+- When that happens depends on the backend. kqueue and epoll fail the receive only once its socket
+  has bytes ready. On epoll, a one-shot receive submitted while its group is empty waits for bytes
+  and does not fail at once (decision 20). On io_uring the kernel picks the buffer and answers
+  `ENOBUFS` when none is free, which `src/uring/uring_errno.zig` maps to `buffers_exhausted`.
 - The cost is the one 0017 named: a buffer held across ticks is one fewer for the group. What that
   costs under many slow TLS handshakes is 0017's open question 6 and is not measured.
 
-Nothing here changes code. `src/kqueue/kqueue_buffers.zig` and `src/uring/uring_buffers.zig` already
-behave this way, and the conformance suite's receive scenarios exercise it.
+Nothing here changes code. `src/core/buffer_group.zig` holds the free ids of a group on kqueue and
+epoll, and `src/kqueue/kqueue_buffers.zig`, `src/epoll/epoll_buffers.zig` and
+`src/uring/uring_buffers.zig` already behave this way. The conformance scenario "a multishot receive
+names the provided buffer of each event and ends when they run out" checks the handover and the
+final `buffers_exhausted` on every backend. CLAUDE.md's non-negotiable 5 and the header of
+`src/core/operation.zig` name this exception to rule 3.
 
 ## Open questions for review
 

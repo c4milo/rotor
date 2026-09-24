@@ -2,7 +2,9 @@
 
 Status: proposed on 2026-09-20, not ruled on. It names a component that does not exist, records
 why two rules already written force it to exist, and lists what it would own. Nothing in rotor
-changes either way, with one exception this record found and reports below: `Remote`.
+changes either way, with one exception this record found and reports below: `Remote`, built on
+2026-09-22. On 2026-09-24 the owner chose to rule on this record when the transport is wanted. The
+same day, what it says about `Remote`, datagrams and decision 5 was brought up to date.
 
 ## Context
 
@@ -81,7 +83,9 @@ written against rotor's public surface alone?** Datagrams could not. That work a
 (`src/uring/uring_datagram.zig`, `src/kqueue/kqueue_datagram.zig`), changes to eleven more backend
 files and to `operation.zig`, `slot.zig` and `constants.zig`, two new declarations on the surface
 (`provide_datagram_buffers`, `datagram`), and two kernel probes. Every job in the table above
-needs none of that, so the transport is a library **on** rotor and not **in** it. Putting it in
+needs none of that, so the transport is a library **on** rotor and not **in** it. The epoll backend
+added two more files for datagrams later: `src/epoll/epoll_datagram.zig`, and
+`src/linux_shared/linux_shared_datagram.zig`, which it shares with io_uring. Putting it in
 rotor would spend two of CLAUDE.md's "ask before" items, a dependency and a module-graph edge, and
 buy nothing.
 
@@ -103,7 +107,7 @@ files where a row names one, and `docs/decisions/0004-threading.md`.
 | UDP for DNS queries | `receive_from`, `send_to` (`0015-datagrams.md`) |
 | Timers for a query timeout, the Happy Eyeballs delay and pool idle | `timer` |
 | Abandon one connect that lost its race | `cancel(handle)` for that one operation, or `close`, which cancels that descriptor's operations (`0005-cancellation.md` rule 6). **Not `cancel_all`**, which cancels every operation on the loop |
-| Hold a received buffer while a TLS record is still short | `give_back_buffer`, which `src/uring/uring_buffers.zig` and `src/kqueue/kqueue_buffers.zig` both document as called "after the caller has read the bytes the receive event named" |
+| Hold a received buffer while a TLS record is still short | `give_back_buffer`, which `src/uring/uring_buffers.zig`, `src/kqueue/kqueue_buffers.zig` and `src/epoll/epoll_buffers.zig` each document as called "after the caller has read the bytes the receive event named" |
 | A resolver thread handing an answer to the loop | **See the gap below.** Not what it looks like |
 
 ### The buffer row, and a tension it exposes
@@ -118,9 +122,18 @@ That reading is this record's, and it does not come from decision 5. Decision 5 
 buffer belongs to the loop until the final event", and a multishot receive has no final event
 while its `more` events flow. Decision 5 never mentions provided buffers or `give_back_buffer`.
 So the rule as written and the provided-buffer path as built need reconciling, and no record does
-it. That is a gap in decision 5, not a licence taken here.
+it. That is a gap in decision 5, not a licence taken here. **Closed on 2026-09-24:** the owner
+accepted decision 5's amendment to rule 3. A provided buffer becomes the caller's at the event that
+names it, and the loop's again at `give_back_buffer`.
 
 ### The gap: `Remote` is written down and not built
+
+**Built on 2026-09-22.** This section is the gap as this record found it on 2026-09-20. `Remote` is
+now in `src/core/remote.zig`, with one per backend (`src/kqueue/kqueue_remote.zig`,
+`src/uring/uring_remote.zig`, `src/epoll/epoll_remote.zig`), and `src/rotor/rotor.zig` exports it.
+Decision 4 records what was settled. A thread that owns no loop now posts through a `Remote`, which
+is the third route below. CLAUDE.md's non-negotiable 4 now names `Remote`, so the last paragraph's
+point about its wording no longer applies.
 
 `0004-threading.md` says, under "What another thread may do":
 

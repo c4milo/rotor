@@ -1,8 +1,8 @@
 # 16. A C ABI for C consumers
 
-Status: proposed on 2026-09-20, not ruled on. It records a request from chapulin, the
-investigation that followed, and a recommendation to decline the request as asked and satisfy
-the need another way. Nothing in rotor changes until the owner rules.
+Status: declined as asked, by the owner on 2026-09-24. It records a request from chapulin, the
+investigation that followed, and the ruling: rotor adds no C ABI and no static library target for
+this request. Nothing in rotor changes.
 
 ## Context
 
@@ -30,7 +30,8 @@ round it needs a new C surface in rotor that exists only for tests.
 
 ## Decision
 
-Proposed: decline the request as asked. Add no C ABI and no static library target for this.
+Declined as asked, by the owner on 2026-09-24. rotor adds no C ABI and no static library target
+for this.
 
 The need splits into two, and neither half wants a C ABI in rotor.
 
@@ -56,7 +57,13 @@ the opposite of what both trees are for.
 1. rotor's README says "No kernel backend exists yet", while `src/kqueue/` and `src/uring/`
    both exist and reference `accept` and `connect`. One of the two is stale. This record
    assumes the README is behind the code and does not rely on either being finished; the
-   recommendation holds regardless, because it asks nothing new of rotor.
+   recommendation holds regardless, because it asks nothing new of rotor. **Settled by
+   2026-09-24:** the README was behind. It now describes the three backends, and rotor has
+   released through v0.4.0.
 2. If a Zig-side harness is written, it belongs to whichever tree owns the loop it drives.
    colibri already links both chapulin roles and runs them against Go, so the cheapest version
-   of this may be a leg in colibri rather than a new harness anywhere.
+   of this may be a leg in colibri rather than a new harness anywhere. **Partly done by
+   2026-09-24:** colibri's decision 58 made rotor the loop of its test-only UDP endpoints, and its
+   hq-interop server runs chapulin's QUIC mode over one rotor socket (`src/testing/quic_udp.zig`
+   in colibri). So chapulin's server role now runs under rotor's loop over QUIC. Its TCP role
+   does not yet, and that harness would also live in colibri's tree or chapulin's, not in rotor.

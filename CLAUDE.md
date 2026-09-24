@@ -44,7 +44,9 @@ The architecture depends on every rule in this section.
    caller may hand a loop threads the loop itself never starts: decision 18 allows a
    caller-supplied pool for the operations a backend cannot do without blocking.
 5. **Every operation ends with exactly one final event**, and its buffer belongs to the loop
-   until then (decision 5).
+   until then (decision 5). A provided buffer is the exception: it becomes the caller's at the
+   event that names it, and the loop's again at `give_back_buffer` (decision 5's amendment, ruled
+   2026-09-24).
 6. **Invariants are code.** A violated invariant halts, and a property test that finds one
    prints the seed that replays it.
 
@@ -346,8 +348,9 @@ fifth: the public module's `register_descriptors` and `register_buffers` did not
 because nothing there named them.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
-has code for it, except decision 13, which is proposed and waits on the owner, and decision 17,
-which is proposed and names a component this repository does not hold. The cost probes cover every
+has code for it, except three. Decision 13 is proposed, and on 2026-09-24 the owner left it so until
+the idle case is measured on a named machine. Decision 16 the owner declined that day. Decision 17
+is proposed and names a component this repository does not hold. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
 
 Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it

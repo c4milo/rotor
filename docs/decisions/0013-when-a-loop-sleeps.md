@@ -1,7 +1,9 @@
 # 13. When a loop sleeps
 
 Status: **proposed** on 2026-09-20, from measurement. A proposed record is not a licence to build
-what it describes (CLAUDE.md). What would accept it is at the end.
+what it describes (CLAUDE.md). What would accept it is at the end. On 2026-09-24 the owner chose to
+leave it proposed until the idle case is measured on a named machine. The same day its figures were
+brought up to date with what `docs/costs.md` and `bench/results/` now hold.
 
 Decision 4 prices a cross-core message and never prices the sleep it interrupts. The measurements
 below say the sleep is almost the whole cost, so the record that governs it should exist.
@@ -14,8 +16,10 @@ nothing to do sleeps at once. That is the whole policy, and nothing in any recor
 
 ## What it costs
 
-Read on `orbstack` on 2026-09-20, threads pinned with `sched_setaffinity`. Nothing here is
-admissible (`docs/costs.md`, rule 1); the ratios are what the argument rests on.
+Read on `orbstack` on 2026-09-20, threads pinned with `sched_setaffinity`. When this was written
+the numbers were not admissible (`docs/costs.md`, rule 1), and the argument rested on the ratios.
+The owner named `orbstack` a measurement machine later that day, and the readings of 2026-09-22
+below fill its column.
 
 | measurement | ns |
 |---|---|
@@ -29,19 +33,22 @@ C19 crosses the same boundary with the receiver awake for about 100 ns. **Crossi
 nearly free. Waking a thread on another core is not.**
 
 Measured on 2026-09-22 on `orbstack`, with both threads pinned (`docs/costs.md`): C14 1,416 ns, C15
-9,333 ns (8,896 to 13,000 across three runs), C19 98 ns, C17 10,981 ns. The ratios hold.
+9,333 ns (8,896 to 13,000 across three runs), C19 98 ns, C17 10,981 ns. The ratios hold. On `github`,
+the x86-64 runner, C19 is 36.0 ns and C17 is 8,724 ns: the same shape on a second architecture.
 
 `bench/uring/post.zig` measures the same thing through rotor's own loops, which is what decides
 whether the loop can act on it:
 
-| how the receiving loop waits | one message, ns |
-|---|---|
-| blocks until the message arrives | 11,021 |
-| never blocks, ticks without waiting | 687 |
-| ticks without waiting for 50 µs, then blocks | 729 |
+| how the receiving loop waits | one message, ns, first run | five runs on 2026-09-22, ns |
+|---|---|---|
+| blocks until the message arrives | 11,021 | 11,041 to 11,479 |
+| never blocks, ticks without waiting | 687 | 666 to 1,354 |
+| ticks without waiting for 50 µs, then blocks | 729 | 687 to 1,375 |
 
-A bounded spin recovers fifteen sixteenths of the sleep, for 6 percent more than a loop that
-burns a core outright.
+The five runs are `docs/costs.md`'s, taken on `orbstack` beside decision 8's experiment. A bounded
+spin recovers almost all of the sleep when the peer answers inside the window. The first run put the
+spin 6 percent above a loop that never blocks. That difference is inside the spread of the five runs,
+so it is not measured.
 
 ## The proposal
 
@@ -69,9 +76,15 @@ A loop may stay awake for a bounded time after its last completion before it blo
   loops, which is the case that decides whether any default above 0 is defensible.
 - **What the budget should be.** 50 µs was picked because it is far above one message and far
   below one sleep. No measurement chose it.
-- **kqueue.** Every number here is io_uring. The kqueue backend's wake is an `EVFILT_USER`
-  trigger, and C18 read about 25,000 ns on a loaded machine. The trade is likely the same shape
-  and is unmeasured.
+- **kqueue.** The kqueue backend's wake is an `EVFILT_USER` trigger. C18, that wake, is now
+  measured on `mac`: 18,125 ns median, 46,750 ns p99. C19 on `mac` is 97.0 ns. So the shape is the
+  same as io_uring's. `bench/crosscore/rotor_post.zig` ran rotor's three modes on `mac` on
+  2026-09-22, one run each (`bench/results/crosscore-mac-2026-09-22-after.md`): p50 2,007 ns when
+  the receiver waits, 501 ns when it spins, and 501 ns when it spins and then waits. Those are the
+  harness's histogram buckets, and the waiting row of that file is marked as disagreeing across
+  runs and taken under other work. The comparison with libuv and libxev runs rotor in its waiting
+  mode only, because neither offers a mode that polls (`bench/alternatives/README.md`), so the
+  spinning rows are rotor against itself. The idle case is not measured on kqueue either.
 - **Whether a spinning loop hurts its neighbours.** A core that spins is a core not yielded. On a
   machine running one loop per core that is free; on a shared machine it is not.
 
@@ -81,9 +94,9 @@ A loop may stay awake for a bounded time after its last completion before it blo
 to an idle loop, which decision 4's model makes the common case for work that crosses cores. It
 is the right default and the wrong only option.
 
-**Always spin.** 687 ns against 729, so the bounded spin costs 6 percent of the benefit and keeps
-the ability to sleep. A loop that never sleeps cannot share a machine, and rotor's caller may not
-own the machine.
+**Always spin.** The five runs above put the two within each other's spread (666 to 1,354 ns
+against 687 to 1,375 ns), and the bounded spin keeps the ability to sleep. A loop that never sleeps
+cannot share a machine, and rotor's caller may not own the machine.
 
 **`IORING_SETUP_SQPOLL`.** A kernel thread polls the submission queue, so submission needs no
 syscall at all. It is a kernel thread per ring, which decision 4 rules out ("holds no lock and
@@ -114,8 +127,9 @@ Every check is on the real kernel: rotor has no simulator (decision 10).
 
 ## What would accept this record
 
-- The numbers above, or their shape, from a machine `docs/costs.md` names. Every figure here is
-  from a container on a development Mac.
+- The numbers above, or their shape, from a machine `docs/costs.md` names. Done: `orbstack` and
+  `github` for io_uring, `mac` for kqueue. `orbstack` is a virtual machine on the `mac` machine's
+  cores, and `github` is a shared runner, so neither is quiet.
 - A measurement of the idle case, which decides whether the default may ever be above 0.
 - The owner's ruling on the one question no measurement answers: whether a rotor loop is
   entitled to burn a core it was not given.
