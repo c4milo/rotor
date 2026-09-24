@@ -6,9 +6,10 @@ So this record states a provisional rule, the experiment that confirms or change
 thresholds, all fixed before the numbers exist. Milestones 2 and 3 run the experiment and report
 the numbers, and the rule is then ratified or amended here.
 
-Measured in part on 2026-09-24: class A's own cost on the `nop` path, on `github`, is under the 2
-percent threshold in the median of four runs on one processor, by a small margin. The last section
-reads it. Class B alone, the echo workload and step 3's counts are still not measured.
+Measured in part on 2026-09-24, on `github`, for io_uring: class A's own cost is 2.1 percent of a
+`nop` round at batch 32 in the median of five runs on one processor, against a threshold of 2, and
+less than the noise on the echo workload on three processors. The last section reads it. Class B
+alone and step 3's counts are still not measured.
 
 Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
 no simulator for them to run in.
@@ -173,20 +174,26 @@ Linux available, the answer would have been lost in the noise.
 ## Results, 2026-09-24, `github`: what class A costs alone
 
 Step 2 is built. `src/core/assertion_class.zig` holds the switch, `build/modules.zig` generates it
-as `core`'s `assertion_options` import (an edge the owner approved on 2026-09-24), and one build
-turns it off: `uring_nop_no_class_a`, which is ReleaseSafe with class A compiled out and every
-other assertion and safety check kept. build.zig offers no option for it.
+as `core`'s `assertion_options` import (an edge the owner approved on 2026-09-24), and two builds
+turn it off: `uring_nop_no_class_a`, and the `rotor_echo` that `zig build bench-echo-no-class-a`
+installs in `zig-out/no-class-a/`. Each is ReleaseSafe with class A compiled out and every other
+assertion and safety check kept. build.zig offers no option for it.
 
-The switch covers the 35 class A sites a `nop` passes through on io_uring: in `core`'s
+The switch covers 49 sites on io_uring: the 35 class A sites a `nop` passes through, in `core`'s
 `operation.zig`, `slot_table.zig`, `slot.zig`, `statistics.zig`, `tables.zig`, `slot_list.zig`
-and `handle.zig`, and in `uring`'s `uring_ring.zig`, `uring_submit.zig` and `uring_reap.zig`. The
-per-operation assertions of every other kind still call `std.debug.assert`. So this measures the
-`nop` path, which is the path the 2 percent threshold is set on, and nothing wider.
+and `handle.zig` and in `uring`'s `uring_ring.zig`, `uring_submit.zig` and `uring_reap.zig`, and
+14 more that a message of the echo workload passes through: its receive from a provided-buffer
+group, its send, `Event.outcome` and the buffer given back. The per-operation assertions of
+connection setup and teardown, of errors, and of the other kinds still call `std.debug.assert`.
 
-The CI job `costs` ran `uring_nop_safe`, `uring_nop_fast` and `uring_nop_no_class_a` in turn, five
-rounds each, and was started five times. Each start got its own runner: four AMD EPYC 7763 and
-one AMD EPYC 9V45 (`bench/results/decision-8-class-a-github-2026-09-24.md`). At batch 32, the
-median and the range of a round's time over the five rounds, in ns:
+The CI job `costs` was started by hand eight times, and each start got its own runner
+(`bench/results/decision-8-class-a-github-2026-09-24.md`). Each ran `uring_nop_safe`,
+`uring_nop_fast` and `uring_nop_no_class_a` in turn, five rounds each. Runs 6 to 8 also ran the
+echo half.
+
+### The `nop` workload
+
+At batch 32, the median and the range of a round's time over the five rounds, in ns:
 
 | run | processor | ReleaseSafe | class A off | ReleaseFast | class A costs | every check costs |
 |---|---|---|---|---|---|---|
@@ -195,45 +202,75 @@ median and the range of a round's time over the five rounds, in ns:
 | 3 | EPYC 7763 | 3,877 (3,848 to 4,017) | 3,797 (3,787 to 3,798) | 3,647 | 2.1 percent | 5.9 percent |
 | 4 | EPYC 9V45 | 3,105 (3,025 to 3,235) | 3,104 (3,075 to 3,175) | 3,044 | 0.0 percent | 2.0 percent |
 | 5 | EPYC 7763 | 3,857 (3,857 to 3,867) | 3,807 (3,778 to 3,808) | 3,656 | 1.3 percent | 5.2 percent |
+| 6 | Xeon Platinum 8573C | 2,413 (2,392 to 2,430) | 2,399 (2,354 to 2,433) | 2,161 | 0.6 percent | 10.4 percent |
+| 7 | EPYC 7763 | 3,877 (3,848 to 3,907) | 3,788 (3,778 to 3,797) | 3,657 | 2.3 percent | 5.7 percent |
+| 8 | EPYC 9V74 | 4,347 (4,336 to 4,427) | 4,256 (4,116 to 4,326) | 4,137 | 2.1 percent | 4.8 percent |
 
-What class A costs at the other batch sizes, in percent of the ReleaseSafe round:
+What class A costs at the other batch sizes, in percent of the ReleaseSafe round. "Overlap" marks
+a cell where the five rounds with class A and the five without overlap:
 
 | run | processor | batch 8 | batch 64 | batch 128 |
 |---|---|---|---|---|
-| 1 | EPYC 7763 | 0.1 | 1.4 | 1.6 |
-| 2 | EPYC 7763 | 0.1 | 2.2 | 1.7 |
-| 3 | EPYC 7763 | 0.0 | 1.5 | 1.4 |
-| 4 | EPYC 9V45 | -2.0 | 2.5 | -1.5 |
-| 5 | EPYC 7763 | 0.8 | 1.4 | 1.6 |
+| 1 | EPYC 7763 | 0.1 (overlap) | 1.4 | 1.6 |
+| 2 | EPYC 7763 | 0.1 (overlap) | 2.2 | 1.7 |
+| 3 | EPYC 7763 | 0.0 (overlap) | 1.5 | 1.4 |
+| 4 | EPYC 9V45 | -2.0 (overlap) | 2.5 (overlap) | -1.5 (overlap) |
+| 5 | EPYC 7763 | 0.8 (overlap) | 1.4 | 1.6 |
+| 6 | Xeon Platinum 8573C | 2.1 (overlap) | 1.1 (overlap) | 1.0 (overlap) |
+| 7 | EPYC 7763 | 1.6 | 1.7 | 1.7 |
+| 8 | EPYC 9V74 | 1.9 | 1.4 (overlap) | 1.5 |
 
-Batch 1 is left out: this runner's clock moves in steps of about 10 ns, and a round of one `nop`
+Batch 1 is left out: the runner's clock moves in steps of about 10 ns, and a round of one `nop`
 takes about 550 ns, so a 2 percent difference is one step.
 
-What the runs say:
+- **On the EPYC 7763, class A is measured, and it sits at the threshold.** Five runs landed there.
+  At batch 32 to 128, the rounds with and without class A are apart in 14 of 15 cells. The median
+  of the five runs is 2.1 percent at batch 32, 1.5 at batch 64 and 1.6 at batch 128. Four cells of
+  fifteen are above 2 percent, all at batch 32 or 64.
+- **The one EPYC 9V74 run agrees:** 2.1 percent at batch 32.
+- **The Xeon Platinum 8573C and the EPYC 9V45 cannot resolve it.** Their rounds overlap at every
+  batch size.
+- **Class A is a third to a half of every check** on the two AMD processors that resolve it: 2.1
+  of 5.7 percent on the EPYC 7763 and 2.1 of 4.8 on the EPYC 9V74, at batch 32.
+- **The processor changes the answer.** At batch 8 to 128 every check costs 6.7 to 11.6 percent on
+  the Xeon Platinum 8573C, 7.4 to 10.4 on the Xeon Platinum 8370C of 2026-09-22, 3.8 to 6.4 on the
+  EPYC 7763, 3.7 to 4.8 on the EPYC 9V74 and 1.0 to 3.3 on the EPYC 9V45.
 
-- **On the EPYC 7763, class A is measured.** At batch 32 to 128, the five rounds with class A and
-  the five without do not overlap in 11 of 12 cells. The exception is run 2 at batch 32, where
-  the two ranges meet at 3,888 ns.
-- **It sits at the threshold, and under it in the median.** The median of the four runs is 1.8
-  percent at batch 32, 1.45 at batch 64 and 1.6 at batch 128. Three cells of twelve are above 2
-  percent: run 2 at batch 32 and 64, and run 3 at batch 32. At batch 8 class A costs less than
-  the spread of the rounds.
-- **Class A is about a third of every check.** On the same processor ReleaseFast saves 3.8 to 6.4
-  percent at batch 8 to 128, so the other two thirds are class B and the bounds and overflow
-  checks together.
-- **The processor changes the answer.** Every check costs 7.4 to 10.4 percent on the Xeon Platinum
-  8370C of 2026-09-22, 3.8 to 6.4 on the EPYC 7763 and 1.0 to 3.3 on the EPYC 9V45, at batch 8 to
-  128. No run landed on the Xeon, so class A is not measured there. The EPYC 9V45 run cannot
-  resolve class A: its rounds of one mode differ by up to 7 percent.
+### The echo workload
 
-By the threshold fixed on 2026-09-19, class A passes on the `nop` path on the EPYC 7763, and no
-assertion moves. The margin is 0.2 percentage points at batch 32, and three cells were over it.
-The owner has not ruled whether this ratifies the provisional rule.
+Runs 6 to 8 ran `echo_runner --candidates rotor --payloads 4096` against the server rotor ships and
+against the one with class A compiled out, alternating, three times each. Each run of the runner is
+three rounds of four seconds. Echoes per second, the median and the range of the three runs:
+
+| run | processor | connections | class A on | class A off | off against on |
+|---|---|---|---|---|---|
+| 6 | Xeon Platinum 8573C | 16 | 210,040 (208,301 to 213,078) | 211,237 (207,082 to 215,304) | +0.6 percent |
+| 6 | Xeon Platinum 8573C | 64 | 214,784 (210,805 to 217,873) | 212,802 (212,609 to 215,576) | -0.9 percent |
+| 7 | EPYC 7763 | 16 | 129,102 (128,963 to 129,163) | 127,400 (125,846 to 128,648) | -1.3 percent |
+| 7 | EPYC 7763 | 64 | 130,500 (130,396 to 130,770) | 130,030 (129,826 to 130,652) | -0.4 percent |
+| 8 | EPYC 9V74 | 16 | 127,359 (126,697 to 127,413) | 127,017 (126,550 to 127,706) | -0.3 percent |
+| 8 | EPYC 9V74 | 64 | 128,910 (128,647 to 129,138) | 128,231 (127,208 to 128,726) | -0.5 percent |
+
+Class A compiled out made the echo server no faster. It was slower in five cells of six. The
+largest gain was 0.6 percent, and the three runs of the server with class A differ by up to 3.4
+percent. Without class A the binary is 8,032 to 9,832 bytes smaller, so the switch did remove
+code; each runner builds for its own processor, so the sizes differ by run. So on the echo
+workload, class A costs less than the noise, on all three processors.
+
+### What the two thresholds say
+
+- The `nop` threshold is 2 percent. On the EPYC 7763 class A's median is 2.1 percent at batch 32,
+  0.1 percentage points over, and under it at batch 64 and 128. Over it, this record moves the
+  costliest class A assertion to class B or D. No run measures one assertion alone, so which one
+  is costliest is not known.
+- The echo clause says that when class A costs less than the noise of the echo workload, the
+  record says so and the question is closed for that backend. It does, on io_uring.
+
+The two point different ways at batch 32. No assertion has moved. The owner has not ruled which
+threshold decides for io_uring.
 
 Still not measured:
 
 - Class B alone. Step 2 asks for it the same way, and it has no switch.
-- The echo workload, the realistic case. It needs the class A sites of `send` and `receive`
-  switched too.
 - Step 3's `perf stat` counts of branches, branch misses and L1 misses. They were not taken.
-- kqueue and epoll. The `nop` benchmark runs on io_uring only.
+- kqueue and epoll. The `nop` benchmark runs on io_uring only, and the echo half ran on io_uring.
