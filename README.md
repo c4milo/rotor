@@ -35,9 +35,9 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 
 ## Status
 
-rotor is at version 0.3.0. Everything planned for version one is built: TCP, UDP with
-segmentation offload and ECN on Linux, files, timers, deadlines and cancellation, and messages
-between loops. One conformance suite, written against the public API, passes on all three
+rotor is at version 0.4.0. Everything planned for version one is built: TCP, UDP with ECN on
+both kernels and segmentation offload on Linux, files, timers, deadlines and cancellation, and
+messages between loops. One conformance suite, written against the public API, passes on all three
 backends, and CI runs it on every push.
 
 | system | backend | requires | tested on |
@@ -66,7 +66,7 @@ Not in version one: TLS, DNS, Unix sockets, process spawning, Windows, and a `st
 Add rotor to a project:
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#v0.3.0
+zig fetch --save git+https://github.com/c4milo/rotor#v0.4.0
 ```
 
 In `build.zig`:
