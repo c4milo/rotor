@@ -1,11 +1,11 @@
 # 13. When a loop sleeps
 
-Status: **proposed** on 2026-09-20, from measurement. A proposed record is not a licence to build
-what it describes (CLAUDE.md). What would accept it is at the end. On 2026-09-24 the owner chose to
-leave it proposed until the idle case is measured on a named machine. The same day its figures were
-brought up to date with what `docs/costs.md` and `bench/results/` now hold, and the idle case was
-measured on `github` for io_uring; the last section reads it. The record stays proposed until the
-owner rules.
+Status: **accepted** by the owner on 2026-09-24, with the spin budget off by default. It was proposed
+on 2026-09-20, from measurement. On 2026-09-24 the owner first chose to leave it proposed until the
+idle case was measured on a named machine. The same day its figures were brought up to date with
+what `docs/costs.md` and `bench/results/` now hold, the idle case was measured on `github` for
+io_uring (the last section), and the owner accepted it. "Ruling" below says what was accepted. It
+is not built yet.
 
 Decision 4 prices a cross-core message and never prices the sleep it interrupts. The measurements
 below say the sleep is almost the whole cost, so the record that governs it should exist.
@@ -138,6 +138,23 @@ Every check is on the real kernel: rotor has no simulator (decision 10).
 - The owner's ruling on the one question no measurement answers: whether a rotor loop is
   entitled to burn a core it was not given.
 
+## Ruling, 2026-09-24
+
+The owner accepted the proposal as written, on the measurement below. The answer to the question no
+measurement answers: a rotor loop spends a core it was not given only when its caller asks for
+it.
+
+- `Loop.Options` gains the spin budget with a default of 0, which is the loop's behaviour today.
+  With the default nothing changes.
+- A caller that sets a budget accepts what the idle case costs: up to about 50 µs of CPU for each
+  message that comes after the budget, which at a 100 µs gap between messages is about half a
+  core.
+- A default above 0 is not part of this ruling. It would need a ruling of its own.
+- The ruling covers every backend, because the budget is off unless a caller sets it. The idle case
+  was measured on io_uring only.
+
+Building it follows "How it is checked, if it is built" above.
+
 ## Results, 2026-09-24, `github`: the idle case
 
 `bench/crosscore/rotor_post.zig` gained `--gap-us N`: the measuring loop waits N microseconds before
@@ -204,4 +221,5 @@ Not measured:
 
 The measurement this record asked for now exists for io_uring. It prices the budget and does not
 decide it: whether a rotor loop may spend up to 50 µs of a core per message it was not given is the
-owner's question at the end of "What would accept this record".
+owner's question at the end of "What would accept this record". The owner answered it on
+2026-09-24, in "Ruling" above.

@@ -349,9 +349,9 @@ fifth: the public module's `register_descriptors` and `register_buffers` did not
 because nothing there named them.
 
 The implementation is done: every row of decision 2's scope table is built, and every decision record
-has code for it, except three. Decision 13 is proposed, and on 2026-09-24 the owner left it so until
-the idle case is measured on a named machine. Decision 16 the owner declined that day. Decision 17
-is proposed and names a component this repository does not hold. The cost probes cover every
+has code for it, except three. Decision 13 the owner accepted on 2026-09-24, after its idle case was
+measured, with the spin budget off by default; it is not built yet. Decision 16 the owner declined
+that day. Decision 17 is proposed and names a component this repository does not hold. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
 
 Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it
@@ -369,7 +369,8 @@ ReleaseSafe costs 9 to 10 percent against ReleaseFast, which is the upper bound 
 and every safety check. Class A's own share was measured on 2026-09-24 with the switch that record
 asks for: on the `nop` path on an EPYC 7763, 1.3 to 2.6 percent at batch 32 over five runs, median
 2.1, against a threshold of 2; on the echo workload, less than the noise on three processors. The
-owner has not ruled which of the two thresholds decides.
+owner ruled the same day that the echo clause decides: the question is closed for io_uring, and no
+assertion moves.
 The `linux` column is the deployment target, needs a machine of the family stompy builds for, and
 that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 (`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;

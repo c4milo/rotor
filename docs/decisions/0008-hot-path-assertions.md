@@ -8,8 +8,9 @@ the numbers, and the rule is then ratified or amended here.
 
 Measured in part on 2026-09-24, on `github`, for io_uring: class A's own cost is 2.1 percent of a
 `nop` round at batch 32 in the median of five runs on one processor, against a threshold of 2, and
-less than the noise on the echo workload on three processors. The last section reads it. Class B
-alone and step 3's counts are still not measured.
+less than the noise on the echo workload on three processors. The last section reads it. The owner
+ruled the same day that the echo clause decides, so the question is closed for io_uring and no
+assertion moves. Class B alone, step 3's counts, kqueue and epoll are still not measured.
 
 Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
 no simulator for them to run in.
@@ -266,8 +267,21 @@ workload, class A costs less than the noise, on all three processors.
 - The echo clause says that when class A costs less than the noise of the echo workload, the
   record says so and the question is closed for that backend. It does, on io_uring.
 
-The two point different ways at batch 32. No assertion has moved. The owner has not ruled which
-threshold decides for io_uring.
+The two point different ways at batch 32.
+
+### Ruling, 2026-09-24
+
+The owner ruled that the echo clause decides for io_uring. Class A costs less than the noise of the
+echo workload there, so the question is closed for io_uring, and no assertion moves. The `nop`
+median of 2.1 percent at batch 32 stays recorded above. The reasons:
+
+- The echo workload is the realistic case, and on it class A cost nothing measurable on three
+  processors.
+- The `nop` excess is 0.1 percentage points, inside the 1.3 to 2.6 percent that five runs on one
+  processor gave.
+- No run measures one assertion alone, so moving "the costliest" would be a guess.
+
+The question stays open for kqueue and epoll, which were not measured.
 
 Still not measured:
 
