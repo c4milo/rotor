@@ -11,11 +11,11 @@ two clients took turns against it. Both came from `zig build bench-echo`:
   pattern per connection and round, and compares round 0 and then one round in 64.
 
 Each line is the connections, the payload, the build, the round, the machine's 1-minute load
-average before the run, the echoes per second, and the p50 and p99 in nanoseconds. Other sessions'
-builds and simulations kept the load between 10.65 and 19.11, so no time here is a claim. No run
-of either client failed.
+average before the run, the echoes per second, and the p50 and p99 in nanoseconds. No run of any
+client failed.
 
-Seven rounds of each configuration:
+The first two sets ran while other sessions' builds and simulations kept the load between 10.65
+and 19.11. Seven rounds of each configuration:
 
 ```text
 16 4096 base 1 load=15.72 139239 p50=104447 p99=238591
@@ -115,3 +115,119 @@ in six of seven rounds there:
 The medians of the second set are 22,596 for base and 21,992 for after, and after was lower in
 7 of 15 rounds. Across both sets it was lower in 13 of 22. At this load the harness shows no
 difference between the two clients.
+
+The third set ran when the load fell. It was 5.29 to 8.03 for the 16-connection rows, then rose to
+10.20 to 14.17 for the 64-connection rows:
+
+```text
+16 4096 base 1 load=7.25 158888 p50=79359 p99=231423
+16 4096 after 1 load=7.07 148497 p50=90111 p99=248831
+16 4096 base 2 load=6.74 161137 p50=81407 p99=219135
+16 4096 after 2 load=6.36 111728 p50=151551 p99=284671
+16 4096 base 3 load=6.09 142136 p50=104447 p99=238591
+16 4096 after 3 load=5.84 145094 p50=102399 p99=229375
+16 4096 base 4 load=5.70 163645 p50=79359 p99=218111
+16 4096 after 4 load=5.80 158788 p50=81407 p99=221183
+16 4096 base 5 load=5.82 159617 p50=82431 p99=223231
+16 4096 after 5 load=5.67 140739 p50=106495 p99=244735
+16 4096 base 6 load=5.62 137585 p50=113151 p99=243711
+16 4096 after 6 load=5.57 142180 p50=102399 p99=244735
+16 4096 base 7 load=5.44 154958 p50=83455 p99=229375
+16 4096 after 7 load=5.41 150050 p50=92159 p99=229375
+16 65536 base 1 load=5.29 53205 p50=307199 p99=475135
+16 65536 after 1 load=5.43 53292 p50=309247 p99=499711
+16 65536 base 2 load=5.63 52776 p50=307199 p99=473087
+16 65536 after 2 load=5.42 52476 p50=309247 p99=481279
+16 65536 base 3 load=6.19 52690 p50=309247 p99=487423
+16 65536 after 3 load=6.01 53060 p50=307199 p99=509951
+16 65536 base 4 load=6.09 49865 p50=311295 p99=577535
+16 65536 after 4 load=6.25 53738 p50=307199 p99=493567
+16 65536 base 5 load=6.06 35661 p50=348159 p99=1753087
+16 65536 after 5 load=6.54 46795 p50=315391 p99=720895
+16 65536 base 6 load=6.58 48849 p50=313343 p99=684031
+16 65536 after 6 load=6.69 11747 p50=368639 p99=28180479
+16 65536 base 7 load=6.55 23522 p50=354303 p99=5472255
+16 65536 after 7 load=8.03 20245 p50=385023 p99=5767167
+64 4096 base 1 load=10.20 56863 p50=667647 p99=6488063
+64 4096 after 1 load=10.91 74161 p50=630783 p99=5898239
+64 4096 base 2 load=11.15 66246 p50=634879 p99=7077887
+64 4096 after 2 load=11.38 60592 p50=647167 p99=7471103
+64 4096 base 3 load=11.43 67143 p50=630783 p99=7045119
+64 4096 after 3 load=11.64 60227 p50=638975 p99=7208959
+64 4096 base 4 load=11.74 65793 p50=638975 p99=6258687
+64 4096 after 4 load=11.76 50883 p50=696319 p99=7143423
+64 4096 base 5 load=11.86 57317 p50=708607 p99=5111807
+64 4096 after 5 load=11.95 54185 p50=864255 p99=4456447
+64 4096 base 6 load=12.12 55491 p50=716799 p99=5963775
+64 4096 after 6 load=12.75 62751 p50=634879 p99=8159231
+64 4096 base 7 load=12.93 71423 p50=634879 p99=5505023
+64 4096 after 7 load=12.93 66799 p50=634879 p99=4784127
+64 65536 base 1 load=13.18 23404 p50=1794047 p99=11010047
+64 65536 after 1 load=13.40 20329 p50=1728511 p99=24772607
+64 65536 base 2 load=13.85 25130 p50=1679359 p99=14680063
+64 65536 after 2 load=13.94 25188 p50=1654783 p99=12124159
+64 65536 base 3 load=13.87 23444 p50=1703935 p99=15204351
+64 65536 after 3 load=14.12 21966 p50=1736703 p99=20971519
+64 65536 base 4 load=14.11 22731 p50=1744895 p99=13238271
+64 65536 after 4 load=14.10 19285 p50=2736127 p99=10551295
+64 65536 base 5 load=14.17 19864 p50=2768895 p99=9175039
+64 65536 after 5 load=13.92 20686 p50=2605055 p99=8716287
+64 65536 base 6 load=14.00 19580 p50=2818047 p99=8716287
+64 65536 after 6 load=14.08 22456 p50=1908735 p99=10223615
+64 65536 base 7 load=14.00 24332 p50=1753087 p99=10944511
+64 65536 after 7 load=14.00 23961 p50=1703935 p99=11206655
+```
+
+In the four quietest rounds, 16 connections at 64 KiB, base measured 49,865 to 53,205 and after
+52,476 to 53,738. That is the row where a compare costs the most. At 4 KiB after was lower in five
+of seven rounds, so the fourth set repeated that row with a third client.
+
+- **window0**: after, with `window_of` returning 0, so every connection and every round sends
+  `pattern[0..payload_bytes]`. It keeps the random bytes and the compare, and drops the moving
+  window.
+
+Twelve rounds of 16 connections at 4 KiB, the order of the three clients rotating each round, at a
+load of 4.54 to 6.61:
+
+```text
+16 4096 after 1 load=6.61 152683 p50=84479 p99=257023
+16 4096 window0 1 load=6.32 159232 p50=82431 p99=227327
+16 4096 base 1 load=5.97 146984 p50=93183 p99=246783
+16 4096 window0 2 load=6.13 163272 p50=79359 p99=219135
+16 4096 base 2 load=5.80 150889 p50=88063 p99=240639
+16 4096 after 2 load=5.74 151538 p50=88063 p99=240639
+16 4096 base 3 load=6.08 140196 p50=98303 p99=258047
+16 4096 after 3 load=6.15 156892 p50=84479 p99=224255
+16 4096 window0 3 load=5.98 145337 p50=96255 p99=245759
+16 4096 after 4 load=5.90 154473 p50=87039 p99=223231
+16 4096 window0 4 load=5.91 147022 p50=94207 p99=238591
+16 4096 base 4 load=5.84 146276 p50=95231 p99=241663
+16 4096 window0 5 load=5.77 155961 p50=85503 p99=227327
+16 4096 base 5 load=5.71 133346 p50=107007 p99=333823
+16 4096 after 5 load=5.57 149728 p50=90111 p99=241663
+16 4096 base 6 load=5.44 149800 p50=91135 p99=238591
+16 4096 after 6 load=5.49 145756 p50=91135 p99=262143
+16 4096 window0 6 load=5.53 153440 p50=86015 p99=237567
+16 4096 after 7 load=5.57 156613 p50=83455 p99=229375
+16 4096 window0 7 load=5.44 159101 p50=82431 p99=222207
+16 4096 base 7 load=5.65 154809 p50=84479 p99=230399
+16 4096 window0 8 load=5.91 163303 p50=79359 p99=218111
+16 4096 base 8 load=5.68 151110 p50=89087 p99=240639
+16 4096 after 8 load=5.47 127992 p50=111103 p99=333823
+16 4096 base 9 load=5.27 146924 p50=93183 p99=245759
+16 4096 after 9 load=5.01 145468 p50=98303 p99=242687
+16 4096 window0 9 load=4.85 156513 p50=84479 p99=226303
+16 4096 after 10 load=5.02 145067 p50=94207 p99=262143
+16 4096 window0 10 load=4.94 144310 p50=100351 p99=240639
+16 4096 base 10 load=4.78 145790 p50=97279 p99=241663
+16 4096 window0 11 load=4.72 153835 p50=87039 p99=226303
+16 4096 base 11 load=4.66 157481 p50=84479 p99=223231
+16 4096 after 11 load=4.61 152884 p50=88063 p99=230399
+16 4096 base 12 load=4.56 137649 p50=108031 p99=261119
+16 4096 after 12 load=4.67 147822 p50=93183 p99=239615
+16 4096 window0 12 load=4.54 138762 p50=101375 p99=266239
+```
+
+The medians are 146,954 for base, 150,633 for after, and 154,898 for window0. At this load neither
+the compare nor the moving window shows a cost, and the lower 4 KiB rows of the third set were
+noise.
