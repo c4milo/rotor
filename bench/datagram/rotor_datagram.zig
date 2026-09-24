@@ -13,16 +13,23 @@
 //! inside its buffer, `send_to` with a peer, and the reply path that answers from the local
 //! address the kernel reported. A run that is wrong in any of them does not complete.
 //!
-//! Two numbers come out, and the second is the one that matters:
+//! Three numbers come out, and the second is the one that matters:
 //!
 //!   - **Throughput**: round trips per second.
 //!   - **Latency**: how long each round trip took, at the median, the 99th and the 999th. A
 //!     transport is judged on the tail, and a loop that batches more of them later is not
 //!     obviously better.
+//!   - **Lost**: round trips still outstanding when the run gave up on them. UDP drops a datagram
+//!     that finds the receiving socket's buffer full, and a burst larger than that buffer does. A
+//!     run waits `lost_wait_ns` past its deadline for the last answers, and no longer.
+//!   - **Ticks**: how many ticks the run took. Each tick of a readiness backend makes one call into
+//!     the kernel for readiness, so ticks per round trip shows how many datagrams one of those calls
+//!     served. It is a count, so a busy machine does not change it the way it changes a time.
 //!
 //! It prints one line, every field one token with no spaces, as `rotor_timers` does:
 //!
-//!     datagram-echo <candidate> <version> <in_flight> <bytes> <round_trips> <span_ns> <p50> <p99> <p999>
+//!     datagram-echo <candidate> <version> <in_flight> <bytes> <round_trips> <span_ns> <p50> <p99>
+//!         <p999> <ticks> <lost>
 //!
 //! **No number from this program is a claim.** `docs/costs.md` names no Linux machine yet, so a
 //! run here guides work and nothing else (CLAUDE.md, performance discipline).
@@ -40,8 +47,11 @@ const Address = core.Address;
 const Outbound = core.datagram.Outbound;
 const sync = backend.sync;
 
-/// Round trips outstanding at once, at most. Each holds one sample slot and one send.
-const in_flight_max = 4096;
+/// Round trips outstanding at once, at most. Each holds one sample slot and one send. It is a
+/// group's buffers: a socket holds at most one datagram per round trip, so a tick that takes every
+/// datagram waiting on a socket still finds a free buffer for each. More would let a group run out,
+/// which ends its multishot receive and stops the run.
+const in_flight_max = group_buffers;
 
 /// Slots: two multishot receives, plus one send per round trip in flight, with room to spare.
 const operations = 2 * in_flight_max + 64;
@@ -64,6 +74,11 @@ const samples_max = 1 << 17;
 
 /// The datagrams a run sends, at most, so every loop here is bounded.
 const round_trips_max = 1 << 26;
+
+/// How long a run waits past its deadline for the round trips still outstanding. One whose datagram
+/// was dropped never completes, and before this bound a run that lost one ticked until
+/// `round_trips_max`, which at a millisecond a tick is most of a day.
+const lost_wait_ns = 100 * core.constants.ns_per_ms;
 
 const user_data_server_receive = 1;
 const user_data_client_receive = 2;
@@ -101,6 +116,7 @@ const Run = struct {
     options: Options,
     deadline_ns: u64,
     round_trips: u64 = 0,
+    ticks: u64 = 0,
     taken: u32 = 0,
     /// The next window slot a send will use, and how many are outstanding.
     next: u32 = 0,
@@ -151,11 +167,14 @@ fn run(state: *Run, server: core.Descriptor, client: core.Descriptor) !u64 {
 
     var events: [events_max]Event = undefined;
     var rounds: u64 = 0;
+    const give_up_ns = state.deadline_ns + lost_wait_ns;
     while (state.outstanding != 0 and rounds < round_trips_max) : (rounds += 1) {
+        if (now_ns() >= give_up_ns) break;
         const count = try loop.tick(&events, core.constants.ns_per_ms);
         for (events[0..count]) |event| handle(state, event, server, client);
     }
     const span = now_ns() - started;
+    state.ticks = rounds;
     loop.cancel_all();
     try loop.drain(&events);
     return span;
@@ -258,7 +277,7 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
     var buffer: [512]u8 = undefined;
     var out = std.Io.File.stdout().writer(init.io, &buffer);
     try out.interface.print(
-        "datagram-echo rotor this-tree {d} {d} {d} {d} {d} {d} {d}\n",
+        "datagram-echo rotor this-tree {d} {d} {d} {d} {d} {d} {d} {d} {d}\n",
         .{
             state.options.in_flight,
             state.options.bytes,
@@ -267,6 +286,8 @@ fn report(init: std.process.Init, state: *const Run, span_ns: u64) !void {
             percentile.nearest_rank(samples, percentile.p50),
             percentile.nearest_rank(samples, percentile.p99),
             percentile.nearest_rank(samples, percentile.p999),
+            state.ticks,
+            state.outstanding,
         },
     );
     try out.interface.flush();
