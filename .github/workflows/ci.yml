@@ -200,13 +200,15 @@ jobs:
       # Decision 13's idle case: what a loop that polls for 50 us before it sleeps costs when its
       # next message comes later than that. `rotor_post --gap-us` waits that long before each ping,
       # and prints the CPU time the answering loop used per round trip on its `rotor_post:` line.
+      # The 1,500 us gap is not a multiple of the program's 1 ms wait, so a ping there never
+      # arrives as a wait ends.
       - name: Decision 13's idle case, three rounds alternating
         run: |
           set -euo pipefail
           zig build bench-crosscore
           for round in 1 2 3; do
             echo "== round $round"
-            for gap in 0 20 100 1000; do
+            for gap in 0 20 100 1000 1500; do
               for mode in waiting spin-then-wait spin-budget spinning; do
                 ./zig-out/bin/rotor_post --mode "$mode" --gap-us "$gap" --samples 2000 --warmup 200 \
                   | grep -E '^rotor_post:|^[{]'
