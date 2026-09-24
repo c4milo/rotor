@@ -19,6 +19,11 @@
 //!
 //! A warm-up span runs first and is thrown away: the first messages of a connection pay for the
 //! kernel's buffers growing and for pages this process has not touched.
+//!
+//! A span fails, and gives no row, when a connection ends for any reason but the deadline: the
+//! server closed it, a send or receive failed, or the bytes that came back were not the bytes
+//! sent. Until 2026-09-24 it did not. A dead server gave a row of 0 operations, and a server that
+//! echoed wrong bytes on io_uring at 64 KiB gave rows that entered `bench/baseline/echo.txt`.
 const std = @import("std");
 const builtin = @import("builtin");
 const core = @import("core");
@@ -75,7 +80,10 @@ const Connection = struct {
     received: u32,
     /// The clock when this round trip's first send was submitted.
     started_ns: u64,
-    /// False once the peer closed or the socket failed: the connection stops working.
+    /// Round trips this connection finished before the one in flight, counted from its connect
+    /// and across both spans. It picks the bytes a round sends and whether they are compared.
+    round: u64,
+    /// True while this slot holds an open socket, which `close_all` closes.
     live: bool,
 };
 
@@ -104,9 +112,75 @@ var loop_memory: [
 ]u8 align(core.layout.memory_alignment) = undefined;
 
 var connections: [connections_max]Connection align(@alignOf(Connection)) = undefined;
-var payload: [payload_bytes_max]u8 = undefined;
 var received_bytes: [connections_max * payload_bytes_max]u8 = undefined;
 var latencies: Histogram align(@alignOf(Histogram)) = Histogram.empty;
+
+/// What a round sends: `payload_bytes` of `pattern`, from an offset that `window_of` picks. The
+/// pattern is random bytes, so a piece that lands at the wrong offset does not match. Each
+/// connection has its own windows, and a connection's next rounds move to the next window. So a
+/// piece from another connection, or from this connection's recent rounds, does not match either.
+/// A buffer the server let two receives share gives exactly those pieces. The bytes before
+/// 2026-09-24 were `index mod 256` on every connection and every round. They hid every piece from
+/// another connection or an earlier round, and every piece moved by a multiple of 256 bytes.
+pub var pattern: [payload_bytes_max + windows * window_step_bytes]u8 = undefined;
+
+/// The seed `pattern` is drawn from. Fixed, so every run sends the same bytes.
+const pattern_seed: u64 = 0x5EED_EC40;
+
+/// Rounds of one connection that use different windows, before the windows repeat.
+pub const rounds_apart = 4;
+pub const windows = connections_max * rounds_apart;
+
+/// How far apart two windows start. Any step changes every byte of a random pattern; this one
+/// keeps the extra bytes at 32 KiB, beside the 64 KiB a round sends at most.
+pub const window_step_bytes = 16;
+
+/// A connection compares one round in this many with what it sent, starting with its first.
+/// Which rounds is a function of the round's number, never of the clock (decision 9). The estimate
+/// for a compare of 64 KiB is C23, a copy of 64 KiB: 1,587 ns on `github`. A round trip there
+/// costs at least two C22, 22,408 ns. So a compare of every round adds 7 percent, and one round
+/// in 64 adds 0.1 percent. The compare runs after the round's latency is recorded.
+pub const compare_every = 64;
+
+pub fn fill_pattern() void {
+    var random = core.random.Random.init(pattern_seed);
+    for (&pattern) |*byte| byte.* = @truncate(random.next());
+}
+
+/// Where in `pattern` round `round` of connection `index` starts.
+pub fn window_of(index: u32, round: u64) usize {
+    const phase: usize = @intCast(round % rounds_apart);
+    return (@as(usize, index) * rounds_apart + phase) * window_step_bytes;
+}
+
+pub fn compared(round: u64) bool {
+    return round % compare_every == 0;
+}
+
+/// The bytes the round in flight on connection `index` sends, and has to get back.
+fn round_bytes(client: *const Client, index: u32) []const u8 {
+    const start = window_of(index, connections[index].round);
+    return pattern[start..][0..client.options.payload_bytes];
+}
+
+/// False when this round is one `compared` picks and the bytes that came back are not the bytes
+/// it sent.
+fn echo_intact(client: *const Client, index: u32) bool {
+    if (!compared(connections[index].round)) return true;
+    const echoed = received_bytes[index * payload_bytes_max ..][0..client.options.payload_bytes];
+    return std.mem.eql(u8, echoed, round_bytes(client, index));
+}
+
+/// Why a span fails. Each names a candidate that must not be reported as a number.
+const SpanError = error{
+    /// A connection ended before its last round came back: the server closed it, or a send or a
+    /// receive on it failed.
+    CandidateClosed,
+    /// A round that `compared` picked came back with bytes other than the bytes it sent.
+    CandidateCorrupted,
+    /// Operations were still in flight `stall_grace_ns` after the deadline.
+    CandidateStalled,
+};
 
 /// The state the event handlers share, so a handler takes one pointer and not eight.
 const Client = struct {
@@ -116,6 +190,9 @@ const Client = struct {
     rounds: u64 = 0,
     /// When the current span ends.
     deadline_ns: u64 = 0,
+    /// Why the current span fails, set by the first connection that ended any way but by the
+    /// deadline.
+    failure: ?SpanError = null,
 };
 
 /// Runs one measurement against a server already listening on `options.port`, and returns the
@@ -133,7 +210,7 @@ pub fn run(options: Options) !Result {
     last_placement = harness.placement.place(options.cpu);
     if (options.connections > connections_max) return error.TooManyConnections;
     if (options.payload_bytes > payload_bytes_max) return error.PayloadTooLarge;
-    for (&payload, 0..) |*byte, index| byte.* = @truncate(index);
+    fill_pattern();
 
     var loop: Loop = undefined;
     try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
@@ -192,6 +269,7 @@ fn connect_all(client: *Client) !void {
             .sent = 0,
             .received = 0,
             .started_ns = 0,
+            .round = 0,
             .live = true,
         };
         _ = client.loop.submit(&.{.{
@@ -233,9 +311,10 @@ const stall_grace_ns = 5 * core.constants.ns_per_s;
 /// Runs for `seconds` and returns the span it actually measured. Every connection starts a round
 /// trip at the top and keeps one in flight until the deadline passes.
 ///
-/// A span that reaches its deadline with operations still in flight ends anyway and fails: a
-/// candidate that stops answering must not hang the harness, and must never be reported as a
-/// number. `cancel_all` and `drain` then leave the loop empty, as decision 5, rule 7 requires.
+/// A span fails, and returns no number, when a connection ended any way but by the deadline, which
+/// `Client.failure` names. It also fails when operations are still in flight `stall_grace_ns` after
+/// the deadline: a candidate that stops answering must not hang the harness. Then `cancel_all` and
+/// `drain` leave the loop empty, as decision 5, rule 7 requires.
 fn run_span(client: *Client, seconds: u64) !u64 {
     const started_ns = now_ns();
     client.deadline_ns = started_ns + seconds * core.constants.ns_per_s;
@@ -256,8 +335,10 @@ fn run_span(client: *Client, seconds: u64) !u64 {
     if (in_flight != 0) {
         client.loop.cancel_all();
         try client.loop.drain(&events);
-        return error.CandidateStalled;
     }
+    // A failure is named before a stall: a connection that failed is why the others stalled.
+    if (client.failure) |failure| return failure;
+    if (in_flight != 0) return error.CandidateStalled;
     return span_ns;
 }
 
@@ -272,7 +353,7 @@ fn start_round(client: *Client, index: u32) void {
 
 fn submit_send(client: *Client, index: u32) void {
     const connection = &connections[index];
-    const bytes = payload[connection.sent..client.options.payload_bytes];
+    const bytes = round_bytes(client, index)[connection.sent..];
     _ = client.loop.submit(&.{.{
         .user_data = user_data_of(.send, index),
         .kind = .{ .send = .{
@@ -307,7 +388,7 @@ fn handle(client: *Client, event: Event) bool {
 
 fn handle_send(client: *Client, index: u32, event: Event) bool {
     const connection = &connections[index];
-    const sent = event.outcome() catch return stop(index);
+    const sent = event.outcome() catch return stop(client, error.CandidateClosed);
     connection.sent += sent;
     // A send may be short, and the rest of the payload has to follow it.
     if (connection.sent < client.options.payload_bytes) {
@@ -320,14 +401,18 @@ fn handle_send(client: *Client, index: u32, event: Event) bool {
 
 fn handle_receive(client: *Client, index: u32, event: Event) bool {
     const connection = &connections[index];
-    const received = event.outcome() catch return stop(index);
-    if (received == 0) return stop(index);
+    const received = event.outcome() catch return stop(client, error.CandidateClosed);
+    // The server closed the connection with this round still owed.
+    if (received == 0) return stop(client, error.CandidateClosed);
     connection.received += received;
     if (connection.received < client.options.payload_bytes) {
         submit_receive(client, index);
         return true;
     }
     finish_round(client, index);
+    // After the round's latency is recorded, so a comparison never lands in a percentile.
+    if (!echo_intact(client, index)) return stop(client, error.CandidateCorrupted);
+    connection.round += 1;
     if (now_ns() >= client.deadline_ns) return false;
     start_round(client, index);
     return true;
@@ -339,8 +424,10 @@ fn finish_round(client: *Client, index: u32) void {
     client.rounds += 1;
 }
 
-fn stop(index: u32) bool {
-    connections[index].live = false;
+/// Ends this connection's part of the span and records why the span fails. The first failure is
+/// the one reported. The socket stays open until `close_all`.
+fn stop(client: *Client, failure: SpanError) bool {
+    if (client.failure == null) client.failure = failure;
     return false;
 }
 
@@ -350,33 +437,49 @@ const now_ns = harness.clock.now_ns;
 
 const testing = std.testing;
 
-/// Connections the leak test opens, and a port nothing listens on. The port is high and odd enough
-/// that a listener there would be somebody else's, and the test says so if one answers.
-const leak_connections = 8;
-const leak_port: u16 = 39_417;
+test {
+    _ = @import("client_test.zig");
+}
 
-test "a connect that fails closes every socket it had already opened" {
-    if (!backend.supported) return error.SkipZigTest;
-    // POSIX hands out the lowest free descriptor, so the number a fresh socket gets says whether
-    // the run before it gave its own back. This is what catches the leak: `connect_all` opens one
-    // socket per connection and returns on the first failure, so a `defer close_all()` below it
-    // would strand every socket already opened, and the next probe would land `leak_connections`
-    // higher. A run of the harness met that on 2026-09-22 and ran out of descriptors.
-    const before = try sync.open_socket(.ipv4);
-    sync.close_now(before);
+/// A client for the tests that hand `handle` a made-up event (decision 10). No such event reaches
+/// the loop: each one ends its connection before anything is submitted.
+fn client_for_test() Client {
+    return .{ .loop = undefined, .options = .{ .port = 0 } };
+}
 
-    const options: Options = .{
-        .port = leak_port,
-        .connections = leak_connections,
-        .seconds = 1,
-        .warmup_seconds = 0,
+test "a send or a receive that fails, or a receive of 0 bytes, fails the span as closed" {
+    // A server that dies can end a connection any of these three ways, and which one depends on
+    // timing, so the kernel will not produce each on demand.
+    const ended = [_]Event{
+        Event.failure(user_data_of(.send, 0), .broken_pipe),
+        Event.failure(user_data_of(.receive, 0), .connection_reset),
+        Event.success(user_data_of(.receive, 0), 0),
     };
-    // Nothing listens there, so every connect is refused and the run fails. A host where
-    // something does answer would make this test pass for the wrong reason, so it is refused.
-    const outcome = run(options);
-    try testing.expectError(error.ConnectFailed, outcome);
+    for (ended) |event| {
+        var client = client_for_test();
+        connections[0].received = 0;
+        try testing.expect(!handle(&client, event));
+        try testing.expectEqual(@as(?SpanError, error.CandidateClosed), client.failure);
+    }
+}
 
-    const after = try sync.open_socket(.ipv4);
-    defer sync.close_now(after);
-    try testing.expectEqual(before, after);
+test "a round that comes back whole moves its connection to its next round" {
+    var client = client_for_test();
+    // Past its deadline, so the connection starts no round after this one. Round 1 is one that
+    // `compared` skips, so the bytes in `received_bytes` do not matter.
+    client.deadline_ns = 0;
+    connections[0].received = 0;
+    connections[0].round = 1;
+    const payload_bytes = client.options.payload_bytes;
+    try testing.expect(!handle(&client, Event.success(user_data_of(.receive, 0), payload_bytes)));
+    try testing.expectEqual(@as(?SpanError, null), client.failure);
+    try testing.expectEqual(@as(u64, 2), connections[0].round);
+    try testing.expectEqual(@as(u64, 1), client.rounds);
+}
+
+test "the first failure of a span is the one it reports" {
+    var client = client_for_test();
+    client.failure = error.CandidateCorrupted;
+    try testing.expect(!handle(&client, Event.failure(user_data_of(.send, 0), .broken_pipe)));
+    try testing.expectEqual(@as(?SpanError, error.CandidateCorrupted), client.failure);
 }
