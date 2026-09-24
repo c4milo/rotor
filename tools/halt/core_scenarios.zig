@@ -1,9 +1,11 @@
 //! Halt scenarios for the `core` module: one per assertion a caller's mistake can reach, and one
 //! per assertion a scenario reaches through a function's own parameters, as the made-up answers
-//! handed to `file_call.result` do. Each name says what the scenario does wrong.
+//! handed to `file_call.result` do. Each name says what the scenario does wrong. How the tables end
+//! an operation the loop answered itself is in `core_scenarios_finish.zig`.
 const std = @import("std");
 const core = @import("core");
 const scenario = @import("scenario.zig");
+const finish = @import("core_scenarios_finish.zig");
 
 const Slot = core.Slot;
 const SlotTable = core.slot_table.SlotTable;
@@ -485,7 +487,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "file_call: hand a sync bytes to transfer",
         .run = hand_a_sync_bytes_to_transfer,
     },
-};
+} ++ finish.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

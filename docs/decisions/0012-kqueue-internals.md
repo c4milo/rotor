@@ -72,6 +72,24 @@ receives into that buffer, and names it in the event. `give_back_buffer` pushes 
 stack ends a multishot receive with `buffers_exhausted`, as on io_uring. `register_buffers`
 records nothing and changes nothing: there is no page pinning to save.
 
+**A receive from a group is not tried at the flush**, where a receive into the caller's own buffer
+is (point 1). epoll tries a single-shot one there since 2026-09-23, because on epoll a receive that
+waits pays an `epoll_ctl` of its own (decision 20). Here the filter it registers rides in the
+tick's one `kevent` call, so trying it first saves no system call, and when its bytes have not come
+it costs a `recv` that answers EAGAIN. It was built and timed on 2026-09-23 with
+`rotor_echo --shape group_single`, five alternating rounds at a load average of about 7
+(`bench/results/echo-group-single-mac-2026-09-23.md`), and not kept:
+
+| payload | build | median echoes per second | spread percent |
+|---:|---|---:|---:|
+| 4096 | waits | 148,176 | 21 |
+| 4096 | tried at the flush | 139,763 | 10 |
+| 65536 | waits | 51,359 | 6 |
+| 65536 | tried at the flush | 50,065 | 10 |
+
+Both medians are lower with the change, inside the spread. At that load the times are not a claim,
+and they show no gain.
+
 ## 5. Files block the loop, and a sync is a full sync
 
 A file operation runs inline in `flush`: `pread`, `pwrite`, and for `fdatasync`,

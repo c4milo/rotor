@@ -41,7 +41,8 @@ pub const Slot = extern struct {
     /// The operation's deadline in nanoseconds from its submitting tick, or 0. For a `timer`,
     /// which may carry no deadline, the period of a repeating one, or 0 (decision 14).
     timeout_ns: u64,
-    /// The buffer's length. For `shutdown`, the `How`. For `post`, the message's tag.
+    /// The buffer's length. For `shutdown`, the `How`. For `post`, the message's tag. For a receive
+    /// from a group that the loop finished itself, the buffer it took (`Tables.finish_local_buffer`).
     len: u32,
     /// The descriptor. For `post`, the target `LoopId`.
     descriptor: i32,

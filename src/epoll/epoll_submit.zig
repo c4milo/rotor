@@ -49,13 +49,15 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
     }
 }
 
-/// Tries the operation now. Two kinds are not tried and go straight to waiting, so that the reap
-/// produces their events: a multishot operation, whose events are many, and a receive from a group,
-/// whose event names a buffer, which the finished list has no room to carry. epoll reports a
-/// descriptor that is already ready as soon as it is registered, so neither waits longer for it.
+/// Tries the operation now. A multishot operation is not tried and goes straight to waiting, so
+/// that the reap produces its events, which are many. So is a receive from a group whose buffers are
+/// all with the caller: it waits for bytes, and fails with `buffers_exhausted` only if the group is
+/// still empty when they come. epoll reports a descriptor that is already ready as soon as it is
+/// registered, so neither waits longer for it. Until 2026-09-23 every receive from a group waited,
+/// because the finished list could not name a buffer, and each paid an `epoll_ctl` (decision 20).
 fn start(loop: *Loop, index: u32, slot: *Slot) void {
     if (slot.flags.descriptor_registered) descriptors_module.resolve(loop, slot);
-    if (slot.flags.multishot or slot.flags.buffer_group) {
+    if (slot.flags.multishot or group_is_empty(loop, slot)) {
         return wait(loop, index, slot, perform.filter_of(slot.code));
     }
     const attempt = perform.attempt(loop, slot);
@@ -63,8 +65,16 @@ fn start(loop: *Loop, index: u32, slot: *Slot) void {
     // The slot stays the loop's until then, which is decision 5, rule 3 for its buffer.
     if (attempt.outcome == .offloaded) return offload_module.hand_out(loop, index, slot);
     if (attempt.outcome != .done) return wait(loop, index, slot, attempt.filter());
-    assert(attempt.buffer_id == null);
-    loop.tables.finish_local(index, attempt.result);
+    const tables = &loop.tables;
+    if (attempt.buffer_id) |buffer_id| {
+        return tables.finish_local_buffer(index, attempt.result, buffer_id);
+    }
+    tables.finish_local(index, attempt.result);
+}
+
+/// True for a receive from a group none of whose buffers is free.
+fn group_is_empty(loop: *const Loop, slot: *const Slot) bool {
+    return slot.flags.buffer_group and loop.groups[slot.buffer_index].free_count == 0;
 }
 
 /// Puts the slot on the list of its descriptor and direction, and registers the direction when the
@@ -122,4 +132,94 @@ fn close(loop: *Loop, slot: *const Slot) i32 {
     loop.tables.end_waiters(&loop.waiters, slot.descriptor);
     sync.close_now(slot.descriptor);
     return 0;
+}
+
+const testing = std.testing;
+const linux = std.os.linux;
+const Event = core.Event;
+const Operation = core.Operation;
+
+/// A loop with one group of four 8-byte buffers, and a socket pair. The tests receive on the first
+/// end and write to the second.
+const Fixture = struct {
+    const operations = 8;
+    const options: Loop.Options = .{ .operations = operations };
+    const group_id = 1;
+    const buffer_bytes = 8;
+    const buffers = 4;
+    const group_bytes = epoll.buffers.group_bytes(buffers, buffer_bytes);
+    const pair_ends = 2;
+
+    memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment),
+    group_memory: [group_bytes]u8 align(epoll.buffers.group_alignment),
+    loop: Loop,
+    pair: [pair_ends]i32,
+
+    fn init(fixture: *Fixture) !void {
+        try fixture.loop.init(&fixture.memory, options);
+        errdefer fixture.loop.deinit();
+        try fixture.loop.provide_buffers(group_id, &fixture.group_memory, buffers, buffer_bytes);
+        const flags = linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC;
+        if (linux.errno(linux.socketpair(linux.AF.UNIX, flags, 0, &fixture.pair)) != .SUCCESS) {
+            return error.Unexpected;
+        }
+    }
+
+    /// Ends whatever still waits, then closes the pair and the loop.
+    fn deinit(fixture: *Fixture) void {
+        fixture.loop.cancel_all();
+        var events: [operations]Event = undefined;
+        // A drain that fails leaves operations in flight, and `Loop.deinit` halts on them.
+        fixture.loop.drain(&events) catch {};
+        for (fixture.pair) |descriptor| sync.close_now(descriptor);
+        fixture.loop.deinit();
+    }
+
+    /// Writes `count` bytes to the second end, so the first has them to read.
+    fn send(fixture: *Fixture, count: usize) !void {
+        const bytes: [buffers * buffer_bytes]u8 = @splat('r');
+        if (linux.write(fixture.pair[1], &bytes, count) != count) return error.ShortWrite;
+    }
+
+    /// A single-shot receive from the group, on the first end.
+    fn from_group(fixture: *const Fixture) Operation {
+        return .{ .user_data = 1, .kind = .{ .receive = .{
+            .socket = fixture.pair[0],
+            .target = .{ .group = group_id },
+        } } };
+    }
+};
+
+test "a receive from a group finds its bytes at the flush, and names its buffer unregistered" {
+    if (!epoll.supported) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    const loop = &fixture.loop;
+    try fixture.send(Fixture.buffer_bytes);
+    try testing.expectEqual(@as(u32, 1), loop.submit(&.{fixture.from_group()}, &.{}));
+    flush(loop);
+    // It completed at once: nothing waits, so the descriptor was never registered.
+    try testing.expectEqual(@as(u32, 0), loop.waiters.count(fixture.pair[0], .read));
+
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expect(events[0].flags.buffer);
+    try testing.expectEqual(@as(u32, Fixture.buffer_bytes), try events[0].outcome());
+    loop.give_back_buffer(Fixture.group_id, events[0].flags.buffer_id);
+}
+
+test "a receive from a group whose buffers are all out waits for bytes and does not fail" {
+    if (!epoll.supported) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    const loop = &fixture.loop;
+    // Bytes for every buffer: the first receives take them all at the flush, and the last finds
+    // the group empty.
+    try fixture.send(Fixture.buffers * Fixture.buffer_bytes);
+    const receives = [_]Operation{fixture.from_group()} ** (Fixture.buffers + 1);
+    try testing.expectEqual(@as(u32, receives.len), loop.submit(&receives, &.{}));
+    flush(loop);
+    try testing.expectEqual(@as(u32, 1), loop.waiters.count(fixture.pair[0], .read));
 }

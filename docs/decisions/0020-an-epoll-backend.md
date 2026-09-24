@@ -124,6 +124,28 @@ So the kernel is asked each time, and the rules the backend settled on are these
   removes the filter a multishot operation kept.
 - **A direction the kernel reports with nobody waiting is taken out by the reap**, or a
   level-triggered registration would report it on every wait.
+- **A single-shot receive from a group is tried at the flush**, as a receive into the caller's own
+  buffer is, since 2026-09-23. Before, every receive from a group waited, because the finished list
+  could not name a buffer, so each paid at least one `epoll_ctl`. The finished list now holds the
+  buffer id in the slot's `len`, which a receive from a group leaves unused
+  (`Tables.finish_local_buffer`). A receive whose group has no free buffer still waits, so it fails
+  with `buffers_exhausted` only if the group is still empty when bytes come.
+
+The change was counted on `orbstack` with `rotor_epoll --shape group_single`, a single-shot receive
+from the group per piece, two alternating runs of each build
+(`bench/results/calls-group-single-orbstack-2026-09-23.md`). Calls per echo:
+
+| payload | build | reads | `epoll_ctl` | both |
+|---:|---|---:|---:|---:|
+| 4096 | receive from a group waits | 1.000, 1.000 | 1.460, 1.395 | 2.460, 2.395 |
+| 4096 | tried at the flush | 1.206, 1.214 | 0.364, 0.368 | 1.570, 1.582 |
+| 65536 | receive from a group waits | 1.000, 1.000 | 1.189, 1.251 | 2.189, 2.251 |
+| 65536 | tried at the flush | 1.512, 1.548 | 0.681, 0.715 | 2.193, 2.263 |
+
+At 4 KiB most receives find their bytes already there, and a third of the calls go. At 64 KiB about
+half find nothing yet, and each of those pays a read that answers EAGAIN for the `epoll_ctl` it
+saves, so the count comes out even. Times are not given: the `mac` machine's load average fell
+from 27 to 7 across the runs.
 
 The conformance suite decided the third and fourth rules: each was first written the other way,
 and a scenario in which a tick must take its whole wait failed until it was changed.

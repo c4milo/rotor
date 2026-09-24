@@ -266,6 +266,23 @@ pub const Tables = struct {
     /// the next `drain_finished` hands its event over and releases it: never the call that
     /// produced the result (decision 5, rule 2).
     pub fn finish_local(tables: *Tables, index: u32, result: i32) void {
+        // A receive from a group that succeeded took a buffer, which `finish_local_buffer` records.
+        assert(result < 0 or !names_buffer(tables.table.at(index)));
+        tables.finish_now(index, result);
+    }
+
+    /// `finish_local` for a single-shot receive from a group that the flush completed: its event
+    /// names the buffer the call took. The slot holds the id in `len` until the event is handed
+    /// over, because a receive from a group names no buffer of its own and leaves `len` unused.
+    pub fn finish_local_buffer(tables: *Tables, index: u32, result: i32, buffer_id: u16) void {
+        const slot = tables.table.at(index);
+        assert(names_buffer(slot));
+        assert(result >= 0);
+        slot.len = buffer_id;
+        tables.finish_now(index, result);
+    }
+
+    fn finish_now(tables: *Tables, index: u32, result: i32) void {
         const slot = tables.table.at(index);
         assert(slot.state == .queued or slot.state == .submitted);
         if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
@@ -291,10 +308,20 @@ pub const Tables = struct {
                 .result = slot.result,
                 .flags = .{ .more = again },
             };
+            if (names_buffer(slot) and slot.result >= 0) {
+                events[produced].flags.buffer = true;
+                events[produced].flags.buffer_id = @intCast(slot.len);
+            }
             if (again) rearm(tables, index, slot) else tables.table.release(index);
         }
         assert(produced <= events.len);
         return produced;
+    }
+
+    /// True for a single-shot receive from a group: an event of it that succeeded names the buffer
+    /// its bytes are in. A multishot one never finishes locally with a success.
+    fn names_buffer(slot: *const Slot) bool {
+        return slot.flags.buffer_group and !slot.flags.multishot;
     }
 
     /// True when this slot is a repeating timer whose caller has not cancelled it, so the event

@@ -472,3 +472,26 @@ test "an operation the loop never sampled is counted nowhere, and events are the
         try testing.expectEqual(@as(u64, 12), events[1].user_data);
     }
 }
+
+test "a receive from a group the loop finished names its buffer, and one that failed names none" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    const from_group: Operation = .{ .user_data = 5, .kind = .{ .receive = .{
+        .socket = 3,
+        .target = .{ .group = 1 },
+    } } };
+    _ = tables.submit(&.{ from_group, from_group }, &.{});
+    const received = tables.pending.peek().?;
+    tables.take_pending(received);
+    tables.finish_local_buffer(received, 12, 3);
+    const failed = tables.pending.peek().?;
+    tables.take_pending(failed);
+    tables.finish_local(failed, event_module.result_of(.connection_reset));
+    var events: [2]Event = undefined;
+    try testing.expectEqual(@as(u32, 2), tables.drain_finished(&events));
+    try testing.expect(events[0].flags.buffer);
+    try testing.expectEqual(@as(u16, 3), events[0].flags.buffer_id);
+    try testing.expectEqual(@as(i32, 12), events[0].result);
+    try testing.expect(!events[1].flags.buffer);
+}
