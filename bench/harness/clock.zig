@@ -24,8 +24,26 @@ pub fn now_ns() u64 {
     } else {
         assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
     }
-    const seconds: u64 = @intCast(value.sec);
+    return nanoseconds_of(value);
+}
+
+/// The CPU time the calling thread has used, user and system time together, in nanoseconds. It
+/// rises only while the thread runs, so a thread that sleeps or blocks in the kernel adds nothing
+/// to it. Decision 13's idle case reads it to price what a loop spends while it waits for work.
+pub fn thread_cpu_ns() u64 {
+    var value: Timespec = undefined;
+    if (builtin.os.tag == .linux) {
+        assert(std.os.linux.clock_gettime(.THREAD_CPUTIME_ID, &value) == 0);
+    } else {
+        assert(std.c.clock_gettime(.THREAD_CPUTIME_ID, &value) == 0);
+    }
+    return nanoseconds_of(value);
+}
+
+fn nanoseconds_of(value: Timespec) u64 {
+    assert(value.sec >= 0);
     assert(value.nsec >= 0);
+    const seconds: u64 = @intCast(value.sec);
     return seconds * std.time.ns_per_s + @as(u64, @intCast(value.nsec));
 }
 
@@ -63,4 +81,18 @@ test "the clock is not the epoch, so it is not the wall clock" {
     // would read about 1.7e18 ns since 1970, which is far above anything an uptime reaches.
     const wall_clock_floor_ns: u64 = 1_000_000_000 * 1_000_000_000;
     try testing.expect(now_ns() < wall_clock_floor_ns);
+}
+
+test "a thread's CPU clock stands still while the thread sleeps, and rises while it runs" {
+    const sleep_ns = 20 * std.time.ns_per_ms;
+    const before_sleep = thread_cpu_ns();
+    try testing.io.sleep(.fromNanoseconds(sleep_ns), .awake);
+    // The monotonic clock read in its place would count the whole sleep.
+    try testing.expect(thread_cpu_ns() - before_sleep < sleep_ns / 2);
+
+    const spin_ns = 2 * std.time.ns_per_ms;
+    const before_spin = thread_cpu_ns();
+    const spin_until_ns = now_ns() + spin_ns;
+    while (now_ns() < spin_until_ns) {}
+    try testing.expect(thread_cpu_ns() > before_spin);
 }

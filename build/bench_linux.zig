@@ -80,6 +80,8 @@ const programs = [_]Program{
     // calls of. The name stays under the 15 characters the kernel keeps of a thread's name, which
     // is what the script's trace filter matches.
     .{ .name = "post_epoll", .root = "bench/crosscore/rotor_post.zig", .backend = .epoll },
+    // The same on io_uring, for decision 13's idle case (`--gap-us`) in the `orbstack` machine.
+    .{ .name = "post_uring", .root = "bench/crosscore/rotor_post.zig" },
     // The echo programs too, so the placement path that only Linux can take is run.
     .{ .name = "rotor_echo", .root = "bench/echo/rotor_echo.zig" },
     // The echo server on epoll, which `bench/calls/count_calls.sh` counts as `rotor_epoll`.
