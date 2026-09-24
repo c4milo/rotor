@@ -256,6 +256,10 @@ one event per readiness and `serve` attempts one transfer, so a multishot datagr
 one datagram per socket per tick, while `kevent`'s `data` field carries the waiting byte count and
 is only ever written as 0. That is rotor's own code and a later record may fix it.
 
+**Fixed on 2026-09-23.** The reap now serves a readiness until the amount in `data` is used
+(decision 12, point 3). `bench/datagram/rotor_datagram.zig` reports the ticks a run took, which
+shows how many datagrams one readiness served.
+
 ## Alternatives it beat
 
 **Keep the metadata in `Event`.** It does not fit. `Event` is 16 bytes so a reap of 32 reads 512

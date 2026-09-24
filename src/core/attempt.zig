@@ -56,6 +56,18 @@ pub fn filter_of(code: operation.Operation.Code) Filter {
     };
 }
 
+/// What a successful attempt took from what the kernel reported ready: one connection for an
+/// accept, and the bytes it moved for a transfer. A failure and a connect take nothing. A reap that
+/// serves one readiness more than once counts with it (decision 12, point 3).
+pub fn used(code: operation.Operation.Code, result: i32) u32 {
+    if (result < 0) return 0;
+    return switch (code) {
+        .accept => 1,
+        .receive, .receive_from, .send, .send_to => @intCast(result),
+        else => 0,
+    };
+}
+
 /// What the loop's policy says to do with a file operation (decision 18), or null when it is to be
 /// made inline. `refuse` is the default, because a stall nobody asked for is the complaint that
 /// record answers.
@@ -86,6 +98,19 @@ test "an operation waits on the direction its call would block in" {
     const write_wait: Attempt = .{ .outcome = .wait_write };
     try testing.expectEqual(Filter.read, read_wait.filter());
     try testing.expectEqual(Filter.write, write_wait.filter());
+}
+
+test "an accept uses one connection, a transfer its bytes, and a failure or a connect nothing" {
+    // The descriptor an accept returns is not an amount.
+    try testing.expectEqual(@as(u32, 1), used(.accept, 7));
+    try testing.expectEqual(@as(u32, 100), used(.receive, 100));
+    try testing.expectEqual(@as(u32, 1200), used(.receive_from, 1200));
+    try testing.expectEqual(@as(u32, 64), used(.send, 64));
+    try testing.expectEqual(@as(u32, 1400), used(.send_to, 1400));
+    try testing.expectEqual(@as(u32, 0), used(.send, 0));
+    try testing.expectEqual(@as(u32, 0), used(.connect, 0));
+    try testing.expectEqual(@as(u32, 0), used(.receive, event.result_of(.connection_reset)));
+    try testing.expectEqual(@as(u32, 0), used(.accept, event.result_of(.would_block)));
 }
 
 test "the file policy refuses, runs inline, or hands the operation out" {

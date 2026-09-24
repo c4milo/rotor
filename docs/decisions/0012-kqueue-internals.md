@@ -54,6 +54,16 @@ level-triggered, so readiness the loop did not get to is reported again at the n
 tick takes no more readiness events than it has room for events. No queue is needed and none can
 overflow.
 
+**One readiness serves as many operations as it can**, since 2026-09-23. A readiness carries in
+`data` the amount that is ready: the connections a listener has waiting, the payload bytes a socket
+can read, or the room it has for bytes to send. Measured on macOS 26.6.2 that day: five datagrams of
+100, 200, 300, 0 and 50 bytes read as 650, and five pending connections as 5. The reap tries the
+waiters oldest first and stops when a call would block or fails, when the successes have used that
+amount, or when the events are full. Every readiness keeps room for one event, because a one-shot
+filter that fired and was not served does not report again. Before, a readiness served one
+operation, so a burst of datagrams or connections took one tick, and one `kevent`, each
+(decision 15, "One correction worth recording").
+
 ## 4. Provided buffers are picked by the loop
 
 io_uring picks a buffer from a group itself. Here the loop does: a group is the caller's memory

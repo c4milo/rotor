@@ -31,7 +31,7 @@ pub fn closes_on_exec(descriptor: i32) bool {
 }
 
 /// The ends of a socket pair.
-const pair_ends = 2;
+pub const pair_ends = 2;
 
 /// Two connected Unix stream sockets that do not block, for a test of this backend alone.
 pub fn nonblocking_pair() ![pair_ends]i32 {
