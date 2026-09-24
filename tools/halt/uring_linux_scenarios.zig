@@ -18,7 +18,7 @@ const Loop = uring.Loop;
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-var loop: Loop = undefined;
+var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// The wait the tick from another thread asks for. It is above 0 so that `tick` enters the kernel:
 /// a loop with nothing to submit that asks for no wait makes no system call.

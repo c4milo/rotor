@@ -109,7 +109,7 @@ const Fixture = struct {
     }
 };
 
-var loop_fixture: Fixture = undefined;
+var loop_fixture: Fixture align(@alignOf(Fixture)) = undefined;
 
 test "a worker on another thread hands its result back, and the loop finishes the operation" {
     if (!kqueue.supported) return error.SkipZigTest;
@@ -336,7 +336,7 @@ const Handshake = struct {
     }
 };
 
-var sleep_handshake: Handshake = undefined;
+var sleep_handshake: Handshake align(@alignOf(Handshake)) = undefined;
 
 test "no offload wake is lost: a worker wakes a loop that has settled to sleep" {
     sleep_handshake = .{};

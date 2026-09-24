@@ -80,8 +80,8 @@ const Side = struct {
     }
 };
 
-var first: Side = undefined;
-var second: Side = undefined;
+var first: Side align(@alignOf(Side)) = undefined;
+var second: Side align(@alignOf(Side)) = undefined;
 var latencies: Histogram align(harness.histogram.alignment_bytes) = .empty;
 
 /// Set when the measuring side has taken its last sample, so the peer stops after one more wake.

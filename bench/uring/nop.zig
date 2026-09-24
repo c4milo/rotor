@@ -35,7 +35,7 @@ const per_mille = 1000;
 const options: Loop.Options = .{ .operations = operations, .entries = entries };
 
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-var loop: Loop = undefined;
+var loop: Loop align(@alignOf(Loop)) = undefined;
 var batch: [batch_max]core.Operation = undefined;
 var events: [batch_max]core.Event = undefined;
 var round_ns: [samples]u64 = undefined;

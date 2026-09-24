@@ -17,7 +17,7 @@ const Loop = epoll.Loop;
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-var loop: Loop = undefined;
+var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// A loop belongs to the thread that initialised it (decision 4). An epoll instance has no owning
 /// thread, so with the owner check deleted the second thread's `epoll_pwait2` returns at once with

@@ -106,6 +106,13 @@ and its mutation is measured against the Linux gate.
   `uring_reap.zig`. Four or more files sharing a prefix move into a subdirectory named for it.
 - Operational errors — a refused operation, a short buffer, a limit reached — return error
   values. Assertions are for programmer error only.
+- **A container-level `var` of a struct type restates its alignment**:
+  `var loop: Loop align(@alignOf(Loop)) = undefined;`. Zig 0.16's own x86-64 backend, which builds
+  Debug on x86-64, places such a static without the alignment its type takes from an aligned field
+  unless the variable declares it. LLVM places it right either way. A comptime assert cannot see
+  this: the type's alignment is correct and only the address is wrong. `Layout.take` checks the
+  address at run time and halts. Found on 2026-09-23, when a new static moved a conformance fixture
+  off its boundary.
 - Write all prose in **simple English**, in active voice, with plain words: short sentences with
   one idea each, terms defined before use, lists for list-like content, no metaphors. Name what
   literally happens.

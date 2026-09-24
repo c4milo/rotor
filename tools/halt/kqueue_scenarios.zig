@@ -13,7 +13,7 @@ const Loop = kqueue.Loop;
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-var loop: Loop = undefined;
+var loop: Loop align(@alignOf(Loop)) = undefined;
 
 const one_timer = [_]core.Operation{
     .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },

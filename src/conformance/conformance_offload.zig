@@ -173,8 +173,11 @@ const Fixture = struct {
     }
 };
 
-var loop_fixture: Fixture = undefined;
-var worker_pool: Pool = undefined;
+// Each static restates its type's alignment. Zig 0.16's own x86-64 backend, which builds Debug on
+// x86-64, places a static without the alignment its type takes from an aligned field, unless the
+// static declares it. `layout.take` halted on that misplaced fixture on 2026-09-23.
+var loop_fixture: Fixture align(@alignOf(Fixture)) = undefined;
+var worker_pool: Pool align(@alignOf(Pool)) = undefined;
 
 test "the refuse policy ends a file read with unsupported, where a file blocks the loop" {
     if (conformance.unsupported()) return error.SkipZigTest;

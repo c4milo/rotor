@@ -61,7 +61,10 @@ const operations = 1024;
 const events_max = 512;
 const options: Loop.Options = .{ .operations = operations };
 var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-var loop: Loop = undefined;
+// Each static restates its type's alignment. Zig 0.16's own x86-64 backend, which builds Debug on
+// x86-64, places a static without the alignment its type takes from an aligned field, unless the
+// static declares it. `conformance_offload.zig` met it on 2026-09-23.
+var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// A poll with nothing in flight: `tick` with no wait, which returns at once.
 ///
