@@ -207,7 +207,7 @@ jobs:
           for round in 1 2 3; do
             echo "== round $round"
             for gap in 0 20 100 1000; do
-              for mode in waiting spin-then-wait spinning; do
+              for mode in waiting spin-then-wait spin-budget spinning; do
                 ./zig-out/bin/rotor_post --mode "$mode" --gap-us "$gap" --samples 2000 --warmup 200 \
                   | grep -E '^rotor_post:|^[{]'
               done

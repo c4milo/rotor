@@ -40,15 +40,24 @@ pub const Mode = enum {
     /// Polls for `spin_budget_ns`, then blocks. A peer that answers inside the budget is never
     /// slept on.
     spin_then_wait,
+    /// Blocks as `waiting` does, on a loop whose own options give it `spin_budget_ns` as its spin
+    /// budget: the spin decision 13 built into the loop, where `spin_then_wait` spins in this
+    /// program. The two should measure alike.
+    spin_budget,
 
     /// What a tick of this mode is given when it is not polling.
     pub fn wait(mode: Mode) u64 {
         return if (mode == .spinning) 0 else wait_ns;
     }
 
-    /// How long a tick of this mode polls before it blocks.
+    /// How long a tick of this mode polls before it blocks, in this program.
     pub fn spin(mode: Mode) u64 {
         return if (mode == .spin_then_wait) spin_budget_ns else 0;
+    }
+
+    /// The spin budget a loop of this mode is given in its options.
+    pub fn loop_budget(mode: Mode) u64 {
+        return if (mode == .spin_budget) spin_budget_ns else 0;
     }
 
     /// The candidate name a row of this mode carries. Only `waiting` is rotor against another
@@ -59,6 +68,7 @@ pub const Mode = enum {
             .waiting => "rotor",
             .spinning => "rotor (spinning, not a comparison)",
             .spin_then_wait => "rotor (spin then wait, not a comparison)",
+            .spin_budget => "rotor (spin budget, not a comparison)",
         };
     }
 };
@@ -145,6 +155,7 @@ fn mode_of(value: []const u8) ?Mode {
     if (std.mem.eql(u8, value, "waiting")) return .waiting;
     if (std.mem.eql(u8, value, "spinning")) return .spinning;
     if (std.mem.eql(u8, value, "spin-then-wait")) return .spin_then_wait;
+    if (std.mem.eql(u8, value, "spin-budget")) return .spin_budget;
     return null;
 }
 
@@ -154,6 +165,7 @@ test "every mode the command line names maps to one, and nothing else does" {
     try testing.expectEqual(Mode.waiting, mode_of("waiting").?);
     try testing.expectEqual(Mode.spinning, mode_of("spinning").?);
     try testing.expectEqual(Mode.spin_then_wait, mode_of("spin-then-wait").?);
+    try testing.expectEqual(Mode.spin_budget, mode_of("spin-budget").?);
     try testing.expectEqual(@as(?Mode, null), mode_of("spin_then_wait"));
     try testing.expectEqual(@as(?Mode, null), mode_of(""));
     try testing.expectEqual(@as(?Mode, null), mode_of("waiting "));
@@ -161,7 +173,7 @@ test "every mode the command line names maps to one, and nothing else does" {
 
 test "only the waiting mode is named as a comparison" {
     try testing.expectEqualStrings("rotor", Mode.waiting.candidate());
-    for ([_]Mode{ .spinning, .spin_then_wait }) |mode| {
+    for ([_]Mode{ .spinning, .spin_then_wait, .spin_budget }) |mode| {
         try testing.expect(std.mem.indexOf(u8, mode.candidate(), "not a comparison") != null);
     }
 }
@@ -175,6 +187,14 @@ test "waiting blocks, spinning never does, and spin-then-wait does both" {
 
     try testing.expect(Mode.spin_then_wait.wait() > 0);
     try testing.expect(Mode.spin_then_wait.spin() > 0);
+
+    // The loop spins in this mode, so the program does not, and the loop is given the budget.
+    try testing.expect(Mode.spin_budget.wait() > 0);
+    try testing.expectEqual(@as(u64, 0), Mode.spin_budget.spin());
+    try testing.expectEqual(Mode.spin_then_wait.spin(), Mode.spin_budget.loop_budget());
+    for ([_]Mode{ .waiting, .spinning, .spin_then_wait }) |mode| {
+        try testing.expectEqual(@as(u64, 0), mode.loop_budget());
+    }
 }
 
 test "a core is a number or the word none, and nothing else" {

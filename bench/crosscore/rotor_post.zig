@@ -1,6 +1,6 @@
 //! rotor_post: one cross-core message on its own, the rotor side of the cross-core comparison.
 //!
-//! Run:  rotor_post [--mode waiting|spinning|spin-then-wait] [--samples N] [--warmup N]
+//! Run:  rotor_post [--mode waiting|spinning|spin-then-wait|spin-budget] [--samples N] [--warmup N]
 //!                  [--cpu N] [--peer-cpu N] [--burst N] [--gap-us N]
 //!
 //! Decision 4 calls the threading model rotor's main claim and names its unit of cost as one
@@ -14,10 +14,12 @@
 //! they slept would measure the spin and not the message. That is the one way this workload could
 //! be rigged, and it is the reason the default is the slow mode.
 //!
-//! The other two modes stay reachable because the gap between them is large and belongs to rotor
+//! The other modes stay reachable because the gap between them is large and belongs to rotor
 //! alone: `spinning` never blocks, and `spin-then-wait` polls for a budget before it blocks.
-//! `bench/uring/post.zig` measures the same three with rotor on both ends. Neither extra mode is
-//! a comparison; both are rotor against itself, and a row from one says so in its candidate name.
+//! `spin-budget` does what `spin-then-wait` does through the loop's own `spin_budget_ns`, which
+//! decision 13 built, where `spin-then-wait` spins in this program. `bench/uring/post.zig`
+//! measures the first three with rotor on both ends. No extra mode is a comparison; each is rotor
+//! against itself, and a row from one says so in its candidate name.
 //!
 //! `--burst N` sends N pings in one submit, so one tick's flush posts all of them, and the peer
 //! answers the N with one pong. It measures what a burst of posts to a loop that sleeps costs, which
@@ -79,6 +81,16 @@ const options_template: Loop.Options = .{
     .id = id_first,
 };
 const memory_bytes = Loop.memory_bytes(options_template);
+
+/// The options of the loop with `id`, in `mode`: both loops share the registry, and a loop in
+/// `spin-budget` is given the budget in its options.
+fn loop_options(mode: Mode, id: core.LoopId) Loop.Options {
+    var options = options_template;
+    options.id = id;
+    options.registry = &registry;
+    options.spin_budget_ns = mode.loop_budget();
+    return options;
+}
 
 comptime {
     std.debug.assert(burst_max < operations);
@@ -169,10 +181,7 @@ const Peer = struct {
 
     fn serve(peer: *Peer) !void {
         peer_placement = placement.place(peer.cpu);
-        var options = options_template;
-        options.id = id_second;
-        options.registry = &registry;
-        try peer.side.loop.init(&peer.side.memory, options);
+        try peer.side.loop.init(&peer.side.memory, loop_options(peer.mode, id_second));
         defer peer.side.loop.deinit();
         std.debug.assert(peer.side.loop.in_flight() == 0);
 
@@ -229,9 +238,7 @@ fn measure(options: Options) !Result {
     registry.init(&registry_memory, loops);
     const own = placement.place(options.cpu);
 
-    var loop_options = options_template;
-    loop_options.registry = &registry;
-    try first.loop.init(&first.memory, loop_options);
+    try first.loop.init(&first.memory, loop_options(options.mode, id_first));
     defer first.loop.deinit();
 
     var peer: Peer = .{
@@ -299,4 +306,12 @@ pub fn main(init: std.process.Init) !void {
 
 test {
     _ = command_line;
+}
+
+test "a loop is given the spin budget in the spin-budget mode and in no other" {
+    try std.testing.expect(loop_options(.spin_budget, id_second).spin_budget_ns > 0);
+    for ([_]Mode{ .waiting, .spinning, .spin_then_wait }) |mode| {
+        try std.testing.expectEqual(@as(u64, 0), loop_options(mode, id_first).spin_budget_ns);
+    }
+    try std.testing.expectEqual(id_second, loop_options(.waiting, id_second).id);
 }
