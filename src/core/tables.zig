@@ -8,6 +8,7 @@
 //! one compare (C21), with no system call.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const event_module = @import("event.zig");
 const handle_module = @import("handle.zig");
@@ -173,7 +174,7 @@ pub const Tables = struct {
             const sequence = tables.operation_sequence +% taken;
             tables.statistics.submitted(sequence, index, slot, tables.now_ns);
             // A loop that posts to itself would wait on an event only its own tick can produce.
-            assert(slot.code != .post or slot.descriptor != tables.id);
+            assert_class_a(slot.code != .post or slot.descriptor != tables.id);
             tables.pending.push(tables.table.slots, index);
             if (handles.len != 0) handles[taken] = tables.table.handle_of(index);
             taken += 1;
@@ -186,7 +187,7 @@ pub const Tables = struct {
     /// The kernel produced the operation's last completion: its deadline is disarmed and its
     /// slot released, as the event is handed to the caller (decision 5, rule 1).
     pub fn finish(tables: *Tables, index: u32, slot: *Slot) void {
-        assert(slot.state == .submitted);
+        assert_class_a(slot.state == .submitted);
         if (slot.flags.sampled) tables.statistics.finished(index, slot, tables.now_ns);
         if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
         tables.table.release(index);
@@ -202,7 +203,7 @@ pub const Tables = struct {
         while (visited < queued) : (visited += 1) {
             const index = tables.pending.peek() orelse return null;
             const slot = tables.table.at(index);
-            assert(slot.state == .queued);
+            assert_class_a(slot.state == .queued);
             if (!slot.flags.cancel_requested and slot.code != .timer) return index;
             tables.take_pending(index);
             if (slot.flags.cancel_requested) {
@@ -218,13 +219,13 @@ pub const Tables = struct {
     /// to its kernel now, or ends it itself.
     pub fn take_pending(tables: *Tables, index: u32) void {
         const taken = tables.pending.pop(tables.table.slots);
-        assert(taken == index);
+        assert_class_a(taken == index);
     }
 
     /// Marks a slot the backend has handed to its kernel, or to an offload, `submitted`, and arms
     /// its deadline, or a timer's delay.
     pub fn hand_over(tables: *Tables, index: u32, slot: *Slot) void {
-        assert(slot.state == .queued);
+        assert_class_a(slot.state == .queued);
         slot.state = .submitted;
         tables.arm(index, slot);
     }
@@ -460,7 +461,7 @@ pub const Tables = struct {
     /// timer. A slot being resubmitted keeps the deadline it has.
     pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
         const after_ns = if (slot.code == .timer) slot.offset else slot.timeout_ns;
-        assert(after_ns <= constants.timeout_ns_max);
+        assert_class_a(after_ns <= constants.timeout_ns_max);
         if (slot.code != .timer and after_ns == 0) return;
         if (tables.timers.is_armed(index)) return;
         const due_ns = tables.now_ns + after_ns;

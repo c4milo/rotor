@@ -12,6 +12,7 @@
 //! resolution of a tick and costs no clock read of its own (rule 4).
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
@@ -69,7 +70,7 @@ pub const Statistics = struct {
         slot: *Slot,
         now_ns: u64,
     ) void {
-        assert(!slot.flags.sampled);
+        assert_class_a(!slot.flags.sampled);
         if (sequence & statistics.sample_mask != statistics.sample_phase) return;
         slot.flags.sampled = true;
         statistics.sampled[@intFromEnum(slot.code)] += 1;
@@ -78,10 +79,10 @@ pub const Statistics = struct {
 
     /// The final event of the sampled operation in the slot at `index` is being handed over.
     pub fn finished(statistics: *Statistics, index: u32, slot: *const Slot, now_ns: u64) void {
-        assert(slot.flags.sampled);
+        assert_class_a(slot.flags.sampled);
         if (slot.flags.multishot) return;
         const start_ns = statistics.starts[index];
-        assert(now_ns >= start_ns);
+        assert_class_a(now_ns >= start_ns);
         statistics.latency[@intFromEnum(slot.code)][bucket_of(now_ns - start_ns)] += 1;
     }
 };

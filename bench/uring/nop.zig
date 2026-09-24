@@ -6,10 +6,12 @@
 //! operation. `(t32 - t1) / 31` is the cost of one more operation in a batch: one more entry
 //! submitted and one more completion reaped, C8 plus C9 together.
 //!
-//! The build makes two of these: `uring_nop_safe`, in ReleaseSafe, the mode rotor ships in, and
+//! The build makes three of these: `uring_nop_safe`, in ReleaseSafe, the mode rotor ships in, and
 //! `uring_nop_fast`, in ReleaseFast, which exists only here. ReleaseFast removes every assertion
 //! and every bounds and overflow check, so the difference between the two is an upper bound on
-//! what decision 8's class A and B assertions cost together.
+//! what decision 8's class A and B assertions cost together. `uring_nop_no_class_a` is ReleaseSafe
+//! with class A alone compiled out (`core.assertion_class`), so its difference from `_safe` is what
+//! class A costs.
 //!
 //! A number from a virtual machine describes the virtual machine. It may guide work; it does not
 //! go in docs/costs.md (rule 1 there).
@@ -61,7 +63,9 @@ pub fn main() !void {
     for (&batch, 0..) |*operation, index| operation.* = .{ .user_data = index, .kind = .nop };
 
     const mode = @tagName(builtin.mode);
-    std.debug.print("uring nop, {s}, {d} samples per batch size\n", .{ mode, samples });
+    const class_a = if (core.assertion_class.enabled) "class A on" else "class A off";
+    const header = "uring nop, {s}, {s}, {d} samples per batch size\n";
+    std.debug.print(header, .{ mode, class_a, samples });
     std.debug.print("| batch | round median ns | round p99 ns | per operation ns |\n", .{});
     std.debug.print("|---|---|---|---|\n", .{});
     for (batch_sizes) |size| {

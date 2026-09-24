@@ -6,7 +6,9 @@
 //! Each benchmark is built twice. `_safe` is ReleaseSafe, the mode rotor ships in. `_fast` is
 //! ReleaseFast, which no other part of the build offers: it removes every assertion and every
 //! bounds and overflow check, so the difference between the two is an upper bound on what the
-//! hot path's assertions cost (decision 8, The experiment).
+//! hot path's assertions cost (decision 8, The experiment). The `nop` benchmark is built a third
+//! time, as `uring_nop_no_class_a`: ReleaseSafe with decision 8's class A assertions compiled out
+//! and everything else kept, so its difference from `_safe` is what class A costs (step 2).
 const std = @import("std");
 const linux = @import("linux.zig");
 const modules = @import("modules.zig");
@@ -16,12 +18,17 @@ const install_directory = "linux-bench";
 pub fn add(b: *std.Build) void {
     const step = b.step("bench-linux", "Build the io_uring benchmarks for Linux; run none");
     const target = linux.container_target(b);
-    const variants = [_]struct { suffix: []const u8, optimize: std.builtin.OptimizeMode }{
+    const variants = [_]struct {
+        suffix: []const u8,
+        optimize: std.builtin.OptimizeMode,
+        assertions: modules.Assertions = .{},
+    }{
         .{ .suffix = "safe", .optimize = .ReleaseSafe },
         .{ .suffix = "fast", .optimize = .ReleaseFast },
+        .{ .suffix = "no_class_a", .optimize = .ReleaseSafe, .assertions = .{ .class_a = false } },
     };
     for (variants) |variant| {
-        const graph = modules.add(b, target, variant.optimize);
+        const graph = modules.add_with(b, target, variant.optimize, variant.assertions);
         const nop = b.addExecutable(.{
             .name = b.fmt("uring_nop_{s}", .{variant.suffix}),
             .root_module = b.createModule(.{
@@ -36,7 +43,8 @@ pub fn add(b: *std.Build) void {
             .dest_dir = .{ .override = .{ .custom = install_directory } },
         });
         step.dependOn(&install.step);
-        if (variant.optimize == .ReleaseSafe) {
+        // The other programs are built once, in the mode rotor ships in.
+        if (variant.optimize == .ReleaseSafe and variant.assertions.class_a) {
             step.dependOn(add_post(b, target, graph));
             const harness = b.createModule(.{
                 .root_source_file = b.path("bench/harness/harness.zig"),

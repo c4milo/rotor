@@ -6,6 +6,7 @@
 //! decision's list is used, and docs/hot-path-ledger.md has no row for this file.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
@@ -99,7 +100,7 @@ fn connect_extra(loop: *Loop, slot: *const Slot) Extra {
 /// Fills `sqe` from `slot`. Every field of the entry is written: the ring hands out entries
 /// that still hold what their last use left.
 pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extra: Extra) void {
-    assert(!Handle.from_bits(user_data).is_none());
+    assert_class_a(!Handle.from_bits(user_data).is_none());
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
     sqe.user_data = user_data;
     sqe.fd = slot.descriptor;

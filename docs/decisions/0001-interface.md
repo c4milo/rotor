@@ -99,12 +99,16 @@ The build enforces the direction (`build/modules.zig`).
 
 | module | imports | holds |
 |---|---|---|
-| `core` | nothing | `Operation`, `Event`, `Handle`, the slot table, the timer heap, the named limits |
+| `core` | `assertion_options` only, since 2026-09-24 | `Operation`, `Event`, `Handle`, the slot table, the timer heap, the named limits |
 | `sim` | `core` | the simulated backend: op clock, seeded completion order, fault injection |
 | `uring` | `core` | the Linux backend |
 | `kqueue` | `core` | the macOS backend |
 | `adapter` | `core`, one backend | the std.Io table, after version one |
 | `bench` | everything | the harness; never linked into the library |
+
+`assertion_options` is a module `build/modules.zig` generates. It holds one switch, whether decision
+8's class A assertions are compiled, and it is true in every graph but the benchmark that measures
+them. The owner approved the edge on 2026-09-24. build.zig offers no option for it.
 
 A backend is chosen at comptime by the consumer's build, the way stompy's build hands `sim` to
 `obi` as its `io` import. The three backends carry the same surface, and a comptime check in

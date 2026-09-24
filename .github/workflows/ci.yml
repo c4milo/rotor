@@ -185,6 +185,8 @@ jobs:
           nproc; uname -r; grep -m1 MemTotal /proc/meminfo
       - name: The probes
         run: zig build bench-costs
+      # `uring_nop_no_class_a` is ReleaseSafe with decision 8's class A assertions compiled out, so
+      # its difference from `uring_nop_safe` is what class A costs (that record's step 2).
       - name: Decision 8's experiment, five rounds alternating
         run: |
           set -euo pipefail
@@ -193,6 +195,7 @@ jobs:
             echo "== round $round"
             ./zig-out/linux-bench/uring_nop_safe
             ./zig-out/linux-bench/uring_nop_fast
+            ./zig-out/linux-bench/uring_nop_no_class_a
           done
 
   # Every night, and when started by hand. It compares rotor on io_uring against libuv and libxev

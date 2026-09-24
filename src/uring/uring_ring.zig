@@ -11,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const IoUring = linux.IoUring;
 const core = @import("core");
@@ -146,7 +147,7 @@ pub const Ring = struct {
     pub fn sqe_space(ring: *Ring) u32 {
         const capacity: u32 = @intCast(ring.io.sq.sqes.len);
         const used = ring.io.sq_ready();
-        assert(used <= capacity);
+        assert_class_a(used <= capacity);
         return capacity - used;
     }
 

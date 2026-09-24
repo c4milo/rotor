@@ -176,7 +176,8 @@ was about to push.
   `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
-  nothing; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
+  only `assertion_options`, the class A switch of decision 8 that `build/modules.zig` generates, an
+  edge the owner approved on 2026-09-24; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
   edge the owner approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
   imports `core` and every backend, because on Linux it falls back from `uring` to `epoll`
   (decision 20); `adapter` imports `core` and one backend; nothing imports `bench`. `conformance`

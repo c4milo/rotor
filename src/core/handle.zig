@@ -5,6 +5,7 @@
 //! longer matches (decision 5, rule 1).
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 
 /// 8 bytes, the alignment of a `u64`. `index` is the low half.
@@ -22,19 +23,19 @@ pub const Handle = packed struct(u64) {
 
     /// The 64 bits a backend writes as the kernel's `user_data`. Never 0 for a claimed slot.
     pub fn to_bits(handle: Handle) u64 {
-        assert(!handle.is_none());
+        assert_class_a(!handle.is_none());
         return @bitCast(handle);
     }
 
     pub fn from_bits(bits: u64) Handle {
         const handle: Handle = @bitCast(bits);
-        assert(handle.index == @as(u32, @truncate(bits)));
+        assert_class_a(handle.index == @as(u32, @truncate(bits)));
         return handle;
     }
 
     /// The generation that follows `generation`, skipping 0 when 32 bits wrap.
     pub fn next_generation(generation: u32) u32 {
-        assert(generation >= constants.generation_first);
+        assert_class_a(generation >= constants.generation_first);
         const next = generation +% 1;
         return if (next == 0) constants.generation_first else next;
     }

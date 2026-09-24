@@ -17,6 +17,7 @@
 //! table is class D and runs in `assert_accounting` alone, which the tests call after every step.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const handle_module = @import("handle.zig");
 const slot_module = @import("slot.zig");
@@ -65,9 +66,9 @@ pub const SlotTable = struct {
             return null;
         }
         const slot = table.at(index);
-        assert(slot.state == .free);
-        assert(slot.generation >= constants.generation_first);
-        assert(table.free_count >= 1);
+        assert_class_a(slot.state == .free);
+        assert_class_a(slot.generation >= constants.generation_first);
+        assert_class_a(table.free_count >= 1);
         table.free_head = slot.next;
         table.free_count -= 1;
         slot.state = .queued;
@@ -80,9 +81,9 @@ pub const SlotTable = struct {
     /// (decision 5, rule 1). The slot's deadline must have left the timer heap already.
     pub fn release(table: *SlotTable, index: u32) void {
         const slot = table.at(index);
-        assert(slot.state != .free);
-        assert(slot.heap_position == heap_position_none);
-        assert(table.free_count < table.slots.len);
+        assert_class_a(slot.state != .free);
+        assert_class_a(slot.heap_position == heap_position_none);
+        assert_class_a(table.free_count < table.slots.len);
         slot.generation = Handle.next_generation(slot.generation);
         slot.state = .free;
         slot.next = table.free_head;
@@ -92,10 +93,10 @@ pub const SlotTable = struct {
 
     /// The handle that names the operation holding the slot at `index`, which must not be free.
     pub fn handle_of(table: *const SlotTable, index: u32) Handle {
-        assert(index < table.slots.len);
+        assert_class_a(index < table.slots.len);
         const slot = &table.slots[index];
-        assert(slot.state != .free);
-        assert(slot.generation >= constants.generation_first);
+        assert_class_a(slot.state != .free);
+        assert_class_a(slot.generation >= constants.generation_first);
         return .{ .index = index, .generation = slot.generation };
     }
 
@@ -113,7 +114,7 @@ pub const SlotTable = struct {
 
     /// The slot at `index`, claimed or free. Halts on an index outside the table.
     pub fn at(table: *SlotTable, index: u32) *Slot {
-        assert(index < table.slots.len);
+        assert_class_a(index < table.slots.len);
         return &table.slots[index];
     }
 

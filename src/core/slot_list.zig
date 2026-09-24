@@ -3,6 +3,7 @@
 //! a backend's pending list while `queued`, its finished list while `finishing`.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const slot_module = @import("slot.zig");
 
 const Slot = slot_module.Slot;
@@ -17,10 +18,10 @@ pub const SlotList = struct {
 
     /// Appends the slot at `index`, which must be on no list.
     pub fn push(list: *SlotList, slots: []Slot, index: u32) void {
-        assert(index < slots.len);
-        assert(slots[index].next == next_none);
+        assert_class_a(index < slots.len);
+        assert_class_a(slots[index].next == next_none);
         if (list.tail == next_none) {
-            assert(list.count == 0);
+            assert_class_a(list.count == 0);
             list.head = index;
         } else {
             slots[list.tail].next = index;
@@ -36,7 +37,7 @@ pub const SlotList = struct {
             return null;
         }
         const index = list.head;
-        assert(index < slots.len);
+        assert_class_a(index < slots.len);
         list.head = slots[index].next;
         if (list.head == next_none) list.tail = next_none;
         slots[index].next = next_none;

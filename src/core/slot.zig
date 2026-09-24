@@ -11,6 +11,7 @@
 //! padding between fields. The 2 spare bytes are declared, so adding a field is a decision.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 
@@ -101,8 +102,8 @@ pub const Slot = extern struct {
     /// Flattens `operation` into a slot the table has just claimed. Leaves `generation` and
     /// `next` alone: they are the table's.
     pub fn fill(slot: *Slot, operation: *const Operation) void {
-        assert(slot.state == .queued);
-        assert(slot.generation >= constants.generation_first);
+        assert_class_a(slot.state == .queued);
+        assert_class_a(slot.generation >= constants.generation_first);
         slot.user_data = operation.user_data;
         slot.timeout_ns = operation.timeout_ns;
         slot.code = operation.code();
@@ -116,7 +117,7 @@ pub const Slot = extern struct {
         slot.buffer_index = 0;
         slot.fill_kind(operation);
         slot.flags.descriptor_registered = operation.descriptor_registered;
-        assert(slot.code == operation.code());
+        assert_class_a(slot.code == operation.code());
     }
 
     fn fill_kind(slot: *Slot, operation: *const Operation) void {

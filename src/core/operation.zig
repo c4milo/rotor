@@ -8,6 +8,7 @@
 //! `give_back_buffer` (decision 5's amendment to rule 3).
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const datagram = @import("datagram.zig");
 
@@ -266,7 +267,7 @@ pub const Operation = struct {
     /// Halts on an operation the caller built wrong. Runs once per operation in `submit`; every
     /// value it reads is in the operation it was handed (decision 8, class A).
     pub fn assert_valid(operation: *const Operation) void {
-        assert(operation.timeout_ns <= constants.timeout_ns_max);
+        assert_class_a(operation.timeout_ns <= constants.timeout_ns_max);
         if (operation.descriptor_registered) {
             assert(operation.code() != .close);
             // Halts on a kind that names no descriptor.
@@ -298,7 +299,7 @@ pub const Operation = struct {
                 assert(kind.after_ns <= constants.timeout_ns_max);
                 assert(kind.repeat_ns <= constants.timeout_ns_max);
             },
-            .nop => assert(operation.timeout_ns == 0),
+            .nop => assert_class_a(operation.timeout_ns == 0),
             .post => |kind| {
                 assert(operation.timeout_ns == 0);
                 assert(kind.target < constants.loops_max);

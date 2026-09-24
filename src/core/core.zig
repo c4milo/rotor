@@ -2,8 +2,9 @@
 //! (`Operation`, `Event`, `Handle`), the record of an in-flight operation (`Slot`) with its table
 //! and its lists, the timer heap, the table of what waits for a descriptor, the layout of a loop's
 //! memory, the list of declarations every backend carries, the drain of a loop that is shutting
-//! down, the seeded generator the property tests draw from, and the named limits. It imports
-//! nothing but std and reads no clock.
+//! down, the seeded generator the property tests draw from, and the named limits. It imports std
+//! and the switch of decision 8's class A assertions, and reads no clock.
+pub const assertion_class = @import("assertion_class.zig");
 pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
 pub const constants = @import("constants.zig");
@@ -44,6 +45,7 @@ pub const Slot = slot.Slot;
 pub const Tables = tables.Tables;
 
 test {
+    _ = assertion_class;
     _ = attempt;
     _ = buffer_group;
     _ = constants;

@@ -11,6 +11,7 @@
 //! decision's list is used, and docs/hot-path-ledger.md has no row for this file.
 const std = @import("std");
 const assert = std.debug.assert;
+const assert_class_a = core.assertion_class.assert_class_a;
 const linux = std.os.linux;
 const core = @import("core");
 const constants = @import("constants.zig");
@@ -77,8 +78,8 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
 /// been handed over, so its generation has not moved.
 fn submitted_slot(loop: *Loop, handle: Handle) *Slot {
     const slot = loop.tables.table.at(handle.index);
-    assert(slot.generation == handle.generation);
-    assert(slot.state == .submitted);
+    assert_class_a(slot.generation == handle.generation);
+    assert_class_a(slot.state == .submitted);
     return slot;
 }
 

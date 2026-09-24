@@ -9,10 +9,13 @@
 //! business, and a consumer that needs a backend of its own carries the surface rather than
 //! reaching into these (decision 10).
 //!
-//! `core` imports nothing. `linux_shared` imports `core`. `uring` and `epoll` import `core` and
-//! `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one backend, which
-//! this file hands it as its `backend` import, so one suite tests every backend (decision 10). docs/decisions/0001-interface.md names the module that
-//! follows: `adapter`, after version one. `bench/` is outside `src/` and outside this graph;
+//! `core` imports nothing but `assertion_options`, the switch of decision 8's class A assertions,
+//! which this file generates and which is true in every graph but one benchmark's. The owner
+//! approved that edge on 2026-09-24. `linux_shared` imports `core`. `uring` and `epoll` import
+//! `core` and `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
+//! backend, which this file hands it as its `backend` import, so one suite tests every backend
+//! (decision 10). docs/decisions/0001-interface.md names the module that follows: `adapter`, after
+//! version one. `bench/` is outside `src/` and outside this graph;
 //! build/bench.zig wires it.
 const std = @import("std");
 
@@ -42,12 +45,35 @@ pub const Modules = struct {
     conformance_epoll: *std.Build.Module,
 };
 
+/// Which of decision 8's assertion classes a graph compiles. Every graph compiles all of them
+/// except the graph of `uring_nop_no_class_a`, which measures what class A costs (decision 8, The
+/// experiment, step 2). build.zig offers no option for this, so a consumer cannot turn an
+/// assertion off.
+pub const Assertions = struct {
+    /// The assertions `src/core/assertion_class.zig` names class A.
+    class_a: bool = true,
+};
+
+/// The graph every build but that one benchmark uses.
 pub fn add(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) Modules {
+    return add_with(b, target, optimize, .{});
+}
+
+/// The graph, with the assertion classes `assertions` names.
+pub fn add_with(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    assertions: Assertions,
+) Modules {
     const core = create(b, "src/core/core.zig", target, optimize);
+    const assertion_options = b.addOptions();
+    assertion_options.addOption(bool, "class_a", assertions.class_a);
+    core.addOptions("assertion_options", assertion_options);
     const linux_shared = create(b, "src/linux_shared/linux_shared.zig", target, optimize);
     linux_shared.addImport("core", core);
     const uring = create(b, "src/uring/uring.zig", target, optimize);
