@@ -26,20 +26,24 @@ const Filter = core.waiters.Filter;
 pub fn flush(loop: *Loop) void {
     const tables = &loop.tables;
     const queued = tables.pending.count;
+    // Each loop the posts of this flush must wake is woken once, after the flush (decision 12,
+    // point 6).
+    var wakes: core.remote.Wakes = .{};
     var visited: u32 = 0;
     while (visited < queued) : (visited += 1) {
         const index = tables.next_pending() orelse break;
         tables.take_pending(index);
-        flush_one(loop, index, tables.table.at(index));
+        flush_one(loop, index, tables.table.at(index), &wakes);
     }
+    if (loop.inbox.registry) |registry| wakes.send(registry, queue_module.Queue.wake);
     assert(tables.pending.count <= queued);
 }
 
-fn flush_one(loop: *Loop, index: u32, slot: *Slot) void {
+fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) void {
     assert(slot.state == .queued);
     const tables = &loop.tables;
     switch (slot.code) {
-        .post => tables.finish_local(index, post(loop, slot)),
+        .post => tables.finish_local(index, post(loop, slot, wakes)),
         .close => tables.finish_local(index, close(loop, slot)),
         else => start(loop, index, slot),
     }
@@ -97,16 +101,16 @@ pub fn register(loop: *Loop, descriptor: core.Descriptor) queue_module.ControlEr
     return loop.queue.arm(descriptor, interest);
 }
 
-/// Writes the message into the ring this loop has to the target, and wakes the target when it
-/// sleeps (decision 12, point 6). The registry holds each epoll loop's eventfd, which is what one
-/// write wakes. The result is the post's own final event.
-fn post(loop: *Loop, slot: *const Slot) i32 {
+/// Writes the message into the ring this loop has to the target, and notes the target in `wakes`
+/// when it sleeps, so the flush wakes it once (decision 12, point 6). The result is the post's own
+/// final event.
+fn post(loop: *Loop, slot: *const Slot, wakes: *core.remote.Wakes) i32 {
     const registry = loop.inbox.registry orelse return core.event.result_of(.loop_not_found);
     const target = slot.post_target();
     const wake = core.remote.send(registry, loop.tables.id, target, slot.message()) catch |err| {
         return core.event.result_of(core.remote.code_of(err));
     };
-    if (wake) |descriptor| queue_module.Queue.wake(descriptor);
+    if (wake != null) wakes.note(target);
     return 0;
 }
 
