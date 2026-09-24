@@ -19,7 +19,11 @@ Intel Xeon Platinum 8573C.
 add the echo half: `echo_runner --candidates rotor --payloads 4096` against `zig-out/bin`, the
 server rotor ships, and against `zig-out/no-class-a`, the same server built with class A compiled
 out, alternating, three times each. A `nop` passes none of those 14 sites, so the `nop` rounds of
-all eight runs measure the same assertions. Decision 8's results section reads them.
+all eight runs measure the same assertions.
+
+Runs 9 to 11 are three more starts, from commit `57dbc22`, which switched the 18 class A sites an
+echo message passes through on epoll. Only their echo half on epoll is kept here: the same runner
+alternates the epoll server with class A on and off. Decision 8's results section reads them.
 
 ## Run 1: AMD EPYC 7763 64-Core Processor, CI run 36008948196
 
@@ -1196,4 +1200,139 @@ uring nop, ReleaseSafe, class A off, 20000 samples per batch size
 |---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 127706 | 510835 | 123391 | 157695 | 230399 | 342015 | 4014080 | 1 | 0 | 0 |  |
 | echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 128726 | 514931 | 493567 | 532479 | 675839 | 892927 | 7462912 | 0 | 3 | 0 |  |
+```
+
+## Run 9: AMD EPYC 7763 64-Core Processor, CI run 36063942175, commit 57dbc22, epoll
+
+The echo half on epoll: `echo_runner --candidates rotor --payloads 4096` against
+`zig-out/epoll-class-a` and `zig-out/epoll-no-class-a`, the same server built on epoll with
+class A on and off, alternating, three times each. The runner's own client is on io_uring.
+
+```text
+model name	: AMD EPYC 7763 64-Core Processor
+4
+6.17.0-1022-azure
+MemTotal:       16373452 kB
+-rwxr-xr-x 1 runner runner 4030872 Sep 24 22:02 zig-out/epoll-class-a/rotor_echo
+-rwxr-xr-x 1 runner runner 4033088 Sep 24 22:02 zig-out/epoll-no-class-a/rotor_echo
+== epoll, round 1, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 125581 | 502335 | 124415 | 163839 | 238591 | 344063 | 8769536 | 2 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 126349 | 505480 | 505855 | 565247 | 806911 | 954367 | 8765440 | 1 | 0 | 0 |  |
+== epoll, round 1, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 125646 | 502597 | 123391 | 160767 | 215039 | 331775 | 8769536 | 1 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 125140 | 500604 | 507903 | 659455 | 876543 | 1155071 | 8769536 | 0 | 0 | 0 |  |
+== epoll, round 2, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 122573 | 490306 | 128511 | 186367 | 229375 | 305151 | 8769536 | 2 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 123471 | 493934 | 516095 | 753663 | 794623 | 1032191 | 8769536 | 0 | 0 | 0 |  |
+== epoll, round 2, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 124024 | 496107 | 125439 | 160767 | 215039 | 313343 | 8769536 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 123882 | 495567 | 511999 | 757759 | 929791 | 1155071 | 8769536 | 2 | 3 | 1 |  |
+== epoll, round 3, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 125466 | 501883 | 124415 | 168959 | 221183 | 278527 | 8769536 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 124578 | 498358 | 511999 | 724991 | 798719 | 1122303 | 8769536 | 0 | 3 | 0 |  |
+== epoll, round 3, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 125384 | 501550 | 123391 | 163839 | 272383 | 358399 | 8769536 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 126366 | 505513 | 505855 | 573439 | 868351 | 1081343 | 8769536 | 0 | 3 | 0 |  |
+```
+
+## Run 10: AMD EPYC 9V45 96-Core Processor, CI run 36063951318, commit 57dbc22, epoll
+
+The echo half on epoll: `echo_runner --candidates rotor --payloads 4096` against
+`zig-out/epoll-class-a` and `zig-out/epoll-no-class-a`, the same server built on epoll with
+class A on and off, alternating, three times each. The runner's own client is on io_uring.
+
+```text
+model name	: AMD EPYC 9V45 96-Core Processor
+4
+6.17.0-1022-azure
+MemTotal:       16373452 kB
+-rwxr-xr-x 1 runner runner 4038720 Sep 24 22:00 zig-out/epoll-class-a/rotor_echo
+-rwxr-xr-x 1 runner runner 4040872 Sep 24 22:00 zig-out/epoll-no-class-a/rotor_echo
+== epoll, round 1, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 162506 | 650038 | 97791 | 116735 | 207871 | 438271 | 8736768 | 0 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 162715 | 650911 | 391167 | 509951 | 983039 | 1302527 | 8736768 | 0 | 0 | 0 |  |
+== epoll, round 1, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 161697 | 646798 | 97279 | 119807 | 259071 | 561151 | 8736768 | 2 | 7 | 1 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 163473 | 653929 | 391167 | 468991 | 778239 | 1212415 | 8736768 | 1 | 3 | 0 |  |
+== epoll, round 2, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 160876 | 643519 | 97791 | 153599 | 333823 | 577535 | 8736768 | 0 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 166025 | 664128 | 385023 | 428031 | 929791 | 1327103 | 8736768 | 2 | 0 | 0 |  |
+== epoll, round 2, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 162959 | 651848 | 97791 | 109567 | 229375 | 468991 | 8736768 | 1 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 165207 | 660866 | 385023 | 460799 | 811007 | 1196031 | 8736768 | 2 | 0 | 0 |  |
+== epoll, round 3, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 161209 | 644845 | 98815 | 114175 | 244735 | 417791 | 8736768 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 161242 | 645013 | 393215 | 462847 | 901119 | 1179647 | 8732672 | 1 | 3 | 0 |  |
+== epoll, round 3, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 161366 | 645478 | 98303 | 110079 | 188415 | 425983 | 8736768 | 1 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 161494 | 646005 | 395263 | 421887 | 634879 | 1073151 | 8736768 | 2 | 0 | 0 |  |
+```
+
+## Run 11: AMD EPYC 9V74 80-Core Processor, CI run 36063960479, commit 57dbc22, epoll
+
+The echo half on epoll: `echo_runner --candidates rotor --payloads 4096` against
+`zig-out/epoll-class-a` and `zig-out/epoll-no-class-a`, the same server built on epoll with
+class A on and off, alternating, three times each. The runner's own client is on io_uring.
+
+```text
+model name	: AMD EPYC 9V74 80-Core Processor
+4
+6.17.0-1022-azure
+MemTotal:       16373444 kB
+-rwxr-xr-x 1 runner runner 4038720 Sep 24 22:03 zig-out/epoll-class-a/rotor_echo
+-rwxr-xr-x 1 runner runner 4040872 Sep 24 22:03 zig-out/epoll-no-class-a/rotor_echo
+== epoll, round 1, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 148914 | 595673 | 116735 | 172031 | 186367 | 241663 | 8736768 | 0 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 145647 | 582650 | 362495 | 770047 | 802815 | 909311 | 8736768 | 0 | 0 | 0 |  |
+== epoll, round 1, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 149109 | 596454 | 114175 | 169983 | 188415 | 243711 | 8736768 | 1 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 150049 | 600254 | 387071 | 704511 | 864255 | 987135 | 8736768 | 1 | 0 | 0 |  |
+== epoll, round 2, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 148937 | 595763 | 113663 | 168959 | 184319 | 242687 | 8736768 | 0 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 148421 | 593747 | 358399 | 745471 | 774143 | 827391 | 8736768 | 6 | 3 | 0 |  |
+== epoll, round 2, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 148183 | 592748 | 117247 | 172031 | 339967 | 540671 | 8736768 | 0 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 149604 | 598476 | 352255 | 741375 | 774143 | 847871 | 8736768 | 0 | 0 | 0 |  |
+== epoll, round 3, class A on
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 150206 | 600845 | 100863 | 172031 | 189439 | 223231 | 8736768 | 2 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 149289 | 597219 | 352255 | 737279 | 782335 | 950271 | 8736768 | 0 | 3 | 1 |  |
+== epoll, round 3, class A off
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+|---|---|---|---:|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 148859 | 595451 | 115199 | 169983 | 190463 | 235519 | 8736768 | 1 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 149298 | 597258 | 350207 | 737279 | 835583 | 1196031 | 8736768 | 2 | 3 | 0 |  |
 ```

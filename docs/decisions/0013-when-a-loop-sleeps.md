@@ -134,7 +134,8 @@ Every check is on the real kernel: rotor has no simulator (decision 10).
   `github` for io_uring, `mac` for kqueue. `orbstack` is a virtual machine on the `mac` machine's
   cores, and `github` is a shared runner, so neither is quiet.
 - A measurement of the idle case, which decides whether the default may ever be above 0. Done for
-  io_uring on `github` on 2026-09-24, in the last section. Not done for kqueue or epoll.
+  io_uring on `github` on 2026-09-24, in "Results", and for epoll the same day, at the end. Not done
+  for kqueue.
 - The owner's ruling on the one question no measurement answers: whether a rotor loop is
   entitled to burn a core it was not given.
 
@@ -151,7 +152,7 @@ it.
   core.
 - A default above 0 is not part of this ruling. It would need a ruling of its own.
 - The ruling covers every backend, because the budget is off unless a caller sets it. The idle case
-  was measured on io_uring only.
+  was measured on io_uring only when it was made, and on epoll later that day.
 
 Building it follows "How it is checked, if it is built" above.
 
@@ -217,6 +218,7 @@ Not measured:
 - **The worst case.** A peer whose message comes just after the budget spins all of it every time
   and is woken anyway. That gap, near 50 µs, was not run.
 - kqueue and epoll. Every number here is io_uring. The `mac` machine was too busy to measure.
+  epoll was measured later the same day, at the end of this record.
 - Many loops on one machine at once, and any budget other than 50 µs.
 
 The measurement this record asked for now exists for io_uring. It prices the budget and does not
@@ -333,3 +335,48 @@ What the runs say:
 
 None of this changes what the record measured in the idle case: after the budget, a message costs
 40 to 47 µs more CPU than waiting.
+
+### epoll, 2026-09-24
+
+epoll is the backend a process runs where the kernel refuses io_uring (decision 20). The costs job
+ran the idle case on it too, from commit `57dbc22`, three times, each beside io_uring on the same
+runner (`bench/results/decision-13-idle-epoll-github-2026-09-24.md`). The CPU time the answering
+loop used per round trip, in µs, the median and the range of three rounds:
+
+| processor | mode | gap 0 | gap 20 µs | gap 100 µs | gap 1,000 µs | gap 1,500 µs |
+|---|---|---|---|---|---|---|
+| EPYC 7763 | waiting | 18.7 (17.1 to 19.2) | 18.3 (17.0 to 19.4) | 19.8 (19.7 to 19.8) | 20.4 (20.3 to 20.6) | 33.5 (33.4 to 33.5) |
+| EPYC 7763 | loop's budget | 2.7 (2.7 to 2.7) | 22.8 (22.8 to 22.9) | 63.0 (62.9 to 63.0) | 65.2 (65.1 to 65.2) | 78.6 (78.6 to 78.7) |
+| EPYC 9V45 | waiting | 10.2 (10.1 to 10.4) | 9.9 (9.4 to 10.7) | 11.1 (10.6 to 11.6) | 11.0 (10.8 to 11.2) | 17.2 (17.0 to 17.4) |
+| EPYC 9V45 | loop's budget | 1.8 (1.8 to 1.8) | 21.8 (21.8 to 21.9) | 57.5 (57.3 to 57.5) | 57.6 (57.6 to 57.7) | 64.2 (64.2 to 64.6) |
+| EPYC 9V74 | waiting | 12.0 (11.8 to 12.5) | 12.2 (11.9 to 14.0) | 12.9 (12.9 to 12.9) | 13.6 (13.5 to 13.7) | 20.4 (20.3 to 20.9) |
+| EPYC 9V74 | loop's budget | 2.2 (2.2 to 2.2) | 22.2 (22.2 to 22.3) | 58.5 (58.5 to 58.8) | 59.4 (59.2 to 59.5) | 66.8 (66.8 to 66.8) |
+
+The round trip, in µs:
+
+| processor | mode | gap 0 | gap 20 µs | gap 100 µs | gap 1,000 µs | gap 1,500 µs |
+|---|---|---|---|---|---|---|
+| EPYC 7763 | waiting | 35.1 (34.6 to 35.3) | 34.0 (34.0 to 34.3) | 34.8 (34.6 to 35.1) | 35.3 (35.1 to 35.6) | 35.6 (35.6 to 35.6) |
+| EPYC 7763 | loop's budget | 2.4 (2.4 to 2.4) | 2.4 (2.4 to 2.4) | 17.4 (17.4 to 17.4) | 20.0 (20.0 to 20.1) | 20.0 (20.0 to 20.1) |
+| EPYC 9V45 | waiting | 19.7 (19.6 to 19.8) | 19.2 (17.3 to 19.7) | 20.0 (19.8 to 20.2) | 20.0 (19.8 to 20.2) | 20.0 (19.8 to 20.4) |
+| EPYC 9V45 | loop's budget | 1.6 (1.6 to 1.7) | 1.6 (1.6 to 1.6) | 11.1 (10.9 to 11.1) | 11.1 (11.1 to 11.2) | 11.1 (11.1 to 11.3) |
+| EPYC 9V74 | waiting | 21.5 (20.7 to 21.9) | 21.1 (21.0 to 21.2) | 22.0 (21.9 to 22.0) | 23.2 (23.0 to 23.3) | 22.8 (22.5 to 23.0) |
+| EPYC 9V74 | loop's budget | 2.0 (2.0 to 2.0) | 2.0 (2.0 to 2.0) | 11.2 (11.2 to 11.6) | 12.7 (12.7 to 13.1) | 12.5 (12.5 to 12.6) |
+
+What the runs say:
+
+- **The idle case costs on epoll what it costs on io_uring.** At gaps of 100 and 1,000 µs, after
+  the budget, a loop with a budget uses 57.5 to 65.2 µs of CPU per round trip against 11.0 to
+  20.4 µs for one that waits: 43 to 47 µs more per message, against 40 to 47 on io_uring. As a share
+  of a core, the budget takes about half of one at a 100 µs gap, where waiting takes 9 to 15
+  percent, and 5.7 to 6.4 percent at one message a millisecond, where waiting takes 1.1 to 2.0.
+- **Inside the budget the spin pays as it does on io_uring.** At a 20 µs gap the round trip is 1.6
+  to 2.4 µs against 19 to 34 µs waiting.
+- **A message between two loops that are awake costs less on epoll.** With no gap the round trip is
+  1.6 to 2.4 µs on epoll and 2.6 to 4.2 µs on io_uring, on the same runners. epoll's backend passes
+  a message through a ring in memory, and io_uring's through the kernel with `IORING_OP_MSG_RING`;
+  how much of the difference that accounts for is not measured.
+- **The loop's budget matches the program's spin on epoll at every gap, 1,000 µs included:** within
+  0.9 µs of CPU up to 1,000 µs and 1.8 µs at 1,500 µs, and within 0.3 µs of round trip. The 1 ms
+  difference of io_uring does not appear on epoll. On io_uring it appeared again in these runs, on
+  all three processors: 0.9 to 7.3 µs more per round trip at a 1,000 µs gap.

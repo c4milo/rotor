@@ -10,7 +10,9 @@ Measured in part on 2026-09-24, on `github`, for io_uring: class A's own cost is
 `nop` round at batch 32 in the median of five runs on one processor, against a threshold of 2, and
 less than the noise on the echo workload on three processors. The last section reads it. The owner
 ruled the same day that the echo clause decides, so the question is closed for io_uring and no
-assertion moves. Class B alone, step 3's counts, kqueue and epoll are still not measured.
+assertion moves. On epoll, measured the same day, class A cost less than the echo workload's noise
+on three processors, which closes the question there by the echo clause. Class B alone, step 3's
+counts and kqueue are still not measured.
 
 Amended on 2026-09-19 by decision 10: class D assertions run in Debug test builds, since there is
 no simulator for them to run in.
@@ -281,10 +283,35 @@ median of 2.1 percent at batch 32 stays recorded above. The reasons:
   processor gave.
 - No run measures one assertion alone, so moving "the costliest" would be a guess.
 
-The question stays open for kqueue and epoll, which were not measured.
+The question stays open for kqueue, which was not measured. epoll is below.
+
+### epoll, 2026-09-24
+
+epoll is the backend a process runs where the kernel refuses io_uring (decision 20). Commit
+`57dbc22` switched the 18 class A sites an echo message passes through there: in epoll's own
+submit, perform, reap and buffer files, and in the readiness table, the buffer group, `Slot.bytes`
+and the `Tables` functions that finish an operation the flush performed, which kqueue shares. It
+also added `zig build bench-echo-epoll-class-a`, which builds the epoll echo server twice, class A
+on and off. The costs job ran the echo half on epoll three times, on three processors
+(`bench/results/decision-8-class-a-github-2026-09-24.md`, runs 9 to 11). Echoes per second, the
+median and the range of three runs of the runner:
+
+{table}
+
+- Class A compiled out gained at most 0.8 percent, and lost in two cells of six. The three runs of
+  the server with class A differ by 2.3 to 3.0 percent at 64 connections.
+- In one cell, the EPYC 9V74 at 64 connections, the two ranges do not overlap: the runs without
+  class A were 0.8 percent faster, by nine echoes a second between the nearest runs. That is still
+  less than the 2.5 percent the runs with class A spread over in that cell.
+- Without class A the x86-64 binary is about 2.2 KB larger, not smaller. The compiler inlines
+  differently when the checks are gone; the switch did change the code.
+
+So on epoll too class A costs less than the noise of the echo workload, and by the echo clause the
+question is closed for epoll. There is no `nop` benchmark for epoll, so the two clauses cannot
+disagree there as they did on io_uring.
 
 Still not measured:
 
 - Class B alone. Step 2 asks for it the same way, and it has no switch.
 - Step 3's `perf stat` counts of branches, branch misses and L1 misses. They were not taken.
-- kqueue and epoll. The `nop` benchmark runs on io_uring only, and the echo half ran on io_uring.
+- kqueue. The `nop` benchmark runs on io_uring only, and the echo half ran on io_uring and epoll.

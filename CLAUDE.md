@@ -373,7 +373,8 @@ and every safety check. Class A's own share was measured on 2026-09-24 with the 
 asks for: on the `nop` path on an EPYC 7763, 1.3 to 2.6 percent at batch 32 over five runs, median
 2.1, against a threshold of 2; on the echo workload, less than the noise on three processors. The
 owner ruled the same day that the echo clause decides: the question is closed for io_uring, and no
-assertion moves.
+assertion moves. On epoll class A also cost less than the echo workload's noise, which closes it
+there; kqueue is not measured.
 The `linux` column is the deployment target, needs a machine of the family stompy builds for, and
 that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 (`bench/results/`, read in `bench/alternatives/README.md`): rotor and libuv are level on echo;
