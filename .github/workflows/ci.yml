@@ -1,6 +1,6 @@
 # What runs on every push to main and every pull request.
 #
-# Four gates, the same four a developer runs by hand:
+# Five gates, the same five a developer runs by hand:
 #
 #   - `macos`: `zig build test`, which is the lint, every module's unit tests, the kqueue
 #     conformance suite, the halt check, the tools' tests, the bench compile, the hook check and
@@ -10,6 +10,8 @@
 #     profile refuses `io_uring_setup`.
 #   - `race`: the same suites under ThreadSanitizer, which needs Docker and a dynamic glibc.
 #   - `proofs`: `zig build proofs`, the Lean proofs of the timer heap and the timer lifecycle.
+#   - `calls`: the kernel calls rotor's echo servers make per echo, counted by the kernel's
+#     tracepoints three times and held to `bench/baseline/calls.txt` by `calls_gate`.
 #
 # **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
 # both the macOS and the Linux job bound the loop's own work: a poll, a timer fire and a submit.
@@ -247,6 +249,44 @@ jobs:
       - name: Kernel calls per echo
         if: ${{ !cancelled() }}
         run: sudo BIN=zig-out/bin sh bench/calls/count_calls.sh
+
+  # Kernel calls per echo, held to `bench/baseline/calls.txt` on every push and pull request. A
+  # count per echo moves far less with the runner's load than a time does, so this is the speed
+  # check steady enough to run on every change (`bench/calls/calls_gate.zig`). It counts rotor's
+  # own echo servers only: io_uring, and epoll with each receive shape. Each of three rounds runs
+  # every row, and the gate judges the smallest count any round gave, because other work on the
+  # runner raises some rounds and a change that adds a call raises all of them.
+  calls:
+    name: Linux x86-64, calls per echo
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Zig
+        run: |
+          set -euo pipefail
+          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
+          curl -fsSL "$url" -o zig.tar.xz
+          echo "$sha  zig.tar.xz" | sha256sum -c -
+          tar -xf zig.tar.xz
+          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - name: What this runner is
+        run: |
+          grep -m1 "model name" /proc/cpuinfo || true
+          nproc; uname -r
+      - name: Build rotor's echo servers, the client and the gate
+        run: zig build bench-echo
+      # One second per row: at three, an epoll row made events faster than the trace reader took
+      # them on EPYC 7763 runners, and every round of that row lost some, which the gate refuses.
+      - name: Count three rounds
+        run: |
+          set -euo pipefail
+          for round in 1 2 3; do
+            sudo SECONDS_PER_RUN=1 BIN=zig-out/bin sh bench/calls/count_calls.sh |
+              tee "calls-$round.md"
+          done
+      - name: Hold the counts to the baseline
+        run: ./zig-out/bin/calls_gate bench/baseline/calls.txt calls-1.md calls-2.md calls-3.md
 
   commits:
     name: Commit messages

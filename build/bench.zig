@@ -153,6 +153,11 @@ const tested = [_]Tested{
         .needs_loop = true,
     },
     .{
+        .name = "bench-calls-gate-tests",
+        .root = "bench/calls/calls_gate.zig",
+        .needs_loop = false,
+    },
+    .{
         .name = "bench-echo-runner-tests",
         .root = "bench/echo/echo_runner_setup.zig",
         .needs_loop = true,
@@ -246,6 +251,8 @@ const Program = struct {
     needs_harness: bool,
     /// Installed by `bench-crosscore` as well as by `bench-echo`.
     crosscore: bool = false,
+    /// Built against the epoll backend in place of the host's, and only on a Linux host.
+    epoll: bool = false,
 };
 
 /// Every program `bench-echo` installs. Each is its own executable, as bench/alternatives' are, so
@@ -335,6 +342,21 @@ const programs = [_]Program{
         .needs_loop = true,
         .needs_harness = true,
     },
+    // The echo server on epoll, which `bench/calls/count_calls.sh` counts as `rotor_epoll`, and
+    // the gate CI holds rotor's counts per echo to `bench/baseline/calls.txt` with.
+    .{
+        .name = "rotor_epoll",
+        .root = "bench/echo/rotor_echo.zig",
+        .needs_loop = true,
+        .needs_harness = true,
+        .epoll = true,
+    },
+    .{
+        .name = "calls_gate",
+        .root = "bench/calls/calls_gate.zig",
+        .needs_loop = false,
+        .needs_harness = false,
+    },
 };
 
 /// The programs the echo smoke runs: the runner, which holds the client, and rotor's server.
@@ -353,7 +375,6 @@ fn add_echo(
     check: *std.Build.Step,
     smoke: *std.Build.Step,
 ) void {
-    const backend = if (target.result.os.tag == .linux) graph.uring else graph.kqueue;
     const echo = b.step("bench-echo", "Build the echo servers and the echo client");
     const crosscore = b.step("bench-crosscore", "Build the cross-core message programs");
     echo.dependOn(crosscore);
@@ -363,16 +384,7 @@ fn add_echo(
         .optimize = .ReleaseSafe,
     });
     for (programs) |program| {
-        const module = b.createModule(.{
-            .root_source_file = b.path(program.root),
-            .target = target,
-            .optimize = .ReleaseSafe,
-        });
-        if (program.needs_loop) {
-            module.addImport("core", graph.core);
-            module.addImport("backend", backend);
-        }
-        if (program.needs_harness) module.addImport("harness", harness_module);
+        const module = program_module(b, target, graph, harness_module, program) orelse continue;
         const install = &b.addInstallArtifact(
             b.addExecutable(.{ .name = program.name, .root_module = module }),
             .{},
@@ -381,6 +393,31 @@ fn add_echo(
         if (is_smoke_program(program.name)) smoke.dependOn(install);
         check.dependOn(&b.addExecutable(.{ .name = program.name, .root_module = module }).step);
     }
+}
+
+/// The module of one program of `programs`, or null for one this host does not build: an epoll
+/// program off Linux.
+fn program_module(
+    b: *std.Build,
+    target: std.Build.ResolvedTarget,
+    graph: modules.Modules,
+    harness_module: *std.Build.Module,
+    program: Program,
+) ?*std.Build.Module {
+    const linux = target.result.os.tag == .linux;
+    if (program.epoll and !linux) return null;
+    const module = b.createModule(.{
+        .root_source_file = b.path(program.root),
+        .target = target,
+        .optimize = .ReleaseSafe,
+    });
+    if (program.needs_loop) {
+        const host_backend = if (linux) graph.uring else graph.kqueue;
+        module.addImport("core", graph.core);
+        module.addImport("backend", if (program.epoll) graph.epoll else host_backend);
+    }
+    if (program.needs_harness) module.addImport("harness", harness_module);
+    return module;
 }
 
 fn is_smoke_program(name: []const u8) bool {

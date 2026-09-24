@@ -260,12 +260,19 @@ was about to push.
   installs, so it is a step of its own and not part of `zig build test`. A change to a function a
   model mirrors changes the model in the same commit; `proofs/README.md` lists the models.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
-  request. Five jobs, each the command a developer runs by hand: `zig build test` on macOS, the
-  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` on Ubuntu, and
-  `zig build lint-commits` on a pull request. Zig is downloaded from ziglang.org and Lean from its
-  GitHub release, each checked against a pinned SHA-256; no third-party action runs. **No number
-  from CI enters `docs/costs.md`**: those runners are neither named nor quiet, and rule 1 of that
-  file stands.
+  request. Six jobs, each the command a developer runs by hand: `zig build test` on macOS, the
+  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` on Ubuntu, the call gate
+  on Ubuntu, and `zig build lint-commits` on a pull request. Zig is downloaded from ziglang.org
+  and Lean from its GitHub release, each checked against a pinned SHA-256; no third-party action
+  runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
+  and rule 1 of that file stands.
+- Call gate: the kernel calls rotor's echo servers make per echo, held to
+  `bench/baseline/calls.txt`. On a Linux host: `zig build bench-echo`, then three rounds of
+  `sudo SECONDS_PER_RUN=1 BIN=zig-out/bin sh bench/calls/count_calls.sh > calls-N.md`, then
+  `./zig-out/bin/calls_gate bench/baseline/calls.txt calls-1.md calls-2.md calls-3.md`. A count
+  moves far less with load than a time, so this is the speed check CI runs on every change. Its
+  ceilings come from GitHub's runners, and the baseline's header says how each was set; a count that
+  moves with timing is held only against a change of about one call per echo.
 - Cost gates: `src/conformance/conformance_cost.zig` bounds what the loop's own work costs — a
   poll, one fire of a repeating timer, one operation of a batch submit — so a path that becomes
   slow fails `zig build test` on both backends. The 12 µs polling park of 2026-09-22 is why: every
