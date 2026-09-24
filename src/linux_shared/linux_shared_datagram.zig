@@ -53,10 +53,14 @@ pub fn write_control(buffer: *[control_bytes_max]u8, out: *const Outbound) ?usiz
     }
     if (out.flags.ecn) {
         const codepoint: c_int = @intFromEnum(out.ecn);
-        used = switch (out.peer.family) {
-            .ipv4 => append(buffer, used, linux.IPPROTO.IP, linux.IP.TOS, codepoint),
-            .ipv6 => append(buffer, used, linux.IPPROTO.IPV6, linux.IPV6.TCLASS, codepoint),
-        } orelse return null;
+        // Linux sends to an IPv4-mapped peer through its IPv4 path, which reads IP_TOS and ignores
+        // IPV6_TCLASS, so such a peer takes IPv4's option even from an IPv6 socket.
+        const ipv4 = out.peer.family == .ipv4 or is_ipv4_mapped(&out.peer);
+        used = (if (ipv4)
+            append(buffer, used, linux.IPPROTO.IP, linux.IP.TOS, codepoint)
+        else
+            append(buffer, used, linux.IPPROTO.IPV6, linux.IPV6.TCLASS, codepoint)) orelse
+            return null;
     }
     if (out.segment_bytes != 0) {
         const segment: u16 = out.segment_bytes;
@@ -64,6 +68,19 @@ pub fn write_control(buffer: *[control_bytes_max]u8, out: *const Outbound) ?usiz
             return null;
     }
     return used;
+}
+
+/// An IPv4-mapped IPv6 address, `::ffff:a.b.c.d`, starts with this many zero bytes, then two
+/// bytes of `mapped_marker`, then the IPv4 address.
+const mapped_zero_bytes = 10;
+const mapped_marker: u8 = 0xff;
+const ipv4_mapped_prefix = [_]u8{0} ** mapped_zero_bytes ++ [_]u8{ mapped_marker, mapped_marker };
+
+/// True for an IPv6 address that names an IPv4 peer: how the kernel names one to a socket bound to
+/// `::`.
+fn is_ipv4_mapped(address: *const Address) bool {
+    if (address.family != .ipv6) return false;
+    return std.mem.eql(u8, address.bytes[0..ipv4_mapped_prefix.len], &ipv4_mapped_prefix);
 }
 
 /// Appends one control message and returns the new length, or null when it does not fit.
@@ -173,11 +190,17 @@ pub fn apply_options(
             .codepoint = linux.IP.RECVTOS,
             .mtu_discover = linux.IP.MTU_DISCOVER,
         }, options),
-        .ipv6 => apply(socket, linux.IPPROTO.IPV6, .{
-            .pktinfo = linux.IPV6.RECVPKTINFO,
-            .codepoint = linux.IPV6.RECVTCLASS,
-            .mtu_discover = linux.IPV6.MTU_DISCOVER,
-        }, options),
+        .ipv6 => {
+            apply(socket, linux.IPPROTO.IPV6, .{
+                .pktinfo = linux.IPV6.RECVPKTINFO,
+                .codepoint = linux.IPV6.RECVTCLASS,
+                .mtu_discover = linux.IPV6.MTU_DISCOVER,
+            }, options);
+            // A socket bound to `::` takes IPv4 datagrams too. The kernel reports their codepoint
+            // only when IP_RECVTOS is set, in an IP_TOS message, even on an IPv6 socket.
+            if (!options.control) return;
+            sync_socket.set_option(socket, linux.IPPROTO.IP, linux.IP.RECVTOS, true) catch {};
+        },
     }
 }
 
@@ -242,6 +265,43 @@ test "a send writes one control message per thing the outbound block asks for" {
     try testing.expectEqual(wanted, used);
     const first: *const linux.cmsghdr = @ptrCast(@alignCast(&buffer[0]));
     try testing.expectEqual(@as(i32, @intCast(linux.IP.PKTINFO)), first.type);
+}
+
+/// The level and type of the one control message `write_control` writes to mark `peer` ECT(0).
+fn codepoint_message_for(peer: Address) !struct { level: i32, kind: i32 } {
+    var buffer: [control_bytes_max]u8 align(@alignOf(linux.cmsghdr)) = undefined;
+    const marked: Outbound = .{
+        .peer = peer,
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .ect0,
+        .flags = .{ .peer = true, .ecn = true },
+    };
+    try testing.expectEqual(@as(?usize, control_space(@sizeOf(c_int))), write_control(&buffer, &marked));
+    const message: *const linux.cmsghdr = @ptrCast(@alignCast(&buffer[0]));
+    return .{ .level = message.level, .kind = message.type };
+}
+
+test "an IPv4 peer is marked with IP_TOS, from an IPv6 socket too, and an IPv6 peer with TCLASS" {
+    const ip_tos: i32 = @intCast(linux.IP.TOS);
+    const ipv6_tclass: i32 = @intCast(linux.IPV6.TCLASS);
+    const ipv4 = try codepoint_message_for(Address.ipv4(.{ 127, 0, 0, 1 }, 1));
+    try testing.expectEqual(ip_tos, ipv4.kind);
+    // `::ffff:127.0.0.1`, how a socket bound to `::` names an IPv4 client.
+    var mapped_bytes: [Address.ipv6_bytes]u8 = @splat(0);
+    mapped_bytes[10] = 0xff;
+    mapped_bytes[11] = 0xff;
+    mapped_bytes[12] = 127;
+    mapped_bytes[15] = 1;
+    const mapped = try codepoint_message_for(Address.ipv6(mapped_bytes, 1, 0));
+    try testing.expectEqual(@as(i32, @intCast(linux.IPPROTO.IP)), mapped.level);
+    try testing.expectEqual(ip_tos, mapped.kind);
+    // `::1` shares every byte of that prefix but the two 0xff, and stays IPv6.
+    var loopback_bytes: [Address.ipv6_bytes]u8 = @splat(0);
+    loopback_bytes[15] = 1;
+    const native = try codepoint_message_for(Address.ipv6(loopback_bytes, 1, 0));
+    try testing.expectEqual(@as(i32, @intCast(linux.IPPROTO.IPV6)), native.level);
+    try testing.expectEqual(ipv6_tclass, native.kind);
 }
 
 test "a datagram's codepoint and segment size are read back out of the control block" {

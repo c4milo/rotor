@@ -322,9 +322,11 @@ Not built, and each one is a separate piece of work:
 Every check is on the real kernel, on both backends: rotor has no simulator (decision 10).
 
 1. `conformance_udp.zig`: a datagram crosses and its peer address is right; a wildcard socket
-   answers from the address it was written to; an ECN codepoint survives both directions; a
-   datagram larger than the buffer reports `truncated`; a multishot receive names a buffer per
-   datagram and ends with one final event.
+   answers from the address it was written to; a datagram larger than the buffer reports
+   `truncated`; a multishot receive names a buffer per datagram and ends with one final event.
+   This item used to list an ECN codepoint surviving both directions, and no scenario checked one
+   until `conformance_families.zig` on 2026-09-23. It found kqueue marking IPv4 datagrams with the
+   wrong option (section "macOS").
 2. The segmentation scenario, two arms, both asserting: Linux segments, macOS refuses.
 3. The coalescing scenario tolerates GRO rather than requiring it: the segments must reassemble
    to what was sent, whether the kernel handed over one datagram or ten.
@@ -332,7 +334,15 @@ Every check is on the real kernel, on both backends: rotor has no simulator (dec
    backend against one table of expectations.
 5. Halt scenarios: a buffer no larger than the reserve, a segment count over the cap, a `send_to`
    whose families disagree, a multishot `receive_from` with no group, and a zero-length send.
-6. Mutations, reported `CAUGHT` or `NOT CAUGHT`: the head length left out of `Event.result`, the
+6. `conformance_families.zig`: over IPv4 and over IPv6, a datagram carries its peer, the local
+   address it was sent to and its ECN codepoint, and the reply goes back. And a socket bound to
+   `::` serving an IPv4 client carries the codepoint both ways. Linux needs IPv4's options for
+   that client, which colibri found on 2026-09-24: Linux sends to an IPv4-mapped peer through its
+   IPv4 path, which reads `IP_TOS` and ignores `IPV6_TCLASS`, and reports an IPv4 datagram's
+   codepoint only when `IP_RECVTOS` is set, even on an IPv6 socket. So `linux_shared_datagram.zig`
+   marks a mapped peer with `IP_TOS`, and sets `IP_RECVTOS` on every IPv6 socket. macOS carries
+   both directions with the IPv6 options, and kqueue needed no change.
+7. Mutations, reported `CAUGHT` or `NOT CAUGHT`: the head length left out of `Event.result`, the
    peer address read from the wrong offset, `truncated` left off, the ECN codepoint reported as
    the raw TOS byte, `segment_bytes` accepted on kqueue.
 

@@ -190,3 +190,73 @@ test "an IPv4 datagram carries its peer, its local address and its codepoint, an
     if (conformance.unsupported()) return error.SkipZigTest;
     try question_and_answer(&loopback4);
 }
+
+/// `::`, port 0. A socket bound here takes IPv6 datagrams and, unless it is set IPv6-only, IPv4
+/// ones too, which the kernel names by their IPv4-mapped addresses (`::ffff:a.b.c.d`).
+const any6 = Address.ipv6(@splat(0), 0, 0);
+
+/// Checks that `peer` is the IPv4-mapped form of 127.0.0.1 at `port`.
+fn expect_mapped_loopback(peer: *const Address, port: u16) !void {
+    const mapped_prefix = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+    try testing.expectEqual(Address.Family.ipv6, peer.family);
+    try testing.expectEqual(port, peer.port);
+    try testing.expectEqualSlices(u8, &mapped_prefix, peer.bytes[0..mapped_prefix.len]);
+    const ipv4_bytes = 4;
+    try testing.expectEqualSlices(
+        u8,
+        loopback4.bytes[0..ipv4_bytes],
+        peer.bytes[mapped_prefix.len..][0..ipv4_bytes],
+    );
+}
+
+test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
+    // A server on `::` answering a client on an IPv4 socket, which is how a QUIC server listens
+    // once for both families. Colibri found on 2026-09-24 that on Linux neither direction carried
+    // its codepoint: the server marked its datagrams with an IPv6 option that a datagram to an
+    // IPv4-mapped peer does not read, and asked only for the IPv6 report of what arrived.
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    try harness.loop.provide_datagram_buffers(receiver_group, &receiver_memory, group_buffers, buffer_bytes, .{});
+    try harness.loop.provide_datagram_buffers(sender_group, &sender_memory, group_buffers, buffer_bytes, .{});
+    const server = try sync.open_datagram(.ipv6, &any6, .{});
+    defer sync.close_now(server);
+    const client = try sync.open_datagram(.ipv4, &loopback4, .{});
+    defer sync.close_now(client);
+    const server_port = (try sync.local_address(server)).port;
+    const client_port = (try sync.local_address(client)).port;
+    var receives: [2]core.Handle = undefined;
+    try harness.submit(&.{
+        Operation.receive_from(user_data_receiver, server, receiver_group),
+        Operation.receive_from(user_data_sender, client, sender_group),
+    }, &receives);
+    // Ended whatever happens, so a failed check reports itself and not the loop's teardown.
+    defer {
+        for (receives) |handle| harness.loop.cancel(handle);
+        var events: [8]Event = undefined;
+        harness.loop.drain(&events) catch {};
+    }
+
+    const asked: Outbound = .{
+        .peer = Address.ipv4(.{ 127, 0, 0, 1 }, server_port),
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .ect0,
+        .flags = .{ .peer = true, .ecn = true },
+    };
+    const heard = try cross(&harness, client, question, &asked, user_data_question, user_data_receiver, receiver_group);
+    try expect_mapped_loopback(&heard.peer, client_port);
+    try testing.expect(heard.flags.ecn);
+    try testing.expectEqual(core.datagram.Ecn.ect0, heard.ecn);
+
+    // The answer goes to the mapped address, marked too.
+    var reply = Outbound.reply_to(&heard);
+    reply.ecn = .ect0;
+    reply.flags.ecn = true;
+    const answered = try cross(&harness, server, answer, &reply, user_data_answer, user_data_sender, sender_group);
+    try testing.expectEqual(Address.Family.ipv4, answered.peer.family);
+    try testing.expectEqual(server_port, answered.peer.port);
+    try testing.expect(answered.flags.ecn);
+    try testing.expectEqual(core.datagram.Ecn.ect0, answered.ecn);
+}
