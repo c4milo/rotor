@@ -58,6 +58,8 @@ test {
     _ = inbox;
     _ = layout;
     _ = mailbox;
+    _ = @import("mailbox_registry.zig");
+    _ = @import("mailbox_registry_test.zig");
     _ = offload;
     _ = operation;
     _ = random;
