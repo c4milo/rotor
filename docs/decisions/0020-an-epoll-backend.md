@@ -285,7 +285,8 @@ Each has a proposed answer, and the implementation follows it until the owner ru
      `uring_ring.zig`'s promise never to fall back to a slower path without saying so.
    - **The flags answer for either backend.** `files_block` and `post_bounded` are true on Linux,
      because a process may run epoll; a caller that sets a file policy and handles `mailbox_full`
-     is right on both.
+     is right on both. Since 2026-09-25 `post_bounded` is true on io_uring too, whose posts go
+     through the same mailbox rings (decision 4).
    - **The public module imports `epoll`**, the one edge of the module graph the ruling adds, and
      moved to `src/rotor/` because it is two files now.
 

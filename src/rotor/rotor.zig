@@ -159,9 +159,9 @@ pub const buffers = struct {
 pub const files_block = if (linux) uring.files_block or epoll.files_block else kqueue.files_block;
 
 /// Whether a `post` may be refused for lack of room at the target, from a loop or from a `Remote`:
-/// what a caller may assume of `mailbox_full` and `MailboxFull` (decision 4). On Linux it is true,
-/// because epoll's rings are bounded where io_uring's are not; a caller that handles the refusal is
-/// right on both.
+/// what a caller may assume of `mailbox_full` and `MailboxFull` (decision 4). True on every backend
+/// since 2026-09-25, when io_uring's posts moved to the mailbox rings every backend shares, which
+/// hold `constants.mailbox_messages` each.
 pub const post_bounded = if (linux)
     uring.post_bounded or epoll.post_bounded
 else

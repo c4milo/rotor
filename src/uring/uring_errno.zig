@@ -31,8 +31,6 @@ pub const Context = struct {
     /// The operation receives into a provided-buffer group, where ENOBUFS means the group is
     /// empty and not that the kernel is out of memory.
     from_group: bool = false,
-    /// The operation is a `post`, where the errno describes the target ring.
-    is_post: bool = false,
 };
 
 /// The code a failed operation's errno carries.
@@ -42,8 +40,6 @@ pub const Context = struct {
 /// the slot records whose cancel it was and the errno does not. This map never returns `timeout`.
 pub fn code_of(errno: E, context: Context) Code {
     assert_errno(errno);
-    // A post receives nothing, so no operation is both.
-    assert(!(context.from_group and context.is_post));
     const code: Code = switch (errno) {
         // `IORING_OP_ASYNC_CANCEL` found the operation before it finished, or the operation's
         // linked timeout expired first and the kernel cancelled the operation
@@ -62,17 +58,16 @@ pub fn code_of(errno: E, context: Context) Code {
         .AGAIN, .INTR => .would_block,
         // An empty buffer group, or a network stack out of buffer space: the helper says which.
         .NOBUFS => code_of_no_buffers(context),
-        // What the errno of a post says about its target ring: the helper names each situation.
-        // For every other operation these five are `unexpected`.
-        .OVERFLOW => code_of_post(context, .mailbox_full),
-        .BADFD, .NXIO, .BADF, .OWNERDEAD => code_of_post(context, .loop_not_found),
+        // Until 2026-09-25 these five described the target ring of a post, which went through
+        // `IORING_OP_MSG_RING`. A post goes through the mailbox rings now (decision 4), so no
+        // operation rotor submits gives them a meaning of its own.
+        .OVERFLOW, .BADFD, .NXIO, .BADF, .OWNERDEAD => .unexpected,
         // io_uring's connect waits for the handshake itself, so no completion carries EINPROGRESS
         // (recalled). `core.errno` keeps it for a readiness backend and asserts it never arrives.
         .INPROGRESS => .unexpected,
         // Every other errno means on io_uring what it means for a backend that makes the call
         // itself, so `core.errno` maps it. ENOMEM there covers the state io_uring keeps of a
-        // connect it tries again (`io_connect` in io_uring/net.c) and the request that carries a
-        // post to its target ring (`io_msg_data_remote` in io_uring/msg_ring.c, Linux 6.12).
+        // connect it tries again (`io_connect` in io_uring/net.c).
         else => core.errno.datagram_code_of(errno),
     };
     assert(code != .timeout);
@@ -85,28 +80,6 @@ pub fn code_of(errno: E, context: Context) Code {
 /// interface whose output queue is full (accept(2), send(2)).
 fn code_of_no_buffers(context: Context) Code {
     return if (context.from_group) .buffers_exhausted else .system_resources;
-}
-
-/// The code of an errno that describes the target ring of a `post`. For every other operation
-/// rotor has no code for the errno, so it is `unexpected`.
-///
-/// - EOVERFLOW, `mailbox_full`: `io_msg_ring_data` could not put the message's completion entry
-///   in the target ring (io_uring/msg_ring.c, Linux 6.1 and 6.12). Recalled: a full completion
-///   ring sends the entry to the ring's overflow list, so the failure is the kernel finding no
-///   memory for that list. In Linux 6.12 a target ring set up with `IORING_SETUP_DEFER_TASKRUN`
-///   takes `io_msg_data_remote` instead, which returns ENOMEM or EOWNERDEAD and never EOVERFLOW.
-/// - EBADFD, `loop_not_found`: the descriptor the post names is open and is not an io_uring
-///   (`io_msg_ring` in io_uring/msg_ring.c), or the target ring is not enabled yet
-///   (`IORING_SETUP_R_DISABLED`, Linux 6.12).
-/// - EBADF, `loop_not_found`: the descriptor the post names is not open, because the target
-///   loop closed its ring (`io_issue_sqe` in io_uring/io_uring.c).
-/// - EOWNERDEAD, `loop_not_found`: the thread that owned the target ring has exited
-///   (`io_msg_data_remote` in io_uring/msg_ring.c, Linux 6.12).
-/// - ENXIO, `loop_not_found`: recalled. `io_uring_enter` answers ENXIO for a ring that is being
-///   torn down. No path of io_uring/msg_ring.c returns it in Linux 6.1 or 6.12.
-fn code_of_post(context: Context, code: Code) Code {
-    assert(code == .mailbox_full or code == .loop_not_found);
-    return if (context.is_post) code else .unexpected;
 }
 
 /// True when the kernel transferred nothing and asked to be tried again: EAGAIN and EINTR. The
@@ -154,7 +127,6 @@ const testing = std.testing;
 const Row = struct { errno: E, context: Context = .{}, code: Code };
 
 const group: Context = .{ .from_group = true };
-const post: Context = .{ .is_post = true };
 
 /// Every arm of the map by name, and every arm that reads the context under each context.
 const rows = [_]Row{
@@ -165,7 +137,6 @@ const rows = [_]Row{
     .{ .errno = .NOMEM, .context = group, .code = .system_resources },
     .{ .errno = .NOBUFS, .code = .system_resources },
     .{ .errno = .NOBUFS, .context = group, .code = .buffers_exhausted },
-    .{ .errno = .NOBUFS, .context = post, .code = .system_resources },
     .{ .errno = .MFILE, .code = .descriptor_limit },
     .{ .errno = .NFILE, .code = .descriptor_limit },
     .{ .errno = .CONNRESET, .code = .connection_reset },
@@ -183,24 +154,17 @@ const rows = [_]Row{
     .{ .errno = .IO, .code = .input_output },
     .{ .errno = .NOSPC, .code = .no_space_left },
     .{ .errno = .DQUOT, .code = .no_space_left },
-    .{ .errno = .OVERFLOW, .context = post, .code = .mailbox_full },
     .{ .errno = .OVERFLOW, .code = .unexpected },
     .{ .errno = .OVERFLOW, .context = group, .code = .unexpected },
-    .{ .errno = .BADFD, .context = post, .code = .loop_not_found },
     .{ .errno = .BADFD, .code = .unexpected },
-    .{ .errno = .NXIO, .context = post, .code = .loop_not_found },
     .{ .errno = .NXIO, .code = .unexpected },
-    .{ .errno = .BADF, .context = post, .code = .loop_not_found },
     .{ .errno = .BADF, .code = .unexpected },
-    // Errnos the map does not name: a caller's mistake, an operation the kernel lacks, the
-    // linked timeout's own result, and what Linux 6.12 answers a post whose target ring's
-    // thread has exited (`io_msg_remote_post` in io_uring/msg_ring.c).
+    // Errnos the map does not name: a caller's mistake, an operation the kernel lacks, and the
+    // linked timeout's own result.
     .{ .errno = .INVAL, .code = .unexpected },
-    .{ .errno = .INVAL, .context = post, .code = .unexpected },
     .{ .errno = .FAULT, .code = .unexpected },
     .{ .errno = .OPNOTSUPP, .code = .unexpected },
     .{ .errno = .TIME, .code = .unexpected },
-    .{ .errno = .OWNERDEAD, .context = post, .code = .loop_not_found },
     .{ .errno = .OWNERDEAD, .code = .unexpected },
 };
 
@@ -211,9 +175,9 @@ test "every arm of the map yields its code, and an arm that reads the context ob
     }
 }
 
-test "the map names 22 errnos for every operation and 5 more for a post, and no other" {
-    const contexts = [_]Context{ .{}, group, post };
-    const named = [_]u32{ 22, 22, 27 };
+test "the map names 22 errnos for every operation, and no other" {
+    const contexts = [_]Context{ .{}, group };
+    const named = [_]u32{ 22, 22 };
     for (contexts, named) |context, expected| {
         var count: u32 = 0;
         for (1..4096) |number| {

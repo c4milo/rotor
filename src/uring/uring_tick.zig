@@ -1,7 +1,8 @@
 //! `tick`: one turn of the loop, and the one system call it makes (decision 3, source 4). In
-//! order: read the clock once, hand queued operations to the kernel, finish the timers that are
-//! due and cancel the operations whose deadline passed, give waiting cancels their entries, hand
-//! the caller the events the loop produced itself, enter the kernel, and reap.
+//! order: read the clock once, hand queued operations to the kernel and posts to the mailbox rings,
+//! finish the timers that are due and cancel the operations whose deadline passed, give waiting
+//! cancels their entries, hand the caller the events the loop produced itself and the messages
+//! other loops posted, enter the kernel, reap, and read the mailboxes again.
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
@@ -28,8 +29,14 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     loop.tables.expire(loop, cancel_module.request);
     cancel_module.flush(loop);
     var produced = tables.drain_finished(events);
-    const wait = if (produced == 0) wait_for(loop, wait_ns) else null;
-    const entered = try loop.ring.enter(wait);
+    produced += loop.drain_mailboxes(events[produced..]);
+    // The loop says it sleeps before it waits, and reads its mailboxes once more, so a post that
+    // came before the flag was set is not slept on (decision 12, point 6). It says it is awake
+    // again before an error can leave the tick.
+    const wait = if (produced == 0) loop.settle_to_sleep(wait_for(loop, wait_ns)) else null;
+    const entering = loop.ring.enter(wait);
+    loop.wake_up();
+    const entered = try entering;
     // The kernel has read every address of this flush's connects, and every message header of
     // its datagram operations, unless it took no entry. Both scratches are one per entry and are
     // reused from the start each tick; a counter that only rose would stop the loop after
@@ -39,6 +46,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         loop.messages_used = 0;
     }
     produced += reap_module.reap(loop, events[produced..]);
+    produced += loop.drain_mailboxes(events[produced..]);
     if (produced == 0 and wait != null) {
         // The wait may have ended because a deadline came due.
         tables.now_ns = clock_ns();
@@ -71,10 +79,11 @@ pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 
     return tick(loop, events, core.spin.remaining_ns(wait_ns, start_ns, tables.now_ns));
 }
 
-/// How long the enter may block: not at all while a cancel waits for its entry, and otherwise
-/// what `core.Tables` allows.
+/// How long the enter may block: not at all while a cancel waits for its entry or a wake waits for
+/// room in the submission ring, and otherwise what `core.Tables` allows.
 fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
     if (loop.cancels.count != 0) return null;
+    if (loop.wakes.targets.count() != 0) return null;
     return loop.tables.wait_bound(wait_ns);
 }
 

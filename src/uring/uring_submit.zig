@@ -26,8 +26,6 @@ pub const Extra = struct {
     /// storage it reuses after the call), so the storage lives until `enter` returns.
     address: u64 = 0,
     address_len: u32 = 0,
-    /// For `post`: the target loop's ring.
-    target_ring: core.Descriptor = -1,
     /// For `receive_from` and `send_to`: the scratch that holds the `msghdr` the kernel reads
     /// while `io_uring_enter` runs, and the control block a send attaches (decision 15).
     message: ?*datagram.Message = null,
@@ -36,8 +34,9 @@ pub const Extra = struct {
 };
 
 /// Hands queued slots to the kernel, oldest first, until the submission ring is full. A timer
-/// takes no entry: it is armed in the heap. A slot cancelled while it waited finishes here,
-/// and the kernel never sees it (decision 5, rule 2).
+/// takes no entry: it is armed in the heap. Nor does a post: it goes through the mailbox ring the
+/// loop has to its target. A slot cancelled while it waited finishes here, and the kernel never
+/// sees it (decision 5, rule 2). The wakes the posts need go last.
 pub fn flush(loop: *Loop) void {
     const tables = &loop.tables;
     const queued = tables.pending.count;
@@ -46,26 +45,25 @@ pub fn flush(loop: *Loop) void {
         const index = tables.next_pending() orelse break;
         if (!flush_entry(loop, index, tables.table.at(index))) break;
     }
+    send_wakes(loop);
     assert(tables.pending.count <= queued);
 }
 
 /// Fills the entry, or the two entries of a `close`, for one slot. False when the submission
-/// ring lacks the room, and the slot stays queued.
+/// ring lacks the room, and the slot stays queued. A post takes no entry, and ends here.
 fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
+    if (slot.code == .post) {
+        loop.tables.take_pending(index);
+        const result = core.remote.post(loop.inbox.registry, loop.tables.id, slot, &loop.wakes);
+        loop.tables.finish_local(index, result);
+        return true;
+    }
     const entries_needed: u32 = if (slot.code == .close) entries_per_close else 1;
     if (loop.ring.sqe_space() < entries_needed) return false;
     var extra: Extra = .{};
     switch (slot.code) {
         .connect => extra = connect_extra(loop, slot),
         .receive_from, .send_to => extra = datagram_extra(loop),
-        .post => {
-            extra.target_ring = loop.registry_descriptor(slot);
-            if (extra.target_ring < 0) {
-                loop.tables.take_pending(index);
-                loop.tables.finish_local(index, core.event.result_of(.loop_not_found));
-                return true;
-            }
-        },
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
     }
@@ -129,7 +127,6 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             ring_module.set_opcode(sqe, .FSYNC);
             sqe.rw_flags = linux.IORING_FSYNC_DATASYNC;
         },
-        .post => prepare_message(sqe, extra.target_ring, slot.message()),
         .nop => ring_module.set_opcode(sqe, .NOP),
         .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
         .send_to => {
@@ -137,12 +134,12 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             // `assert_send_to` bounds what a caller may ask for, so the control block fits.
             assert(datagram.prepare_send(sqe, extra.message.?, slot, out));
         },
-        .timer => unreachable,
+        .timer, .post => unreachable,
     }
     if (slot.flags.descriptor_registered) {
         // `fd` holds the index, which `Operation.assert_valid` allows for no kind that puts
         // something else there.
-        assert(slot.code != .post and slot.code != .close);
+        assert(slot.code != .close);
         sqe.flags |= linux.IOSQE_FIXED_FILE;
     }
 }
@@ -181,19 +178,39 @@ fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
     }
 }
 
-/// Makes `sqe` send `message` to the loop that owns `target_ring`, where `uring_reap.zig`'s
-/// `message_of` reads it back. A loop's own post and a `Remote`'s post both build it here.
-pub fn prepare_message(
-    sqe: *linux.io_uring_sqe,
-    target_ring: core.Descriptor,
-    message: core.Message,
-) void {
+/// Sends each wake the posts noted in `loop.wakes`: one `IORING_OP_MSG_RING` per target that said
+/// it sleeps, however many messages the flush posted it (decision 12, point 6). A target the
+/// submission ring has no room for stays noted, and the tick does not block while one is
+/// (`uring_tick.zig`), so no wake is lost. A target that stopped since has no ring in the
+/// registry, and nothing wakes it.
+fn send_wakes(loop: *Loop) void {
+    const registry = loop.inbox.registry orelse return;
+    const noted = loop.wakes;
+    var targets = noted.targets.iterator(.{});
+    while (targets.next()) |target| {
+        const ring = registry.get(@intCast(target));
+        if (ring >= 0) {
+            const sqe = loop.ring.get_sqe() orelse return;
+            prepare_wake(sqe, ring);
+        }
+        loop.wakes.targets.unset(target);
+    }
+}
+
+/// Makes `sqe` wake the loop that owns `target_ring`: an `IORING_OP_MSG_RING` that carries no
+/// message, only a completion whose `user_data` is `constants.user_data_wake`, which the target's
+/// reap drops. It ends the target's wait; the messages are in the mailbox rings. The sender's own
+/// answer carries the same `user_data`, and its reap drops it too. A loop's wakes and a `Remote`'s
+/// both build it here.
+pub fn prepare_wake(sqe: *linux.io_uring_sqe, target_ring: core.Descriptor) void {
     assert(target_ring >= 0);
+    sqe.* = std.mem.zeroes(linux.io_uring_sqe);
     ring_module.set_opcode(sqe, .MSG_RING);
     sqe.fd = target_ring;
     sqe.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
-    sqe.len = message.tag | constants.message_result_flag;
-    sqe.off = message.payload;
+    sqe.len = 0;
+    sqe.off = constants.user_data_wake;
+    sqe.user_data = constants.user_data_wake;
 }
 
 /// The entry that asks the kernel to cancel the operation whose `user_data` is `target`. The

@@ -153,7 +153,7 @@ test "a remote is answered loop_not_found before the loop starts and after it st
     try testing.expectError(error.LoopNotFound, remote.post(loop_id, message));
 }
 
-test "a remote that outruns the loop is refused where the kernel bounds it, and never loses a message" {
+test "a remote that outruns the loop is refused when its ring is full, and never loses a message" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
     registry.init(&registry_memory, ids);
@@ -166,17 +166,14 @@ test "a remote that outruns the loop is refused where the kernel bounds it, and 
     try remote.init(&registry, remote_id);
     defer remote.deinit();
 
-    // Post without the loop ticking, so nothing drains meanwhile. What happens next is the kernel's,
-    // and `backend.post_bounded` says which kernel this is:
-    //
-    // - kqueue: the mailbox holds `mailbox_messages`, and the next post is refused. It must be, and
-    //   it must be refused with `MailboxFull` and not dropped.
-    // - io_uring: rotor requires `IORING_FEAT_NODROP`, so a full completion ring overflows into a
-    //   kernel list and every post lands while the kernel has memory. Nothing here is refused, so
-    //   the scenario stops at a count the loop can drain inside its bound and asserts that every
-    //   one of them arrives.
+    // Post without the loop ticking, so nothing drains meanwhile. The mailbox ring holds
+    // `mailbox_messages`, on every backend since 2026-09-25 (decision 4), and the next post is
+    // refused. It must be, and it must be refused with `MailboxFull` and not dropped. Until then an
+    // io_uring post rode a `MSG_RING`, bounded only by kernel memory, and this scenario stopped at
+    // a count instead.
+    comptime std.debug.assert(backend.post_bounded);
     var sent: u32 = 0;
-    const attempts_max: u32 = if (backend.post_bounded) 1 << 16 else 1000;
+    const attempts_max: u32 = 1 << 16;
     while (sent < attempts_max) : (sent += 1) {
         remote.post(loop_id, .{ .payload = sent, .tag = 1 }) catch |err| {
             try testing.expectEqual(error.MailboxFull, err);
@@ -184,11 +181,7 @@ test "a remote that outruns the loop is refused where the kernel bounds it, and 
         };
     }
     try testing.expect(sent >= 1);
-    if (backend.post_bounded) {
-        try testing.expect(sent < attempts_max);
-    } else {
-        try testing.expectEqual(attempts_max, sent);
-    }
+    try testing.expect(sent < attempts_max);
 
     // Every message that was accepted comes out, in order, and any refused one does not.
     var received: u32 = 0;
@@ -245,9 +238,9 @@ test "a remote's post wakes a loop that sleeps in its tick, long before its wait
     var sleeper: Sleeper = .{ .registry = &registry };
     const thread = try std.Thread.spawn(.{}, Sleeper.run, .{&sleeper});
 
-    // Give the other loop time to start and to fall asleep, then post once it is there. On kqueue
-    // the post must trigger the sleeper's kqueue, or the sleeper wakes only when its second is
-    // over; on io_uring the `MSG_RING` itself wakes it.
+    // Give the other loop time to start and to fall asleep, then post once it is there. The post
+    // must wake the sleeper with its backend's wake, kqueue's trigger, epoll's eventfd or
+    // io_uring's `MSG_RING`, or the sleeper wakes only when its second is over.
     var posted = false;
     var attempt: u32 = 0;
     while (!posted and attempt < pause_attempts_max) : (attempt += 1) {

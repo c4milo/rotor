@@ -294,14 +294,15 @@ may do to it is post a message:
   `loops` and the `registry` in its options. `post{ .target, .message }` from one loop arrives in
   the target's next tick as an event with `flags.message`, `user_data` the payload and `result`
   the tag (at most `message_tag_max`). The sender's own final event says 0, `mailbox_full` or
-  `loop_not_found`. On kqueue and epoll the mailbox between two loops holds `mailbox_messages`
-  (256); on io_uring a full target overflows into kernel memory. `rotor.post_bounded` is true on
-  Linux, because a process there may run either.
+  `loop_not_found`. On every backend the mailbox between two loops holds `mailbox_messages`
+  (256), and `rotor.post_bounded` is true. A loop that sleeps is woken by the post that finds it
+  asleep: on io_uring with an `IORING_OP_MSG_RING` that carries no message. Between two loops
+  that are awake a message costs no system call on any backend.
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
   one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
-  loop's post produces an event: `MailboxFull`, `LoopNotFound`, and on io_uring `SystemResources`,
-  `Unanswered` (the kernel took the message and had not answered within a second; it may still
-  land) and `Unexpected`. A `Remote` belongs to one thread as a loop does.
+  loop's post produces an event: `MailboxFull` or `LoopNotFound`. `SystemResources`, `Unanswered`
+  and `Unexpected` are still in the set and no backend returns them since 2026-09-25. A `Remote`
+  belongs to one thread as a loop does.
 - The offload's workers answer through rings of their own, not through a `Remote`.
 
 At most `loops_max` (256) loops and remotes share one registry.

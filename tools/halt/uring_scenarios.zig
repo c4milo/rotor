@@ -24,7 +24,7 @@
 //!
 //! With its assertion deleted, no scenario here makes a Linux system call: `submit`, `cancel`,
 //! `cancel_all`, `assert_empty` and the registry make none, and each remote `post` answers
-//! `LoopNotFound` from the registry before it reaches the ring.
+//! `LoopNotFound` from the registry before it pushes a message or wakes anything.
 const std = @import("std");
 const core = @import("core");
 const uring = @import("uring");
@@ -195,7 +195,6 @@ fn claim_remote_one_by_hand(id: core.LoopId) void {
     remote_one.registry = &remote_registry;
     remote_one.owner = core.tables.thread_identity();
     remote_one.id = id;
-    remote_one.unanswered = false;
     remote_registry.set_remote(id);
 }
 
@@ -239,7 +238,7 @@ fn post_through_remote_one() void {
     _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A tag above `message_tag_max`, which would collide with the flag the reap tells a message by.
+/// A tag above `message_tag_max`, the most a message may carry on every backend.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
     claim_remote_one_by_hand(1);

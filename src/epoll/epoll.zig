@@ -61,8 +61,8 @@ pub const post_bounded = true;
 pub const supported = @import("builtin").os.tag == .linux;
 
 /// The rings are `core`'s, and so is the table of which loop is where: this backend's `post` is
-/// kqueue's, because neither kernel carries a message the way io_uring's `msg_ring` does
-/// (decision 20, open question 3).
+/// every backend's, `core.remote.post` (decision 20, open question 3; decision 4, amended
+/// 2026-09-25).
 pub const Registry = core.mailbox.Registry;
 pub const Remote = remote_module.Remote;
 pub const InitError = queue_module.InitError;

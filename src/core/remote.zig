@@ -2,9 +2,10 @@
 //! `Remote` keeps (decision 4, "What another thread may do"). A `Remote` is what a thread that
 //! owns no loop holds so it can post a message to a loop.
 //!
-//! Each backend has its own `Remote`, because the mechanism belongs to its kernel: on kqueue it
-//! is the producer end of a mailbox pair, and on io_uring it is a small ring that submits
-//! `MSG_RING`. The shared part is here, so one conformance suite drives both (decision 10).
+//! Each backend has its own `Remote`, because the wake belongs to its kernel: every remote is the
+//! producer end of its mailbox rings, and wakes a sleeping loop with that loop's own wake, which on
+//! io_uring means a small ring of its own to submit `MSG_RING` on. The shared part is here, so one
+//! conformance suite drives every backend (decision 10).
 //!
 //! A `Remote` returns errors where a loop's `post` produces events. A loop that posts gets a
 //! final event with a code such as `mailbox_full` (decision 5, rule 1). A `Remote` owns no loop,
@@ -20,40 +21,41 @@
 //! for a loop.
 //!
 //! `send` is the post of the readiness backends, kqueue and epoll, where a loop's post and a
-//! `Remote`'s post write the same mailbox ring. io_uring posts through the kernel instead.
+//! `Remote`'s post write the same mailbox ring, on io_uring too since 2026-09-25 (decision 4).
 const std = @import("std");
 const constants = @import("constants.zig");
 const event = @import("event.zig");
 const layout = @import("layout.zig");
 const mailbox = @import("mailbox.zig");
 const operation = @import("operation.zig");
+const slot_module = @import("slot.zig");
 
+const assert = std.debug.assert;
+const Slot = slot_module.Slot;
 const Descriptor = operation.Descriptor;
 const LoopId = operation.LoopId;
 const Message = operation.Message;
 
 /// What `Remote.post` answers.
 pub const PostError = error{
-    /// The target's queue had no room. Nothing was sent, and the caller may try again. On kqueue
-    /// the queue is a mailbox of `mailbox_messages`. On io_uring it is the target's completion
-    /// ring, which under `IORING_FEAT_NODROP` overflows into a kernel list, so this is answered
-    /// only when the kernel cannot allocate the overflow entry. `post_bounded` on each backend
-    /// says which of the two it is.
+    /// The target's queue had no room. Nothing was sent, and the caller may try again. The queue
+    /// is the mailbox ring of `mailbox_messages` the remote has to the target, on every backend
+    /// since 2026-09-25 (decision 4).
     MailboxFull,
     /// The target names no running loop: an id at or above the count the registry was sized for,
     /// a loop that has not started or has stopped, or another `Remote`.
     LoopNotFound,
-    /// io_uring only: the kernel had no memory for the request that carries the message. Nothing
-    /// was sent, and the caller may try again. kqueue never answers it.
+    /// No backend answers it since 2026-09-25, when io_uring's posts moved to the mailbox rings
+    /// (decision 4). Until then io_uring answered it when the kernel had no memory for the request
+    /// that carried the message. It stays in the set by the owner's ruling of that day, so the
+    /// surface did not change.
     SystemResources,
-    /// io_uring only: the kernel took the message and had not answered when the post's wait ran
-    /// out (`uring/constants.zig`, `remote_wait_ns`). The message may still land, so a caller that
-    /// posts it again may deliver it twice. Until the answer arrives, every later post through this
-    /// `Remote` is refused with this error and sends nothing. The answer, when it comes, is read
-    /// and dropped: its caller has already been told this. kqueue never answers it.
+    /// No backend answers it since 2026-09-25, for the same reason. Until then io_uring answered it
+    /// when the kernel had not answered the `IORING_OP_MSG_RING` that carried the message within
+    /// the post's wait.
     Unanswered,
-    /// io_uring only: the kernel answered with an errno rotor has no meaning for, or refused the
-    /// `io_uring_enter` call itself. kqueue never answers it.
+    /// No backend answers it since 2026-09-25, for the same reason. Until then io_uring answered it
+    /// for an errno rotor had no meaning for, or an `io_uring_enter` the kernel refused.
     Unexpected,
 };
 
@@ -117,6 +119,21 @@ pub const Wakes = struct {
         }
     }
 };
+
+/// A loop's `post`, the same on every backend: writes the slot's message into the ring `sender`
+/// has to the slot's target, and notes the target in `wakes` when it said it sleeps, so the flush
+/// wakes it once (decision 12, point 6). The result is the post's own final event. Until
+/// 2026-09-25 kqueue and epoll each carried a copy, and io_uring posted through the kernel.
+pub fn post(registry: ?*mailbox.Registry, sender: LoopId, slot: *const Slot, wakes: *Wakes) i32 {
+    assert(slot.code == .post);
+    const known = registry orelse return event.result_of(.loop_not_found);
+    const target = slot.post_target();
+    const wake = send(known, sender, target, slot.message()) catch |err| {
+        return event.result_of(code_of(err));
+    };
+    if (wake != null) wakes.note(target);
+    return 0;
+}
 
 /// The code a loop's post ends with when `send` refused it.
 pub fn code_of(err: SendError) event.Code {

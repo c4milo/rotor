@@ -26,6 +26,14 @@ reopens with that number.
 
 ## 2. A posted message travels in the completion's result, with the top bit set
 
+*Replaced on 2026-09-25.* The owner ruled that loops talk through shared memory on io_uring too
+(decision 4, its amendment of that day). A message now goes through the mailbox ring the sender
+has to the target, and an `IORING_OP_MSG_RING` carries no message: it wakes a target that sleeps,
+and its completion, with `user_data` `constants.user_data_wake`, is dropped by both reaps. So the
+result carries no tag, a result below -4095 means nothing, and `message_result_flag` is gone.
+`core.constants.message_tag_max` stays, as a named limit every backend holds a tag to. What
+follows is the point as it stood.
+
 io_uring delivers a `MSG_RING` post as a completion whose `user_data` and 32-bit result are the
 sender's to choose. The payload is any 64 bits, so `user_data` cannot mark the completion as a
 message. The backend sets bit 31 of the result above the tag. An errno is at most 4095, so a

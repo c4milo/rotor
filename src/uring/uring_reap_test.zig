@@ -217,18 +217,16 @@ test "a multishot operation keeps its slot while more follows and ends with one 
     try testing.expectEqual(@as(u32, 0), fixture.loop.in_flight());
 }
 
-test "a posted message is an event of no operation, even when its payload reads as a handle" {
+test "a wake, and the answer to one this loop sent, yield no event and end no operation" {
     var fixture: Fixture = undefined;
     fixture.init();
-    const handle = fixture.receive(1);
-    const tag: u32 = 42;
-    const result: i32 = @bitCast(tag | constants.message_result_flag);
-    const event = fixture.complete(handle.to_bits(), result, 0).?;
-    try testing.expect(event.flags.message and !event.is_final());
-    try testing.expectEqual(handle.to_bits(), event.user_data);
-    try testing.expectEqual(@as(i32, 42), event.result);
+    _ = fixture.receive(1);
+    const wake = constants.user_data_wake;
+    // The completion a wake leaves on the loop it woke, and the answer on the loop that sent it.
+    try testing.expectEqual(none, fixture.cancel_answer(wake, null));
+    // A wake the kernel refused: the target stopped and its ring is gone.
+    try testing.expectEqual(none, fixture.cancel_answer(wake, .BADF));
     try testing.expectEqual(@as(u32, 1), fixture.loop.in_flight());
-    try testing.expect(fixture.loop.tables.table.lookup(handle) != null);
 }
 
 test "the completions the backend consumes itself yield no event" {

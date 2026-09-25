@@ -125,7 +125,7 @@ file may be filled from a machine of another architecture, however convenient it
 | C14 | loopback TCP round trip, 1 byte each way, both ends on one core | 10,000 to 30,000 | recalled | 12,791 (47,500) | 1,416 (1,708) | 5,209 (6,882) | |
 | C15 | loopback TCP round trip, 1 byte each way, ends on two cores | no prior | none | 11,750 (40,875) | 9,333 (42,833) | 7,403 (21,452) | |
 | C16 | `send` plus `recv` of 4 KiB on a connected loopback socket, the two syscalls alone | no prior | none | 4,417 (17,416) | 1,250 (1,500) | 4,320 (4,594) | |
-| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap | no prior | none | not applicable | 10,981 (13,519) | 8,724 (9,253) | |
+| C17 | one cross-core message by `IORING_OP_MSG_RING`, post to reap: since 2026-09-25 what waking a sleeping io_uring loop costs | no prior | none | not applicable | 10,981 (13,519) | 8,724 (9,253) | |
 | C18 | one cross-core message by a shared ring plus an `EVFILT_USER` wake, post to reap | no prior | none | 18,125 (46,750) | not applicable | not applicable | not applicable |
 | C19 | one cross-core message by a shared ring when the receiver is already awake | no prior | none | 97.0 (501) | 98.0 (518) | 36.0 (38.0) | |
 | C20 | monotonic clock read | 20 | recalled | 16.4 (28.3) | 18.6 (30.8) | 22.4 (28.7) | |

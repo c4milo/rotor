@@ -142,18 +142,19 @@ test "a shutdown's how is the kernel's own value" {
     try testing.expectEqual(@as(u32, linux.SHUT.WR), sqe.len);
 }
 
-test "a post carries its payload as user data and its tag in a result no errno reaches" {
-    const sqe = prepared(.{ .user_data = 1, .kind = .{ .post = .{
-        .target = 2,
-        .message = .{ .payload = 0xFEED_FACE_CAFE_BEEF, .tag = core.constants.message_tag_max },
-    } } }, .{ .target_ring = 11 });
-    try testing.expectEqual(linux.IORING_OP.MSG_RING, sqe.opcode);
-    try testing.expectEqual(@as(i32, 11), sqe.fd);
-    try testing.expectEqual(@as(u64, 0xFEED_FACE_CAFE_BEEF), sqe.off);
-    const result: i32 = @bitCast(sqe.len);
-    try testing.expect(result < -4095);
-    const tag = sqe.len & ~constants.message_result_flag;
-    try testing.expectEqual(core.constants.message_tag_max, tag);
+test "a wake is a MSG_RING that carries no message, whatever the entry held before" {
+    var sqe: linux.io_uring_sqe = undefined;
+    @memset(std.mem.asBytes(&sqe), 0xAA);
+    submit_module.prepare_wake(&sqe, 11);
+    var expected = std.mem.zeroes(linux.io_uring_sqe);
+    expected.opcode = .MSG_RING;
+    expected.fd = 11;
+    expected.addr = @intFromEnum(linux.IORING_MSG_RING_COMMAND.DATA);
+    // The target's completion and the sender's answer both carry the wake's `user_data`, which
+    // names no operation, and the target's has result 0.
+    expected.off = constants.user_data_wake;
+    expected.user_data = constants.user_data_wake;
+    try testing.expectEqualSlices(u8, std.mem.asBytes(&expected), std.mem.asBytes(&sqe));
 }
 
 test "a connect names the kernel's form of the address and its length" {

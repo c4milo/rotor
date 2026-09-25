@@ -1,6 +1,8 @@
-//! One cross-core message on its own: row C17 of docs/costs.md, and the unit of cost decision 4's
-//! threading model pays in. Two loops on two threads pinned to two CPUs send one message back and
-//! forth. A round trip is two posts, so half of it is one message, post to reap.
+//! One cross-core message on its own, through rotor's loops: the unit of cost decision 4's
+//! threading model pays in, which rows C17 and C19 of docs/costs.md measure without a loop. Since
+//! 2026-09-25 the message goes through a mailbox ring, and `IORING_OP_MSG_RING` only wakes a loop
+//! that sleeps (decision 4). Two loops on two threads pinned to two CPUs send one message back
+//! and forth. A round trip is two posts, so half of it is one message, post to reap.
 //!
 //! It runs three times, and the third is the question the first two raise.
 //!
@@ -68,7 +70,8 @@ const Side = struct {
     memory: [memory_bytes]u8 align(core.layout.memory_alignment) = undefined,
     loop: Loop = undefined,
 
-    /// Posts one message and consumes the post's own completion when it arrives with the reply.
+    /// Posts one message. The post's own event comes back in the tick that flushes it, and
+    /// `receive` skips it.
     fn post(side: *Side, target: core.LoopId, tag: u32) void {
         const taken = side.loop.submit(&.{.{ .user_data = 0, .kind = .{ .post = .{
             .target = target,
@@ -128,7 +131,7 @@ const Echo = struct {
         });
         defer echo.side.loop.deinit();
         while (try echo.side.receive(echo.mode) != tag_stop) echo.side.post(0, tag_pong);
-        // Reap the completion of the last pong before the loop ends.
+        // Hand over the last pong's own event before the loop ends.
         var events: [4]core.Event = undefined;
         const wait_ns = echo.mode.wait_ns;
         while (echo.side.loop.in_flight() != 0) _ = try echo.side.loop.tick(&events, wait_ns);

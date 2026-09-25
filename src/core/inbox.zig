@@ -1,7 +1,7 @@
-//! What a readiness loop, kqueue's or epoll's, receives from other threads, and the sleep handshake
-//! that makes sure it wakes for it (decision 12, point 6): the messages other loops post to its
-//! mailboxes, and the results its offload's workers push to their rings (decision 18). io_uring
-//! carries both through the kernel, so it has none of this.
+//! What a loop receives from other threads, and the sleep handshake that makes sure it wakes for it
+//! (decision 12, point 6): the messages other loops post to its mailboxes, on every backend since
+//! 2026-09-25 (decision 4), and the results its offload's workers push to their rings, on kqueue
+//! and epoll (decision 18). io_uring has no offload: the kernel performs its file operations.
 //!
 //! Each loop embeds one `Inbox`. Until 2026-09-23 the two readiness backends wrote these fields and
 //! the handshake out twice, so every change to the handshake had to land in two places.

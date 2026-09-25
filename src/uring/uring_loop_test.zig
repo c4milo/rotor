@@ -254,3 +254,57 @@ test "more datagrams than the ring has entries reuse the message scratch" {
     fixture.loop.cancel_all();
     try fixture.loop.drain(&events);
 }
+
+test "a wake that finds no room in the submission ring waits for it, and the loop does not block" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var registry: uring.Registry = undefined;
+    var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
+    registry.init(&registry_memory, 2);
+    var sender: Fixture = undefined;
+    try sender.init(.{ .operations = operations, .entries = 1, .id = 0, .registry = &registry });
+    defer sender.loop.deinit();
+    // Whatever fails below, the receives end before `deinit`, which halts on one in flight.
+    var scratch: [4]Event = undefined;
+    defer {
+        sender.loop.cancel_all();
+        sender.loop.drain(&scratch) catch {};
+    }
+    // A ring stands in for loop 1 and says it sleeps, so a post to it needs a wake.
+    var target = try uring.ring_module.Ring.init(4);
+    defer target.deinit();
+    registry.set(1, target.descriptor());
+    defer registry.clear(1);
+    registry.begin_sleep(1);
+    defer registry.end_sleep(1);
+    const pair = try socket_pair();
+    defer close_pair(pair);
+    var first: [8]u8 = undefined;
+    var second: [8]u8 = undefined;
+    var handles: [3]Handle = undefined;
+    var events: [4]Event = undefined;
+
+    // The receive takes the ring's one entry, so the post's wake finds no room.
+    const post: Operation = .{ .user_data = 9, .kind = .{ .post = .{
+        .target = 1,
+        .message = .{ .payload = 5, .tag = 6 },
+    } } };
+    _ = sender.loop.submit(&.{ receive(1, pair[0], &first, 0), post }, handles[0..2]);
+    try testing.expectEqual(@as(u32, 1), try sender.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 9), events[0].user_data);
+    try testing.expect(sender.loop.wakes.targets.isSet(1));
+
+    // Another receive takes the entry the enter freed, so the wake still finds none. The tick has
+    // nothing to hand over, and it must not block while the wake waits.
+    _ = sender.loop.submit(&.{receive(2, pair[0], &second, 0)}, handles[2..3]);
+    const before = uring.testing.monotonic_ns();
+    try testing.expectEqual(@as(u32, 0), try sender.loop.tick(&events, core.constants.ns_per_s));
+    try testing.expect(uring.testing.monotonic_ns() - before < core.constants.ns_per_s / 2);
+
+    // Now there is room: the wake goes out, and reaches the target's ring.
+    _ = try sender.loop.tick(&events, 0);
+    try testing.expect(!sender.loop.wakes.targets.isSet(1));
+    _ = try target.enter(null);
+    try testing.expectEqual(@as(u32, 1), target.cq_ready());
+    try testing.expectEqual(uring.constants.user_data_wake, target.cqe_at(0).user_data);
+    target.cq_advance(1);
+}

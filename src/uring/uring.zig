@@ -20,7 +20,6 @@ pub const cancel_module = @import("uring_cancel.zig");
 pub const descriptors = @import("uring_descriptors.zig");
 pub const errno = @import("uring_errno.zig");
 pub const reap_module = @import("uring_reap.zig");
-pub const registry_module = @import("uring_registry.zig");
 pub const remote_module = @import("uring_remote.zig");
 pub const ring_module = @import("uring_ring.zig");
 pub const submit_module = @import("uring_submit.zig");
@@ -28,7 +27,10 @@ pub const sync = @import("uring_sync.zig");
 pub const testing = @import("linux_shared").testing;
 pub const tick_module = @import("uring_tick.zig");
 
-pub const Registry = registry_module.Registry;
+/// Where loops find each other's mailbox rings: `core.mailbox`'s, the one kqueue and epoll use.
+/// Since 2026-09-25 a post on io_uring goes through these rings too, and `IORING_OP_MSG_RING`
+/// only wakes a target that sleeps (decision 4, the owner's ruling of that day).
+pub const Registry = core.mailbox.Registry;
 pub const Remote = remote_module.Remote;
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation
@@ -37,17 +39,11 @@ pub const Remote = remote_module.Remote;
 pub const files_block = false;
 
 /// Whether a `post` can be refused for lack of room at the target, which decides what a caller
-/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). The ring is
-/// created with `IORING_FEAT_NODROP` required, so a target whose completion ring is full has the
-/// completion kept by the kernel in an overflow list, bounded by kernel memory and not by rotor.
-/// A `MSG_RING` to a running loop therefore lands unless the kernel is out of memory. What it
-/// answers then depends on the kernel: `EOVERFLOW`, `mailbox_full`, when the overflow entry could
-/// not be allocated (Linux 6.1, and 6.3 to 6.9 from the target's task work); `ENOMEM`,
-/// `system_resources`, when the request that carries the message could not be allocated (6.10
-/// and later, where a later failure to allocate the overflow entry drops the message with no
-/// answer to the sender). Recalled from `io_uring/msg_ring.c`; `uring_errno.zig` records what
-/// was read there.
-pub const post_bounded = false;
+/// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). A post goes
+/// through the mailbox ring the sender has to the target, which holds
+/// `core.constants.mailbox_messages`, so a full ring refuses it, as on kqueue and epoll. Until
+/// 2026-09-25 the message rode an `IORING_OP_MSG_RING` and was bounded by kernel memory alone.
+pub const post_bounded = true;
 
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
 pub const supported = @import("builtin").os.tag == .linux;
@@ -107,7 +103,12 @@ pub const Loop = struct {
     /// `core.datagram.prefix_bytes(datagram_group)`, held here because the reap subtracts it from
     /// every datagram completion and must not recompute it per event.
     datagram_prefix: i32,
-    registry: ?*Registry,
+    /// The mailbox rings other loops post to this one through, and the sleep flag they read to
+    /// know whether to wake it (decision 12, point 6).
+    inbox: core.inbox.Inbox,
+    /// The loops this loop's posts must wake whose wake found no room in the submission ring yet.
+    /// A tick does not block while one is left, so no wake is lost (`uring_submit.zig`).
+    wakes: core.remote.Wakes,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
 
@@ -128,8 +129,8 @@ pub const Loop = struct {
         spin_budget_ns: u64 = 0,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
-        /// Where loops find each other's rings. Null for a loop that posts to none and that
-        /// none posts to.
+        /// Where loops find each other's mailbox rings. Null for a loop that posts to none and
+        /// that none posts to.
         registry: ?*Registry = null,
         /// **Checked and ignored** (decision 18). The kernel performs `read`, `write` and
         /// `fdatasync` without a thread here, which is the whole point of this backend, so there is
@@ -176,7 +177,7 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.ring = try ring_module.Ring.init(entries_of(options));
-        if (loop.registry) |registry| registry.set(loop.tables.id, loop.ring.descriptor());
+        if (loop.inbox.registry) |registry| registry.set(loop.tables.id, loop.ring.descriptor());
     }
 
     /// Everything but the ring: what the paths that enter no kernel run on, so their tests
@@ -208,7 +209,8 @@ pub const Loop = struct {
         loop.messages_used = 0;
         loop.datagram_group = .{};
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
-        loop.registry = options.registry;
+        loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
+        loop.wakes = .{};
         loop.groups = @splat(buffers.Group.none);
     }
 
@@ -216,7 +218,7 @@ pub const Loop = struct {
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
         loop.tables.assert_empty();
-        if (loop.registry) |registry| registry.clear(loop.tables.id);
+        if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.ring.deinit();
     }
 
@@ -332,13 +334,20 @@ pub const Loop = struct {
         return loop.groups[group_id].bytes_of(buffer_id);
     }
 
-    /// The ring of the loop a `post` names, or a negative value when there is none.
-    pub fn registry_descriptor(loop: *const Loop, slot: *const Slot) core.Descriptor {
-        assert(slot.code == .post);
-        const registry = loop.registry orelse return registry_module.descriptor_none;
-        const target = slot.post_target();
-        assert(target != loop.tables.id);
-        return registry.get(target);
+    /// Moves the messages other loops posted into `events`: `core.inbox`'s.
+    pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
+        return loop.inbox.drain_mailboxes(loop.tables.id, events);
+    }
+
+    /// Tells the registry this loop is about to sleep, and looks at its mailboxes once more:
+    /// `core.inbox`'s.
+    pub fn settle_to_sleep(loop: *Loop, wait: ?u64) ?u64 {
+        return loop.inbox.settle_to_sleep(loop.tables.id, wait);
+    }
+
+    /// Tells the registry the loop is awake again.
+    pub fn wake_up(loop: *Loop) void {
+        loop.inbox.wake_up(loop.tables.id);
     }
 };
 
@@ -355,7 +364,6 @@ test {
     _ = descriptors;
     _ = errno;
     _ = reap_module;
-    _ = registry_module;
     _ = remote_module;
     _ = ring_module;
     _ = submit_module;

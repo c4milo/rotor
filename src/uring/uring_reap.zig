@@ -83,11 +83,10 @@ fn submitted_slot(loop: *Loop, handle: Handle) *Slot {
     return slot;
 }
 
-/// A result below zero: a message another loop posted, a completion the backend consumes, or an
-/// operation that failed. Kept out of `complete` so the path of a success stays short.
+/// A result below zero: a completion the backend consumes, or an operation that failed. Kept out
+/// of `complete` so the path of a success stays short.
 fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     assert(cqe.res < 0);
-    if (cqe.res < -constants.errno_max) return message_of(cqe);
     const handle = Handle.from_bits(cqe.user_data);
     if (handle.is_none()) return null;
     const slot = submitted_slot(loop, handle);
@@ -97,10 +96,7 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         loop.tables.requeue(handle.index);
         return null;
     }
-    var code = errno_module.code_of(errno, .{
-        .from_group = slot.flags.buffer_group,
-        .is_post = slot.code == .post,
-    });
+    var code = errno_module.code_of(errno, .{ .from_group = slot.flags.buffer_group });
     // An operation that a cancel is waiting for, and that the kernel ended having transferred
     // nothing, was cancelled as far as its caller can tell: EAGAIN and EINTR are not retried
     // once a cancel is asked for, and they are not the caller's to interpret.
@@ -120,13 +116,4 @@ fn should_retry(slot: *const Slot, errno: linux.E) bool {
     if (!errno_module.is_retryable(errno)) return false;
     if (slot.flags.cancel_requested) return false;
     return slot.retries < core.constants.transfer_retries_max;
-}
-
-/// A result below every errno is a message: the sender set the top bit of the tag
-/// (`constants.message_result_flag`) and put the payload in `user_data`.
-fn message_of(cqe: *const linux.io_uring_cqe) Event {
-    const bits: u32 = @bitCast(cqe.res);
-    assert(bits & constants.message_result_flag != 0);
-    const tag = bits & ~constants.message_result_flag;
-    return Event.message(cqe.user_data, tag);
 }

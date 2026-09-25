@@ -374,8 +374,9 @@ What the runs say:
   to 2.4 µs against 19 to 34 µs waiting.
 - **A message between two loops that are awake costs less on epoll.** With no gap the round trip is
   1.6 to 2.4 µs on epoll and 2.6 to 4.2 µs on io_uring, on the same runners. epoll's backend passes
-  a message through a ring in memory, and io_uring's through the kernel with `IORING_OP_MSG_RING`;
-  how much of the difference that accounts for is not measured.
+  a message through a ring in memory, and io_uring's passed it through the kernel with
+  `IORING_OP_MSG_RING`: two system calls per message against none, counted on 2026-09-25
+  (decision 4). io_uring's posts moved to the rings in memory that day.
 - **The loop's budget matches the program's spin on epoll at every gap, 1,000 µs included:** within
   0.9 µs of CPU up to 1,000 µs and 1.8 µs at 1,500 µs, and within 0.3 µs of round trip. The 1 ms
   difference of io_uring does not appear on epoll. On io_uring it appeared again in these runs, on

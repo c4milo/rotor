@@ -5,6 +5,12 @@ did not rule on the open questions below, so the implementation follows the prop
 each until a ruling changes it. This record argues with the owner's position in two places: file
 ownership and SO_REUSEPORT on macOS.
 
+Amended on 2026-09-25 by the owner's ruling: loops talk through shared memory on io_uring too.
+A post on every backend goes through the mailbox ring the sender has to the target, and
+`IORING_OP_MSG_RING` only wakes a target that sleeps. The ruling reopened the alternative "Shared
+rings for both backends", which this record had rejected, on the evidence recorded under it. "How
+cores talk" and "What another thread may do" below say what changed.
+
 Amended on 2026-09-21 by decision 19: the harness measures one core. The requests below for rows on
 N cores, and for skewed rows, are withdrawn. That record says why, and what is measured instead.
 
@@ -120,15 +126,20 @@ bytes, a 64-bit payload and a 32-bit tag with 32 bits reserved. The receiver see
 `Event` in its normal reap. Anything larger travels as an index or pointer into memory the two
 sides agreed on; the loop copies 16 bytes and no more.
 
-- **io_uring**: `IORING_OP_MSG_RING`. The post is a submission entry in the sender's own batch,
-  so it adds `C8` to the sender's tick and no syscall. It arrives as a completion in the
-  receiver's ring and wakes the receiver if it is waiting. No memory is shared.
+- **io_uring**, since 2026-09-25: the same rings as kqueue and epoll, and the same sleep flag.
+  The wake is an `IORING_OP_MSG_RING` that carries no message, sent only when the ring's loop said
+  it sleeps: a submission entry in the sender's batch, whose completion ends the target's wait.
+  Between two loops that are awake a message costs no system call, where it cost two before.
+  Until that day the message itself rode the `MSG_RING`: a submission entry in the sender's own
+  batch that arrived as a completion in the receiver's ring, with no memory shared, and a
+  `DEFER_TASKRUN` receiver had to enter the kernel to see it.
 - **kqueue**: kqueue has nothing like it. The answer is one single-producer single-consumer ring
   per ordered pair of loops, in memory both share, plus an `EVFILT_USER` trigger on the
   receiver's kqueue. The sender triggers only when the ring goes from empty to non-empty, so a
   burst costs one `kevent` call (C10) and not one per message.
 
-The kqueue rings are the one place in rotor where two threads touch the same memory. They use
+The rings are the one place in rotor where two threads touch the same memory, on every backend
+since 2026-09-25 (`src/core/mailbox.zig`). They use
 two atomic indices and no lock, and the two indices sit on separate cache lines, 128 bytes apart
 on Apple silicon, so the producer and the consumer never write one line. The memory is
 `loops_max × loops_max × ring_bytes`, a named product, handed in at init.
@@ -214,9 +225,9 @@ decision 19:** there are no skewed runs, so the second case is argued and not me
 ### What another thread may do
 
 One thing: `post`. A thread that owns a loop posts through its own loop. A thread that owns no
-loop uses a `Remote`, a handle registered at init that counts against `loops_max`: on kqueue it
-is the producer end of a ring pair, and on io_uring it is a small ring created for that thread,
-used only to submit `MSG_RING`.
+loop uses a `Remote`, a handle registered at init that counts against `loops_max`: on every
+backend it is the producer end of its mailbox rings. On io_uring it also carries a small ring
+created for that thread, used only to submit the `MSG_RING` that wakes a target that sleeps.
 
 **`Remote` was built on 2026-09-22**, after `0017-the-layer-that-owns-the-loop.md` found it
 described here and absent from `src/`. It is `src/kqueue/kqueue_remote.zig` and
@@ -228,18 +239,18 @@ exports it. What it settled that this paragraph did not say:
   `loop_not_found` by the check every backend already made on a negative descriptor.
 - `Remote.post` returns `core.remote.PostError` where a loop's `post` produces an event, because a
   remote has nowhere to deliver an event. The errors a loop's post can also report keep the names
-  `event.error_of` gives them: `MailboxFull`, `LoopNotFound`, `SystemResources`, `Unexpected`. On
-  io_uring the errno goes through the same map a loop's post uses, `uring_errno.zig`. kqueue
-  answers only the first two.
-- On io_uring `post` submits one `MSG_RING` and reads the kernel's answer before it returns. On
-  Linux 6.1, and on 6.10 and later, the answer is posted inside the `io_uring_enter` that submits,
-  so the post is one system call. On 6.3 to 6.9 a `MSG_RING` to a `DEFER_TASKRUN` target runs as
-  task work of the target's thread and the answer waits for that thread to run (recalled from
-  `io_uring/msg_ring.c`, not read). So the enter waits `remote_wait_ns` at most, and a post whose
-  answer has not come is `Unanswered`: the message may still land, and until the answer arrives the
-  remote refuses every post. That is the fifth error, and the one a loop can never report.
-- The ring holds `constants.remote_entries` entries, one: a post never submits while an earlier
-  entry is unanswered, so one entry and a completion ring of two are enough.
+  `event.error_of` gives them: `MailboxFull`, `LoopNotFound`, `SystemResources`, `Unexpected`,
+  and `Unanswered`, which a loop can never report. Since 2026-09-25 every backend answers only the
+  first two. The other three stay in the set by the owner's ruling of that day, so the surface did
+  not change.
+- On io_uring, since 2026-09-25, `post` pushes the message into the ring and, when the target
+  sleeps, submits a wake from the remote's own ring without waiting for its answer. A wake the
+  kernel refuses is dropped, as kqueue and epoll drop theirs: the message is in the ring, and the
+  target reads it when it next ticks. Until that day the post submitted the message as a
+  `MSG_RING` and waited up to `remote_wait_ns` for the kernel's answer, and a post whose answer
+  had not come was `Unanswered`.
+- The remote's ring holds `constants.remote_entries` entries, one: it submits one wake at a time
+  in an enter of its own, and drops the answers to earlier wakes before the next.
 - A `Remote` belongs to one thread. `init` records the thread's identity, the address of the
   thread-local marker `core/tables.zig` keeps for a loop, and `post` and `deinit` halt on any
   other thread.
@@ -249,9 +260,9 @@ exports it. What it settled that this paragraph did not say:
   id may be claimed again, and a message left in a ring by a previous holder is delivered to the
   next loop that claims the receiving id.
 - Whether `MailboxFull` can happen at all is the backend's, and `post_bounded`, exported from
-  `src/rotor/rotor.zig`, says: yes on kqueue, whose mailbox holds `mailbox_messages`; on io_uring only
-  when the kernel is out of memory, because `IORING_FEAT_NODROP` keeps an overflowing completion
-  in a kernel list.
+  `src/rotor/rotor.zig`, says. Since 2026-09-25 it is yes on every backend, whose mailbox holds
+  `mailbox_messages`. Until then io_uring refused a post only when the kernel was out of memory,
+  because `IORING_FEAT_NODROP` kept an overflowing completion in a kernel list.
 
 **The offload built on 2026-09-21 is not `Remote` and does not replace it.**
 `0018-a-caller-supplied-thread-pool.md` lets a worker thread hand back the result of one file
@@ -307,8 +318,33 @@ loop that is awake, which decision 13's spin budget makes common for a caller th
 "Rides in a batch the sender already submits" holds for a loop whose tick has other work to enter
 for; in the measured ping-pong each message paid for its entries alone. What the evidence points
 to is a post that goes through a shared ring when the target is awake, as on kqueue and epoll,
-with `MSG_RING` left to wake a target that sleeps. That is the rejected alternative in part, and
-nothing is built toward it.
+with `MSG_RING` left to wake a target that sleeps.
+
+*Adopted on 2026-09-25.* The owner ruled that loops talk across threads through shared memory
+(the amendment at the top of this record). What was built:
+
+- A post on io_uring goes through `core.remote.post`, which every backend now calls, into the
+  mailbox ring. A target that said it sleeps is noted and woken once per flush, with an
+  `IORING_OP_MSG_RING` that carries no message and whose completion both reaps drop
+  (`uring/constants.zig`, `user_data_wake`). A wake that finds no room in the submission ring
+  stays noted, and the tick does not block while one is.
+- The io_uring tick takes the sleep handshake of `core.inbox`: it drains the mailboxes, says it
+  sleeps and reads them once more before it blocks, and says it is awake again before an error
+  can leave the tick.
+- `uring.Registry` is `core.mailbox.Registry`. A `Remote` on io_uring pushes into the ring and
+  keeps its one-entry ring for wakes alone.
+
+Counted afterwards, on `orbstack`, with `bench/calls/count_post.sh`:
+
+| how the receiving loop waits | io_uring before, calls per message | io_uring after | epoll |
+|---|---|---|---|
+| it blocks | 2.10 | 2.10 | 3.15 |
+| it polls without blocking | 2.10 | 0.002 | 0.002 |
+| it polls for its 50 µs spin budget | 2.10 | 0.002 | 0.002 |
+
+Between loops that are awake a message now costs io_uring what it costs epoll. Waking a loop that
+sleeps still costs 2.1 calls, one fewer than epoll. The time on `github` is measured after the
+change lands.
 
 ## How it is checked
 

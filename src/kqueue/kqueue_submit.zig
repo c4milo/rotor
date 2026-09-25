@@ -43,7 +43,10 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
     assert(slot.state == .queued);
     const tables = &loop.tables;
     switch (slot.code) {
-        .post => tables.finish_local(index, post(loop, slot, wakes)),
+        .post => {
+            const result = core.remote.post(loop.inbox.registry, tables.id, slot, wakes);
+            tables.finish_local(index, result);
+        },
         .close => tables.finish_local(index, close(loop, slot)),
         else => start(loop, index, slot),
     }
@@ -145,19 +148,6 @@ pub fn kernel_filter(filter: Filter) i16 {
         .read => std.c.EVFILT.READ,
         .write => std.c.EVFILT.WRITE,
     };
-}
-
-/// Writes the message into the ring this loop has to the target, and notes the target in `wakes`
-/// when it sleeps, so the flush wakes it once (decision 12, point 6). The result is the post's own
-/// final event.
-fn post(loop: *Loop, slot: *const Slot, wakes: *core.remote.Wakes) i32 {
-    const registry = loop.inbox.registry orelse return core.event.result_of(.loop_not_found);
-    const target = slot.post_target();
-    const wake = core.remote.send(registry, loop.tables.id, target, slot.message()) catch |err| {
-        return core.event.result_of(core.remote.code_of(err));
-    };
-    if (wake != null) wakes.note(target);
-    return 0;
 }
 
 /// Ends every operation that waits on the descriptor with `canceled`, then closes it. The

@@ -120,7 +120,7 @@ recalled and to be verified by the init probe in milestone 2:
 | feature | recalled kernel | used for |
 |---|---|---|
 | `IORING_FEAT_NODROP`, `IORING_FEAT_EXT_ARG` | 5.5, 5.11 | no lost completion; wait timeout as an argument (stompy requires both today) |
-| `IORING_OP_MSG_RING` | 5.18 | cross-core post |
+| `IORING_OP_MSG_RING` | 5.18 | waking a loop that sleeps (the post itself since 2026-09-25 goes through a mailbox ring, decision 4) |
 | multishot accept | 5.19 | one submission, many accepts |
 | provided buffer rings | 5.19 | multishot receive |
 | multishot receive | 6.0 | one submission, many receives |

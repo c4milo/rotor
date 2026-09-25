@@ -1,12 +1,12 @@
-//! The mailboxes a `post` travels through on a readiness backend (decision 4, "How cores talk";
+//! The mailboxes a `post` travels through, on every backend (decision 4, "How cores talk";
 //! decision 12, point 6). `Mailbox` is one single-producer single-consumer ring of `Message`, and
 //! there is one per ordered pair of loops. `Registry` holds the rings, each loop's readiness
 //! descriptor, and whether each loop sleeps.
 //!
-//! It is in `core` because `kqueue` and `epoll` both need it and it names no kernel type: neither
-//! has io_uring's `msg_ring`, so a message crosses in user space on both, and only the wake differs,
-//! which is the loop's job. `uring` holds its own `Registry` with no rings. It lived in
-//! `src/kqueue/` until the second readiness backend needed it, on 2026-09-22.
+//! It is in `core` because every backend needs it and it names no kernel type: a message crosses
+//! in user space on each, and only the wake differs, which is the loop's job. It lived in
+//! `src/kqueue/` until epoll needed it, on 2026-09-22. io_uring's posts moved onto it on
+//! 2026-09-25, when the owner ruled that loops talk through shared memory (decision 4).
 //!
 //! Nothing here enters the kernel, so this file compiles on every host. The tests that start a
 //! thread are in `src/kqueue/kqueue_mailbox_test.zig`, which says why they are there.
@@ -61,8 +61,8 @@
 //!   blocking call into the kernel, so its cost is lost in the system call.
 //! - `begin_sleep` first loads the flag with `.unordered` to assert it is clear. The loop is the
 //!   flag's only writer, so the load returns the loop's last store.
-//! - `clear` swaps a descriptor with `.release` and `get` loads it with `.acquire`, as the
-//!   `uring` registry does. The entry is one word, and a reader that sees the old value behaves
+//! - `clear` swaps a descriptor with `.release` and `get` loads it with `.acquire`. The entry is
+//!   one word, and a reader that sees the old value behaves
 //!   as if it ran before the swap. The swap returns the value it replaced, so the assertion
 //!   tests the value that was overwritten and not an earlier one.
 //! - `set` and `set_remote` swap with `.acq_rel`. The thread that claims an id becomes the
@@ -73,7 +73,7 @@
 //!   reads the `descriptor_none` the previous holder's `clear` stored is the one edge rotor
 //!   controls: its acquire half makes every store before that `clear` visible to the claimant.
 //!   No test shows it, because the claimant's first loads would have to be served stale; the
-//!   argument is the evidence. The `uring` registry holds no rings, so its claim stays `.release`.
+//!   argument is the evidence.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
