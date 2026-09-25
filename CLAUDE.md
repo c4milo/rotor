@@ -350,11 +350,13 @@ could see, and halt scenarios a Mac cannot prove for a Linux backend. Building t
 fifth: the public module's `register_descriptors` and `register_buffers` did not compile for Linux,
 because nothing there named them.
 
-The implementation is done: every row of decision 2's scope table is built, and every decision record
-has code for it, except two. Decision 13 the owner accepted on 2026-09-24, after its idle case was
-measured, with the spin budget off by default, and it was built the same day: `spin_budget_ns` in a
-loop's options, and `core/spin.zig`. Decision 16 the owner declined that day. Decision 17 is
-proposed and names a component this repository does not hold. The cost probes cover every
+Every row of decision 2's scope table is built but one: posts between processes, which the owner
+added on 2026-09-25 with decision 21, loops in several processes that post to each other through
+shared memory. That record is accepted and not built yet. Every other decision record has code,
+except two: decision 16, which the owner declined on 2026-09-24, and decision 17, which is proposed
+and names a component this repository does not hold. Decision 13 the owner accepted on 2026-09-24,
+after its idle case was measured, with the spin budget off by default, and it was built the same
+day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
 
 Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it

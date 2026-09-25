@@ -21,7 +21,7 @@ Accept the proposal, with four additions, two exclusions it did not name, and on
 | regular files | positional read, positional write, `fdatasync`, close; synchronous open, size, preallocate and directory sync |
 | timers | arm, cancel |
 | cancellation | cancel one operation by handle; cancel every operation of one descriptor (`0005-cancellation.md`) |
-| cross-core | post one message into another loop (`0004-threading.md`) |
+| cross-core | post one message into another loop (`0004-threading.md`), in the same process or, since 2026-09-25, in another process of the same group (`0021-loops-in-several-processes.md`) |
 | registration | buffers and descriptors, once, before use (`0003-speed-sources.md`) |
 
 The four additions:
@@ -33,6 +33,12 @@ The four additions:
    because a backend that the simulator replaces must own every call that touches the disk.
 3. **Cross-core post.** The threading model is the main claim, and its unit of cost is one
    cross-core message (C17, C18). A version one without it cannot test the claim.
+
+   **Amended on 2026-09-25 by `0021-loops-in-several-processes.md`: a post may cross a process.**
+   The owner asked for loops in several processes that post to each other through shared memory,
+   and ruled that they are in version one. The group's processes share the mailbox rings and
+   inherit each loop's wake from the process that created the registry; no descriptor moves between
+   them after they start.
 4. **Registration.** Registered buffers and descriptors are where part of the speed is meant to
    come from, so they are in the first API and not added to it later.
 

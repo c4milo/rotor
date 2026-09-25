@@ -261,7 +261,7 @@ the machines, and the commands to take every number again.
 | [18](docs/decisions/0018-a-caller-supplied-thread-pool.md) | a caller-supplied thread pool for file operations | accepted |
 | [19](docs/decisions/0019-the-comparison-measures-one-core.md) | the comparison measures one core | accepted |
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
-| [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | proposed |
+| [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why.
