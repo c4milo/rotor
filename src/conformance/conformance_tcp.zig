@@ -259,6 +259,13 @@ test "bytes that arrive while nobody receives do not keep the loop from sleeping
 /// with a reset, and the kernel refuses one of the next few; this many is far beyond that.
 const sends_to_a_closed_peer_max = 64;
 
+/// How long the scenario below waits after a send the kernel took, so that the peer's reset can
+/// arrive before the next send. With no wait, 64 sends could finish before the reset did: on `mac`
+/// on 2026-09-25, with four copies of the kqueue suite running at once, the scenario failed in 53
+/// of 160 runs, and in 73 of 160 once a tick with nothing to ask the kernel made no call. The loop
+/// counts sends, so without a wait how long it lasts depends on how fast each send is.
+const reset_wait_ns = core.constants.ns_per_ms;
+
 /// SIGPIPEs this process received while the scenario below counted them.
 var broken_pipe_signals: std.atomic.Value(u32) align(@alignOf(std.atomic.Value(u32))) = .init(0);
 
@@ -300,7 +307,8 @@ test "a send to a peer that closed ends with broken_pipe, and raises no signal" 
         try harness.submit(&.{Operation.send(1, pair[0], "x")}, &.{});
         try harness.collect(&events);
         // A reset reported on one send is consumed by it, and the next send meets the closed pipe.
-        if (events[0].outcome()) |_| {} else |err| switch (err) {
+        // A send the kernel took waits for the reset it will bring.
+        if (events[0].outcome()) |_| try harness.pause(reset_wait_ns) else |err| switch (err) {
             error.ConnectionReset => {},
             else => {
                 refused = err;
