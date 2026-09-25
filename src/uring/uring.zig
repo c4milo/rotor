@@ -31,6 +31,7 @@ pub const tick_module = @import("uring_tick.zig");
 /// Since 2026-09-25 a post on io_uring goes through these rings too, and `IORING_OP_MSG_RING`
 /// only wakes a target that sleeps (decision 4, the owner's ruling of that day).
 pub const Registry = core.mailbox.Registry;
+pub const group_module = @import("linux_shared").group;
 pub const Remote = remote_module.Remote;
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. io_uring completes a file operation
@@ -109,6 +110,11 @@ pub const Loop = struct {
     /// The loops this loop's posts must wake whose wake found no room in the submission ring yet.
     /// A tick does not block while one is left, so no wake is lost (`uring_submit.zig`).
     wakes: core.remote.Wakes,
+    /// In a group, the eventfd its creator made for this loop, and -1 outside one (decision 21,
+    /// point 3). The loop keeps a poll of it in the ring.
+    group_wake: core.Descriptor,
+    /// True while the poll of it is in the ring. A tick does not block while it is not.
+    group_wake_armed: bool,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
 
@@ -177,7 +183,13 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.ring = try ring_module.Ring.init(entries_of(options));
-        if (loop.inbox.registry) |registry| registry.set(loop.tables.id, loop.ring.descriptor());
+        const registry = loop.inbox.registry orelse return;
+        const id = loop.tables.id;
+        const wake = registry.wake(id) orelse return registry.set(id, loop.ring.descriptor());
+        // In a group the loop is woken through the eventfd its group's creator made for it, and
+        // every sender writes there (decision 21, point 3). The first flush queues its poll.
+        loop.group_wake = wake.watch;
+        registry.set(id, wake.send);
     }
 
     /// Everything but the ring: what the paths that enter no kernel run on, so their tests
@@ -211,6 +223,8 @@ pub const Loop = struct {
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
         loop.wakes = .{};
+        loop.group_wake = -1;
+        loop.group_wake_armed = false;
         loop.groups = @splat(buffers.Group.none);
     }
 
@@ -369,6 +383,7 @@ test {
     _ = submit_module;
     _ = sync;
     _ = tick_module;
+    _ = @import("uring_group.zig");
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");

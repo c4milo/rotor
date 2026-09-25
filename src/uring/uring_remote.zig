@@ -26,6 +26,7 @@ const core = @import("core");
 const constants = @import("constants.zig");
 const ring_module = @import("uring_ring.zig");
 const submit_module = @import("uring_submit.zig");
+const group = @import("linux_shared").group;
 
 const Registry = core.mailbox.Registry;
 const Ring = ring_module.Ring;
@@ -77,7 +78,9 @@ pub const Remote = struct {
         assert(target != remote.id);
         assert(message.tag <= core.constants.message_tag_max);
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
-        if (wake) |target_ring| remote.send_wake(target_ring);
+        const descriptor = wake orelse return;
+        // In a group the target published its eventfd, and not its ring (decision 21, point 3).
+        if (remote.registry.group) group.send(descriptor) else remote.send_wake(descriptor);
     }
 
     /// Submits a wake to the loop that owns `target_ring`, and waits for nothing. The answers to

@@ -17,6 +17,7 @@ const core = @import("core");
 const constants = @import("constants.zig");
 const errno_module = @import("uring_errno.zig");
 const uring = @import("uring.zig");
+const group_wake = @import("uring_group.zig");
 
 const Loop = uring.Loop;
 const Event = core.Event;
@@ -60,7 +61,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (cqe.res < 0) return complete_negative(loop, cqe);
     const handle = Handle.from_bits(cqe.user_data);
     // A completion that names no operation is one the backend submitted for itself.
-    if (handle.is_none()) return null;
+    if (handle.is_none()) return own(loop, cqe);
     const slot = submitted_slot(loop, handle);
     const event: Event = .{
         .user_data = slot.user_data,
@@ -72,6 +73,13 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     };
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
     return event;
+}
+
+/// A completion of an entry the backend submitted for itself, which yields no event. The read of a
+/// group's eventfd is noted, so the next flush queues it again (decision 21, point 3).
+fn own(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
+    if (cqe.user_data == constants.user_data_group_wake) group_wake.completed(loop, cqe.res);
+    return null;
 }
 
 /// The slot a completion's handle names. It still holds that operation: its final event has not
@@ -88,7 +96,7 @@ fn submitted_slot(loop: *Loop, handle: Handle) *Slot {
 fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     assert(cqe.res < 0);
     const handle = Handle.from_bits(cqe.user_data);
-    if (handle.is_none()) return null;
+    if (handle.is_none()) return own(loop, cqe);
     const slot = submitted_slot(loop, handle);
     const errno = errno_module.errno_of(cqe.res);
     if (should_retry(slot, errno)) {

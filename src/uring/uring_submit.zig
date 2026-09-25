@@ -13,6 +13,8 @@ const constants = @import("constants.zig");
 const address_module = @import("linux_shared").address;
 const ring_module = @import("uring_ring.zig");
 const uring = @import("uring.zig");
+const group_wake = @import("uring_group.zig");
+const group = @import("linux_shared").group;
 const datagram = @import("uring_datagram.zig");
 
 const Loop = uring.Loop;
@@ -46,6 +48,7 @@ pub fn flush(loop: *Loop) void {
         if (!flush_entry(loop, index, tables.table.at(index))) break;
     }
     send_wakes(loop);
+    group_wake.arm(loop);
     assert(tables.pending.count <= queued);
 }
 
@@ -188,10 +191,16 @@ fn send_wakes(loop: *Loop) void {
     const noted = loop.wakes;
     var targets = noted.targets.iterator(.{});
     while (targets.next()) |target| {
-        const ring = registry.get(@intCast(target));
-        if (ring >= 0) {
-            const sqe = loop.ring.get_sqe() orelse return;
-            prepare_wake(sqe, ring);
+        const descriptor = registry.get(@intCast(target));
+        if (descriptor >= 0) {
+            if (registry.group) {
+                // In a group the target published its eventfd, and a write to it is the wake
+                // (decision 21, point 3).
+                group.send(descriptor);
+            } else {
+                const sqe = loop.ring.get_sqe() orelse return;
+                prepare_wake(sqe, descriptor);
+            }
         }
         loop.wakes.targets.unset(target);
     }

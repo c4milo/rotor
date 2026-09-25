@@ -12,6 +12,7 @@ const reap_module = @import("uring_reap.zig");
 const ring_module = @import("uring_ring.zig");
 const submit_module = @import("uring_submit.zig");
 const uring = @import("uring.zig");
+const group_wake = @import("uring_group.zig");
 
 const Loop = uring.Loop;
 const Event = core.Event;
@@ -79,11 +80,13 @@ pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 
     return tick(loop, events, core.spin.remaining_ns(wait_ns, start_ns, tables.now_ns));
 }
 
-/// How long the enter may block: not at all while a cancel waits for its entry or a wake waits for
-/// room in the submission ring, and otherwise what `core.Tables` allows.
+/// How long the enter may block: not at all while a cancel waits for its entry, a wake waits for
+/// room in the submission ring, or a loop of a group has no poll of its eventfd in the ring, and
+/// otherwise what `core.Tables` allows.
 fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
     if (loop.cancels.count != 0) return null;
     if (loop.wakes.targets.count() != 0) return null;
+    if (group_wake.unarmed(loop)) return null;
     return loop.tables.wait_bound(wait_ns);
 }
 
