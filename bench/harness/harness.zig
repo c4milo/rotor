@@ -32,6 +32,7 @@ pub const candidates = @import("candidates.zig");
 pub const text = @import("text.zig");
 pub const random = @import("random.zig");
 pub const placement = @import("placement.zig");
+pub const process = @import("process.zig");
 
 pub const Histogram = histogram.Histogram;
 pub const Machine = machine.Machine;

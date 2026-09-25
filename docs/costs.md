@@ -132,6 +132,8 @@ file may be filled from a machine of another architecture, however convenient it
 | C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.00 (1.85) | |
 | C22 | `send` plus `recv` of 64 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | 11,204 (21,257) | |
 | C23 | copy 64 KiB from one buffer to another | no prior | none | | | 1,587 (2,032) | |
+| C24 | one message between processes by a shared ring when the receiver is already awake | as C19 | decision 21 | | | | |
+| C25 | one message between processes by a shared ring plus decision 21's wake, post to reap: a pipe watched with `EVFILT_READ` on macOS, an eventfd polled from io_uring on Linux | near C17 and C18 | decision 21 | | | | |
 
 C22 and C23 have a `github` cell and no other. Both were added after the `mac` and `orbstack` runs
 of that day, and this machine has not been idle since: rule 1 stands, so their two cells stay empty
@@ -142,6 +144,12 @@ rotor leads libuv and libxev at 4 KiB and trails libxev at 64 KiB, and nothing h
 of a 64 KiB echo is the kernel's own work. C16 measures the same pair of calls at 4 KiB, so C22 is
 its large twin, and C23 bounds the copy inside it. The two rows are the estimate that has to come
 before any argument about a large payload, zero-copy send among them.
+
+Rows C24 and C25 exist because decision 21 lets loops in several processes post to each other.
+Their prior is that crossing a process costs nothing more than crossing a core: the ring is the same
+memory, so C24 should read as C19, and the wake is one more system call before a sleeping thread
+wakes, so C25 should read near C17 and C18. Their cells are empty until a quiet run fills them:
+the probes were written on 2026-09-25, when this machine's load average was 7.8.
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.

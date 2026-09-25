@@ -13,12 +13,11 @@ quiet machine, on mains power, and copy the cells by hand.
 zig build bench-costs                          # every row this target has
 zig build bench-costs -- --row C6              # one row
 zig build bench-costs -- --row C1 --row C3     # --row may repeat
-zig test bench/costs/main.zig -O ReleaseSafe   # the probes' own unit tests
+zig build test-bench-programs                  # the probes' own unit tests, with the others
 ```
 
 `build/bench.zig` always builds the probes ReleaseSafe, the mode rotor ships in. `zig build test`
-compiles the probes and lints them. It does not run the unit tests above, because
-`build/bench.zig` has no test step for `bench/costs`.
+compiles the probes and lints them, and `zig build test-bench-programs` runs their unit tests.
 
 Exit status: 0 when every row printed a number, 1 when a row failed, 2 on a usage error.
 
@@ -43,6 +42,8 @@ Each row has one command, `zig build bench-costs -- --row <id>`:
 | C21 | `probes/probes_cpu.zig` | a thread-local read and compare inside a never-inlined function |
 | C22 | `probes/probes_socket.zig` | `send` and `recv` of 64 KiB with the data already there |
 | C23 | `probes/probes_memory.zig` | `@memcpy` of 64 KiB between two warm buffers |
+| C24 | `probes/probes_cross_process.zig` | C19 with the far side in a process made by `fork` |
+| C25 | `probes/probes_cross_process.zig` | a ring message plus decision 21's wake to a process blocked in its wait |
 
 Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring: C7 to C9 are in
 `probes/probes_linux.zig`, C12 and C13 in `probes/probes_linux_file.zig`, and C17 in
@@ -53,7 +54,8 @@ Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring: C7 to C9 are in
 The probes are built for the Linux gate's target and run in its container, without a cpuset:
 
 ```bash
-zig build-exe bench/costs/main.zig -target aarch64-linux-musl -O ReleaseSafe -femit-bin=/tmp/costs
+zig build-exe -target aarch64-linux-musl -O ReleaseSafe --dep harness -Mroot=bench/costs/main.zig \
+  -target aarch64-linux-musl -O ReleaseSafe -Mharness=bench/harness/harness.zig -femit-bin=/tmp/costs
 docker run --rm --security-opt seccomp=unconfined -v /tmp:/t:ro \
   alpine@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc \
   sh -c 'cp /t/costs /tmp/c && chmod +x /tmp/c && /tmp/c'

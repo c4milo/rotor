@@ -60,7 +60,7 @@ pub const probes = switch (builtin.os.tag) {
 
 /// The line both index fields are aligned to: the 128-byte cache line of Apple silicon, which
 /// also keeps two 64-byte lines apart where the hardware prefetches the line next door.
-const cache_line_bytes = 128;
+pub const cache_line_bytes = 128;
 
 /// The ring's capacity. The probes keep one message in flight, so any power of two does.
 const ring_slots = 64;
@@ -68,30 +68,30 @@ const ring_mask = ring_slots - 1;
 
 /// The most times a thread polls for the other thread before it gives up: tens of seconds of
 /// spinning, and a thread that is merely descheduled comes back in milliseconds.
-const spins_max = 1 << 34;
+pub const spins_max = 1 << 34;
 
 /// How long C18's producer spins after the consumer says it is about to block. Entering `kevent`
 /// and blocking takes a few microseconds. In development runs, gaps from 50 to 1,000
 /// microseconds gave the same median.
-const idle_gap_ns = 100 * std.time.ns_per_us;
+pub const idle_gap_ns = 100 * std.time.ns_per_us;
 
 /// How long C18's consumer waits in `kevent` before it calls the producer lost. A loop that has
 /// timers blocks with a timeout too.
-const wake_timeout: posix.timespec = .{ .sec = 5, .nsec = 0 };
+pub const wake_timeout: posix.timespec = .{ .sec = 5, .nsec = 0 };
 
-const wake_plan: Plan = .{ .warmup = 200, .samples = 5000, .batch = 1 };
+pub const wake_plan: Plan = .{ .warmup = 200, .samples = 5000, .batch = 1 };
 
 /// 128 messages are 64 round trips.
-const awake_plan: Plan = .{ .warmup = 200, .samples = 2000, .batch = 128 };
+pub const awake_plan: Plan = .{ .warmup = 200, .samples = 2000, .batch = 128 };
 
 /// The message of decision 4: a 64-bit payload, a 32-bit tag, 32 bits reserved.
-const Message = extern struct {
+pub const Message = extern struct {
     payload: u64,
     tag: u32,
     reserved: u32 = 0,
 };
 
-const Ring = extern struct {
+pub const Ring = extern struct {
     /// Messages pushed so far. The producer alone writes it.
     tail: std.atomic.Value(u32) align(cache_line_bytes) = .init(0),
     /// Messages popped so far. The consumer alone writes it.
@@ -101,7 +101,7 @@ const Ring = extern struct {
     /// Refuses a full ring, so it reads the consumer's index on every push. A push that kept its
     /// last reading of that index, and read it again only when the ring looked full, was tried
     /// and measured the same on an M1 Pro, so the plain check stays.
-    fn push(ring: *Ring, message: Message) Error!void {
+    pub fn push(ring: *Ring, message: Message) Error!void {
         // The producer alone writes `tail`, so it reads its own index with a plain load.
         const tail = ring.tail.raw;
         const head = ring.head.load(.acquire);
@@ -110,7 +110,7 @@ const Ring = extern struct {
         ring.tail.store(tail +% 1, .release);
     }
 
-    fn pop(ring: *Ring) ?Message {
+    pub fn pop(ring: *Ring) ?Message {
         // The consumer alone writes `head`.
         const head = ring.head.raw;
         if (ring.tail.load(.acquire) == head) return null;
@@ -139,7 +139,7 @@ comptime {
 
 // Row C19.
 
-const Awake = struct {
+pub const Awake = struct {
     request: Ring = .{},
     reply: Ring = .{},
     sequence: u32 = 0,
@@ -150,7 +150,7 @@ const Awake = struct {
     /// cores must say so when it did not get them.
     placement: std.atomic.Value(u8) = .init(0),
 
-    fn respond(awake: *Awake) void {
+    pub fn respond(awake: *Awake) void {
         awake.placement.store(@intFromEnum(measure.pin_current_thread(measure.second_cpu)), .release);
         awake.serve() catch awake.failed.store(true, .release);
     }
