@@ -200,7 +200,10 @@ const loop_error_sets = [_][]const u8{
     "InitError", "TickError", "DrainError", "RegisterError", "ProvideError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
-const registry_declarations = [_][]const u8{ "memory_bytes", "init", "loops" };
+const registry_declarations = [_][]const u8{
+    "memory_bytes", "init", "loops", "GroupError", "AttachError", "init_group", "attach", "release",
+    "close_wakes",
+};
 
 fn named(comptime T: type, comptime lists: []const []const []const u8) bool {
     inline for (@typeInfo(T).@"struct".decls) |declaration| {
@@ -366,4 +369,5 @@ test "a socket from sync suits the backend: it does not block exactly when epoll
 
 test {
     _ = loop_module;
+    _ = @import("rotor_loop_registry.zig");
 }

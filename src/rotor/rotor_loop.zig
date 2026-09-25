@@ -66,46 +66,7 @@ pub fn chosen() Tag {
     return @enumFromInt(stored orelse @intFromEnum(decided));
 }
 
-/// The registry a group of loops shares, for `post` between them (decision 4). The application
-/// owns its memory and hands it to every loop and remote of the group.
-pub const Registry = struct {
-    inner: Inner,
-
-    const Inner = if (linux)
-        union(Tag) { uring: uring.Registry, epoll: epoll.Registry }
-    else
-        union(Tag) { kqueue: kqueue.Registry };
-
-    /// The bytes `init` needs for `loop_count` loops and remotes: the most any backend this build
-    /// carries needs, because the memory is sized before the choice is made.
-    pub fn memory_bytes(loop_count: u16) usize {
-        var most: usize = 0;
-        inline for (comptime std.enums.values(Tag)) |tag| {
-            most = @max(most, module(tag).Registry.memory_bytes(loop_count));
-        }
-        return most;
-    }
-
-    pub fn init(
-        registry: *Registry,
-        memory: []align(core.layout.memory_alignment) u8,
-        loop_count: u16,
-    ) void {
-        switch (chosen()) {
-            inline else => |tag| {
-                registry.inner = @unionInit(Inner, @tagName(tag), undefined);
-                @field(registry.inner, @tagName(tag)).init(memory, loop_count);
-            },
-        }
-    }
-
-    /// How many loops and remotes the registry was sized for.
-    pub fn loops(registry: *const Registry) u16 {
-        return switch (registry.inner) {
-            inline else => |*inner| inner.loops(),
-        };
-    }
-};
+pub const Registry = @import("rotor_loop_registry.zig").Registry;
 
 /// What a thread that owns no loop holds to post with (decision 4). It takes one slot of the
 /// registry, sends, and never receives.
