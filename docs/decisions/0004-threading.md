@@ -282,6 +282,34 @@ stealing can build it over `post`; rotor cannot remove it once it is inside.
 memory in the Linux backend for no gain: `MSG_RING` rides in a batch the sender already
 submits.
 
+*Evidence against that reason, 2026-09-25. It is not a ruling: the alternative stays rejected
+until the owner reopens it.* `bench/calls/count_post.sh` counted the system calls of one message
+in `rotor_post`'s ping-pong, on `orbstack`
+(`bench/results/calls-crosscore-uring-epoll-orbstack-2026-09-25.md`):
+
+| how the receiving loop waits | io_uring, calls per message | epoll, calls per message |
+|---|---|---|
+| it blocks | 2.10, all `io_uring_enter` | 3.15: an eventfd write, an `epoll_pwait2`, an eventfd read |
+| it polls without blocking | 2.10 | 0.002 |
+| it polls for its 50 µs spin budget (decision 13) | 2.10 | 0.002 |
+
+- Between two loops that are awake, `MSG_RING` costs two system calls per message, and epoll's
+  shared rings cost none. The sender enters the kernel to submit its post. The receiver enters to
+  take it: with `DEFER_TASKRUN`, which `src/uring` sets, a message becomes a completion only when
+  the receiving ring's own thread enters the kernel, as the C17 probe's notes say.
+- In time, on `github`, a round trip between two loops that poll took 2.6 to 4.2 µs on io_uring
+  and 1.6 to 2.4 µs on epoll, on the same runners (decision 13, its epoll section). C19, the
+  shared ring alone, is 36 ns there.
+- When the receiver sleeps, io_uring is the cheaper, at 2.1 calls against 3.15.
+
+So "no gain" holds for a post to a loop that must be woken, and does not hold for a post to a
+loop that is awake, which decision 13's spin budget makes common for a caller that asks for it.
+"Rides in a batch the sender already submits" holds for a loop whose tick has other work to enter
+for; in the measured ping-pong each message paid for its entries alone. What the evidence points
+to is a post that goes through a shared ring when the target is awake, as on kqueue and epoll,
+with `MSG_RING` left to wake a target that sleeps. That is the rejected alternative in part, and
+nothing is built toward it.
+
 ## How it is checked
 
 - The harness runs every workload on 1 core and measures C17, C18 and C19 on their own. **Amended on
