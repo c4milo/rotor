@@ -343,8 +343,27 @@ Counted afterwards, on `orbstack`, with `bench/calls/count_post.sh`:
 | it polls for its 50 µs spin budget | 2.10 | 0.002 | 0.002 |
 
 Between loops that are awake a message now costs io_uring what it costs epoll. Waking a loop that
-sleeps still costs 2.1 calls, one fewer than epoll. The time on `github` is measured after the
-change lands.
+sleeps still costs 2.1 calls, one fewer than epoll.
+
+The time, on `github`: a round trip of `rotor_post` in µs, the median and the range of three
+rounds, with no gap between messages. "Before" is the last run on a runner of the same processor,
+from `dcc95fb` or `57dbc22`; "after" is `1ccbd4e`, with epoll on the same runner
+(`bench/results/crosscore-uring-shared-rings-github-2026-09-25.md`):
+
+| processor | receiving loop | io_uring before | io_uring after | epoll, same runner as after |
+|---|---|---|---|---|
+| Intel Xeon Platinum 8573C | polls | 2.5 (2.5 to 2.5) | 1.7 (1.7 to 1.7) | 2.3 (2.3 to 2.4) |
+| Intel Xeon Platinum 8573C | blocks | 15.9 (15.3 to 23.0) | 18.2 (17.9 to 26.5) | 18.4 (14.8 to 19.7) |
+| AMD EPYC 7763 | polls | 4.2 (4.2 to 4.2) | 1.8 (1.8 to 1.8) | 2.4 (2.4 to 2.4) |
+| AMD EPYC 7763 | blocks | 33.0 (23.2 to 33.3) | 25.5 (23.2 to 33.3) | 28.4 (24.8 to 34.8) |
+| AMD EPYC 9V74 | polls | 3.9 (3.9 to 4.0) | 1.5 (1.5 to 1.5) | 2.0 (2.0 to 2.0) |
+| AMD EPYC 9V74 | blocks | 17.5 (16.9 to 21.6) | 20.7 (19.1 to 20.7) | 21.9 (19.5 to 21.9) |
+
+- Between two loops that poll, a round trip on io_uring fell from 2.5 to 4.2 µs to 1.5 to 1.8 µs,
+  and is now shorter than epoll's on the same runner, by 0.5 to 0.6 µs.
+- To a loop that blocks, the round trip rose on two processors and fell on the third, by 2.3 to
+  7.5 µs, between runners of one processor, and the rounds of one runner spread by up to 10 µs.
+  The wake still costs 2.1 calls, so this change is not measured to have moved that round trip.
 
 ## How it is checked
 
