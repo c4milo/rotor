@@ -313,6 +313,44 @@ may do to it is post a message:
 
 At most `loops_max` (256) loops and remotes share one registry.
 
+## Loops in several processes
+
+Loops that run in different processes can post to each other in the same way (decision 21). They
+share a registry that lives in memory every process maps, and each loop keeps its own memory, as a
+loop in one process does.
+
+1. One process, the creator, maps `Registry.memory_bytes(loops)` bytes with `MAP_SHARED`
+   (`memfd_create`, `shm_open`, or an anonymous mapping made before it forks) and calls
+   `registry.init_group(memory, loops)`. It makes one wake per loop: a pipe on macOS, an eventfd on
+   Linux. It returns `Registry.GroupError` when the process has no descriptor left for one.
+2. The creator then starts the other processes: with `fork`, or by spawning them with the wakes
+   kept open at the same numbers. rotor makes the wakes without close-on-exec for this. No
+   descriptor moves between processes after they start.
+3. Each other process maps the same memory and calls `registry.attach(memory)`, which answers
+   `Registry.AttachError` when the memory holds no group this build of rotor laid out.
+4. Every process runs loops and remotes with ids of that registry, as in one process. Which process
+   runs which ids is the application's choice.
+
+A message is 16 bytes and rotor reads none of them, so between processes a payload that points at
+memory must be an offset into memory both processes map: a pointer means something in one process
+only. A message cannot carry a socket to another process either; each process accepts its own
+connections.
+
+When a process dies, the application learns it (a `pidfd` on Linux, `EVFILT_PROC` on macOS, or its
+supervisor), and a surviving process calls `registry.release(id)` for each loop the dead one ran.
+Posts to those ids are then refused as `loop_not_found`. A new process started by the creator may
+then run loops with those ids, and is handed what was posted to the dead loop and not read.
+`release` is only for a process known to be dead: one that is only stopped would come back to find
+a second loop on its rings. Each process calls `registry.close_wakes()` when it is done with the
+group.
+
+A macOS process holds two descriptors per loop of the group. The default limit a macOS process
+starts with was 256 descriptors on an M1 Pro with macOS 26.6.2 (`launchctl limit maxfiles`,
+2026-09-25), so a group of more than about 100 loops needs a higher limit.
+
+Processes that share a registry trust each other as threads of one process do: each can write any
+byte of it.
+
 ## A library that shares a loop
 
 A library such as a resolver takes a `*Loop` from the application and owns no socket, thread or
@@ -367,7 +405,8 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 ## Not in version one
 
 TLS (chapulin fills that interface for colibri), DNS (cocuyo), Unix sockets, process spawning,
-Windows and the `std.Io` adapter. Decision 2 says why, and what would bring each in. The epoll
+Windows and the `std.Io` adapter. Loops in several processes are in version one, but rotor starts
+no process: the application does. Decision 2 says why, and what would bring each in. The epoll
 backend was on this list until decision 20 brought it in.
 
 ## Where the numbers are

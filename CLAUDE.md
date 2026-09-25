@@ -350,9 +350,10 @@ could see, and halt scenarios a Mac cannot prove for a Linux backend. Building t
 fifth: the public module's `register_descriptors` and `register_buffers` did not compile for Linux,
 because nothing there named them.
 
-Every row of decision 2's scope table is built but one: posts between processes, which the owner
-added on 2026-09-25 with decision 21, loops in several processes that post to each other through
-shared memory. That record is accepted and not built yet. Every other decision record has code,
+Every row of decision 2's scope table is built. The owner added posts between processes to it on
+2026-09-25 with decision 21, loops in several processes that post to each other through shared
+memory, and it was built the same day; its costs are not measured yet. Every other decision record
+has code,
 except two: decision 16, which the owner declined on 2026-09-24, and decision 17, which is proposed
 and names a component this repository does not hold. Decision 13 the owner accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same

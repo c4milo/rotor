@@ -1,8 +1,9 @@
 # 21. Loops in several processes
 
-Status: **accepted** by the owner on 2026-09-25, the day it was proposed. "Ruling" below says what
-the owner decided, and the design after it follows the ruling. Nothing here is built yet. Decision 2
-is amended the same day to put posts between processes in version one.
+Status: **accepted** by the owner on 2026-09-25, the day it was proposed, and **built** the same
+day. "Ruling" below says what the owner decided, and the design after it follows the ruling.
+"Built" at the end says what was built, where it differs from the design, and how it is checked.
+Decision 2 is amended the same day to put posts between processes in version one.
 
 ## Context
 
@@ -13,7 +14,8 @@ figure out how to shard memory between rotor processes", and asked for it after 
 What exists today, and what of it can cross a process boundary:
 
 - `core.mailbox.Mailbox` is one single-producer single-consumer ring. It is an `extern struct` of two
-  atomic `u32` indices and 32 messages of 16 bytes: 4,352 bytes and no pointer. Its correctness
+  atomic `u32` indices, each on its own 128-byte line, and 256 messages of 16 bytes: 4,352 bytes
+  and no pointer. Its correctness
   argument is about loads and stores to shared memory, and a mapping two processes share is shared
   memory in the same sense. So a ring can live in such a mapping as it is.
 - `core.mailbox.Entry`, one per loop, holds the loop's `sleeping` flag and `queue`, the descriptor
@@ -113,9 +115,9 @@ the ruling, the creator makes one for every loop before any member starts:
   loop drains the pipe when it wakes.
 - **epoll**: an eventfd per loop, which the loop uses as its wake in place of the one it creates
   today.
-- **io_uring**: an eventfd per loop, with a read of it kept in the loop's ring. A sender writes to
-  it. This replaces `MSG_RING` as the wake in a group, since a sender would otherwise need the
-  target's ring descriptor and a ring of its own to submit on.
+- **io_uring**: an eventfd per loop, with a poll of it kept in the loop's ring. A sender writes to
+  it with `write(2)`. This replaces `MSG_RING` as the wake in a group, since a sender would
+  otherwise need the target's ring descriptor and a ring of its own to submit on.
 
 A member gets them by inheritance: the creator forks after it created them, or spawns the member
 with them kept open at the same numbers. A descriptor inherited this way has the same number in
@@ -125,8 +127,8 @@ number today. Nothing moves after start.
 In a group, every wake goes through these objects, from the loop's own process too. A sender then
 never needs to know which process a target runs in.
 
-`Entry` gains the pipe's read end, which a kqueue loop registers, inside its 128 bytes: the size of
-the entry does not change.
+The wakes sit in a table of their own after the header, one `Wake` of two descriptors per loop, so
+`Entry` does not change.
 
 ### 4. What a message carries between processes
 
@@ -237,3 +239,66 @@ that side is a thread or a process.
    without `exec` inherits the wakes regardless. A member started with `exec` needs them kept open,
    which the application does in its spawn. Proposed: rotor creates the group's wakes without
    `FD_CLOEXEC`, since inheritance is what they are for, and says so where `init` is documented.
+
+## Built, 2026-09-25
+
+What was built, module by module:
+
+- `core`: `mailbox_registry.zig`, split from `mailbox.zig`, holds the header, the wake table,
+  `init_group`, `attach` and `release`. `Registry.memory_bytes` grows by the 128-byte header and the
+  wake table in whole 128-byte lines: 256 bytes more for up to 16 loops.
+- `kqueue`: `kqueue_group.zig` makes the pipes. A loop of a group registers its pipe's read end with
+  `EVFILT_READ` at `init` and publishes the write end; the reap reads what was written; a loop's
+  flush and a `Remote` write one byte.
+- `linux_shared`: `linux_shared_group.zig` makes the eventfds, non-blocking and without
+  close-on-exec.
+- `epoll`: a loop of a group waits on the group's eventfd in place of one of its own
+  (`Queue.init_group`), and leaves it open at `deinit`. Senders write to it as they did.
+- `uring`: `uring_group.zig`. A loop of a group keeps an `IORING_OP_POLL_ADD` of its eventfd in its
+  ring, reads the count when it completes, and queues it again at the next flush; a tick does not
+  block while it is not in the ring. A sender writes with `write(2)`.
+- The public module: `Registry.init_group`, `attach`, `release` and `close_wakes`, with
+  `Registry.GroupError` and `Registry.AttachError`. `Loop.Options` did not change.
+
+Where it differs from the design: the first build on io_uring kept a read of the eventfd in the
+loop's ring and queued a sender's write in the sender's ring. The first conformance scenario below
+failed on io_uring in Docker: the child submitted its write, exited at once, and the parent slept
+out its whole wait. Under `strace` the same scenario passed. The explanation that fits is that the
+kernel gave the write to a worker thread and the child's exit cancelled it; it is not measured. A
+`write(2)` has happened when it returns, and a poll takes no worker, so the build uses those.
+
+How it is checked, point by point of "How it is checked":
+
+1. `src/conformance/conformance_group.zig` runs four scenarios on every backend, each with a child
+   made by `fork` after the registry and before the parent's loop, so the child holds none of that
+   loop's own descriptors: a post that wakes a loop that sleeps, after which the loop sleeps again;
+   a message to a loop that sleeps in the other process and its answer back; a loop whose process
+   died, released and taken over by a new process that reads what was left for it; and a post from
+   a `Remote` in the other process. They pass on kqueue natively, and on io_uring and epoll in the
+   Linux gate, with and without a spin budget, and under ThreadSanitizer in the race gate. They do
+   not use `exec`.
+2. The lost-wake test with its two sides in two processes is not built yet.
+3. The two rows of `docs/costs.md` are not measured yet.
+4. `rotor_post` has no two-process mode yet.
+5. Mutations:
+
+| mutation | caught by | result |
+|---|---|---|
+| `attach` skips the magic number, the version or the group check | `test-core` | CAUGHT, each |
+| `init_group` writes the header of a registry of one process | `test-core` | CAUGHT |
+| `release` leaves the entry set | `test-core` | CAUGHT |
+| each of the five new assertions of `init_group`, `attach` and `release` deleted | `zig build halt-check` | CAUGHT, each DID NOT HALT |
+| a kqueue loop never registers its wake pipe | `test-conformance-kqueue` | CAUGHT |
+| a kqueue loop's post or `Remote` wakes a group's loop through `EVFILT_USER` | `test-conformance-kqueue` | CAUGHT, each |
+| the kqueue reap leaves the wake pipe full | `test-conformance-kqueue` | CAUGHT |
+| a kqueue loop of a group publishes its kqueue | `test-conformance-kqueue` | CAUGHT |
+| the pipes close on exec | `test-kqueue` | CAUGHT |
+| an epoll loop of a group waits on an eventfd of its own | `conformance-epoll`, Linux gate | CAUGHT |
+| an epoll loop's end closes its group's eventfd | `epoll`, Linux gate | CAUGHT |
+| an io_uring loop never queues the poll of its eventfd | `conformance-uring`, Linux gate | CAUGHT |
+| an io_uring loop leaves its eventfd's count | `conformance-uring`, Linux gate | CAUGHT |
+| an io_uring loop's post or `Remote` wakes a group's loop with `MSG_RING` | `conformance-uring`, Linux gate | CAUGHT, each |
+| an io_uring loop of a group publishes its ring | `conformance-uring`, Linux gate | CAUGHT |
+| the eventfds close on exec | `linux-shared`, Linux gate | CAUGHT |
+| the public `release` does nothing | `test-rotor` | CAUGHT |
+
