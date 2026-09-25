@@ -43,9 +43,19 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // the next tick that waits at once. That is what a tick whose events were already full did
     // until 2026-09-22, which the conformance suite's multishot accept caught once a second loop
     // made its late connection. Whether such a tick parks as a poll with room does is not measured.
-    if (wait == null and room != 0) arm_poll(loop);
+    // A poll with no change to carry in and no operation waiting for readiness makes no call. The
+    // kernel could report only this loop's own wake event, which names no operation, and what a
+    // wake announces, a message or an offload's result, is read from its ring above and below. A
+    // trigger another loop sent stays set for the next call that waits, which then ends at once:
+    // the wasted wake decision 12, point 6 already allows. A trigger this loop armed and has not
+    // seen come back is not left: that call is made, and hands it back.
+    const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
+    const idle = wait == null and quiet;
+    if (wait == null and room != 0 and !idle) arm_poll(loop);
     const changes = loop.changes[0..loop.changes_used];
-    const ready = loop.queue.exchange(changes, loop.readiness[0..room], wait);
+    const nothing: queue_module.ExchangeError!u32 = 0;
+    const readiness = loop.readiness[0..room];
+    const ready = if (idle) nothing else loop.queue.exchange(changes, readiness, wait);
     loop.changes_used = 0;
     loop.wake_up();
     const ready_count = try ready;
@@ -96,6 +106,7 @@ pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 
 /// no operation. A changelist that is already full triggers with a call of its own, which costs
 /// the rare tick that registers `changes_max` descriptors while polling one more system call.
 fn arm_poll(loop: *Loop) void {
+    loop.trigger_armed = true;
     if (loop.changes_used < constants.changes_max) {
         loop.changes[loop.changes_used] = queue_module.poll_trigger();
         loop.changes_used += 1;
@@ -155,4 +166,73 @@ fn poll_burst_ns(loop: *Loop, events: []Event) !u64 {
     const before = clock_ns();
     for (0..poll_polls) |_| try testing.expectEqual(@as(u32, 0), try loop.tick(events, 0));
     return clock_ns() - before;
+}
+
+test "a tick with a message to hand over and nothing waiting on a socket polls nothing" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const loops = 2;
+    const receiver: core.LoopId = 1;
+    const sender: core.LoopId = 0;
+    var registry_memory: [kqueue.Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: kqueue.Registry = undefined;
+    registry.init(&registry_memory, loops);
+    const sizing: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    defer loop.deinit();
+
+    // Another loop posts, and wakes this one as a post to a loop that sleeps does.
+    try testing.expect(registry.mailbox(sender, receiver).push(.{ .tag = 7, .payload = 1 }));
+    queue_module.Queue.wake(loop.queue.descriptor);
+
+    // The message is handed over. No operation waits for readiness and no change is queued, so the
+    // kernel could report only the wake, and the tick does not ask it: the wake stays set for the
+    // next call that waits. A tick that polled would have taken it.
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expect(events[0].flags.message);
+    try testing.expectEqual(@as(u32, 1), try loop.queue.exchange(&.{}, loop.readiness[0..1], 0));
+}
+
+test "a loop whose own wake trigger came back skips the poll again" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const loops = 2;
+    const receiver: core.LoopId = 1;
+    const sender: core.LoopId = 0;
+    var registry_memory: [kqueue.Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: kqueue.Registry = undefined;
+    registry.init(&registry_memory, loops);
+    const sizing: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    defer loop.deinit();
+    const pair = try kqueue.testing.nonblocking_pair();
+    defer for (pair) |descriptor| sync_close(descriptor);
+
+    // A receive waits for readiness, so a tick that asks for none polls, and arms the trigger.
+    var buffer: [8]u8 = undefined;
+    var handles: [1]core.Handle = undefined;
+    const receive = core.Operation.receive(3, pair[0], &buffer);
+    try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &handles));
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+    loop.cancel(handles[0]);
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expectEqual(@as(u32, 0), loop.in_flight());
+
+    // Nothing waits now, and the trigger came back from the polls above, so a tick with a message
+    // to hand over makes no call and leaves the post's wake set, as in the test above.
+    try testing.expect(registry.mailbox(sender, receiver).push(.{ .tag = 7, .payload = 1 }));
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expect(events[0].flags.message);
+    try testing.expectEqual(@as(u32, 1), try loop.queue.exchange(&.{}, loop.readiness[0..1], 0));
+}
+
+fn sync_close(descriptor: i32) void {
+    _ = std.c.close(descriptor);
 }

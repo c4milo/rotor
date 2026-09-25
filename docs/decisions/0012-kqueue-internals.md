@@ -139,6 +139,46 @@ event as it always did. A changelist already at `changes_max` triggers with a ca
 Measured on the cross-core workload (`bench/alternatives/README.md`): one message from post to reap
 went from 6,015 ns to 2,007 ns, and an empty polling tick from 12.5 µs to 358 ns.
 
+**Amended on 2026-09-25: a polling tick with nothing to ask the kernel makes no call.** A tick that
+polls, carries no change, and has no operation waiting for readiness skips its `kevent` call. The
+kernel could report only the loop's own wake event, which names no operation, and what a wake
+announces, a message or an offload's result, is read from its ring before and after the call either
+way. A wake another loop sent stays set, and the next call that waits ends at once: the wasted wake
+this point already allows. A trigger the loop armed itself is different. A poll whose readiness
+filled the caller's room leaves it set, and skipping the next call would leave it for the next wait.
+So `Loop.trigger_armed` is set when a poll arms the trigger and cleared when a call hands the wake
+event back, and a tick skips its call only while it is clear. A loop with any operation waiting on a
+descriptor still makes the call, so an echo server's ticks do not change.
+
+Measured on `mac` on 2026-09-25, from commit `507c762` with and without the change, six alternating
+rounds each, once the machine was quiet
+(`bench/results/crosscore-kqueue-skip-poll-mac-2026-09-25.md`). Each cell is the median of the six
+rounds' medians, with their range:
+
+| candidate | messages per second, `507c762` | messages per second, with the skip | change |
+|---|---:|---:|---:|
+| rotor | 401,918 (397,314 to 405,679) | 474,017 (470,848 to 480,272) | +17.9 percent |
+| libuv | 554,143 (544,180 to 575,142) | 562,818 (551,731 to 584,316) | +1.6 percent |
+| libxev | 457,676 (449,241 to 468,663) | 465,845 (459,163 to 480,232) | +1.8 percent |
+
+The ranges of rotor's rounds do not overlap. libuv and libxev do not run the change, so their 1.6
+and 1.8 percent is how far the machine moved. rotor's p50 stayed at 2,007 ns and its p99 went from
+5,503 to 5,023 ns. Every row carries the harness's **OTHER WORK** mark: the machine was quieter
+than on 2026-09-22 and was not idle. rotor now passes libxev on this workload and is still 16
+percent behind libuv, so the parity bar of decision 2 is not met here. `rotor_post` in the same
+spell (`bench/results/decision-13-idle-kqueue-mac-2026-09-25.md`) agrees: in `waiting` mode with no
+gap, one message went from 2,007 to 1,503 ns and the answering loop's CPU per round trip from 2.4
+to 1.9 µs.
+
+Mutations, each measured against `zig build test-kqueue` and `zig build test-conformance-kqueue`:
+
+| mutation | caught by | result |
+|---|---|---|
+| the poll never skipped | `test-kqueue` | CAUGHT |
+| the flag never cleared by the wake event | `test-kqueue` | CAUGHT |
+| an armed trigger ignored | `test-conformance-kqueue` | CAUGHT |
+| arming a poll never sets the flag | `test-conformance-kqueue` | CAUGHT |
+
 ## 7. Timers, deadlines, cancellation
 
 As in `uring`, from `core`: the heap orders every deadline, the nearest one bounds the `kevent`

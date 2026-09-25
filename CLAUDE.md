@@ -381,8 +381,10 @@ that machine is not named. Milestone 4's comparisons ran on `mac` on 2026-09-22
 decision 18's offload puts rotor level with libuv's pool on the file rows, where inline is a
 quarter of both; and the cross-core row, rotor's loss by four times, was a 12 µs kernel park on
 every polling `kevent`, removed the same day (decision 12, point 6): rotor posts in 2.0 µs there
-against libuv's 1.5. The load
-mark of that day was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
+against libuv's 1.5. On 2026-09-25 a polling tick with nothing to ask the kernel stopped making its
+call, and on a quieter `mac` rotor's cross-core rate rose 17.9 percent, past libxev and 16 percent
+behind libuv (decision 12, point 6). The load
+mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.
 

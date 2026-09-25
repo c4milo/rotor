@@ -69,6 +69,10 @@ pub const Loop = struct {
     /// The registrations the next `kevent` call carries in.
     changes: [constants.changes_max]Kevent,
     changes_used: u32,
+    /// True from when a poll arms the loop's wake trigger until a call hands the wake event back.
+    /// A poll whose readiness filled its room leaves the trigger set, and a tick that skipped its
+    /// call (`kqueue_tick.zig`) would leave it for the next wait, which would then end at once.
+    trigger_armed: bool,
     /// Where the `kevent` call writes the descriptors that became ready.
     readiness: [constants.readiness_max]Kevent,
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
@@ -182,6 +186,7 @@ pub const Loop = struct {
             .spin_budget_ns = options.spin_budget_ns,
         });
         loop.changes_used = 0;
+        loop.trigger_armed = false;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};
     }

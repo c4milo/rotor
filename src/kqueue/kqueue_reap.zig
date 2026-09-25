@@ -33,7 +33,11 @@ pub fn reap(loop: *Loop, readiness: []const Kevent, events: []Event) u32 {
     assert(readiness.len <= events.len);
     var produced: u32 = 0;
     for (readiness, 1..) |*ready, position| {
-        const filter = filter_of(ready) orelse continue;
+        const filter = filter_of(ready) orelse {
+            // The wake event: whatever armed it, it is no longer set.
+            loop.trigger_armed = false;
+            continue;
+        };
         const room = events[produced .. events.len - (readiness.len - position)];
         produced += serve(loop, @intCast(ready.ident), filter, reported_of(ready), room);
     }

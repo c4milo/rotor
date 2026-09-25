@@ -981,6 +981,20 @@ alternatives do not; rotor's row is marked, at a spread of 14. `rotor_post`'s ot
 their spread: an echo server's tick mostly blocks, and the park was paid only by a tick that already
 held work.
 
+On 2026-09-25 a polling tick that has nothing to ask the kernel stopped making its `kevent` call
+(decision 12, point 6, its second amendment). Six alternating rounds of each build on a quieter
+`mac`, every row still marked for other work, the median of the six rounds' medians
+(`bench/results/crosscore-kqueue-skip-poll-mac-2026-09-25.md`):
+
+| candidate | messages per second, before | messages per second, after | p50 ns, after | p99 ns, after |
+|---|---:|---:|---:|---:|
+| rotor | 401,918 | 474,017 | 2,007 | 5,023 |
+| libuv | 554,143 | 562,818 | 1,500 | 4,500 |
+| libxev | 457,676 | 465,845 | 2,007 | 5,263 |
+
+rotor gained 17.9 percent where libuv and libxev, which the change does not reach, moved 1.6 and 1.8.
+rotor now passes libxev here and is 16 percent behind libuv.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is
