@@ -141,6 +141,7 @@ test {
     _ = @import("conformance_offload.zig");
     _ = @import("conformance_tcp.zig");
     _ = @import("conformance_file.zig");
+    _ = @import("conformance_group.zig");
     _ = @import("conformance_families.zig");
     _ = @import("conformance_post.zig");
     _ = @import("conformance_registered.zig");
