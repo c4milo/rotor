@@ -11,6 +11,11 @@ pub const readiness_max: u32 = 256;
 /// triggers to wake it for a message (decision 12, point 6).
 pub const wake_identifier: usize = 1;
 
+/// The most bytes a loop of a group reads from its wake pipe per wake (decision 21, point 3). Each
+/// wake is one byte, and a sender writes only to a loop that said it sleeps, so a read rarely finds
+/// more than a few; what is left keeps the pipe ready and the next tick reads it.
+pub const group_wake_drain_bytes: usize = 64;
+
 comptime {
     const assert = std.debug.assert;
     assert(changes_max >= readiness_max);

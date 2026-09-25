@@ -15,6 +15,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
+const group_module = @import("kqueue_group.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
 const submit_module = @import("kqueue_submit.zig");
@@ -33,6 +34,11 @@ pub fn reap(loop: *Loop, readiness: []const Kevent, events: []Event) u32 {
     assert(readiness.len <= events.len);
     var produced: u32 = 0;
     for (readiness, 1..) |*ready, position| {
+        if (ready.ident == loop.group_watch and ready.filter == std.c.EVFILT.READ) {
+            // The loop's wake pipe in a group (decision 21, point 3), which names no operation.
+            group_module.drain(@intCast(ready.ident));
+            continue;
+        }
         const filter = filter_of(ready) orelse {
             // The wake event: whatever armed it, it is no longer set.
             loop.trigger_armed = false;

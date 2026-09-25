@@ -9,6 +9,7 @@ const assert = std.debug.assert;
 const core = @import("core");
 const constants = @import("constants.zig");
 const descriptors_module = @import("kqueue_descriptors.zig");
+const group_module = @import("kqueue_group.zig");
 const offload_module = @import("kqueue_offload.zig");
 const perform = @import("kqueue_perform.zig");
 const queue_module = @import("kqueue_queue.zig");
@@ -35,7 +36,9 @@ pub fn flush(loop: *Loop) void {
         tables.take_pending(index);
         flush_one(loop, index, tables.table.at(index), &wakes);
     }
-    if (loop.inbox.registry) |registry| wakes.send(registry, queue_module.Queue.wake);
+    if (loop.inbox.registry) |registry| {
+        if (registry.group) wakes.send(registry, group_module.send) else wakes.send(registry, queue_module.Queue.wake);
+    }
     assert(tables.pending.count <= queued);
 }
 

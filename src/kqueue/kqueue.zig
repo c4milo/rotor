@@ -18,6 +18,7 @@ const datagram_module = @import("kqueue_datagram.zig");
 pub const cancel_module = @import("kqueue_cancel.zig");
 pub const descriptors_module = @import("kqueue_descriptors.zig");
 pub const errno = core.errno;
+pub const group_module = @import("kqueue_group.zig");
 pub const mailbox = core.mailbox;
 pub const offload_module = @import("kqueue_offload.zig");
 pub const perform = @import("kqueue_perform.zig");
@@ -59,6 +60,9 @@ const Layout = core.layout.Layout;
 const Waiters = core.waiters.Waiters;
 const Kevent = queue_module.Kevent;
 
+/// `Loop.group_watch` of a loop that is not in a group: no descriptor has this number.
+pub const group_watch_none: usize = std.math.maxInt(usize);
+
 pub const Loop = struct {
     queue: queue_module.Queue,
     /// What a loop holds whatever its kernel: the slot table, the timer heap, the pending and
@@ -73,6 +77,9 @@ pub const Loop = struct {
     /// A poll whose readiness filled its room leaves the trigger set, and a tick that skipped its
     /// call (`kqueue_tick.zig`) would leave it for the next wait, which would then end at once.
     trigger_armed: bool,
+    /// The read end of this loop's wake pipe in a group, as the `ident` of the readiness that
+    /// reports it, or `group_watch_none` (decision 21, point 3).
+    group_watch: usize,
     /// Where the `kevent` call writes the descriptors that became ready.
     readiness: [constants.readiness_max]Kevent,
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
@@ -153,7 +160,16 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.queue = try queue_module.Queue.init();
-        if (loop.inbox.registry) |registry| registry.set(loop.tables.id, loop.queue.descriptor);
+        errdefer loop.queue.deinit();
+        const registry = loop.inbox.registry orelse return;
+        const id = loop.tables.id;
+        const wake = registry.wake(id) orelse return registry.set(id, loop.queue.descriptor);
+        // In a group the loop is woken through the pipe its group's creator made for it, and every
+        // sender writes there (decision 21, point 3).
+        const watch = [1]Kevent{group_module.watch_event(wake.watch)};
+        _ = loop.queue.exchange(&watch, &.{}, 0) catch return error.Unexpected;
+        loop.group_watch = @intCast(wake.watch);
+        registry.set(id, wake.send);
     }
 
     /// Everything but the kqueue: what the paths that enter no kernel run on.
@@ -189,6 +205,7 @@ pub const Loop = struct {
         });
         loop.changes_used = 0;
         loop.trigger_armed = false;
+        loop.group_watch = group_watch_none;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};
     }
@@ -332,6 +349,7 @@ test {
     _ = cancel_module;
     _ = descriptors_module;
     _ = errno;
+    _ = group_module;
     _ = mailbox;
     _ = perform;
     _ = remote_module;

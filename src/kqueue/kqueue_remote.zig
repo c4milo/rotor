@@ -24,6 +24,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
 const core = @import("core");
+const group_module = @import("kqueue_group.zig");
 const queue_module = @import("kqueue_queue.zig");
 
 const Registry = core.mailbox.Registry;
@@ -70,7 +71,9 @@ pub const Remote = struct {
         assert(target != remote.id);
         assert(message.tag <= core.constants.message_tag_max);
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
-        if (wake) |descriptor| queue_module.Queue.wake(descriptor);
+        const descriptor = wake orelse return;
+        // In a group the target's wake is a pipe its group's creator made (decision 21, point 3).
+        if (remote.registry.group) group_module.send(descriptor) else queue_module.Queue.wake(descriptor);
     }
 
     /// Halts when another thread calls into the remote: a programmer error, and one that would put
