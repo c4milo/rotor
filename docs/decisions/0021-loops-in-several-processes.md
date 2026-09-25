@@ -309,3 +309,40 @@ How it is checked, point by point of "How it is checked":
 | the eventfds close on exec | `linux-shared`, Linux gate | CAUGHT |
 | the public `release` does nothing | `test-rotor` | CAUGHT |
 
+### Measured on `github`, 2026-09-25
+
+The CI job `costs`, started by hand on commit `26da902`, run 36177323493, on an AMD EPYC 7763
+(`bench/results/decision-21-github-2026-09-25.md`). The probes, one run, median and p99 in ns:
+
+| row | what | median (p99) |
+|---|---|---:|
+| C19 | a message between two threads, the receiver awake | 42.0 (44.4) |
+| C24 | a message between two processes, the receiver awake | 41.6 (44.1) |
+| C17 | a message by `MSG_RING` to a thread that sleeps, round trip halved | 14,734 (16,017) |
+| C25 | a message plus the group's wake to a process that sleeps, post to reap | 14,534 (17,560) |
+
+`rotor_post` with its peer as a thread and as a process, three rounds alternating: one message,
+the median and the range of the three rounds' medians, in ns.
+
+| backend | mode | peer thread | peer process |
+|---|---|---:|---:|
+| io_uring | spinning | 903 (903 to 915) | 907 (903 to 907) |
+| epoll | spinning | 1,215 (1,215 to 1,215) | 1,215 (1,215 to 1,215) |
+| io_uring | waiting | 12,671 (12,095 to 16,639) | 17,151 (12,287 to 17,151) |
+| epoll | waiting | 12,607 (11,455 to 12,607) | 14,399 (12,479 to 16,511) |
+
+What the runs say:
+
+- **A process boundary costs a message nothing when the receiver is awake.** C24 reads as C19, and
+  rotor's own loops that spin post in the same time with the peer in a thread or a process, on
+  io_uring and on epoll. The ring is the same memory either way, which is what the prior said.
+- **A wake between processes costs what a wake between threads costs.** C25, the group's eventfd
+  polled from io_uring, reads as C17, `MSG_RING`, within 2 percent. The two are measured differently:
+  C17 is a round trip halved with both sides asleep, and C25 one message to a process that had slept
+  for 100 µs.
+- **With a peer that sleeps, three rounds cannot tell a thread from a process.** The ranges overlap
+  on both backends and each spreads by 4 to 5 µs.
+
+These cells do not enter `docs/costs.md`: its `github` column describes a Xeon Platinum 8573C and is
+replaced whole or not at all. The `mac` and `orbstack` cells wait for a quiet run.
+

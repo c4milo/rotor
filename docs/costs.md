@@ -149,7 +149,10 @@ Rows C24 and C25 exist because decision 21 lets loops in several processes post 
 Their prior is that crossing a process costs nothing more than crossing a core: the ring is the same
 memory, so C24 should read as C19, and the wake is one more system call before a sleeping thread
 wakes, so C25 should read near C17 and C18. Their cells are empty until a quiet run fills them:
-the probes were written on 2026-09-25, when this machine's load average was 7.8.
+the probes were written on 2026-09-25, when this machine's load average was 7.8. Run 36177323493
+of the CI job `costs` measured both that day on an AMD EPYC 7763, where C24 read as C19 and C25 as
+C17 (decision 21, "Measured on `github`"); the `github` column describes a Xeon Platinum 8573C and is
+replaced whole, so that run did not fill it.
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.
