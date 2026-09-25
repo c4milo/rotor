@@ -431,5 +431,6 @@ took 0.5 µs longer than with the skipped poll at gaps of 0, 20, 100 and 1,500 �
 
 The ruling of 2026-09-24 priced the idle case in CPU only, from io_uring. On kqueue a caller that
 sets a budget also pays about 11 µs on each message that comes after it. The budget stays off by
-default, so no caller pays it without asking; whether the option's documentation should say so for
-macOS is the owner's call.
+default, so no caller pays it without asking. The owner ruled on 2026-09-25 that the option's
+documentation says so: the doc comment of `spin_budget_ns` on kqueue and in the public module, and
+`docs/using.md`, give these numbers.

@@ -105,7 +105,9 @@ pub const Loop = struct {
         /// How long a tick polls without waiting before it blocks, in nanoseconds, at most
         /// `core.constants.spin_budget_ns_max` (decision 13). 0, the default, never polls. A loop
         /// with a budget answers a message that comes inside it without being woken, and spends
-        /// the budget in CPU on every wait that outlasts it.
+        /// the budget in CPU on every wait that outlasts it. A message that comes after the budget
+        /// also arrives about 11 µs later than with no budget: 12.5 to 14.5 µs against 1.0 to 3.5,
+        /// measured on macOS 26.6.2 on 2026-09-25 (decision 13, "kqueue").
         spin_budget_ns: u64 = 0,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,

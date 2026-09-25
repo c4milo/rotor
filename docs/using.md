@@ -91,6 +91,12 @@ each message that comes after the budget costs the budget in polling, which at o
 100 µs was about half a core (`bench/results/decision-13-idle-github-2026-09-24.md`). A tick given no wait, or a wait no longer than the budget, never polls, and nor
 does one whose next timer is due inside the budget.
 
+On macOS a budget costs time as well as CPU. A message that comes after the budget arrives about
+11 µs later than it would with no budget: 12.5 to 14.5 µs against 1.0 to 3.5 µs, measured on an
+M1 Pro on 2026-09-25 (`bench/results/decision-13-idle-kqueue-mac-2026-09-25.md`). The loop that
+spun is slower to wake when the message comes. Why is not known. A macOS caller should set a budget
+only when most messages come inside it.
+
 ## Submit and tick
 
 ```zig
