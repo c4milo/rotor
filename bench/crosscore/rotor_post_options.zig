@@ -85,6 +85,9 @@ pub const Options = struct {
     burst: u32 = 1,
     /// Microseconds the measuring side waits before each ping, so the peer is idle that long.
     gap_us: u32 = 0,
+    /// True when the peer runs in a process of its own, made by `fork`, and the two loops share a
+    /// group's registry (decision 21); false for a thread of this process.
+    peer_process: bool = false,
 
     pub fn messages_per_round_trip(options: Options) u32 {
         return options.burst + 1;
@@ -97,10 +100,15 @@ const burst_candidate = "rotor (burst of posts, not a comparison)";
 /// The candidate name of a run with a gap before each ping, which is rotor against itself too.
 const gap_candidate = "rotor (idle gap, not a comparison)";
 
+/// The candidate name of a run whose peer is in another process: rotor against itself, since libuv
+/// and libxev post only between threads of one process.
+const process_candidate = "rotor (peer in another process, not a comparison)";
+
 /// The name a run's row carries. Only a plain run in `waiting` is a comparison.
 pub fn candidate_of(options: Options) []const u8 {
     if (options.burst != 1) return burst_candidate;
     if (options.gap_us != 0) return gap_candidate;
+    if (options.peer_process) return process_candidate;
     return options.mode.candidate();
 }
 
@@ -138,9 +146,18 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.burst = try std.fmt.parseInt(u32, value, 10);
     } else if (std.mem.eql(u8, name, "--gap-us")) {
         options.gap_us = try std.fmt.parseInt(u32, value, 10);
+    } else if (std.mem.eql(u8, name, "--peer")) {
+        options.peer_process = try peer_process_of(value);
     } else {
         return error.UnknownArgument;
     }
+}
+
+/// Where the peer runs: `thread` or `process`.
+fn peer_process_of(value: []const u8) !bool {
+    if (std.mem.eql(u8, value, "thread")) return false;
+    if (std.mem.eql(u8, value, "process")) return true;
+    return error.UnknownPeer;
 }
 
 /// A core, or `none` for a run that places nothing and reports that it did not.
@@ -243,4 +260,15 @@ test "a run with a gap is not named as a comparison, whatever its mode" {
         const name = candidate_of(.{ .mode = mode, .gap_us = 100 });
         try testing.expect(std.mem.indexOf(u8, name, "not a comparison") != null);
     }
+}
+
+test "the peer is a thread by default, a process when asked, and a process run is no comparison" {
+    var options: Options = .{};
+    try testing.expect(!options.peer_process);
+    try apply(&options, "--peer", "process");
+    try testing.expect(options.peer_process);
+    try testing.expect(std.mem.indexOf(u8, candidate_of(options), "not a comparison") != null);
+    try apply(&options, "--peer", "thread");
+    try testing.expect(!options.peer_process);
+    try testing.expectError(error.UnknownPeer, apply(&options, "--peer", "fork"));
 }

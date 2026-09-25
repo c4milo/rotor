@@ -1,7 +1,7 @@
 //! rotor_post: one cross-core message on its own, the rotor side of the cross-core comparison.
 //!
 //! Run:  rotor_post [--mode waiting|spinning|spin-then-wait|spin-budget] [--samples N] [--warmup N]
-//!                  [--cpu N] [--peer-cpu N] [--burst N] [--gap-us N]
+//!                  [--cpu N] [--peer-cpu N] [--burst N] [--gap-us N] [--peer thread|process]
 //!
 //! Decision 4 calls the threading model rotor's main claim and names its unit of cost as one
 //! cross-core message; rows C17 to C19 of `docs/costs.md` are that unit measured against the
@@ -32,6 +32,10 @@
 //! anyway. The program prints the CPU time the peer's thread used per round trip on a line of its
 //! own, before the result, because that is the cost the idle case is about and a latency does not
 //! show it. A run with a gap is rotor against itself, and its row says so.
+//!
+//! `--peer process` runs the peer loop in a process of its own, made by `fork`, and the two loops
+//! share a group's registry in a shared mapping (decision 21): the message crosses a process
+//! boundary, and a wake is the group's wake. It is rotor against itself too.
 //!
 //! **A round trip is two messages, so one message is half of it.** The two directions run the
 //! same mechanism over the same pair of loops, so halving is a fair split and not an average over
@@ -235,6 +239,7 @@ fn wait_gap(gap_us: u32) void {
 /// Starts the peer, measures, stops it, and returns the run as a `Result`.
 fn measure(options: Options) !Result {
     std.debug.assert(options.samples >= 1);
+    if (options.peer_process) return measure_across(options);
     registry.init(&registry_memory, loops);
     const own = placement.place(options.cpu);
 
@@ -261,6 +266,12 @@ fn measure(options: Options) !Result {
     thread.join();
     if (peer.failure) |err| return err;
 
+    return result_of(options, span_ns, own);
+}
+
+/// The row of a run that measured `span_ns` over `options.samples` round trips, with this thread
+/// placed as `own` says and the peer as it reported.
+fn result_of(options: Options, span_ns: u64, own: placement.Placement) Result {
     const pinned = own.names_a_core() and peer_placement.names_a_core();
     return .init(.{
         .workload = "cross-core",
@@ -279,6 +290,89 @@ fn measure(options: Options) !Result {
         .duration_ns = @max(span_ns, 1),
         .operations = @as(u64, options.samples) * options.messages_per_round_trip(),
     }, &latencies);
+}
+
+/// What the peer reports when it runs in a process of its own, where a thread writes the globals
+/// above. It sits in the shared mapping after the registry.
+const Report = extern struct {
+    cpu_ns: u64 = 0,
+    placement: u8 = 0,
+    failed: bool = false,
+};
+
+/// The shared mapping of a run whose peer is a process: the registry, then the report.
+const across_bytes = std.mem.alignForward(usize, registry_bytes, @alignOf(Report)) + @sizeOf(Report);
+
+/// Ticks the measuring loop waits, of `wait_ns` each, for a peer process to claim its id.
+const peer_start_ticks_max = 1000;
+
+/// What the peer process is handed: the options, and the mapping it attaches to.
+const Across = struct {
+    peer: Peer,
+    memory: []align(std.heap.page_size_min) u8,
+};
+
+fn measure_across(options: Options) !Result {
+    const memory = try harness.process.shared(across_bytes);
+    defer harness.process.release(memory);
+    var wakes: [loops]core.mailbox.Wake = undefined;
+    try backend.group_module.make(&wakes);
+    defer backend.group_module.close(&wakes);
+    registry.init_group(memory[0..registry_bytes], loops, &wakes);
+    const report = report_in(memory);
+    report.* = .{};
+    const child = try harness.process.start(Across, .{ .peer = .{
+        .mode = options.mode,
+        .cpu = options.peer_cpu,
+        .burst = options.burst,
+        .warmup = options.warmup,
+        .samples = options.samples,
+    }, .memory = memory }, serve_across);
+    const own = placement.place(options.cpu);
+    try first.loop.init(&first.memory, loop_options(options.mode, id_first));
+    defer first.loop.deinit();
+    try wait_for_peer(report);
+
+    const span_ns = try ping_pong(options);
+    first.post(id_second, tag_stop, 1);
+    try first.drain(options.mode);
+    if (try harness.process.wait(child) != harness.process.status_passed) return error.PeerFailed;
+    if (report.failed) return error.PeerFailed;
+    peer_cpu_ns = report.cpu_ns;
+    peer_placement = @enumFromInt(report.placement);
+    return result_of(options, span_ns, own);
+}
+
+fn report_in(memory: []align(std.heap.page_size_min) u8) *Report {
+    const offset = std.mem.alignForward(usize, registry_bytes, @alignOf(Report));
+    return @ptrCast(@alignCast(memory[offset..][0..@sizeOf(Report)]));
+}
+
+/// Ticks until the peer process claimed its id, or says it failed, or the ticks run out.
+fn wait_for_peer(report: *const Report) !void {
+    var events: [events_max]Event = undefined;
+    for (0..peer_start_ticks_max) |_| {
+        if (registry.get(id_second) >= 0) return;
+        if (report.failed) return error.PeerFailed;
+        _ = try first.loop.tick(&events, wait_ns);
+    }
+    return error.PeerFailed;
+}
+
+/// The peer process: it attaches to the group's registry, serves as the peer thread does, and
+/// writes what the thread would have written into the report.
+fn serve_across(across: Across) u8 {
+    const report = report_in(across.memory);
+    registry.attach(across.memory[0..registry_bytes]) catch {
+        report.failed = true;
+        return harness.process.status_failed;
+    };
+    var peer = across.peer;
+    peer.run();
+    report.cpu_ns = peer_cpu_ns;
+    report.placement = @intFromEnum(peer_placement);
+    report.failed = peer.failure != null;
+    return if (peer.failure == null) harness.process.status_passed else harness.process.status_failed;
 }
 
 const output_buffer_bytes = 4096;
