@@ -86,17 +86,34 @@ pub const Queue = struct {
     /// The eventfd another thread writes to wake this loop. Registered for read readiness at init
     /// and never removed, so a wake is one write and needs no registration of its own.
     wake_descriptor: core.Descriptor,
+    /// False in a group, whose creator made the eventfd and keeps it (decision 21, point 3).
+    owns_wake: bool,
 
     /// Opens the epoll instance and the eventfd that wakes it.
     pub fn init() InitError!Queue {
+        return open(null);
+    }
+
+    /// Opens the epoll instance, woken through `group_wake`, the eventfd the creator of the loop's
+    /// group made for it (decision 21, point 3). `deinit` leaves it open.
+    pub fn init_group(group_wake: core.Descriptor) InitError!Queue {
+        assert(group_wake >= 0);
+        return open(group_wake);
+    }
+
+    fn open(group_wake: ?core.Descriptor) InitError!Queue {
         if (comptime !supported) return error.Unsupported;
         const opened = linux.epoll_create1(linux.EPOLL.CLOEXEC);
         const descriptor = try descriptor_of(opened);
-        var queue: Queue = .{ .descriptor = descriptor, .wake_descriptor = -1 };
+        var queue: Queue = .{
+            .descriptor = descriptor,
+            .wake_descriptor = -1,
+            .owns_wake = group_wake == null,
+        };
         errdefer queue.deinit();
 
         const flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
-        queue.wake_descriptor = try descriptor_of(linux.eventfd(0, flags));
+        queue.wake_descriptor = group_wake orelse try descriptor_of(linux.eventfd(0, flags));
         var wake_event: Event = .{
             .events = linux.EPOLL.IN,
             .data = .{ .u64 = constants.wake_user_data },
@@ -119,7 +136,7 @@ pub const Queue = struct {
 
     pub fn deinit(queue: *Queue) void {
         if (queue.wake_descriptor >= 0) {
-            _ = linux.close(queue.wake_descriptor);
+            if (queue.owns_wake) _ = linux.close(queue.wake_descriptor);
             queue.wake_descriptor = -1;
         }
         if (queue.descriptor >= 0) {
@@ -251,6 +268,21 @@ test "a poll of an idle epoll returns nothing, and a wake ends a wait long befor
     try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, 0));
     queue.drain_wake();
     try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
+}
+
+test "a queue woken through its group's eventfd waits on it and leaves it open" {
+    if (!supported) return error.SkipZigTest;
+    const shared: core.Descriptor = @intCast(linux.eventfd(0, linux.EFD.NONBLOCK));
+    defer _ = linux.close(shared);
+    var queue = try Queue.init_group(shared);
+    try testing.expectEqual(shared, queue.wake_descriptor);
+    Queue.wake(shared);
+    var readiness: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, core.constants.wait_ns_max));
+    try testing.expectEqual(constants.wake_user_data, readiness[0].data.u64);
+    queue.deinit();
+    // The group's creator owns the eventfd, so the loop's end leaves it open.
+    try testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.fcntl(shared, linux.F.GETFD, 0)));
 }
 
 test "arming adds a descriptor the kernel does not hold, and modifies one it does" {

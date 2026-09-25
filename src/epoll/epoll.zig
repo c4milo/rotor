@@ -64,6 +64,7 @@ pub const supported = @import("builtin").os.tag == .linux;
 /// every backend's, `core.remote.post` (decision 20, open question 3; decision 4, amended
 /// 2026-09-25).
 pub const Registry = core.mailbox.Registry;
+pub const group_module = @import("linux_shared").group;
 pub const Remote = remote_module.Remote;
 pub const InitError = queue_module.InitError;
 pub const TickError = tick_module.TickError;
@@ -164,7 +165,13 @@ pub const Loop = struct {
         options: Options,
     ) InitError!void {
         loop.init_tables(memory, options);
-        loop.queue = try queue_module.Queue.init();
+        // In a group the loop is woken through the eventfd its group's creator made for it, which
+        // every process of the group holds (decision 21, point 3).
+        const group_wake = if (loop.inbox.registry) |registry| registry.wake(loop.tables.id) else null;
+        loop.queue = if (group_wake) |wake|
+            try queue_module.Queue.init_group(wake.watch)
+        else
+            try queue_module.Queue.init();
         // The eventfd and not the epoll instance: a post wakes a loop by writing to the descriptor
         // the registry holds, and an epoll descriptor cannot be written to.
         const registry = loop.inbox.registry orelse return;
