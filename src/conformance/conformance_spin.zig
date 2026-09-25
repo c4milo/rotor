@@ -6,10 +6,12 @@
 //!
 //! Each attempt starts by handing over one event, because the budget runs from the loop's last
 //! one. Each bound is read from the best of several attempts, as `conformance_cost.zig`'s are.
-//! Other work on the machine takes CPU from a polling thread and never gives it more, so the most
-//! one attempt spent is the closest to what a poll spends, and a tick that sleeps spends little
-//! however loaded the machine is. Every bound is one-sided in the direction that load cannot
-//! break.
+//! Other work on the machine takes CPU from a polling thread, so the most one attempt spent is the
+//! closest to what a poll spends. It can also charge a tick that sleeps for more than the tick
+//! did: on a hosted macOS runner at a load average of 53, one attempt's sleeping tick was charged
+//! more than half a millisecond, on 2026-09-24. So a bound on what a tick that should not poll
+//! spends reads the least any attempt spent. Every bound is one-sided in the direction that load
+//! cannot break.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
@@ -91,7 +93,7 @@ test "a loop that has handed over nothing since its budget ran out sleeps at onc
     defer harness.deinit();
 
     var events: [4]Event = undefined;
-    var most_cpu_ns: u64 = 0;
+    var least_cpu_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         try hand_over_one(&harness);
         // This wait spends the budget and ends with nothing, as a caller's wait for an idle peer
@@ -99,10 +101,10 @@ test "a loop that has handed over nothing since its budget ran out sleeps at onc
         try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 5 * ms));
         const spent = try timed_tick(&harness, &events, 5 * ms);
         try testing.expectEqual(@as(u32, 0), spent.produced);
-        most_cpu_ns = @max(most_cpu_ns, spent.cpu_ns);
+        least_cpu_ns = @min(least_cpu_ns, spent.cpu_ns);
     }
     // A loop that polled once per tick would spend a budget on every tick of an idle wait.
-    try testing.expect(most_cpu_ns < budget_ns / 4);
+    try testing.expect(least_cpu_ns < budget_ns / 4);
 }
 
 test "a tick asked not to block, or given a wait the budget covers, does not poll" {
@@ -112,17 +114,17 @@ test "a tick asked not to block, or given a wait the budget covers, does not pol
     defer harness.deinit();
 
     var events: [4]Event = undefined;
-    var most_cpu_ns: u64 = 0;
+    var least_cpu_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         try hand_over_one(&harness);
         const cpu_before = thread_cpu_ns();
         for (0..polls) |_| try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
         // A wait no longer than the budget is slept, as it was before there were budgets.
         try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, budget_ns));
-        most_cpu_ns = @max(most_cpu_ns, thread_cpu_ns() - cpu_before);
+        least_cpu_ns = @min(least_cpu_ns, thread_cpu_ns() - cpu_before);
     }
     // Twenty polls and one sleep cost far less than one budget spent polling.
-    try testing.expect(most_cpu_ns < budget_ns / 2);
+    try testing.expect(least_cpu_ns < budget_ns / 2);
 }
 
 test "a timer due inside the budget ends the spin before it starts, and the loop sleeps until it" {
@@ -133,16 +135,16 @@ test "a timer due inside the budget ends the spin before it starts, and the loop
 
     const timer_after_ns = budget_ns / 2;
     var events: [1]Event = undefined;
-    var most_cpu_ns: u64 = 0;
+    var least_cpu_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         try hand_over_one(&harness);
         try harness.submit(&.{Operation.timer(9, timer_after_ns, 0)}, &.{});
         const cpu_before = thread_cpu_ns();
         try harness.collect(&events);
-        most_cpu_ns = @max(most_cpu_ns, thread_cpu_ns() - cpu_before);
+        least_cpu_ns = @min(least_cpu_ns, thread_cpu_ns() - cpu_before);
         try testing.expectEqual(@as(u64, 9), events[0].user_data);
         try testing.expectEqual(@as(u32, 0), try events[0].outcome());
     }
     // Sleeping until the timer costs a few ticks. Polling until it would cost the time to it.
-    try testing.expect(most_cpu_ns < timer_after_ns / 2);
+    try testing.expect(least_cpu_ns < timer_after_ns / 2);
 }
