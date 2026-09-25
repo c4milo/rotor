@@ -277,9 +277,16 @@ How it is checked, point by point of "How it is checked":
    a `Remote` in the other process. They pass on kqueue natively, and on io_uring and epoll in the
    Linux gate, with and without a spin budget, and under ThreadSanitizer in the race gate. They do
    not use `exec`.
-2. The lost-wake test with its two sides in two processes is not built yet.
-3. The two rows of `docs/costs.md` are not measured yet.
-4. `rotor_post` has no two-process mode yet.
+2. `conformance_group.zig` also runs the lost-wake test across processes, on every backend: a
+   child's loop posts 4,000 rounds of one to eight messages at moments drawn from a seed, each
+   after the parent's loop took the round before, a quarter of them only once that loop says it
+   sleeps; a tick of the parent's loop that lasts a second is a lost wake. With the check after
+   `begin_sleep` deleted from `core/inbox.zig` it failed on kqueue with and without a spin budget,
+   and no other scenario did: CAUGHT. It was added on 2026-09-25, after the rest.
+3. The probes of rows C24 and C25 exist (`bench/costs/probes/probes_cross_process.zig`), and their
+   cells wait for a quiet run.
+4. `rotor_post --peer process` runs the peer loop in a forked process on a group's registry, and the
+   CI job `costs` runs it beside `--peer thread` on io_uring and on epoll.
 5. Mutations:
 
 | mutation | caught by | result |
