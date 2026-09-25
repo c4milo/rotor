@@ -87,7 +87,8 @@ A loop may stay awake for a bounded time after its last completion before it blo
   harness's histogram buckets, and the waiting row of that file is marked as disagreeing across
   runs and taken under other work. The comparison with libuv and libxev runs rotor in its waiting
   mode only, because neither offers a mode that polls (`bench/alternatives/README.md`), so the
-  spinning rows are rotor against itself. The idle case is not measured on kqueue either.
+  spinning rows are rotor against itself. The idle case was measured on kqueue on 2026-09-25, at
+  the end of this record.
 - **Whether a spinning loop hurts its neighbours.** A core that spins is a core not yielded. On a
   machine running one loop per core that is free; on a shared machine it is not.
 
@@ -134,8 +135,8 @@ Every check is on the real kernel: rotor has no simulator (decision 10).
   `github` for io_uring, `mac` for kqueue. `orbstack` is a virtual machine on the `mac` machine's
   cores, and `github` is a shared runner, so neither is quiet.
 - A measurement of the idle case, which decides whether the default may ever be above 0. Done for
-  io_uring on `github` on 2026-09-24, in "Results", and for epoll the same day, at the end. Not done
-  for kqueue.
+  io_uring on `github` on 2026-09-24, in "Results", for epoll the same day, and for kqueue on `mac`
+  on 2026-09-25, both at the end.
 - The owner's ruling on the one question no measurement answers: whether a rotor loop is
   entitled to burn a core it was not given.
 
@@ -218,7 +219,7 @@ Not measured:
 - **The worst case.** A peer whose message comes just after the budget spins all of it every time
   and is woken anyway. That gap, near 50 µs, was not run.
 - kqueue and epoll. Every number here is io_uring. The `mac` machine was too busy to measure.
-  epoll was measured later the same day, at the end of this record.
+  epoll was measured later the same day, and kqueue on 2026-09-25, both at the end of this record.
 - Many loops on one machine at once, and any budget other than 50 µs.
 
 The measurement this record asked for now exists for io_uring. It prices the budget and does not
@@ -382,3 +383,53 @@ What the runs say:
   0.9 µs of CPU up to 1,000 µs and 1.8 µs at 1,500 µs, and within 0.3 µs of round trip. The 1 ms
   difference of io_uring does not appear on epoll. On io_uring it appeared again in these runs, on
   all three processors: 0.9 to 7.3 µs more per round trip at a 1,000 µs gap.
+
+### kqueue, 2026-09-25, `mac`
+
+`rotor_post` ran the four modes on kqueue on `mac` once the machine was quiet, three rounds each of
+two builds, alternating: commit `507c762`, and the same commit with decision 12's skipped poll
+(point 6, its amendment of 2026-09-25), which the tree now holds
+(`bench/results/decision-13-idle-kqueue-mac-2026-09-25.md`). The harness's clock on macOS advances
+in 1,000 ns steps, so a message's time moves in steps of about 500 ns, and 0 means a round trip
+shorter than one step. The build with the skipped poll: the CPU time the answering loop used per
+round trip, in µs, the median and the range of three rounds.
+
+| mode | gap 0 | gap 20 µs | gap 100 µs | gap 1,000 µs | gap 1,500 µs |
+|---|---|---|---|---|---|
+| waiting | 1.9 (1.7 to 1.9) | 2.0 (2.0 to 2.1) | 1.8 (1.8 to 1.9) | 2.8 (2.7 to 2.8) | 6.9 (6.8 to 6.9) |
+| loop's budget | 0.4 (0.4 to 0.4) | 20.0 (20.0 to 20.0) | 52.9 (52.8 to 52.9) | 54.5 (54.4 to 54.5) | 56.9 (56.9 to 57.0) |
+
+One message, in ns:
+
+| mode | gap 0 | gap 20 µs | gap 100 µs | gap 1,000 µs | gap 1,500 µs |
+|---|---|---|---|---|---|
+| waiting | 1,503 (1,503 to 1,503) | 1,503 (1,503 to 1,503) | 1,003 (1,003 to 1,003) | 3,503 (3,503 to 3,503) | 2,511 (2,511 to 2,511) |
+| loop's budget | 0 (0 to 0) | 0 (0 to 0) | 12,543 (12,543 to 12,543) | 14,527 (14,015 to 14,527) | 13,055 (12,543 to 13,055) |
+
+What the runs say:
+
+- **Inside the budget, the spin pays.** At a 20 µs gap a message takes less than one clock step
+  with the budget, against 1,503 ns waiting, for 20.0 µs of CPU per round trip, which is the gap,
+  against 2.0 µs.
+- **After the budget, the spin costs CPU and time on kqueue.** At gaps of 100 to 1,500 µs the loop
+  with a budget uses 52.9 to 56.9 µs of CPU per round trip against 1.8 to 6.9 µs waiting: 50 to 51
+  µs more per message. A message also takes 10.5 to 11.5 µs longer: 12.5 to 14.5 µs against 1.0 to
+  3.5 µs. On io_uring and epoll the round trip after the budget was shorter with the spin.
+- **The extra time is the answering loop's wake after it spun.** The measuring side waits out the
+  gap on its core and never sleeps, so only the answering loop sleeps. In `waiting` mode that loop
+  sleeps as long or longer and answers in 1.0 to 3.5 µs. The extra time appears with the program's
+  spin as well as the loop's budget, within one clock step, and in both builds. In the build with
+  the skipped poll a spin makes no `kevent` call at all, so the calls a spin makes do not cause it.
+  Why a thread that spun before it slept wakes later on macOS is not known.
+- **As a share of a core.** At a 100 µs gap, 42 percent with the budget and 1.8 percent waiting; at
+  one message a millisecond, 5.3 percent and 0.3 percent.
+- **With no gap the budget costs less CPU than the sleep,** 0.4 µs per round trip against 1.9 µs.
+
+The `507c762` build agrees: after the budget its messages took 12.5 to 14.5 µs too, and waiting
+took 0.5 µs longer than with the skipped poll at gaps of 0, 20, 100 and 1,500 µs, and the same at
+1,000 µs. Every figure is in the results file.
+
+The ruling of 2026-09-24 priced the idle case in CPU only, from io_uring. On kqueue a caller that
+sets a budget also pays about 11 µs on each message that comes after it. The budget stays off by
+default, so no caller pays it without asking; whether the option's documentation should say so for
+macOS is the owner's call.
