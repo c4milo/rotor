@@ -7,9 +7,15 @@
 # reads, writes, ctl (epoll_ctl), waits (epoll waits) and other (other calls). The gate derives
 # untried, the epoll_ctl calls beyond the reads that found nothing, which calls_gate.zig explains.
 #
-# Every ceiling comes from six runs of the job on 2026-09-24, five on AMD EPYC 7763 runners and
-# one on an Intel Xeon Platinum 8370C, each the smallest of three rounds. It follows one of three
-# rules:
+# The ceilings were first taken from six runs of the job on 2026-09-24, five on AMD EPYC 7763
+# runners and one on an Intel Xeon Platinum 8370C. Runners on processors those six did not include
+# then failed the gate with no change to the code: 0.524 io_uring_enter per echo at 65536 bytes
+# on an AMD EPYC 9V74, and 0.730 epoll waits per echo for `rotor on epoll (group single)` on a
+# Xeon 8370C. So they were retaken on 2026-09-25 from the 33 runs the job made on 2026-09-24 on
+# the tree since `db9e39e`: 18 on AMD EPYC 7763, 8 on Intel Xeon Platinum 8573C, 5 on AMD EPYC
+# 9V74 and 2 on Intel Xeon Platinum 8370C. Each run gives the smallest of its three rounds. A
+# ceiling is the larger of what the rules below give on those 33 runs and what the first taking
+# gave, so none was lowered. Each follows one of three rules:
 #
 # - A count every run gave as 0 has the ceiling 0.05, so any call of that kind a change adds fails.
 # - A count whose runs differed by less than 0.1 has the highest run plus 0.10.
@@ -22,7 +28,7 @@
 
 # rotor at 4096 bytes
 4096 enter 0.95 rotor
-4096 requests 1.10 rotor
+4096 requests 1.11 rotor
 4096 arms 0.05 rotor
 4096 workers 0.05 rotor
 4096 reads 0.05 rotor
@@ -33,20 +39,20 @@
 4096 untried 0.05 rotor
 
 # rotor at 65536 bytes
-65536 enter 0.50 rotor
-65536 requests 1.14 rotor
-65536 arms 0.05 rotor
+65536 enter 0.80 rotor
+65536 requests 1.19 rotor
+65536 arms 0.11 rotor
 65536 workers 0.05 rotor
 65536 reads 0.05 rotor
 65536 writes 0.05 rotor
 65536 ctl 0.05 rotor
 65536 waits 0.05 rotor
-65536 other 0.05 rotor
+65536 other 0.11 rotor
 65536 untried 0.05 rotor
 
 # rotor (accumulate) at 4096 bytes
 4096 enter 1.05 rotor (accumulate)
-4096 requests 2.10 rotor (accumulate)
+4096 requests 2.11 rotor (accumulate)
 4096 arms 1.30 rotor (accumulate)
 4096 workers 0.05 rotor (accumulate)
 4096 reads 0.05 rotor (accumulate)
@@ -65,7 +71,7 @@
 65536 writes 0.05 rotor (accumulate)
 65536 ctl 0.05 rotor (accumulate)
 65536 waits 0.05 rotor (accumulate)
-65536 other 0.05 rotor (accumulate)
+65536 other 0.11 rotor (accumulate)
 65536 untried 0.05 rotor (accumulate)
 
 # rotor on epoll at 4096 bytes
@@ -73,23 +79,23 @@
 4096 requests 0.05 rotor on epoll
 4096 arms 0.05 rotor on epoll
 4096 workers 0.05 rotor on epoll
-4096 reads 1.10 rotor on epoll
+4096 reads 1.11 rotor on epoll
 4096 writes 1.10 rotor on epoll
-4096 ctl 0.05 rotor on epoll
-4096 waits 0.85 rotor on epoll
-4096 other 0.05 rotor on epoll
-4096 untried 0.05 rotor on epoll
+4096 ctl 0.11 rotor on epoll
+4096 waits 1.10 rotor on epoll
+4096 other 0.11 rotor on epoll
+4096 untried 0.11 rotor on epoll
 
 # rotor on epoll at 65536 bytes
 65536 enter 0.05 rotor on epoll
 65536 requests 0.05 rotor on epoll
 65536 arms 0.05 rotor on epoll
 65536 workers 0.05 rotor on epoll
-65536 reads 1.12 rotor on epoll
-65536 writes 1.11 rotor on epoll
-65536 ctl 0.05 rotor on epoll
-65536 waits 0.80 rotor on epoll
-65536 other 0.05 rotor on epoll
+65536 reads 1.13 rotor on epoll
+65536 writes 1.13 rotor on epoll
+65536 ctl 0.11 rotor on epoll
+65536 waits 0.95 rotor on epoll
+65536 other 0.11 rotor on epoll
 65536 untried 0.10 rotor on epoll
 
 # rotor on epoll (accumulate) at 4096 bytes
@@ -101,41 +107,41 @@
 4096 writes 1.10 rotor on epoll (accumulate)
 4096 ctl 1.35 rotor on epoll (accumulate)
 4096 waits 1.10 rotor on epoll (accumulate)
-4096 other 0.05 rotor on epoll (accumulate)
-4096 untried 0.05 rotor on epoll (accumulate)
+4096 other 0.11 rotor on epoll (accumulate)
+4096 untried 0.15 rotor on epoll (accumulate)
 
 # rotor on epoll (accumulate) at 65536 bytes
 65536 enter 0.05 rotor on epoll (accumulate)
 65536 requests 0.05 rotor on epoll (accumulate)
 65536 arms 0.05 rotor on epoll (accumulate)
 65536 workers 0.05 rotor on epoll (accumulate)
-65536 reads 2.40 rotor on epoll (accumulate)
-65536 writes 1.10 rotor on epoll (accumulate)
-65536 ctl 1.10 rotor on epoll (accumulate)
-65536 waits 0.80 rotor on epoll (accumulate)
-65536 other 0.05 rotor on epoll (accumulate)
-65536 untried 0.10 rotor on epoll (accumulate)
+65536 reads 2.45 rotor on epoll (accumulate)
+65536 writes 1.11 rotor on epoll (accumulate)
+65536 ctl 1.20 rotor on epoll (accumulate)
+65536 waits 0.90 rotor on epoll (accumulate)
+65536 other 0.11 rotor on epoll (accumulate)
+65536 untried 0.11 rotor on epoll (accumulate)
 
 # rotor on epoll (group single) at 4096 bytes
 4096 enter 0.05 rotor on epoll (group single)
 4096 requests 0.05 rotor on epoll (group single)
 4096 arms 0.05 rotor on epoll (group single)
 4096 workers 0.05 rotor on epoll (group single)
-4096 reads 2.50 rotor on epoll (group single)
+4096 reads 2.55 rotor on epoll (group single)
 4096 writes 1.10 rotor on epoll (group single)
-4096 ctl 1.25 rotor on epoll (group single)
-4096 waits 0.65 rotor on epoll (group single)
-4096 other 0.05 rotor on epoll (group single)
-4096 untried 0.05 rotor on epoll (group single)
+4096 ctl 1.30 rotor on epoll (group single)
+4096 waits 1.05 rotor on epoll (group single)
+4096 other 0.11 rotor on epoll (group single)
+4096 untried 0.15 rotor on epoll (group single)
 
 # rotor on epoll (group single) at 65536 bytes
 65536 enter 0.05 rotor on epoll (group single)
 65536 requests 0.05 rotor on epoll (group single)
 65536 arms 0.05 rotor on epoll (group single)
 65536 workers 0.05 rotor on epoll (group single)
-65536 reads 2.40 rotor on epoll (group single)
+65536 reads 2.50 rotor on epoll (group single)
 65536 writes 1.13 rotor on epoll (group single)
-65536 ctl 1.20 rotor on epoll (group single)
-65536 waits 0.80 rotor on epoll (group single)
-65536 other 0.05 rotor on epoll (group single)
-65536 untried 0.13 rotor on epoll (group single)
+65536 ctl 1.30 rotor on epoll (group single)
+65536 waits 0.85 rotor on epoll (group single)
+65536 other 0.11 rotor on epoll (group single)
+65536 untried 0.14 rotor on epoll (group single)
