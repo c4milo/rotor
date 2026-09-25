@@ -230,6 +230,24 @@ jobs:
               done
             done
           done
+      # Decision 21: one message between loops of two processes against the same between two
+      # threads, alternating, on io_uring (`rotor_post`) and on epoll (`post_epoll`). The peer that
+      # waits pays a wake each message; the peer that spins pays none, which isolates the crossing.
+      - name: Decision 21, a message between processes, three rounds alternating
+        run: |
+          set -euo pipefail
+          zig build bench-crosscore bench-linux
+          for round in 1 2 3; do
+            for program in ./zig-out/bin/rotor_post ./zig-out/linux-bench/post_epoll; do
+              for mode in waiting spinning; do
+                for peer in thread process; do
+                  echo "== round $round, $program, $mode, peer $peer"
+                  "$program" --mode "$mode" --peer "$peer" --samples 2000 --warmup 200 \
+                    | grep -E '^rotor_post:|^[{]'
+                done
+              done
+            done
+          done
       # Decision 8's echo half: rotor's echo server at 4 KiB with class A compiled out, against the
       # one rotor ships. Both are named `rotor`, and the runner alternates candidates only inside
       # one run, so the two runs alternate here, three times each, each on its own ports.
