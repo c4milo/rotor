@@ -241,3 +241,122 @@ test "a post from a Remote in another process wakes a loop that sleeps" {
     try testing.expectEqual(@as(u64, payload_ping), events[0].user_data);
     try testing.expect(slept < sleep_ns / 2);
 }
+
+// The sleep handshake between processes (decision 21, "How it is checked", point 2): what
+// `kqueue/kqueue_mailbox_test.zig` checks with two threads and a stand-in for the kernel's wait,
+// here with two loops in two processes and the group's real wake. A lost wake leaves the parent's
+// loop asleep with a message in its ring, and nothing else comes to wake it.
+
+/// Rounds the child posts. Each waits until the parent took the round before.
+const handshake_rounds = 4000;
+/// The seed the child draws its moments from. A failure names it.
+const handshake_seed: u64 = 0x6772_6F75_705F_7761;
+/// Messages one round posts, at most.
+const handshake_burst_max = 8;
+/// Spins the child waits for the parent to take a round, or to say it sleeps, before it gives up.
+const handshake_wait_spins_max: u64 = 1 << 32;
+/// How long the parent's loop sleeps at most per tick, and how long a tick may last before the
+/// parent calls a wake lost: every post comes within milliseconds of the parent's last take.
+const handshake_sleep_ns = 5 * core.constants.ns_per_s;
+const handshake_lost_ns = core.constants.ns_per_s;
+/// Ticks the parent makes at most, far more than the rounds need.
+const handshake_ticks_max = 1 << 20;
+const tag_stop = 3;
+
+const status_parent_stalled: u8 = 7;
+
+fn spin(iterations: u64) void {
+    for (0..iterations) |iteration| std.mem.doNotOptimizeAway(iteration);
+}
+
+/// Spins until `condition` holds of the group's registry, or the spins run out.
+fn wait_for(member: *Registry, comptime condition: enum { drained, sleeping }) bool {
+    var spins: u64 = 0;
+    while (spins < handshake_wait_spins_max) : (spins += 1) {
+        const met = switch (condition) {
+            .drained => member.mailbox(1, 0).is_empty(),
+            .sleeping => member.must_wake(0),
+        };
+        if (met) return true;
+    }
+    return false;
+}
+
+/// Posts `count` messages numbered from `first` in one submit, so one flush posts them all.
+fn post_burst(harness: *Harness, first: u64, count: u64) u8 {
+    var batch: [handshake_burst_max]Operation = undefined;
+    for (batch[0..count], 0..) |*operation, offset| {
+        operation.* = Operation.post(9, 0, .{ .payload = first + offset, .tag = tag_ping });
+    }
+    harness.submit(batch[0..count], &.{}) catch return status_loop_failed;
+    var events: [handshake_burst_max]Event = undefined;
+    harness.collect(events[0..count]) catch return status_loop_failed;
+    for (events[0..count]) |event| {
+        const result = event.outcome() catch return status_post_refused;
+        if (result != 0) return status_post_refused;
+    }
+    return process.status_passed;
+}
+
+/// The child: posts bursts at moments drawn from the seed. A quarter of the rounds wait until the
+/// parent's loop says it sleeps, so only a wake can deliver them; the rest land while it is on its
+/// way to sleep, which is where a wake can be lost.
+fn post_at_drawn_moments(memory: Memory) u8 {
+    var member: Registry = undefined;
+    member.attach(memory) catch return status_attach_failed;
+    var harness: Harness = undefined;
+    harness.init(1, &member) catch return status_loop_failed;
+    defer harness.deinit();
+    var random = core.random.Random.init(handshake_seed);
+    var sent: u64 = 0;
+    for (0..handshake_rounds) |_| {
+        const after_sleeping = random.chance(1, 4);
+        const spins = random.below(4096);
+        const burst = if (random.chance(1, 8)) random.between(2, handshake_burst_max) else 1;
+        if (!wait_for(&member, .drained)) return status_parent_stalled;
+        if (after_sleeping and !wait_for(&member, .sleeping)) return status_never_slept;
+        spin(spins);
+        const posted = post_burst(&harness, sent, burst);
+        if (posted != process.status_passed) return posted;
+        sent += burst;
+    }
+    if (!wait_for(&member, .drained)) return status_parent_stalled;
+    return post_once(&harness, 0, .{ .payload = sent, .tag = tag_stop });
+}
+
+test "no wake is lost between processes: a loop that sleeps is woken by the post that needs it" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var group: Group = undefined;
+    try group.init();
+    defer group.deinit();
+    const child = try process.start(Memory, group.memory, post_at_drawn_moments);
+    var harness: Harness = undefined;
+    try harness.init(0, &group.registry);
+    defer harness.deinit();
+
+    var events: [handshake_burst_max]Event = undefined;
+    var received: u64 = 0;
+    var stopped = false;
+    var ticks: u32 = 0;
+    while (!stopped and ticks < handshake_ticks_max) : (ticks += 1) {
+        const before = backend.testing.monotonic_ns();
+        const produced = try harness.loop.tick(&events, handshake_sleep_ns);
+        if (backend.testing.monotonic_ns() - before >= handshake_lost_ns) {
+            std.debug.print("a wake was lost after {d} messages; seed 0x{x}\n", .{ received, handshake_seed });
+            return error.LostWake;
+        }
+        for (events[0..produced]) |event| {
+            try testing.expect(event.flags.message);
+            if (event.result == tag_stop) {
+                try testing.expectEqual(received, event.user_data);
+                stopped = true;
+                continue;
+            }
+            try testing.expectEqual(received, event.user_data);
+            received += 1;
+        }
+    }
+    try testing.expect(stopped);
+    try testing.expectEqual(process.status_passed, try process.wait(child));
+    try testing.expect(received >= handshake_rounds);
+}
