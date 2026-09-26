@@ -226,6 +226,7 @@ and the commands to take every number again.
 | [19](docs/decisions/0019-the-comparison-measures-one-core.md) | the comparison measures one core | accepted |
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
 | [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
+| [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | proposed |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why.
