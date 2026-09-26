@@ -24,13 +24,14 @@ const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
 const race = @import("build/race.zig");
 const proofs = @import("build/proofs.zig");
+const examples = @import("build/examples.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
-const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
+const source_directories = [_][]const u8{ "bench", "build", "examples", "src", "tools" };
 
 /// Every directory the tools/lint rules read: the sources above plus the documents, which the
 /// markdown rule covers.
-const lint_rule_directories = [_][]const u8{ "bench", "build", "src", "tools", "docs" };
+const lint_rule_directories = [_][]const u8{ "bench", "build", "examples", "src", "tools", "docs" };
 
 /// The Markdown files at the top of the tree, which the markdown rule reads beside `docs`.
 const lint_rule_files = [_][]const u8{ "CLAUDE.md", "README.md", "proofs/README.md" };
@@ -138,6 +139,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(bench_steps.harness_tests);
     test_step.dependOn(bench_steps.program_tests);
     test_step.dependOn(bench_steps.echo_smoke);
+    // The examples compile against the public module, so the README cannot show a program that no
+    // longer builds.
+    test_step.dependOn(examples.add(b, graph, target, optimize));
 
     linux.add(b, optimize);
     // The race gate's compile, and not its install: it is the only step that builds the kqueue

@@ -96,7 +96,8 @@ and its mutation is measured against the Linux gate.
 
 ## Conventions
 
-- Zig 0.16. One library, no binary, plus the harness under `bench/`.
+- Zig 0.16. One library, no binary, plus the harness under `bench/` and the programs under
+  `examples/`.
 - Names spell words out: `slot_bytes`, not `slot_sz`. Kernel vocabulary stays as the
   kernel spells it (`sqe`, `cqe`, `kevent`, `msg_ring`). One-letter names only for loop indices.
   `_bytes` and `_len` count bytes; `_max` names a limit.
@@ -201,6 +202,9 @@ was about to push.
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds
   rotor's configuration of each rule.
 - `proofs/` holds the Lean proofs, a Lake project outside the Zig build's module graph.
+- `examples/` holds complete programs that import the public module as a dependent package does.
+  `zig build test` compiles them, and the README shows one, so the README cannot show code that no
+  longer builds. `build/examples.zig` wires them.
 - `docs/` is the design set. `bench/` will hold the harness, the cost probes of
   `docs/costs.md`, the pinned versions of what rotor is measured against, and the committed
   results with the machine and kernel beside them.
@@ -219,14 +223,14 @@ was about to push.
 
 - Build: `zig build`. `-Drelease` builds ReleaseSafe; ReleaseFast and ReleaseSmall are not
   offered, because assertions stay on in production.
-- Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src` and `tools`,
-  then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import, markdown,
-  file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
+- Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `examples`, `src` and
+  `tools`, then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import,
+  markdown, file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
   rule runs.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
-  executables' compile, the hook check and the format check. Every change passes it before it
+  executables' compile, the examples' compile, the hook check and the format check. Every change passes it before it
   is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
 - Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
