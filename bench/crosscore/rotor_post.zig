@@ -117,6 +117,10 @@ var peer_cpu_ns: u64 = 0;
 const Side = struct {
     memory: [memory_bytes]u8 align(core.layout.memory_alignment) = undefined,
     loop: Loop = undefined,
+    /// Where `post` builds its operations. A local array would cost a fill of all `burst_max`
+    /// entries on every post, because ReleaseSafe writes a pattern over `undefined` memory, and
+    /// libuv's program pays nothing like it.
+    batch: [burst_max]core.Operation = undefined,
 
     /// Posts `count` messages to `target` in one submit, so one flush posts them all. Each one's
     /// own completion arrives as an event too, and `receive` skips it: an event is the peer's
@@ -124,7 +128,7 @@ const Side = struct {
     fn post(side: *Side, target: core.LoopId, tag: u32, count: u32) void {
         std.debug.assert(count >= 1 and count <= burst_max);
         std.debug.assert(tag == tag_ping or tag == tag_pong or tag == tag_stop);
-        var batch: [burst_max]core.Operation = undefined;
+        const batch = &side.batch;
         const message: core.Message = .{ .payload = 0, .tag = tag };
         for (batch[0..count]) |*operation| operation.* = core.Operation.post(0, target, message);
         const taken = side.loop.submit(batch[0..count], &.{});
