@@ -186,9 +186,14 @@ fn arm_poll(loop: *Loop) void {
 /// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that
 /// produced nothing (decision 9, rule 4). `kqueue_testing.zig` hands it to the tests, so a test
 /// measures with the clock the tick reads.
+///
+/// It is `CLOCK_MONOTONIC_RAW`, which on macOS counts in 41 ns steps and costs 14.5 ns a read.
+/// `CLOCK_MONOTONIC` there counts in 1,000 ns steps and costs 20.1 ns, measured on macOS 26.6.2 on
+/// 2026-09-26. Both keep counting while the machine sleeps. `bench/harness/clock.zig` reads the
+/// same clock, so a benchmark's spans and a loop's deadlines agree.
 pub fn clock_ns() u64 {
     var now: std.c.timespec = undefined;
-    const rc = std.c.clock_gettime(.MONOTONIC, &now);
+    const rc = std.c.clock_gettime(.MONOTONIC_RAW, &now);
     assert(rc == 0);
     assert(now.sec >= 0);
     const seconds: u64 = @intCast(now.sec);

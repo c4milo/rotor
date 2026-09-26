@@ -17,12 +17,16 @@ const Timespec = if (builtin.os.tag == .linux) std.os.linux.timespec else std.c.
 
 /// The monotonic clock in nanoseconds. A round trip is thousands of these, so the read's own cost
 /// (C20, about 20 ns by a recalled prior) is not what a caller is measuring.
+///
+/// On macOS it is `CLOCK_MONOTONIC_RAW`, the clock the kqueue tick reads, which counts in 41 ns
+/// steps. `CLOCK_MONOTONIC` there counts in 1,000 ns steps, so every macOS latency recorded before
+/// 2026-09-26 is a whole number of microseconds. `bench/alternatives/libuv_bench.h` reads the same.
 pub fn now_ns() u64 {
     var value: Timespec = undefined;
     if (builtin.os.tag == .linux) {
         assert(std.os.linux.clock_gettime(.MONOTONIC, &value) == 0);
     } else {
-        assert(std.c.clock_gettime(.MONOTONIC, &value) == 0);
+        assert(std.c.clock_gettime(.MONOTONIC_RAW, &value) == 0);
     }
     return nanoseconds_of(value);
 }

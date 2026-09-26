@@ -18,6 +18,10 @@ alternative.
   taken while another job used half a core or more is marked **OTHER WORK**.
 - **Each library in its cheapest mode.** A row names the mode, so no result depends on driving an
   alternative badly.
+- **One clock.** Every candidate reads the same clock the same way. On macOS it is
+  `CLOCK_MONOTONIC_RAW` since 2026-09-26, which counts in 41 ns steps. The runs before read
+  `CLOCK_MONOTONIC`, which counts in 1,000 ns steps there, so their macOS latencies are whole
+  microseconds: a p50 of 1,500 or 2,007 ns is a step, not a measurement to the nanosecond.
 
 ## Machines
 

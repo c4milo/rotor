@@ -237,6 +237,11 @@ Alternatives:
 
 The io_uring and epoll backends do not change.
 
+**Amended the same day: the tick reads `CLOCK_MONOTONIC_RAW`.** `CLOCK_MONOTONIC` on macOS counts in
+1,000 ns steps and costs 20.1 ns a read; `CLOCK_MONOTONIC_RAW` counts in 41 ns steps and costs 14.5
+ns, and both keep counting while the machine sleeps. So `Loop.now_ns` counts in 41 ns steps on this
+backend. The benchmark harness reads the same clock, so its spans and a loop's deadlines agree.
+
 Mutations, measured against `zig build test-kqueue`, and against `zig build halt-check` for the two
 assertions on the timer's bound:
 

@@ -27,10 +27,15 @@
 #define BENCH_P999 9990ULL
 #define BENCH_P9999 9999ULL
 
-/* The monotonic clock in nanoseconds, the one bench/harness/clock.zig reads. */
+/* The monotonic clock in nanoseconds, the one bench/harness/clock.zig reads: CLOCK_MONOTONIC_RAW on
+ * macOS, which counts in 41 ns steps where CLOCK_MONOTONIC counts in 1,000. */
 static inline uint64_t bench_now_ns(void) {
     struct timespec value;
+#ifdef __APPLE__
+    clock_gettime(CLOCK_MONOTONIC_RAW, &value);
+#else
     clock_gettime(CLOCK_MONOTONIC, &value);
+#endif
     return (uint64_t)value.tv_sec * BENCH_NS_PER_S + (uint64_t)value.tv_nsec;
 }
 
