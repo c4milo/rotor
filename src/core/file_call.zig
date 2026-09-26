@@ -1,4 +1,4 @@
-//! A file operation's system call on a readiness backend: `read`, `write` or `fdatasync`. The loop
+//! A file operation's system call on a readiness backend: `read`, `write`, `fdatasync` or `fsync`. The loop
 //! thread makes it inline under the `blocking` policy, and one of the caller's workers makes it
 //! under `offload` (decision 18). Both paths call `result`, so the policy decides which thread
 //! makes the call and nothing else. Until 2026-09-23 each path had its own copy, and the copies
@@ -37,10 +37,15 @@ pub const Code = Work.Code;
 pub const Request = struct {
     code: Code,
     descriptor: operation.Descriptor,
-    /// The bytes to transfer. Empty for `fdatasync`, and for nothing else.
+    /// The bytes to transfer. Empty for a sync, and for nothing else.
     bytes: []u8,
     offset: u64,
 };
+
+/// True for the two syncs, which transfer no bytes.
+pub fn is_sync(code: Code) bool {
+    return code == .fdatasync or code == .fsync;
+}
 
 /// What one system call answered: the count it returned, or its errno. `E` is the backend's errno
 /// type: `std.posix.E` on kqueue, `std.os.linux.E` on epoll. The two are different types on a
@@ -54,7 +59,7 @@ pub fn Answer(comptime E: type) type {
 /// `Answer`. In a backend it is the kernel; in a test it is a list of answers.
 pub fn result(calls: anytype, request: Request, comptime retries_max: u32) i32 {
     comptime assert(retries_max >= 1);
-    assert((request.code == .fdatasync) == (request.bytes.len == 0));
+    assert(is_sync(request.code) == (request.bytes.len == 0));
     var retry: u32 = 0;
     while (retry <= retries_max) : (retry += 1) {
         switch (calls.answer(request)) {
@@ -78,7 +83,7 @@ pub fn result(calls: anytype, request: Request, comptime retries_max: u32) i32 {
 pub fn request_of_slot(slot: *const Slot) Request {
     const code: Code = offload.code_of(slot.code).?;
     // A sync's slot holds no buffer, so `bytes` would fail its own check.
-    const bytes: []u8 = if (code == .fdatasync) &.{} else slot.bytes();
+    const bytes: []u8 = if (is_sync(code)) &.{} else slot.bytes();
     return .{ .code = code, .descriptor = slot.descriptor, .bytes = bytes, .offset = slot.offset };
 }
 
@@ -91,7 +96,7 @@ pub fn request_of_work(work: *const Work) Request {
         .bytes = &.{},
         .offset = work.offset,
     };
-    if (work.code != .fdatasync) {
+    if (!is_sync(work.code)) {
         const buffer: [*]u8 = @ptrFromInt(work.buffer);
         request.bytes = buffer[0..work.length];
     }
@@ -219,6 +224,12 @@ test "a slot's request carries its buffer, and a sync's carries none" {
     try testing.expectEqual(Code.fdatasync, sync.code);
     try testing.expectEqual(@as(operation.Descriptor, 7), sync.descriptor);
     try testing.expectEqual(@as(usize, 0), sync.bytes.len);
+
+    slot.fill(&.{ .user_data = 3, .kind = .{ .fsync = .{ .file = 8 } } });
+    const full = request_of_slot(&slot);
+    try testing.expectEqual(Code.fsync, full.code);
+    try testing.expectEqual(@as(operation.Descriptor, 8), full.descriptor);
+    try testing.expectEqual(@as(usize, 0), full.bytes.len);
 }
 
 test "a work's request carries the bytes the loop copied, and a sync's carries none" {
@@ -243,5 +254,7 @@ test "a work's request carries the bytes the loop copied, and a sync's carries n
     sync.code = .fdatasync;
     sync.buffer = 0;
     sync.length = 0;
+    try testing.expectEqual(@as(usize, 0), request_of_work(&sync).bytes.len);
+    sync.code = .fsync;
     try testing.expectEqual(@as(usize, 0), request_of_work(&sync).bytes.len);
 }

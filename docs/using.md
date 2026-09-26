@@ -115,7 +115,7 @@ const count = try loop.tick(&events, rotor.constants.ns_per_ms);
 ```
 
 `Operation` has one constructor per kind (`accept`, `connect`, `receive`, `receive_group`, `send`,
-`shutdown`, `close`, `read`, `write`, `fdatasync`, `timer`, `post`, `receive_from`, `send_to`),
+`shutdown`, `close`, `read`, `write`, `fdatasync`, `fsync`, `timer`, `post`, `receive_from`, `send_to`),
 each building the common shape in one call. Set `timeout_ns` or `descriptor_registered` on the
 result when either is wanted, and write the struct out for a receive into a registered buffer.
 
@@ -180,7 +180,8 @@ Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registe
 | `shutdown` | a socket and `how` | 0 |
 | `close` | a descriptor of the process | 0 |
 | `read`, `write` | a file, a buffer and an offset | bytes moved |
-| `fdatasync` | a file | 0 |
+| `fdatasync` | a file: its data, and the metadata a later read needs, such as its size | 0 |
+| `fsync` | a file: its data and all of its metadata, such as its times and permissions | 0 |
 | `timer` | `after_ns`, optional `repeat_ns` | 0 per fire |
 | `post` | a target `LoopId` and a `Message` | 0, or `mailbox_full`, `loop_not_found` |
 | `nop` | nothing | 0 |
@@ -273,7 +274,7 @@ cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmen
 
 ## Files
 
-io_uring performs `read`, `write` and `fdatasync` without a thread. kqueue and epoll report
+io_uring performs `read`, `write`, `fdatasync` and `fsync` without a thread. kqueue and epoll report
 readiness and never complete a file operation, so on macOS, and on Linux where the process runs
 epoll, the loop needs to be told what to do. `rotor.files_block` is true on both, because on Linux
 a process may run either backend; a caller that sets a policy there is right on both:

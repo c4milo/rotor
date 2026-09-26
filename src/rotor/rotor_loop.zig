@@ -150,7 +150,7 @@ pub const Loop = struct {
         /// Where loops find each other, for `post`. Null for a loop that posts to none and that
         /// none posts to.
         registry: ?*Registry = null,
-        /// What the loop does with `read`, `write` and `fdatasync` on a backend whose file
+        /// What the loop does with `read`, `write`, `fdatasync` and `fsync` on a backend whose file
         /// operations block (decision 18). io_uring checks it as epoll does, and then ignores it.
         file_policy: core.offload.FilePolicy = .refuse,
         /// The caller's threads, required when `file_policy` is `offload` and refused otherwise.

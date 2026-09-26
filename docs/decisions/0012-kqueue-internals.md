@@ -92,9 +92,11 @@ and they show no gain.
 
 ## 5. Files block the loop, and a sync is a full sync
 
-A file operation runs inline in `flush`: `pread`, `pwrite`, and for `fdatasync`,
+A file operation runs inline in `flush`: `pread`, `pwrite`, and for `fdatasync` and `fsync`,
 `fcntl(F_FULLFSYNC)`. Decision 2 accepted the blocking. `F_FULLFSYNC` is what makes the promise
-of `fdatasync` true on macOS: a plain `fsync` leaves the bytes in the drive's cache. `open_file`
+of either sync true on macOS: a plain `fsync` leaves the bytes in the drive's cache. It writes the
+data and all of the file's metadata, so it keeps `fsync`'s promise as well as `fdatasync`'s, and
+the two operations are the same call on this backend (decision 2, its amendment of 2026-09-26). `open_file`
 with `direct` sets `F_NOCACHE`, the nearest macOS has to O_DIRECT, and `set_file_size`
 preallocates with `F_PREALLOCATE` and then sets the length.
 

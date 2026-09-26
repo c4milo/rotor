@@ -43,7 +43,7 @@ pub fn attempt(loop: *Loop, slot: *Slot) Attempt {
         .receive => attempt_receive(loop, slot),
         .send => attempt_send(slot),
         .shutdown => attempt_shutdown(slot),
-        .read, .write, .fdatasync => attempt_file(loop, slot),
+        .read, .write, .fdatasync, .fsync => attempt_file(loop, slot),
         .nop => Attempt.done(0),
         .receive_from => attempt_receive_from(loop, slot),
         .send_to => attempt_send_to(slot),

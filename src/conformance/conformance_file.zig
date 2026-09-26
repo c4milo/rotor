@@ -43,6 +43,11 @@ test "a block written and synced reads back, and a read past the end returns 0" 
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 
+    try harness.submit(&.{Operation.fsync(5, file)}, &.{});
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u64, 5), events[0].user_data);
+    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
+
     try harness.submit(&.{Operation.read(3, file, &in, 2 * block_bytes)}, &.{});
     try harness.collect(&events);
     try testing.expectEqual(@as(u32, block_bytes), try events[0].outcome());

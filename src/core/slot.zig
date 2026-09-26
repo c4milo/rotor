@@ -148,6 +148,7 @@ pub const Slot = extern struct {
                 slot.offset = write.offset;
             },
             .fdatasync => |fdatasync| slot.descriptor = fdatasync.file,
+            .fsync => |fsync| slot.descriptor = fsync.file,
             .timer => |timer| {
                 slot.descriptor = 0;
                 slot.offset = timer.after_ns;

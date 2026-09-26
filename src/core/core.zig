@@ -62,6 +62,7 @@ test {
     _ = @import("mailbox_registry_test.zig");
     _ = offload;
     _ = operation;
+    _ = @import("operation_test.zig");
     _ = random;
     _ = remote;
     _ = shutdown;

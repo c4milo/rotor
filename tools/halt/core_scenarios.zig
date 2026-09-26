@@ -8,6 +8,7 @@ const scenario = @import("scenario.zig");
 const finish = @import("core_scenarios_finish.zig");
 const spin = @import("core_scenarios_spin.zig");
 const registry = @import("core_scenarios_registry.zig");
+const file_call = @import("core_scenarios_file_call.zig");
 
 const Slot = core.Slot;
 const SlotTable = core.slot_table.SlotTable;
@@ -69,6 +70,13 @@ fn disarm_a_slot_that_is_not_armed() void {
     const index = slot_table.claim().?;
     scenario.reached_violation();
     heap.disarm(index);
+}
+
+/// A sync of a descriptor no file can have.
+fn sync_a_negative_descriptor() void {
+    const operation = core.Operation.fsync(1, -1);
+    scenario.reached_violation();
+    operation.assert_valid();
 }
 
 fn submit_a_transfer_of_no_bytes() void {
@@ -348,50 +356,6 @@ fn cancel_a_slot_whose_final_event_is_queued() void {
     _ = tables.request_cancel(index, tables.table.at(index));
 }
 
-const FileAnswer = core.file_call.Answer(std.posix.E);
-
-/// A call that answers one more byte than it was given, which no kernel does.
-const OverCount = struct {
-    pub fn answer(_: OverCount, request: core.file_call.Request) FileAnswer {
-        return .{ .count = request.bytes.len + 1 };
-    }
-};
-
-/// A call that transfers nothing and succeeds, so only the request's own shape can halt.
-const NoCount = struct {
-    pub fn answer(_: NoCount, request: core.file_call.Request) FileAnswer {
-        _ = request;
-        return .{ .count = 0 };
-    }
-};
-
-/// The bound handed to `file_call.result`. Each call here answers the first time.
-const file_retries_max = 1;
-
-var file_bytes: [1]u8 = undefined;
-
-fn answer_a_read_with_more_bytes_than_it_was_given() void {
-    const request: core.file_call.Request = .{
-        .code = .read,
-        .descriptor = 0,
-        .bytes = &file_bytes,
-        .offset = 0,
-    };
-    scenario.reached_violation();
-    _ = core.file_call.result(OverCount{}, request, file_retries_max);
-}
-
-fn hand_a_sync_bytes_to_transfer() void {
-    const request: core.file_call.Request = .{
-        .code = .fdatasync,
-        .descriptor = 0,
-        .bytes = &file_bytes,
-        .offset = 0,
-    };
-    scenario.reached_violation();
-    _ = core.file_call.result(NoCount{}, request, file_retries_max);
-}
-
 const scenarios = [_]scenario.Scenario{
     .{ .name = "slot_table: release a free slot", .run = release_a_free_slot },
     .{
@@ -408,6 +372,7 @@ const scenarios = [_]scenario.Scenario{
         .run = disarm_a_slot_that_is_not_armed,
     },
     .{ .name = "operation: submit a transfer of no bytes", .run = submit_a_transfer_of_no_bytes },
+    .{ .name = "operation: sync a negative descriptor", .run = sync_a_negative_descriptor },
     .{
         .name = "operation: submit a timer with a deadline of its own",
         .run = submit_a_timer_with_a_deadline_of_its_own,
@@ -481,15 +446,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "tables: cancel a slot whose final event is queued",
         .run = cancel_a_slot_whose_final_event_is_queued,
     },
-    .{
-        .name = "file_call: answer a read with more bytes than it was given",
-        .run = answer_a_read_with_more_bytes_than_it_was_given,
-    },
-    .{
-        .name = "file_call: hand a sync bytes to transfer",
-        .run = hand_a_sync_bytes_to_transfer,
-    },
-} ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios;
+} ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios ++ file_call.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

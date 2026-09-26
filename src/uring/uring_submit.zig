@@ -130,6 +130,11 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
             ring_module.set_opcode(sqe, .FSYNC);
             sqe.rw_flags = linux.IORING_FSYNC_DATASYNC;
         },
+        // The same opcode without the data-only flag: `fsync(2)`, metadata and all.
+        .fsync => {
+            ring_module.set_opcode(sqe, .FSYNC);
+            sqe.rw_flags = 0;
+        },
         .nop => ring_module.set_opcode(sqe, .NOP),
         .receive_from => datagram.prepare_receive(sqe, extra.message.?, slot, extra.group),
         .send_to => {

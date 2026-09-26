@@ -18,7 +18,7 @@ Accept the proposal, with four additions, two exclusions it did not name, and on
 | area | operations |
 |---|---|
 | TCP | listen, accept (single and multishot), connect, receive (single and multishot with provided buffers), send, shutdown, close |
-| regular files | positional read, positional write, `fdatasync`, close; synchronous open, size, preallocate and directory sync |
+| regular files | positional read, positional write, `fdatasync`, `fsync`, close; synchronous open, size, preallocate and directory sync |
 | timers | arm, cancel |
 | cancellation | cancel one operation by handle; cancel every operation of one descriptor (`0005-cancellation.md`) |
 | cross-core | post one message into another loop (`0004-threading.md`), in the same process or, since 2026-09-25, in another process of the same group (`0021-loops-in-several-processes.md`) |
@@ -28,6 +28,13 @@ The four additions:
 
 1. **`fdatasync`.** The proposal lists files with O_DIRECT and no way to make a write durable.
    stompy is the first consumer and its journal calls `fdatasync` after every batch of writes.
+
+   **Amended on 2026-09-26, by Camilo's ruling of that day: `fsync` too.** `fdatasync` makes the
+   data durable and may leave metadata such as the file's times behind; `fsync` makes all of it
+   durable. `std.Io`'s `fileSync` is `fsync`, and a caller that needs a file's times or
+   permissions to survive a crash has had no way to ask for it. io_uring makes it the same opcode
+   as `fdatasync` without the data-only flag, epoll calls `fsync(2)`, and kqueue makes both
+   `F_FULLFSYNC`, which already wrote all of it (decision 12, point 5).
 2. **The synchronous file calls stompy's layer has**: open with O_DIRECT, file size,
    `fallocate`, directory `fsync`. They run at startup and are not hot. They are in scope
    because a backend that the simulator replaces must own every call that touches the disk.

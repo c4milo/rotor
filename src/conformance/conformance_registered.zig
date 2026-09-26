@@ -30,6 +30,7 @@ fn registered(operation: Operation, index: core.Descriptor) Operation {
         .read => |*kind| kind.file = index,
         .write => |*kind| kind.file = index,
         .fdatasync => |*kind| kind.file = index,
+        .fsync => |*kind| kind.file = index,
         else => unreachable,
     }
     return named;
@@ -70,6 +71,11 @@ test "a file named by its registered index is written, synced and read as by its
     const fdatasync: Operation = Operation.fdatasync(2, 0);
     try harness.submit(&.{registered(fdatasync, 1)}, &.{});
     try harness.collect(&events);
+    try testing.expectEqual(@as(u32, 0), try events[0].outcome());
+
+    try harness.submit(&.{registered(Operation.fsync(4, 0), 1)}, &.{});
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u64, 4), events[0].user_data);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());
 
     // Read once by descriptor, which shows where the write landed, and once by index.

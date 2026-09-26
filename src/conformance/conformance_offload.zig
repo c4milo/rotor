@@ -171,6 +171,18 @@ const Fixture = struct {
         }
         return error.EventsMissing;
     }
+
+    /// Submits `operation`, which transfers no bytes, and returns its one event.
+    fn one_event(fixture: *Fixture, operation: Operation) !Event {
+        var events: [1]Event = undefined;
+        if (fixture.loop.submit(&.{operation}, &.{}) != 1) return error.TableFull;
+        var round: u32 = 0;
+        while (round < conformance.collect_rounds_max) : (round += 1) {
+            const produced = try fixture.loop.tick(&events, 10 * core.constants.ns_per_ms);
+            if (produced == 1) return events[0];
+        }
+        return error.EventsMissing;
+    }
 };
 
 // Each static restates its type's alignment. Zig 0.16's own x86-64 backend, which builds Debug on
@@ -233,6 +245,28 @@ test "the offload policy completes a file read on the caller's own thread" {
     // already has the result, so a read before the join can come up one short.
     worker_pool.stop();
     try testing.expectEqual(@as(u32, 1), worker_pool.served.load(.monotonic));
+}
+
+test "the offload policy completes an fdatasync and an fsync on the caller's own thread" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    if (!backend.files_block) return error.SkipZigTest;
+    try worker_pool.start();
+    try loop_fixture.init(.offload, &worker_pool);
+    defer {
+        worker_pool.stop();
+        loop_fixture.deinit();
+    }
+
+    // A sync carries no buffer, so the hand-off copies none out of its slot.
+    const data = try loop_fixture.one_event(Operation.fdatasync(8, loop_fixture.file));
+    try testing.expectEqual(@as(u32, 0), try data.outcome());
+    const full = try loop_fixture.one_event(Operation.fsync(9, loop_fixture.file));
+    try testing.expectEqual(@as(u64, 9), full.user_data);
+    try testing.expectEqual(@as(u32, 0), try full.outcome());
+    try testing.expectEqual(@as(u32, 0), loop_fixture.loop.in_flight());
+    // Both went to the worker, as `Pool.served` counts after the join.
+    worker_pool.stop();
+    try testing.expectEqual(@as(u32, 2), worker_pool.served.load(.monotonic));
 }
 
 test "an offloaded read of every block completes, so the ring is drained and reused" {

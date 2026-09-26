@@ -80,6 +80,13 @@ test "a send never raises SIGPIPE and an fdatasync asks for data only" {
     try testing.expectEqual(@as(u32, linux.IORING_FSYNC_DATASYNC), sync.rw_flags);
 }
 
+test "an fsync asks for everything: the same opcode as fdatasync, without the data-only flag" {
+    const full = prepared(.{ .user_data = 1, .kind = .{ .fsync = .{ .file = 6 } } }, .{});
+    try testing.expectEqual(linux.IORING_OP.FSYNC, full.opcode);
+    try testing.expectEqual(@as(u32, 0), full.rw_flags);
+    try testing.expectEqual(@as(i32, 6), full.fd);
+}
+
 test "a multishot accept and a multishot receive from a group set their flags" {
     const accept = prepared(.{ .user_data = 1, .kind = .{ .accept = .{
         .listener = 3,

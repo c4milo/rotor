@@ -25,12 +25,16 @@ pub fn result(request: Request) i32 {
 /// its own with the same methods, which answers what the kernel will not on demand.
 const Kernel = struct {
     pub fn answer(kernel: Kernel, request: Request) Answer {
+        return answer_with(kernel, request);
+    }
+
+    pub fn transfer(_: Kernel, request: Request) Answer {
         const bytes = request.bytes;
         const offset: i64 = @intCast(request.offset);
         return switch (request.code) {
             .read => answer_of(std.c.pread(request.descriptor, bytes.ptr, bytes.len, offset)),
             .write => answer_of(std.c.pwrite(request.descriptor, bytes.ptr, bytes.len, offset)),
-            .fdatasync => sync_answer(kernel, request.descriptor),
+            .fdatasync, .fsync => unreachable,
         };
     }
 
@@ -42,6 +46,16 @@ const Kernel = struct {
         return answer_of(std.c.fsync(descriptor));
     }
 };
+
+/// Makes the call `request` names through `kernel`: a transfer, or a sync. Both syncs are
+/// `F_FULLFSYNC` on macOS, which writes the data and all of the file's metadata and then flushes
+/// the drive, so it keeps `fsync`'s promise as well as `fdatasync`'s (decision 12, point 5).
+fn answer_with(kernel: anytype, request: Request) Answer {
+    return switch (request.code) {
+        .read, .write => kernel.transfer(request),
+        .fdatasync, .fsync => sync_answer(kernel, request.descriptor),
+    };
+}
 
 fn answer_of(rc: anytype) Answer {
     if (rc >= 0) return .{ .count = @intCast(rc) };
@@ -79,8 +93,12 @@ const Syncs = struct {
     plain_made: u32 = 0,
 
     pub fn answer(syncs: *Syncs, request: Request) Answer {
-        std.debug.assert(request.code == .fdatasync);
-        return sync_answer(syncs, request.descriptor);
+        std.debug.assert(core.file_call.is_sync(request.code));
+        return answer_with(syncs, request);
+    }
+
+    pub fn transfer(_: *Syncs, _: Request) Answer {
+        unreachable;
     }
 
     pub fn full_sync(syncs: *Syncs, descriptor: core.Descriptor) Answer {
@@ -98,12 +116,11 @@ const Syncs = struct {
     }
 
     fn sync(syncs: *Syncs) i32 {
-        const request: Request = .{
-            .code = .fdatasync,
-            .descriptor = 0,
-            .bytes = &.{},
-            .offset = 0,
-        };
+        return syncs.sync_as(.fdatasync);
+    }
+
+    fn sync_as(syncs: *Syncs, code: core.file_call.Code) i32 {
+        const request: Request = .{ .code = code, .descriptor = 0, .bytes = &.{}, .offset = 0 };
         return core.file_call.result(syncs, request, core.constants.interrupt_retries_max);
     }
 };
@@ -150,4 +167,15 @@ test "a plain fsync's EAGAIN ends the sync with would_block, and its other errno
 
     var failed: Syncs = .{ .full_answers = &.{refused}, .plain_answers = &.{.{ .errno = .IO }} };
     try testing.expectEqual(core.event.result_of(.input_output), failed.sync());
+}
+
+test "an fsync takes F_FULLFSYNC first, as an fdatasync does, and a plain fsync where it is refused" {
+    var taking: Syncs = .{ .full_answers = &.{synced}, .plain_answers = &.{synced} };
+    try testing.expectEqual(@as(i32, 0), taking.sync_as(.fsync));
+    try testing.expectEqual(@as(u32, 1), taking.full_made);
+    try testing.expectEqual(@as(u32, 0), taking.plain_made);
+
+    var refusing: Syncs = .{ .full_answers = &.{refused}, .plain_answers = &.{synced} };
+    try testing.expectEqual(@as(i32, 0), refusing.sync_as(.fsync));
+    try testing.expectEqual(@as(u32, 1), refusing.plain_made);
 }

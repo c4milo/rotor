@@ -53,14 +53,14 @@ pub const Work = struct {
     code: Code,
     descriptor: Descriptor,
     /// The bytes to transfer, as an address and a length, which is how a `Slot` carries them.
-    /// Both are 0 for `fdatasync`.
+    /// Both are 0 for a sync.
     buffer: usize,
     length: u32,
     offset: u64,
 
-    /// The operations an offload is ever handed. `fdatasync` is here because it blocks as long as
-    /// the device takes, and that is why it is here.
-    pub const Code = enum { read, write, fdatasync };
+    /// The operations an offload is ever handed. The two syncs are here because they block as long
+    /// as the device takes.
+    pub const Code = enum { read, write, fdatasync, fsync };
 };
 
 /// The caller's side of the hand-off.
@@ -136,13 +136,14 @@ test "an offload is valid with workers the loop can hold, and not otherwise" {
     }).valid());
 }
 
-test "the offloadable operations are the three that block, and no others" {
+test "the offloadable operations are the four that block, and no others" {
     // Socket operations are never offloaded. kqueue reports their readiness, so they do not block
     // the loop, and handing one to a thread would cost a hop and save nothing.
-    try testing.expectEqual(@as(usize, 3), @typeInfo(Work.Code).@"enum".fields.len);
+    try testing.expectEqual(@as(usize, 4), @typeInfo(Work.Code).@"enum".fields.len);
     try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
     try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));
     try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
+    try testing.expectEqual(@as(u2, 3), @intFromEnum(Work.Code.fsync));
 }
 
 /// A `Mailbox` is aligned to 128 and the caller's memory to 64, so `init_rings` may skip this many
@@ -184,6 +185,7 @@ pub fn code_of(code: operation.Operation.Code) ?Work.Code {
         .read => .read,
         .write => .write,
         .fdatasync => .fdatasync,
+        .fsync => .fsync,
         else => null,
     };
 }
@@ -252,6 +254,7 @@ test "only the three blocking operations map to offload work" {
     try testing.expectEqual(Work.Code.read, code_of(.read).?);
     try testing.expectEqual(Work.Code.write, code_of(.write).?);
     try testing.expectEqual(Work.Code.fdatasync, code_of(.fdatasync).?);
+    try testing.expectEqual(Work.Code.fsync, code_of(.fsync).?);
     const others = [_]operation.Operation.Code{
         .accept, .receive, .send, .connect, .timer, .post, .close,
     };

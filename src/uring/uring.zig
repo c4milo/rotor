@@ -139,7 +139,7 @@ pub const Loop = struct {
         /// that none posts to.
         registry: ?*Registry = null,
         /// **Checked and ignored** (decision 18). The kernel performs `read`, `write` and
-        /// `fdatasync` without a thread here, which is the whole point of this backend, so there is
+        /// `fdatasync` and `fsync` without a thread here, which is the whole point of this backend, so there is
         /// nothing to hand out and no policy to apply. It is in the options so that a caller's
         /// options are the same on every backend, as `entries` is on the others. `init` checks it
         /// with `offload` and `offload_memory` as kqueue and epoll do

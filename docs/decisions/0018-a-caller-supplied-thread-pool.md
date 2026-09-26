@@ -73,7 +73,7 @@ one file policy at init:
 
 | policy | behaviour | for |
 |---|---|---|
-| `offload` | hands `read`, `write` and `fdatasync` to the caller's offload | a consumer that wants concurrency on macOS |
+| `offload` | hands `read`, `write`, `fdatasync` and `fsync` to the caller's offload | a consumer that wants concurrency on macOS |
 | `blocking` | today's behaviour: performs it inline, and the tick stalls | a development machine, chosen and not inherited |
 | `refuse` (the default) | the operation ends with `unsupported` | everybody who did not choose |
 
