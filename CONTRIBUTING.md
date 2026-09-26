@@ -17,7 +17,7 @@ message before a push.
 
 | command | what it does |
 |---|---|
-| `zig build test` | the lint, every module's tests, the conformance suite, the halt check, the examples' compile and the format check |
+| `zig build test` | the lint, every module's tests, the conformance suite, the halt check, every example built and checked, and the format check |
 | `zig build test-<module>` | one module's tests alone, such as `zig build test-kqueue` |
 | `zig build test-linux && bash tools/linux_test.sh` | the Linux tests in Docker: io_uring with `seccomp=unconfined`, epoll under the default profile |
 | `zig build test-race && bash tools/race_test.sh` | the suites that start threads, under ThreadSanitizer in Docker |
@@ -27,6 +27,10 @@ message before a push.
 
 Every change passes `zig build test` before it is committed. A change to a Linux backend also
 passes the Linux gate, and a change to code that another thread touches also passes the race gate.
+
+Code in the README or the guide is an excerpt of a program under [`examples/`](examples), line for
+line, and `zig build test` fails when it is not (`tools/readme_examples.zig`). To change what a page
+shows, change the program, check that it still runs, and copy the lines.
 
 ## What a change needs
 
@@ -67,7 +71,7 @@ passes the Linux gate, and a change to code that another thread touches also pas
 | [`src/core/`](src/core) | the types every backend shares, the slot table, the timer heap and the limits |
 | [`src/uring/`](src/uring), [`src/kqueue/`](src/kqueue), [`src/epoll/`](src/epoll) | the three backends |
 | [`src/conformance/`](src/conformance) | the suite every backend passes |
-| [`examples/`](examples) | complete programs that use the public module |
+| [`examples/`](examples) | complete programs that use the public module, which `zig build test` runs and checks |
 | [`bench/`](bench) | the harness, a server per library, the cost probes and every recorded run |
 | [`docs/`](docs) | the guide, the benchmarks, the design records and the table of measured costs |
 | [`proofs/`](proofs) | the Lean proofs of the timer heap and the timer lifecycle |

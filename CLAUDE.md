@@ -202,9 +202,14 @@ was about to push.
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds
   rotor's configuration of each rule.
 - `proofs/` holds the Lean proofs, a Lake project outside the Zig build's module graph.
-- `examples/` holds complete programs that import the public module as a dependent package does.
-  `zig build test` compiles them, and the README shows one, so the README cannot show code that no
-  longer builds. `build/examples.zig` wires them.
+- `examples/` holds complete programs that import the public module as a dependent package does,
+  and `examples/consumer/`, a project of its own whose `build.zig` holds the README's lines.
+  `zig build test` runs each program, against its checker in `tools/` when it has one
+  (`tools/echo_check.zig`), builds the consumer with a nested `zig build`, and requires every Zig
+  block of the README and the guide to be an excerpt of one of these files
+  (`tools/readme_examples.zig`). The Linux gate runs the programs with io_uring and with epoll. So
+  a page cannot show code that stopped compiling, stopped working, or drifted from what runs.
+  `build/examples.zig` wires them.
 - `docs/` is the design set. `bench/` will hold the harness, the cost probes of
   `docs/costs.md`, the pinned versions of what rotor is measured against, and the committed
   results with the machine and kernel beside them.
@@ -223,14 +228,14 @@ was about to push.
 
 - Build: `zig build`. `-Drelease` builds ReleaseSafe; ReleaseFast and ReleaseSmall are not
   offered, because assertions stay on in production.
-- Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `examples`, `src` and
-  `tools`, then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import,
+- Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src`, `tools` and the
+  files `build/examples.zig` lists as `sources`, then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import,
   markdown, file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
   rule runs.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
-  executables' compile, the examples' compile, the hook check and the format check. Every change passes it before it
+  executables' compile, every example built and checked, the hook check and the format check. Every change passes it before it
   is committed.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
 - Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
@@ -241,7 +246,8 @@ was about to push.
   seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for.
   `rotor`, the public module's tests, runs both ways, because the module chooses io_uring or epoll
   by what the kernel allows, and each run takes the other branch. `conformance-uring` and
-  `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's. It prints the kernel release the container sees, because decision 2 sets the floor at
+  `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's.
+  Each example then runs both ways too, against its checker when it has one. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. Last, the script runs the halt check, built for Linux, on the scenarios a Mac
   cannot prove (`tools/halt/*_linux_scenarios.zig`) and on the canary: uring's with

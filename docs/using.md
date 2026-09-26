@@ -8,6 +8,11 @@ rotor is one Zig module. It allocates nothing: the caller hands every loop its m
 every table and queue inside it is bounded by a named limit. A loop belongs to one thread. Every
 operation ends with exactly one final event. Those three rules shape everything below.
 
+The code here runs. Each Zig block is part of [`examples/guide.zig`](../examples/guide.zig) or of
+the consumer project in [`examples/consumer/`](../examples/consumer), line for line. `zig build
+test` builds and runs both, and the Linux gate runs the guide's program with io_uring and with
+epoll.
+
 ## Getting the module
 
 ```bash

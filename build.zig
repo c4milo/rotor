@@ -27,11 +27,11 @@ const proofs = @import("build/proofs.zig");
 const examples = @import("build/examples.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
-const source_directories = [_][]const u8{ "bench", "build", "examples", "src", "tools" };
+const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
 
 /// Every directory the tools/lint rules read: the sources above plus the documents, which the
 /// markdown rule covers.
-const lint_rule_directories = [_][]const u8{ "bench", "build", "examples", "src", "tools", "docs" };
+const lint_rule_directories = [_][]const u8{ "bench", "build", "src", "tools", "docs" };
 
 /// The Markdown files at the top of the tree, which the markdown rule reads beside `docs`.
 const lint_rule_files = [_][]const u8{
@@ -40,7 +40,7 @@ const lint_rule_files = [_][]const u8{
     "README.md",
     "SECURITY.md",
     "proofs/README.md",
-};
+} ++ examples.sources;
 
 /// Every tool built on pepegrillo whose own tests `zig build test` runs. A build that does not
 /// run the checkers' own tests lets a rule lose its own test without the build reporting it.
@@ -80,6 +80,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run the lint, then every module's unit tests");
     test_step.dependOn(lint.add(b, .{
         .source_directories = &source_directories,
+        .source_files = &examples.sources,
         .rule_directories = &lint_rule_directories,
         .rule_files = &lint_rule_files,
         .complexity = b.addExecutable(.{
@@ -163,7 +164,7 @@ pub fn build(b: *std.Build) void {
 
     const fmt_step = b.step("fmt", "Check formatting of every Zig source");
     fmt_step.dependOn(&b.addFmt(.{
-        .paths = &(.{"build.zig"} ++ source_directories),
+        .paths = &(.{"build.zig"} ++ source_directories ++ examples.sources),
         .check = true,
     }).step);
     test_step.dependOn(fmt_step);

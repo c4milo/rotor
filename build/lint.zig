@@ -82,6 +82,8 @@ const canary_markdown =
 pub const Options = struct {
     /// Every directory the complexity score reads, beside build.zig itself.
     source_directories: []const []const u8,
+    /// Every single file the complexity score reads beside those directories.
+    source_files: []const []const u8 = &.{},
     /// Every directory the tools/lint rules read.
     rule_directories: []const []const u8,
     /// Every single file the tools/lint rules read beside those directories.
@@ -99,6 +101,7 @@ pub fn add(b: *std.Build, options: Options) *std.Build.Step {
     for (options.source_directories) |directory| {
         complexity_run.addDirectoryArg(b.path(directory));
     }
+    for (options.source_files) |file| complexity_run.addFileArg(b.path(file));
 
     const complexity_canary = b.addWriteFiles();
     const complexity_canary_run = b.addRunArtifact(options.complexity);

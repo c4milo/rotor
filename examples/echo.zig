@@ -1,15 +1,19 @@
 //! A TCP echo server on one rotor loop: it sends back every byte a connection sends it.
 //!
-//! Run:  zig build examples && ./zig-out/bin/echo
+//! Run:  zig build examples && ./zig-out/bin/echo [PORT]
 //! Then: nc 127.0.0.1 9000
 //!
-//! It imports the public module `rotor` the way a project that depends on rotor does, and
-//! `zig build test` compiles it, so it stays in step with the API. The README shows its `main`.
+//! It imports the public module `rotor` the way a project that depends on rotor does. `zig build
+//! test` builds it and runs `tools/echo_check.zig` against it, and the Linux gate does the same on
+//! io_uring and on epoll, so it stays in step with the API and keeps working. The README shows its
+//! `main`.
 const std = @import("std");
 const rotor = @import("rotor");
 
-const port = 9000;
-/// Connections served at once. The server closes any connection beyond this.
+/// The port it listens on when the command line names none.
+const port_default = 9000;
+/// The server keeps each connection's state in arrays indexed by its descriptor, so it serves a
+/// connection whose descriptor is below this and closes any other.
 const connections_max = 128;
 const buffer_bytes = 4096;
 
@@ -30,7 +34,8 @@ var buffers: [connections_max][buffer_bytes]u8 = undefined;
 var received: [connections_max]u32 = undefined;
 var sent: [connections_max]u32 = undefined;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const port = try port_of(init);
     var loop: rotor.Loop = undefined;
     try loop.init(&memory, options);
     // The server runs until it is stopped, so it never calls `loop.deinit()`.
@@ -46,6 +51,13 @@ pub fn main() !void {
         const count = try loop.tick(&events, rotor.constants.ns_per_s);
         for (events[0..count]) |event| try handle(&loop, event);
     }
+}
+
+/// The port the command line names, or `port_default`.
+fn port_of(init: std.process.Init) !u16 {
+    const arguments = try init.minimal.args.toSlice(init.arena.allocator());
+    if (arguments.len < 2) return port_default;
+    return std.fmt.parseInt(u16, arguments[1], 10);
 }
 
 fn handle(loop: *rotor.Loop, event: rotor.Event) !void {

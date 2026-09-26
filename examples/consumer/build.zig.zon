@@ -1,0 +1,12 @@
+.{
+    .name = .rotor_consumer,
+    .version = "0.0.0",
+    .minimum_zig_version = "0.16.0",
+    .fingerprint = 0x5d77ea7d8c37a654,
+    // This tree, as a dependency. A project of its own names a release instead, as the README's
+    // `zig fetch --save` line writes it.
+    .dependencies = .{
+        .rotor = .{ .path = "../.." },
+    },
+    .paths = .{ "build.zig", "build.zig.zon" },
+}

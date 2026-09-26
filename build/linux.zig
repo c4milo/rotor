@@ -27,6 +27,7 @@
 const std = @import("std");
 const halt = @import("halt.zig");
 const modules = @import("modules.zig");
+const examples = @import("examples.zig");
 
 /// The directory the step fills and tools/linux_test.sh reads, under the install prefix.
 const install_directory = "linux";
@@ -41,6 +42,11 @@ const manifest_name = "tests.manifest";
 /// name followed by the arguments the halt check takes after it. The check itself is not listed:
 /// tools/linux_test.sh names it, as it names the probe.
 const halt_manifest_name = "halt.manifest";
+
+/// The file that lists the installed examples, one per line, each name followed by the name of the
+/// program that checks it when it has one. tools/linux_test.sh runs each with io_uring and without:
+/// the checker against the example, or the example on its own.
+const examples_manifest_name = "examples.manifest";
 
 /// The io_uring probe, which tools/linux_test.sh runs before any test. It is not in the manifest:
 /// the script names it, so a build that stops installing it fails the run.
@@ -109,6 +115,7 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
 
     stamp.step.dependOn(install_manifest(b, manifest_name, manifest));
     add_halt(b, graph, target, optimize, stamp);
+    add_examples(b, graph, target, optimize, stamp);
 
     const step = b.step(
         "test-linux",
@@ -116,6 +123,30 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
             "tools/linux_test.sh",
     );
     step.dependOn(&stamp.step);
+}
+
+/// Installs every example with the program that checks it, when it has one, and the manifest that
+/// pairs them. The examples build in `optimize`, as `zig build test` builds them.
+fn add_examples(
+    b: *std.Build,
+    graph: modules.Modules,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+    stamp: *std.Build.Step.Run,
+) void {
+    var manifest: []const u8 = "";
+    for (examples.programs) |program| {
+        const executable = examples.example(b, graph, target, optimize, program.name, program.root);
+        stamp.step.dependOn(&install(b, executable).step);
+        const root = program.checker orelse {
+            manifest = b.fmt("{s}{s}\n", .{ manifest, executable.name });
+            continue;
+        };
+        const check = examples.checker(b, target, program.name, root);
+        stamp.step.dependOn(&install(b, check).step);
+        manifest = b.fmt("{s}{s} {s}\n", .{ manifest, executable.name, check.name });
+    }
+    stamp.step.dependOn(install_manifest(b, examples_manifest_name, manifest));
 }
 
 /// Installs the halt check, the scenario executables it runs, and the manifest that lists them. The

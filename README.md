@@ -97,7 +97,8 @@ every connection, and each tick hands over the events that finished:
 const options: rotor.Loop.Options = .{ .operations = connections_max + 1 };
 var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const port = try port_of(init);
     var loop: rotor.Loop = undefined;
     try loop.init(&memory, options);
 
@@ -114,12 +115,17 @@ pub fn main() !void {
 ```
 
 The whole server, with its receive, send and close, is [`examples/echo.zig`](examples/echo.zig).
-`zig build test` compiles it, so it stays in step with the API. Run it, then connect with
-`nc 127.0.0.1 9000`: each line typed comes back.
+Run it, then connect with `nc 127.0.0.1 9000`: each line typed comes back. It takes another port as
+its one argument.
 
 ```bash
 zig build examples && ./zig-out/bin/echo
 ```
+
+`zig build test` runs the example against a client that checks it, and the Linux gate does the same
+on io_uring and on epoll: a line, 32 clients at once, 4 MiB messages, clients that read late or hang
+up, and a client that closes its side. A test also checks that every line of the code above is a
+line of the example, in the same order, so this page cannot drift from a program that works.
 
 [The guide](docs/using.md) covers the rest of the API: every operation and what it promises,
 deadlines and cancellation, the three ways to hand the loop buffers, datagrams, files, and loops on

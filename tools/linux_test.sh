@@ -2,7 +2,8 @@
 #
 # linux_test: runs the io_uring probe, then every test executable that `zig build test-linux`
 # installed under zig-out/linux/, then the halt check on every halt scenario executable it
-# installed, each in a Linux container, and stops at the first one that fails.
+# installed, then every example against the program that checks it, each in a Linux container, and
+# stops at the first one that fails.
 #
 #     zig build test-linux && bash tools/linux_test.sh
 #
@@ -29,6 +30,12 @@
 # the scenario executables by a second manifest, one per line, each name followed by the
 # arguments the check takes after it. The canary is listed there too, so the run also proves that
 # the check built for Linux reports a scenario that did not halt.
+#
+# An example runs twice, as the public module's tests do: with io_uring, and under Docker's default
+# seccomp profile, where the public module falls back to epoll. Its checker starts it, talks to it
+# as a client, and stops it (tools/echo_check.zig), so the program the README shows is shown to
+# work on both Linux backends and not only to compile. A third manifest pairs each example with its
+# checker, one pair per line.
 #
 # Every executable runs in a container of its own, so a test cannot leave a file or a socket
 # behind for the next one. It is copied from the read-only bind mount to the container's own
@@ -82,13 +89,16 @@ readonly manifest_name='tests.manifest'
 # The file that lists the installed halt scenario executables, one per line, in run order, each
 # name followed by the arguments the halt check takes after it.
 readonly halt_manifest_name='halt.manifest'
+# The file that lists each installed example, one per line, followed by the program that checks it
+# when it has one. An example with no checker checks itself and exits 0 only when it worked.
+readonly examples_manifest_name='examples.manifest'
 # The halt check, which runs on every executable the halt manifest lists.
 readonly halt_check_name='halt_check'
 # The io_uring probe, which runs before any test.
 readonly probe_name='uring_probe'
 # Every path that holds a source of an installed executable, relative to the top of the work
 # tree. Only the .zig and .zon files under them are compared to the stamp.
-readonly source_paths=(src build tools build.zig build.zig.zon)
+readonly source_paths=(src build tools examples build.zig build.zig.zon)
 # Where the install directory is mounted in the container, read-only.
 readonly mount_point='/t'
 # Where an executable is copied before it runs, on the container's own filesystem.
@@ -101,6 +111,7 @@ readonly out="$PWD/$install_directory"
 readonly stamp="$out/$stamp_name"
 readonly manifest="$out/$manifest_name"
 readonly halt_manifest="$out/$halt_manifest_name"
+readonly examples_manifest="$out/$examples_manifest_name"
 
 # Prints why the run cannot go on, and ends it.
 fail() {
@@ -111,7 +122,7 @@ fail() {
 # Refuses an install that is missing, incomplete, or older than a source.
 require_fresh_install() {
   local required stale
-  for required in "$stamp" "$manifest" "$halt_manifest" "$out/$probe_name" \
+  for required in "$stamp" "$manifest" "$halt_manifest" "$examples_manifest" "$out/$probe_name" \
     "$out/$halt_check_name"; do
     if [[ ! -f "$required" ]]; then
       fail "$required is missing; run 'zig build test-linux' first"
@@ -122,6 +133,9 @@ require_fresh_install() {
   fi
   if [[ ! -s "$halt_manifest" ]]; then
     fail "$halt_manifest lists no halt scenario executable"
+  fi
+  if [[ ! -s "$examples_manifest" ]]; then
+    fail "$examples_manifest lists no example"
   fi
   stale="$(find "${source_paths[@]}" -type f \( -name '*.zig' -o -name '*.zon' \) \
     -newer "$stamp" -print -quit)"
@@ -217,6 +231,19 @@ run_halt() {
   fi
 }
 
+# Runs one example against its checker in a container of the runner's kind. Both are copied in,
+# and the checker is given the example's path, as `zig build test` gives it on the host.
+check_with() {
+  local runner="$1"
+  local example="$2"
+  local checker="$3"
+  # shellcheck disable=SC2016
+  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && exec "$2/$4" "$2/$3"' \
+    sh "$mount_point" "$run_directory" "$example" "$checker"; then
+    fail "$checker failed on $example; nothing after it was run"
+  fi
+}
+
 require_fresh_install
 
 if ! command -v docker >/dev/null 2>&1; then
@@ -246,5 +273,23 @@ while read -r -a words; do
   fi
   run_halt "${words[@]}"
 done <"$halt_manifest"
+
+# The examples, each checked with io_uring and then where io_uring is refused.
+while read -r example checker; do
+  if [[ -z "${example:-}" ]]; then
+    continue
+  fi
+  if [[ -z "${checker:-}" ]]; then
+    echo "linux_test: example $example, with io_uring"
+    run_with in_container "$example"
+    echo "linux_test: example $example, under Docker's default seccomp profile, which refuses io_uring"
+    run_with in_default_container "$example"
+    continue
+  fi
+  echo "linux_test: $checker on $example, with io_uring"
+  check_with in_container "$example" "$checker"
+  echo "linux_test: $checker on $example, under Docker's default seccomp profile, which refuses io_uring"
+  check_with in_default_container "$example" "$checker"
+done <"$examples_manifest"
 
 echo "linux_test: all passed"
