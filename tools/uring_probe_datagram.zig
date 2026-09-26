@@ -53,7 +53,7 @@ const single_shot: Feature = .{ .name = "single-shot recvmsg layout", .need = .o
 
 /// The two features above decision 2's Linux 6.1 floor that this tree has a use for. Neither is
 /// built: building one means raising the floor or carrying a conditional path, which decision 2
-/// forbids doing silently, and both are the owner's call. Probing says whether raising the floor
+/// forbids doing silently, and both are Camilo's call. Probing says whether raising the floor
 /// would buy anything on the kernel in front of us, which is what that call needs.
 const pbuf_ring_inc: Feature = .{ .name = "IOU_PBUF_RING_INC", .need = .optional };
 const recvsend_bundle: Feature = .{ .name = "IORING_RECVSEND_BUNDLE", .need = .optional };

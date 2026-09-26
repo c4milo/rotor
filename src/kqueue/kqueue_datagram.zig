@@ -5,7 +5,7 @@
 //!
 //! **What macOS cannot do.** `netinet/udp.h` defines exactly one option, `UDP_NOCKSUM`: there is
 //! no segmentation and no coalescing. A send that asks for `segment_bytes` is answered
-//! `unsupported`, which the owner ruled on 2026-09-20. Everything else a QUIC stack needs is
+//! `unsupported`, which Camilo ruled on 2026-09-20. Everything else a QUIC stack needs is
 //! here: `IP_PKTINFO` selects the source address on a wildcard socket, and the traffic class
 //! carries the codepoint both ways.
 //!

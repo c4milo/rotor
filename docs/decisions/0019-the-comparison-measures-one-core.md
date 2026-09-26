@@ -1,6 +1,6 @@
 # 19. The comparison measures one core
 
-Status: **accepted** on 2026-09-21. The owner ruled "no skewed load, use 1 core for accepting
+Status: **accepted** on 2026-09-21. Camilo ruled "no skewed load, use 1 core for accepting
 connections", and separately that rotor needs a thread pool on kqueue to compare fairly with libuv
 and libxev. This record covers the first half. The second half is
 `0018-a-caller-supplied-thread-pool.md`, built the same day, and the section below says why it
@@ -81,7 +81,7 @@ kernel does not do." That sentence and the request for `even` and `skewed` rows 
 
 ### Where a thread pool makes the comparison fair, and where it does not
 
-The owner's ruling pairs one core with a thread pool. The two apply to different workloads, and it is
+Camilo's ruling pairs one core with a thread pool. The two apply to different workloads, and it is
 worth writing down which, because a pool in the wrong place would make a row less fair.
 
 **A pool belongs to the file rows.** libuv runs every file operation on one pool per process, four

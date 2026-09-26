@@ -1,14 +1,14 @@
 # 21. Loops in several processes
 
-Status: **accepted** by the owner on 2026-09-25, the day it was proposed, and **built** the same
-day. "Ruling" below says what the owner decided, and the design after it follows the ruling.
+Status: **accepted** by Camilo on 2026-09-25, the day it was proposed, and **built** the same
+day. "Ruling" below says what Camilo decided, and the design after it follows the ruling.
 "Built" at the end says what was built, where it differs from the design, and how it is checked.
 Decision 2 is amended the same day to put posts between processes in version one.
 
 ## Context
 
-On 2026-09-25 the owner ruled that loops talk through shared memory, and io_uring's posts moved onto
-the mailbox rings the same day (decision 4, its amendment). The owner then said: "We also need to
+On 2026-09-25 Camilo ruled that loops talk through shared memory, and io_uring's posts moved onto
+the mailbox rings the same day (decision 4, its amendment). Camilo then said: "We also need to
 figure out how to shard memory between rotor processes", and asked for it after the io_uring change.
 
 What exists today, and what of it can cross a process boundary:
@@ -33,20 +33,20 @@ What exists today, and what of it can cross a process boundary:
 
 ## Ruling, 2026-09-25
 
-The owner ruled on the four questions the proposal asked:
+Camilo ruled on the four questions the proposal asked:
 
 1. **Posts between processes are in version one.** Decision 2 is amended.
-2. **The unit is the loop.** In the owner's words: "each event loop owns 1 single CPU core, and a
+2. **The unit is the loop.** In Camilo's words: "each event loop owns 1 single CPU core, and a
    dedicated and distinct memory region. Mechanical sympathy. Communication between event loops
    happens through shared memory". A process runs one loop or several. The proposal's shards, ranges
    of loop ids owned by one process, had no job left under this rule, and the design below has none.
-3. **No descriptor moves between processes after they start.** The owner asked why descriptors
+3. **No descriptor moves between processes after they start.** Camilo asked why descriptors
    came up at all, and was not sure rotor should move them. The process that creates the registry
    creates every loop's wake, and the other processes inherit them. rotor does not use `SCM_RIGHTS`.
 4. **A process that dies is replaced.** A surviving process releases the dead process's loops, and a
    new process takes their ids over.
 
-The owner also asked for a better alternative to shared memory, if there is one. None is known on
+Camilo also asked for a better alternative to shared memory, if there is one. None is known on
 one machine: a socket per message costs 46 to 120 times the ring (below), and `MSG_RING` cost two
 system calls per message between threads (decision 4).
 
@@ -194,7 +194,7 @@ that side is a thread or a process.
 2. **`IORING_OP_MSG_RING` between processes.** Two system calls per message, counted between
    threads on 2026-09-25 (decision 4), and it exists on io_uring only.
 3. **Moving wake descriptors with `SCM_RIGHTS`**, the first proposal. It needs a Unix socket and an
-   exchange between every pair of processes, and each process a table of its own. The owner ruled
+   exchange between every pair of processes, and each process a table of its own. Camilo ruled
    against moving descriptors.
 4. **Opening each loop's wake by name**, a FIFO or a Unix socket at a path. It needs no common
    creator, and costs one filesystem name per loop, created and cleaned up. Not chosen.
@@ -231,7 +231,7 @@ that side is a thread or a process.
 ## Open questions
 
 1. **Where the rings a loop reads live.** The rings toward one loop are adjacent in the region
-   (`receiver * loops + sender`). Under the owner's rule of a region per loop, each loop's block of
+   (`receiver * loops + sender`). Under Camilo's rule of a region per loop, each loop's block of
    inbound rings could sit on that loop's NUMA node, so its polls read local memory. It matters only
    on a machine with more than one socket, and no named machine has one. Proposed: build the region
    as above, and keep each loop's block of rings page-aligned so an application can place it.

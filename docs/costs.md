@@ -50,7 +50,7 @@ What `orbstack` is good for, and what milestone 3 uses it for: any comparison of
 two code paths on one machine, decision 8's assertion experiment among them. A ratio measured
 here holds whatever the absolute numbers are elsewhere.
 
-### The owner promoted it on 2026-09-20
+### Camilo promoted it on 2026-09-20
 
 `orbstack` is a **named machine**, and its column is filled from probes run on it, under rule 1
 like any other. The project's earlier blanket statement — that a number from a virtual machine
@@ -64,7 +64,7 @@ never enters this file — is amended to what it was actually protecting against
 - A design argument may cite an `orbstack` cell, and must say which machine it came from. A claim
   that rotor is faster than another candidate is still made on the machine the claim names.
 
-### The owner added `github` on 2026-09-22
+### Camilo added `github` on 2026-09-22
 
 A GitHub-hosted `ubuntu-24.04` runner, filled by the `costs` job of `.github/workflows/ci.yml`,
 which is started by hand. It is here because **it is the only x86-64 machine this project has

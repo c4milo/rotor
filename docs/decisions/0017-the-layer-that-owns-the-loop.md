@@ -3,7 +3,7 @@
 Status: proposed on 2026-09-20, not ruled on. It names a component that does not exist, records
 why two rules already written force it to exist, and lists what it would own. Nothing in rotor
 changes either way, with one exception this record found and reports below: `Remote`, built on
-2026-09-22. On 2026-09-24 the owner chose to rule on this record when the transport is wanted. The
+2026-09-22. On 2026-09-24 Camilo chose to rule on this record when the transport is wanted. The
 same day, what it says about `Remote`, datagrams and decision 5 was brought up to date.
 
 ## Context
@@ -41,7 +41,7 @@ chapulin. Each of the three questions above is that gap seen from a different si
 
 Proposed: name the component and record what it owns, before any part of it is built.
 
-Working name in this record: **the transport**. The name it carries in code is the owner's to
+Working name in this record: **the transport**. The name it carries in code is Camilo's to
 pick, and this record does not pick it. QUIC uses "transport" for something else, so a different
 word may be the better one.
 
@@ -122,7 +122,7 @@ That reading is this record's, and it does not come from decision 5. Decision 5 
 buffer belongs to the loop until the final event", and a multishot receive has no final event
 while its `more` events flow. Decision 5 never mentions provided buffers or `give_back_buffer`.
 So the rule as written and the provided-buffer path as built need reconciling, and no record does
-it. That is a gap in decision 5, not a licence taken here. **Closed on 2026-09-24:** the owner
+it. That is a gap in decision 5, not a licence taken here. **Closed on 2026-09-24:** Camilo
 accepted decision 5's amendment to rule 3. A provided buffer becomes the caller's at the event that
 names it, and the loop's again at `give_back_buffer`.
 
@@ -215,9 +215,9 @@ it describes (CLAUDE.md).
    the reason `Remote` was first wanted has gone, and this record's DNS worker is now its only named
    consumer. It should shape it.
 
-   **Built on 2026-09-22**, on the owner's instruction, ahead of that consumer. `0004-threading.md`
+   **Built on 2026-09-22**, on Camilo's instruction, ahead of that consumer. `0004-threading.md`
    records what was settled. The DNS library is being written in its own repository and will take a
-   loop rather than own sockets, so the first caller of `Remote` is still to come. The owner named
+   loop rather than own sockets, so the first caller of `Remote` is still to come. Camilo named
    it on 2026-09-22: cocuyo, a resolver in Zig with no I/O of its own. That answers question 4 in
    favour of a resolver driven by the loop, and `docs/using.md` says what such a library gets from
    rotor and what it must do to share a loop with the application that owns it.

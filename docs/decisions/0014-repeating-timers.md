@@ -1,10 +1,10 @@
 # 14. Repeating timers
 
-Status: accepted on 2026-09-20, by the owner, after the timer churn benchmark showed what the
+Status: accepted on 2026-09-20, by Camilo, after the timer churn benchmark showed what the
 absence costs. Decision 2's scope table says "timers: arm, cancel", and nothing in any record
 chose to leave a repeat out; it was never considered.
 
-Amended on 2026-09-23, by the owner: a cancel of a repeating timer whose fire is queued in the loop
+Amended on 2026-09-23, by Camilo: a cancel of a repeating timer whose fire is queued in the loop
 and not yet handed over replaces that fire, and rule 5 says so. The Lean model found that such a
 cancel was dropped and the timer kept firing (`proofs/README.md`, "What the proofs found").
 

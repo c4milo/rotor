@@ -358,7 +358,7 @@ pub const Tables = struct {
     /// A finishing slot reaches here only as a repeating timer whose fire is queued and not yet
     /// handed over. The cancel replaces that fire with `canceled`, so the event already waiting
     /// on `finished` is the timer's final one. That is what a cancel of a timer whose deadline
-    /// passed before the loop expired it already hands over, and the owner chose it on
+    /// passed before the loop expired it already hands over, and Camilo chose it on
     /// 2026-09-23 (decision 14, rule 5).
     pub fn request_cancel(tables: *Tables, index: u32, slot: *Slot) CancelAction {
         assert(slot.state != .free);

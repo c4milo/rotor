@@ -45,7 +45,7 @@ The caller asked the timer to stop, and no final event ever came. This contradic
 rule 2 and decision 14, rule 5. The conformance suite reproduced it on all three backends
 (`src/conformance/conformance_timers.zig`).
 
-The owner ruled on 2026-09-23 that the cancel replaces the queued fire: that event becomes the
+Camilo ruled on 2026-09-23 that the cancel replaces the queued fire: that event becomes the
 timer's final one, and it says canceled. A cancel of a timer whose deadline passed before the loop
 expired it already hands over the same event, so the caller gets one answer either way. The code
 and the model changed together. `lost_cancel` became `cancel_not_lost`, which proves that the next

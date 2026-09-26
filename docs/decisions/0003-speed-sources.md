@@ -1,6 +1,6 @@
 # 3. Where the speed is meant to come from
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it. Every number here is a prior from `docs/costs.md` and none is a
 measurement. Each claim names the harness result that confirms or kills it.

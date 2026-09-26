@@ -2,7 +2,7 @@
 //! thread may do").
 //!
 //! A post goes through the mailbox ring the remote has to the target, `core.remote.send`, as it
-//! does on kqueue and epoll: the owner ruled on 2026-09-25 that loops talk through shared memory on
+//! does on kqueue and epoll: Camilo ruled on 2026-09-25 that loops talk through shared memory on
 //! io_uring too (decision 4). The remote carries a small ring of its own for one job. To wake a
 //! target that sleeps, it submits an `IORING_OP_MSG_RING` that carries no message
 //! (`uring_submit.prepare_wake`), and a thread with no loop has no other ring to submit it on. The
@@ -13,7 +13,7 @@
 //! submitted. A wake the kernel refuses is dropped too, as kqueue and epoll drop theirs: the
 //! message is already in the ring, and the target reads it the next time it ticks, at the latest
 //! when its wait ends. So `Unanswered`, `SystemResources` and `Unexpected` no longer come from this
-//! backend. `PostError` keeps them, by the owner's ruling of the same day, so the surface does not
+//! backend. `PostError` keeps them, by Camilo's ruling of the same day, so the surface does not
 //! change.
 //!
 //! One thread owns a `Remote`. `init` records the thread, and `post` and `deinit` halt on any

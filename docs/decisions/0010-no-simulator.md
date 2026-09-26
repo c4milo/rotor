@@ -1,6 +1,6 @@
 # 10. rotor carries no simulator
 
-Status: accepted on 2026-09-19. The owner asked whether rotor needs a simulator and judged it
+Status: accepted on 2026-09-19. Camilo asked whether rotor needs a simulator and judged it
 overkill. This record gives the reasoning and what replaces it. It amends decisions 1, 4, 5, 6, 8
 and 9, each of which now says so under its status line.
 
@@ -72,7 +72,7 @@ behind stompy's own `io` facade with rotor as the production side.
 its few kernel calls, with a seeded, fault-injecting fake beneath. It would run the code that
 ships, deterministically, on any host, and I proposed it first. It is still a simulator: the
 fake has to model what io_uring does with every opcode rotor uses, and that model is a belief
-about the kernel that only the real kernel can confirm. The owner judged it overkill for an I/O
+about the kernel that only the real kernel can confirm. Camilo judged it overkill for an I/O
 layer this thin, and the evidence agrees: stompy's layer and TigerBeetle's are both tested
 without one.
 

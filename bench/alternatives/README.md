@@ -319,7 +319,7 @@ it, rotor leads every clean row at 16 connections and at 64 connections with 4 K
 (`bench/results/echo-sized-pool-orbstack-2026-09-22.md`). The library is unchanged. A group sized
 to the buffers in flight is the caller's choice, and `docs/using.md` says so. Keeping io_uring's
 ring short and refilling it from a stack of recently returned buffers would make any group size
-warm. The owner ruled on 2026-09-22 that rotor does not do this: an application sizes its group.
+warm. Camilo ruled on 2026-09-22 that rotor does not do this: an application sizes its group.
 The design has a risk that needs a bound: the kernel takes buffers from the ring
 while the loop waits, so a ring shorter than the receives one wait completes runs dry, and a
 receive ends with `buffers_exhausted` while the stack still holds free buffers. The same day
@@ -457,10 +457,10 @@ and libxev, every spread at 5 percent or under:
 
 The other columns are thousandths of rotor's rate. There is no run on that processor from before
 the fix, so this does not say whether the fix moved GitHub's numbers. The ratios fall inside the
-range the other processors' sections hold at 64 KiB. The owner approved adding the run as the
+range the other processors' sections hold at 64 KiB. Camilo approved adding the run as the
 baseline's Xeon 8370C section, the only section taken after the fix.
 
-**The other sections' 64 KiB rows were retaken on 2026-09-24**, at the owner's request, each from
+**The other sections' 64 KiB rows were retaken on 2026-09-24**, at Camilo's request, each from
 the first `comparison` job on its processor that had both the fix and the client check of
 `34763cc`. Those jobs were gated, so they printed tables and not baseline rows. Each ratio is the
 table's median per second, times 1000, divided by rotor's in the same configuration, rounded down.
@@ -502,7 +502,7 @@ at 64 KiB out on 2026-09-22 for the same symptom; they are back.
 
 The EPYC 9V74 section's rows below 64 KiB no longer fit that processor either. The three jobs on it
 since the fix put libuv 141 to 230 below them, and a lower ratio does not fail the gate, so those
-rows held nothing. At the owner's request the whole section was retaken from run 36032383576, the
+rows held nothing. At Camilo's request the whole section was retaken from run 36032383576, the
 run its 64 KiB rows came from. Every spread in it was 4 percent or under, its CPU step agreed at
 4 KiB as well, and the second job with the check, 36034642821, came within 33 of every row.
 
@@ -640,7 +640,7 @@ offered the same choice.
 
 So a caller of either library keeps its own queue and uses the notification only to wake the loop.
 **A gap against rotor on this row is partly rotor doing more work**, and no reader can see that from
-the numbers. Recorded and not corrected, by the owner's ruling of 2026-09-22: the row compares what
+the numbers. Recorded and not corrected, by Camilo's ruling of 2026-09-22: the row compares what
 each library actually offers, which is the question worth asking, and giving rotor a payload-free
 mode or writing a queue for the alternatives would each measure something no consumer would use.
 
@@ -855,7 +855,7 @@ runs a loop per core.
 behaviour `src/conformance/conformance_reuse_port.zig` measured as 0, 0, 0, 32 — every connection
 to the last listener bound — which is the outcome libuv refuses to expose.
 
-**What this settled.** The owner ruled on 2026-09-21 that the echo comparison measures 1 core only,
+**What this settled.** Camilo ruled on 2026-09-21 that the echo comparison measures 1 core only,
 with no skewed rows, and `docs/decisions/0019-the-comparison-measures-one-core.md` records it and
 amends decision 4. Rows C17, C18 and C19 are unaffected: `bench/crosscore/` measures the cross-core
 message on its own, as decision 4 says.
@@ -909,7 +909,7 @@ whose runs disagree by 12 percent, and level on the 64 KiB rows; its server prin
 in submission queue` during the 64-connection rows, the defect recorded above. `std.Io.Threaded`
 is 15 to 30 percent behind.
 
-**These rows meet the bar and no more.** The owner set it on 2026-09-22, when the same day made
+**These rows meet the bar and no more.** Camilo set it on 2026-09-22, when the same day made
 macOS a production platform: on macOS rotor is at least as fast as libuv and libxev. Echo is a tie
 with libuv within 3 percent both ways and a win over libxev at 16 connections; nothing here is a
 loss outside the spread. The timer and file sections below carry the wins, and the cross-core
@@ -1092,7 +1092,7 @@ by about 1.3 on their own, and more at 64 connections. The threshold of one poin
 harness's own load from a job arriving. The timer run shows the other side: the `std.Io.Threaded`
 candidate's 4,096 threads took the average to 327, and the cross-core rows taken two minutes later
 carry a "load low" of 301 from an average still decaying on an idle machine. What the mark should
-read was decided the same day, on the owner's word: `bench/harness/other_work.zig` reads how busy
+read was decided the same day, on Camilo's word: `bench/harness/other_work.zig` reads how busy
 the machine is in a quarter-second pause before and after every run, while the harness runs
 nothing, and carries the fullest pause of the series and the mean, in hundredths of one core.
 Nothing of the harness's is in a pause, a candidate's 4,096 threads have exited by then, and

@@ -1,11 +1,11 @@
 # 4. Threading model: one shared-nothing loop per core
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
-each until a ruling changes it. This record argues with the owner's position in two places: file
+each until a ruling changes it. This record argues with Camilo's position in two places: file
 ownership and SO_REUSEPORT on macOS.
 
-Amended on 2026-09-25 by the owner's ruling: loops talk through shared memory on io_uring too.
+Amended on 2026-09-25 by Camilo's ruling: loops talk through shared memory on io_uring too.
 A post on every backend goes through the mailbox ring the sender has to the target, and
 `IORING_OP_MSG_RING` only wakes a target that sleeps. The ruling reopened the alternative "Shared
 rings for both backends", which this record had rejected, on the evidence recorded under it. "How
@@ -241,7 +241,7 @@ exports it. What it settled that this paragraph did not say:
   remote has nowhere to deliver an event. The errors a loop's post can also report keep the names
   `event.error_of` gives them: `MailboxFull`, `LoopNotFound`, `SystemResources`, `Unexpected`,
   and `Unanswered`, which a loop can never report. Since 2026-09-25 every backend answers only the
-  first two. The other three stay in the set by the owner's ruling of that day, so the surface did
+  first two. The other three stay in the set by Camilo's ruling of that day, so the surface did
   not change.
 - On io_uring, since 2026-09-25, `post` pushes the message into the ring and, when the target
   sleeps, submits a wake from the remote's own ring without waiting for its answer. A wake the
@@ -294,7 +294,7 @@ memory in the Linux backend for no gain: `MSG_RING` rides in a batch the sender 
 submits.
 
 *Evidence against that reason, 2026-09-25. It is not a ruling: the alternative stays rejected
-until the owner reopens it.* `bench/calls/count_post.sh` counted the system calls of one message
+until Camilo reopens it.* `bench/calls/count_post.sh` counted the system calls of one message
 in `rotor_post`'s ping-pong, on `orbstack`
 (`bench/results/calls-crosscore-uring-epoll-orbstack-2026-09-25.md`):
 
@@ -320,7 +320,7 @@ for; in the measured ping-pong each message paid for its entries alone. What the
 to is a post that goes through a shared ring when the target is awake, as on kqueue and epoll,
 with `MSG_RING` left to wake a target that sleeps.
 
-*Adopted on 2026-09-25.* The owner ruled that loops talk across threads through shared memory
+*Adopted on 2026-09-25.* Camilo ruled that loops talk across threads through shared memory
 (the amendment at the top of this record). What was built:
 
 - A post on io_uring goes through `core.remote.post`, which every backend now calls, into the

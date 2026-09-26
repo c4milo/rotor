@@ -1,6 +1,6 @@
 # 1. Interface: a completion-based core, with a std.Io adapter over it
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
@@ -8,7 +8,7 @@ Amended on 2026-09-19 by decision 10: rotor carries no simulated backend, so the
 module table and the phrase "the three backends" no longer hold. The backends are `uring` and
 `kqueue`, and a consumer that needs a deterministic twin of the surface brings its own.
 
-Amended on 2026-09-22 by the owner: rotor exports one module, `rotor`, and that module chooses
+Amended on 2026-09-22 by Camilo: rotor exports one module, `rotor`, and that module chooses
 this host's backend itself. The sentence below saying a backend is chosen by the consumer's build
 no longer holds for a consumer outside this tree, because the backends are no longer modules it
 can name: exporting them would export how a backend performs an operation, which is nobody else's
@@ -108,7 +108,7 @@ The build enforces the direction (`build/modules.zig`).
 
 `assertion_options` is a module `build/modules.zig` generates. It holds one switch, whether decision
 8's class A assertions are compiled, and it is true in every graph but the benchmark that measures
-them. The owner approved the edge on 2026-09-24. build.zig offers no option for it.
+them. Camilo approved the edge on 2026-09-24. build.zig offers no option for it.
 
 A backend is chosen at comptime by the consumer's build, the way stompy's build hands `sim` to
 `obi` as its `io` import. The three backends carry the same surface, and a comptime check in
@@ -118,8 +118,8 @@ each compares its declarations against `core`'s list.
 
 `src/rotor/rotor.zig` is the one module a dependent package can name, and since 2026-09-22 its `Loop`,
 `Registry` and `Remote` are types of that file that wrap the host's backend and carry exactly the
-surface `core/surface.zig` lists, plus their error sets; a test holds each to that count. The
-owner's ruling: rotor supports its public API and no internal one. A backend's other public
+surface `core/surface.zig` lists, plus their error sets; a test holds each to that count. Camilo's
+ruling: rotor supports its public API and no internal one. A backend's other public
 functions serve its own files, the benchmarks and the conformance suite, and stay inside the tree.
 
 On Linux the host's backend is chosen per process since the same day: io_uring where the kernel

@@ -1,6 +1,6 @@
 # The echo baseline retaken from several runners, `github`, 2026-09-25
 
-The owner ruled on 2026-09-25 that a section of `bench/baseline/echo.txt` is taken from several runs, each on its
+Camilo ruled on 2026-09-25 that a section of `bench/baseline/echo.txt` is taken from several runs, each on its
 own runner, with each row the highest ratio among them. These are the fifteen `comparison` jobs of
 `.github/workflows/ci.yml` on commits whose echo server is the same: `1ccbd4e` and `219dc9c`,
 started by hand that morning, and `92a97d4`, started ten times that afternoon. Each run's echo rows

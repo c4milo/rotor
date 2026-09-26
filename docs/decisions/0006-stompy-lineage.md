@@ -1,6 +1,6 @@
 # 6. What rotor keeps from stompy's I/O layer, what it changes, and why stompy should move
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 

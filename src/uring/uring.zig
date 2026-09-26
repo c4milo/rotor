@@ -29,7 +29,7 @@ pub const tick_module = @import("uring_tick.zig");
 
 /// Where loops find each other's mailbox rings: `core.mailbox`'s, the one kqueue and epoll use.
 /// Since 2026-09-25 a post on io_uring goes through these rings too, and `IORING_OP_MSG_RING`
-/// only wakes a target that sleeps (decision 4, the owner's ruling of that day).
+/// only wakes a target that sleeps (decision 4, Camilo's ruling of that day).
 pub const Registry = core.mailbox.Registry;
 pub const group_module = @import("linux_shared").group;
 pub const Remote = remote_module.Remote;

@@ -8,7 +8,7 @@ the numbers, and the rule is then ratified or amended here.
 
 Measured in part on 2026-09-24, on `github`, for io_uring: class A's own cost is 2.1 percent of a
 `nop` round at batch 32 in the median of five runs on one processor, against a threshold of 2, and
-less than the noise on the echo workload on three processors. The last section reads it. The owner
+less than the noise on the echo workload on three processors. The last section reads it. Camilo
 ruled the same day that the echo clause decides, so the question is closed for io_uring and no
 assertion moves. On epoll, measured the same day, class A cost less than the echo workload's noise
 on three processors, which closes the question there by the echo clause. Class B alone, step 3's
@@ -26,7 +26,7 @@ then die by a signal. A canary whose scenarios do not halt must fail the check. 
 caller's mistake can reach gets a scenario; a mutation that deletes one is measured against `zig
 build halt-check`.
 
-Amended on 2026-09-23 by the owner's ruling: an assertion that only rotor's own code or the
+Amended on 2026-09-23 by Camilo's ruling: an assertion that only rotor's own code or the
 kernel's answer can break also gets a scenario, when a scenario can reach it through the
 function's own parameters. `core.file_call.result` takes its system call as a parameter, so a
 scenario hands it a made-up answer, and both of its assertions have one. An assertion that no
@@ -177,7 +177,7 @@ Linux available, the answer would have been lost in the noise.
 ## Results, 2026-09-24, `github`: what class A costs alone
 
 Step 2 is built. `src/core/assertion_class.zig` holds the switch, `build/modules.zig` generates it
-as `core`'s `assertion_options` import (an edge the owner approved on 2026-09-24), and two builds
+as `core`'s `assertion_options` import (an edge Camilo approved on 2026-09-24), and two builds
 turn it off: `uring_nop_no_class_a`, and the `rotor_echo` that `zig build bench-echo-no-class-a`
 installs in `zig-out/no-class-a/`. Each is ReleaseSafe with class A compiled out and every other
 assertion and safety check kept. build.zig offers no option for it.
@@ -273,7 +273,7 @@ The two point different ways at batch 32.
 
 ### Ruling, 2026-09-24
 
-The owner ruled that the echo clause decides for io_uring. Class A costs less than the noise of the
+Camilo ruled that the echo clause decides for io_uring. Class A costs less than the noise of the
 echo workload there, so the question is closed for io_uring, and no assertion moves. The `nop`
 median of 2.1 percent at batch 32 stays recorded above. The reasons:
 

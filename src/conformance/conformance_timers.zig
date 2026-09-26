@@ -116,7 +116,7 @@ test "a cancel of a repeating timer whose fire is queued and not handed over sti
 
     // The cancel comes between the tick that queued the fire and the tick that hands it over.
     // Decision 5, rule 2 answers it with the timer's final event. The cancel replaces the queued
-    // fire, by the owner's ruling of 2026-09-23: the next event is that final one, and it says
+    // fire, by Camilo's ruling of 2026-09-23: the next event is that final one, and it says
     // `canceled` (decision 14, rule 5).
     harness.loop.cancel(handles[left]);
     var before: u32 = 0;

@@ -1,6 +1,6 @@
 # 20. An epoll backend
 
-Status: **accepted** on 2026-09-22, by the owner, who ruled for it after a consumer could not run
+Status: **accepted** on 2026-09-22, by Camilo, who ruled for it after a consumer could not run
 rotor at all in its continuous integration.
 
 ## Why this reverses decision 2
@@ -254,7 +254,7 @@ that answers EAGAIN. A later attempt needs a way to know a socket is empty witho
 
 ## Open questions
 
-Each has a proposed answer, and the implementation follows it until the owner rules otherwise.
+Each has a proposed answer, and the implementation follows it until Camilo rules otherwise.
 
 1. **`epoll_wait` or `epoll_pwait2`?** The first takes a timeout in milliseconds, which is coarser
    than every deadline rotor accepts; the second takes a `timespec` and arrived in Linux 5.11, below
@@ -268,9 +268,9 @@ Each has a proposed answer, and the implementation follows it until the owner ru
    write replaces the `EVFILT_USER` trigger and nothing else moves.*
 4. **Does the comparison gain an epoll row?** *Proposed: no. There is no speed claim to make, and a
    row invites one. A person who wants the number runs the harness by hand.*
-5. **How does a caller get this backend?** Two shapes were put to the owner: a build option that
+5. **How does a caller get this backend?** Two shapes were put to Camilo: a build option that
    makes the public module wrap `epoll` on Linux, and a fallback at `init` that tries io_uring and
-   runs epoll when the kernel refuses it. **The owner ruled on 2026-09-22: the fallback at init.**
+   runs epoll when the kernel refuses it. **Camilo ruled on 2026-09-22: the fallback at init.**
    One binary runs everywhere, as libuv does; the price is a branch per call on Linux and both
    backends linked. What was built (`src/rotor/rotor_loop.zig`):
    - **The choice is made once per process, not per loop.** The sockets `sync` opens before any

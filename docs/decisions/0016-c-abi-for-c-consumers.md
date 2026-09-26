@@ -1,6 +1,6 @@
 # 16. A C ABI for C consumers
 
-Status: declined as asked, by the owner on 2026-09-24. It records a request from chapulin, the
+Status: declined as asked, by Camilo on 2026-09-24. It records a request from chapulin, the
 investigation that followed, and the ruling: rotor adds no C ABI and no static library target for
 this request. Nothing in rotor changes.
 
@@ -30,7 +30,7 @@ round it needs a new C surface in rotor that exists only for tests.
 
 ## Decision
 
-Declined as asked, by the owner on 2026-09-24. rotor adds no C ABI and no static library target
+Declined as asked, by Camilo on 2026-09-24. rotor adds no C ABI and no static library target
 for this.
 
 The need splits into two, and neither half wants a C ABI in rotor.

@@ -6,7 +6,7 @@
 //! cannot name a backend, and the types below carry exactly the surface `core/surface.zig` lists,
 //! which the tests at the bottom hold them to. A backend's other public functions exist for its own
 //! files, the benchmarks and the conformance suite, which live in this tree: they are not API, and
-//! no dependent package can reach them (the owner's ruling of 2026-09-22).
+//! no dependent package can reach them (Camilo's ruling of 2026-09-22).
 //!
 //! The backend is this host's. On Darwin it is `kqueue`. On Linux it is `uring` where the kernel
 //! gives the process a ring and `epoll` where the kernel refuses one, chosen once per process and

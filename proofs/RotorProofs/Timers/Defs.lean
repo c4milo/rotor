@@ -170,7 +170,7 @@ def drain (t : Tables) : Nat → Tables × List Event
 
 /-- `Tables.request_cancel` for a timer: once. A queued timer is left for the flush to end. A
 repeating timer whose fire is queued and not yet handed over has that fire replaced with
-`canceled`, so the event already on the finished list is its final one: the owner's ruling of
+`canceled`, so the event already on the finished list is its final one: Camilo's ruling of
 2026-09-23 (decision 14, rule 5). Any other timer finishes at once, because it lives in the heap
 and its cancel has no race (decision 5, rule 5). -/
 def requestCancel (t : Tables) (i : Nat) : Tables :=

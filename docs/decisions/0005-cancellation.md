@@ -1,6 +1,6 @@
 # 5. Cancellation and timeout semantics
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
@@ -141,7 +141,7 @@ completed, and checks both outcomes.
 
 ## Amendment to rule 3, 2026-09-22: a provided buffer changes hands at the event that names it
 
-Status: accepted by the owner on 2026-09-24. Proposed on 2026-09-22.
+Status: accepted by Camilo on 2026-09-24. Proposed on 2026-09-22.
 `0017-the-layer-that-owns-the-loop.md` found the gap: rule 3 says the
 buffer belongs to the loop until the final event, and a multishot `receive` from a provided-buffer
 group has no final event while its `more` events flow, yet each of those events hands the caller a

@@ -26,7 +26,7 @@ reopens with that number.
 
 ## 2. A posted message travels in the completion's result, with the top bit set
 
-*Replaced on 2026-09-25.* The owner ruled that loops talk through shared memory on io_uring too
+*Replaced on 2026-09-25.* Camilo ruled that loops talk through shared memory on io_uring too
 (decision 4, its amendment of that day). A message now goes through the mailbox ring the sender
 has to the target, and an `IORING_OP_MSG_RING` carries no message: it wakes a target that sleeps,
 and its completion, with `user_data` `constants.user_data_wake`, is dropped by both reaps. So the

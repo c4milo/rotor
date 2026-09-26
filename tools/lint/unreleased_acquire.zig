@@ -42,7 +42,7 @@
 //! that is ending anyway, which is the reason `defer_order.zig` leaves `tools/` out.
 //!
 //! So this rule guards the harness, where the bug it is named for cost a real run. Widening it to
-//! `src` means changing those four tests, and that is the owner's call.
+//! `src` means changing those four tests, and that is Camilo's call.
 //!
 //! The rule is pepegrillo's `unreleased_acquire`. This file holds rotor's configuration of it.
 

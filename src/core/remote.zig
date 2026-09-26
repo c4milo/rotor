@@ -47,7 +47,7 @@ pub const PostError = error{
     LoopNotFound,
     /// No backend answers it since 2026-09-25, when io_uring's posts moved to the mailbox rings
     /// (decision 4). Until then io_uring answered it when the kernel had no memory for the request
-    /// that carried the message. It stays in the set by the owner's ruling of that day, so the
+    /// that carried the message. It stays in the set by Camilo's ruling of that day, so the
     /// surface did not change.
     SystemResources,
     /// No backend answers it since 2026-09-25, for the same reason. Until then io_uring answered it

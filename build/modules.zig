@@ -10,7 +10,7 @@
 //! reaching into these (decision 10).
 //!
 //! `core` imports nothing but `assertion_options`, the switch of decision 8's class A assertions,
-//! which this file generates and which is true in every graph but one benchmark's. The owner
+//! which this file generates and which is true in every graph but one benchmark's. Camilo
 //! approved that edge on 2026-09-24. `linux_shared` imports `core`. `uring` and `epoll` import
 //! `core` and `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
 //! backend, which this file hands it as its `backend` import, so one suite tests every backend
@@ -98,7 +98,7 @@ pub fn add_with(
     rotor.addImport("core", core);
     rotor.addImport("uring", uring);
     // On Linux the public module falls back to epoll where the kernel refuses io_uring (decision 20,
-    // open question 5, ruled by the owner on 2026-09-22), so it needs both Linux backends.
+    // open question 5, ruled by Camilo on 2026-09-22), so it needs both Linux backends.
     rotor.addImport("epoll", epoll);
     rotor.addImport("kqueue", kqueue);
     return .{

@@ -110,7 +110,7 @@ theorem cancel_stops {t : Tables} (r : Reachable t) (h : Handle)
 /-- **Decision 5, rule 2 and decision 14, rule 5.** A cancel, through its current handle, of a
 repeating timer whose fire is queued and not yet handed over makes that queued event its final one:
 the slot stays on the finished list and out of the heap, its event will not say `more`, and it says
-canceled. The owner ruled on 2026-09-23 that the cancel replaces the queued fire. -/
+canceled. Camilo ruled on 2026-09-23 that the cancel replaces the queued fire. -/
 theorem cancel_ends_queued {t : Tables} (r : Reachable t) (h : Handle)
     (hfin : h.index ∈ t.finished) (hrep : repeats (t.slots h.index) = true)
     (hg : (t.slots h.index).generation = h.generation) :

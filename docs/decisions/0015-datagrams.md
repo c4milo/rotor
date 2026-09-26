@@ -1,8 +1,8 @@
 # 15. Datagrams
 
-Status: **accepted** on 2026-09-20, by the owner, who asked for datagrams and named two consumers:
-colibri's and chapulin's QUIC transport. Three of its questions he answered directly, recorded
-under "What the owner has decided"; the rest are at the end with a proposed answer each, and the
+Status: **accepted** on 2026-09-20, by Camilo, who asked for datagrams and named two consumers:
+colibri's and chapulin's QUIC transport. Three of its questions Camilo answered directly, recorded
+under "What Camilo has decided"; the rest are at the end with a proposed answer each, and the
 implementation follows the proposed answer until he rules otherwise.
 
 The probe that section demanded has since run, and it **corrected this record**: the payload sits
@@ -16,7 +16,7 @@ Decision 2 puts UDP in "Not in version one" and gives the reason:
 > **UDP and Unix sockets.** No consumer needs them yet. colibri's QUIC will want UDP, but colibri
 > owns no I/O, so the need arrives with whoever embeds colibri.
 
-That is a trigger, not a refusal, and the owner fired it. Two consumers need datagrams, not one:
+That is a trigger, not a refusal, and Camilo fired it. Two consumers need datagrams, not one:
 colibri's QUIC transport and chapulin's. The second matters to the record, because a surface with
 two consumers is settled by what both need and not by what one happens to do first.
 
@@ -183,7 +183,7 @@ reap subtracts one constant the group already fixed. No dependent load into the 
 of the head on the hot path. It is one subtract in `uring_reap.complete` and one in kqueue's
 `serve`. That function is four statements today and is the path decision 8's experiment measures,
 so milestone 3 must know it moved. The alternative — reporting the bytes the datagram occupies, leaving the reap path
-untouched — was rejected by the owner: it would hand a caller who writes
+untouched — was rejected by Camilo: it would hand a caller who writes
 `parse(buffer[0..try event.outcome()])` rotor's head as packet bytes, and rotor cannot assert its
 way out of a mistake in the caller's code.
 
@@ -239,7 +239,7 @@ sends ECT(0) and requires ECT(0) back, on every backend, and failed on kqueue un
 **What macOS does not have is segmentation.** `netinet/udp.h` defines exactly one option,
 `UDP_NOCKSUM`. There is no GSO and no GRO. So:
 
-- **`segment_bytes` above 0 is refused on kqueue**, with `unsupported`. The owner ruled on this.
+- **`segment_bytes` above 0 is refused on kqueue**, with `unsupported`. Camilo ruled on this.
 - The suite's scenario for it has two arms that both assert — segmentation on Linux, the refusal
   on macOS — rather than one that compiles away on one side. Decision 10 runs one suite on both
   backends so the two cannot drift unnoticed, and a scenario that vanishes is how they would.
@@ -346,7 +346,7 @@ Every check is on the real kernel, on both backends: rotor has no simulator (dec
    peer address read from the wrong offset, `truncated` left off, the ECN codepoint reported as
    the raw TOS byte, `segment_bytes` accepted on kqueue.
 
-## What the owner has decided
+## What Camilo has decided
 
 1. `Event.result` for a `receive_from` counts the datagram's own bytes, and both reap paths pay
    the subtract.
@@ -355,7 +355,7 @@ Every check is on the real kernel, on both backends: rotor has no simulator (dec
 
 ## Open questions
 
-The implementation follows the proposed answer to each until the owner rules.
+The implementation follows the proposed answer to each until Camilo rules.
 
 1. Does a datagram group get a new `provide_datagram_buffers`, leaving `provide_buffers` and its
    callers untouched? **Proposed: yes.**
@@ -378,5 +378,5 @@ The implementation follows the proposed answer to each until the owner rules.
    `kqueue_sync_socket.zig` would cross it. Are those splits their own commits? **Proposed: yes,
    landed first and separately.**
 9. Is it accepted that no cell of `docs/costs.md` is filled until this lands, because the paths it
-   touches are the paths that table measures? **Proposed: yes, which is the order the owner
+   touches are the paths that table measures? **Proposed: yes, which is the order Camilo
    already gave: finish the implementation, then benchmark.**

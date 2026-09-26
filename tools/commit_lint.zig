@@ -46,7 +46,7 @@ const imperative_exceptions = [_][]const u8{
 };
 
 /// The keys a trailer paragraph may name: pepegrillo's default set with `Co-Authored-By` struck,
-/// because CLAUDE.md forbids that trailer (the owner ruled it out on 2026-09-21).
+/// because CLAUDE.md forbids that trailer (Camilo ruled it out on 2026-09-21).
 ///
 /// **This does not refuse the trailer, and the tests below say so.** `trailer_keys` names the keys
 /// a trailer *may* use, so a final paragraph naming anything else is counted as body instead.

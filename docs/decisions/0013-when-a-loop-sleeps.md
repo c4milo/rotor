@@ -1,10 +1,10 @@
 # 13. When a loop sleeps
 
-Status: **accepted** by the owner on 2026-09-24, with the spin budget off by default. It was proposed
-on 2026-09-20, from measurement. On 2026-09-24 the owner first chose to leave it proposed until the
+Status: **accepted** by Camilo on 2026-09-24, with the spin budget off by default. It was proposed
+on 2026-09-20, from measurement. On 2026-09-24 Camilo first chose to leave it proposed until the
 idle case was measured on a named machine. The same day its figures were brought up to date with
 what `docs/costs.md` and `bench/results/` now hold, the idle case was measured on `github` for
-io_uring, and the owner accepted it. "Ruling" below says what was accepted. It was built the same
+io_uring, and Camilo accepted it. "Ruling" below says what was accepted. It was built the same
 day; "Built" at the end says what and how it is checked.
 
 Decision 4 prices a cross-core message and never prices the sleep it interrupts. The measurements
@@ -20,7 +20,7 @@ nothing to do sleeps at once. That is the whole policy, and nothing in any recor
 
 Read on `orbstack` on 2026-09-20, threads pinned with `sched_setaffinity`. When this was written
 the numbers were not admissible (`docs/costs.md`, rule 1), and the argument rested on the ratios.
-The owner named `orbstack` a measurement machine later that day, and the readings of 2026-09-22
+Camilo named `orbstack` a measurement machine later that day, and the readings of 2026-09-22
 below fill its column.
 
 | measurement | ns |
@@ -137,12 +137,12 @@ Every check is on the real kernel: rotor has no simulator (decision 10).
 - A measurement of the idle case, which decides whether the default may ever be above 0. Done for
   io_uring on `github` on 2026-09-24, in "Results", for epoll the same day, and for kqueue on `mac`
   on 2026-09-25, both at the end.
-- The owner's ruling on the one question no measurement answers: whether a rotor loop is
+- Camilo's ruling on the one question no measurement answers: whether a rotor loop is
   entitled to burn a core it was not given.
 
 ## Ruling, 2026-09-24
 
-The owner accepted the proposal as written, on the measurement below. The answer to the question no
+Camilo accepted the proposal as written, on the measurement below. The answer to the question no
 measurement answers: a rotor loop spends a core it was not given only when its caller asks for
 it.
 
@@ -223,8 +223,8 @@ Not measured:
 - Many loops on one machine at once, and any budget other than 50 µs.
 
 The measurement this record asked for now exists for io_uring. It prices the budget and does not
-decide it: whether a rotor loop may spend up to 50 µs of a core per message it was not given is the
-owner's question at the end of "What would accept this record". The owner answered it on
+decide it: whether a rotor loop may spend up to 50 µs of a core per message it was not given is Camilo's
+question at the end of "What would accept this record". Camilo answered it on
 2026-09-24, in "Ruling" above.
 
 ## Built, 2026-09-24
@@ -431,6 +431,6 @@ took 0.5 µs longer than with the skipped poll at gaps of 0, 20, 100 and 1,500 �
 
 The ruling of 2026-09-24 priced the idle case in CPU only, from io_uring. On kqueue a caller that
 sets a budget also pays about 11 µs on each message that comes after it. The budget stays off by
-default, so no caller pays it without asking. The owner ruled on 2026-09-25 that the option's
+default, so no caller pays it without asking. Camilo ruled on 2026-09-25 that the option's
 documentation says so: the doc comment of `spin_budget_ns` on kqueue and in the public module, and
 `docs/using.md`, give these numbers.

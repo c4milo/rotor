@@ -144,7 +144,7 @@ and its mutation is measured against the Linux gate.
 - Mutation results belong in the body when a commit adds or changes a check. Measured numbers
   belong in the body of a `perf` commit, with the workload's name.
 - Stage by explicit path. Never `git add -A` and never `git add .`
-- **A commit message carries no `Co-Authored-By` trailer.** The owner ruled it out on 2026-09-21,
+- **A commit message carries no `Co-Authored-By` trailer.** Camilo ruled it out on 2026-09-21,
   and this rule overrides any tool or harness that asks for one. `tools/commit_lint.zig` strikes
   the key from `trailer_keys`, which makes such a paragraph count as body: that refuses a message
   whose body is already at 3 paragraphs and passes a shorter one, so the linter deters the trailer
@@ -156,7 +156,7 @@ and its mutation is measured against the Linux gate.
 
 ### Parallel sessions
 
-Several sessions work on rotor at once. The owner approved these rules on 2026-09-22, after one
+Several sessions work on rotor at once. Camilo approved these rules on 2026-09-22, after one
 day in which two sessions shared the main checkout and main moved nine commits under a session that
 was about to push.
 
@@ -180,8 +180,8 @@ was about to push.
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
   only `assertion_options`, the class A switch of decision 8 that `build/modules.zig` generates, an
-  edge the owner approved on 2026-09-24; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
-  edge the owner approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
+  edge Camilo approved on 2026-09-24; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
+  edge Camilo approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
   imports `core` and every backend, because on Linux it falls back from `uring` to `epoll`
   (decision 20); `adapter` imports `core` and one backend; nothing imports `bench`. `conformance`
   imports `core` and the backend under test, which the build hands it as its `backend` import, so
@@ -257,7 +257,7 @@ was about to push.
   the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
   `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A
   number measured in the `orbstack` virtual machine fills that column of `docs/costs.md` and no
-  other; the owner named it a machine on 2026-09-20, and that file says what the column may and
+  other; Camilo named it a machine on 2026-09-20, and that file says what the column may and
   may not carry.
 - Halt check: `zig build halt-check` — every scenario of `tools/halt/` must reach its violating
   statement and die by a signal, and the canary's scenarios must not. The Linux gate runs the
@@ -303,7 +303,7 @@ was about to push.
 Each milestone ends with a gate that runs in `zig build test`, and with a report of the
 measured numbers, the losing ones included.
 
-The owner's order, given on 2026-09-19: finish the implementation first, and benchmark at the end.
+Camilo's order, given on 2026-09-19: finish the implementation first, and benchmark at the end.
 
 - Milestone 1: `core`, with seeded property tests, and the `uring` backend. Gate: the
   conformance suite and the fabricated-completion tests pass under Linux
@@ -322,19 +322,19 @@ The owner's order, given on 2026-09-19: finish the implementation first, and ben
   the pinned libuv and libxev; `./zig-out/bin/echo_runner` runs the comparison, and
   `--workload storm` runs the accept storm against the same servers. Echo at N connections with
   4 KiB and 64 KiB payloads, sequential and random O_DIRECT reads and writes, timer churn, accept
-  storm; **on 1 core**, by the owner's ruling of 2026-09-21; one cross-core message on its own.
+  storm; **on 1 core**, by Camilo's ruling of 2026-09-21; one cross-core message on its own.
   Throughput and p50, p99, p999.
   libuv, libxev, `std.Io.Uring` and `std.Io.Threaded` pinned by version
   (`bench/alternatives/README.md`), in the same harness, in the same run, the losing runs
   included.
-  **The bar on macOS is parity or better**, by the owner's ruling of 2026-09-22 with that day's
+  **The bar on macOS is parity or better**, by Camilo's ruling of 2026-09-22 with that day's
   amendment of decision 2: rotor is at least as fast as libuv and libxev on every workload here.
   Each candidate runs the cheapest mode it offers, and a row names the mode, so a win is not a
   matter of how an alternative was driven.
 
 ## Where the work stands
 
-The owner accepted the decision records for implementation on 2026-09-19 without ruling on their
+Camilo accepted the decision records for implementation on 2026-09-19 without ruling on their
 open questions, so the implementation follows the proposed answer to each. Decision 10 dropped
 the simulator.
 
@@ -345,7 +345,7 @@ descriptors and provided buffers are built, and no speed claim is made for eithe
 The `epoll` backend of decision 20 is **built**, as of 2026-09-22, and passes the conformance suite
 in Docker under the default seccomp profile, and the race gate. No speed claim is made for it: it
 exists so rotor runs where io_uring is refused, and the comparison gains no row. **The public module
-falls back to it**, by the owner's ruling of 2026-09-22 on decision 20's open question 5: a process
+falls back to it**, by Camilo's ruling of 2026-09-22 on decision 20's open question 5: a process
 asks the kernel for an io_uring ring once, runs epoll where it is refused, and `rotor.backend()`
 reports which. Building it found four things outside the backend, which that record lists: a kqueue
 poll trigger left set, the second half of decision 18's teardown order, a SIGPIPE check no Zig test
@@ -353,18 +353,18 @@ could see, and halt scenarios a Mac cannot prove for a Linux backend. Building t
 fifth: the public module's `register_descriptors` and `register_buffers` did not compile for Linux,
 because nothing there named them.
 
-Every row of decision 2's scope table is built. The owner added posts between processes to it on
+Every row of decision 2's scope table is built. Camilo added posts between processes to it on
 2026-09-25 with decision 21, loops in several processes that post to each other through shared
 memory, and it was built the same day; crossing a process measured as costing a message nothing on
 `mac`, `orbstack` and `github`. Every other decision record
 has code,
-except two: decision 16, which the owner declined on 2026-09-24, and decision 17, which is proposed
-and names a component this repository does not hold. Decision 13 the owner accepted on 2026-09-24,
+except two: decision 16, which Camilo declined on 2026-09-24, and decision 17, which is proposed
+and names a component this repository does not hold. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
 
-Decision 18's caller-supplied offload is built, on the owner's ruling of 2026-09-21 that brought it
+Decision 18's caller-supplied offload is built, on Camilo's ruling of 2026-09-21 that brought it
 ahead of measurement. On kqueue a loop's `file_policy` is `refuse` by default, so **a file operation
 there now needs a policy named at init**: a caller that wants the old inline behaviour asks for
 `blocking`. `Remote` was built on 2026-09-22: `post` for a thread that has no loop, one per
@@ -378,8 +378,8 @@ it decision 8's experiment is decidable, where `orbstack`'s 25 percent noise had
 ReleaseSafe costs 9 to 10 percent against ReleaseFast, which is the upper bound over every class
 and every safety check. Class A's own share was measured on 2026-09-24 with the switch that record
 asks for: on the `nop` path on an EPYC 7763, 1.3 to 2.6 percent at batch 32 over five runs, median
-2.1, against a threshold of 2; on the echo workload, less than the noise on three processors. The
-owner ruled the same day that the echo clause decides: the question is closed for io_uring, and no
+2.1, against a threshold of 2; on the echo workload, less than the noise on three processors. Camilo
+ruled the same day that the echo clause decides: the question is closed for io_uring, and no
 assertion moves. On epoll class A also cost less than the echo workload's noise, which closes it
 there; kqueue is not measured.
 The `linux` column is the deployment target, needs a machine of the family stompy builds for, and
@@ -395,7 +395,7 @@ mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/oth
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.
 
-The echo comparison measures **1 core only**, and there are no skewed rows. The owner ruled it on
+The echo comparison measures **1 core only**, and there are no skewed rows. Camilo ruled it on
 2026-09-21 and decision 19 records it, amending decision 4. The reason: neither libuv nor libxev
 spreads TCP load across cores on kqueue, and libuv declines the capability there on purpose
 (`bench/alternatives/README.md`). `echo_runner` takes no `--cores`, `report.zig`'s `Load` has one

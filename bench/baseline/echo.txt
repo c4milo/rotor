@@ -6,7 +6,7 @@
 # to the section of the processor it ran on. A run on a processor not named here is held to nothing,
 # and prints its own `processor` line and rows in this format, ready to add.
 #
-# Since 2026-09-25, by the owner's ruling of that day, a section is taken from several runs, each on
+# Since 2026-09-25, by Camilo's ruling of that day, a section is taken from several runs, each on
 # its own runner of the processor, and each row is the highest ratio among them: two runners of one
 # processor differ by more than the margin, and one run cannot show how far. A run whose rows
 # disagreed gives no ratio for that row. `--write-baseline yes` prints one run's rows in this format.
@@ -38,7 +38,7 @@
 # and the job's CPU step agreed with the 4 KiB and 64 KiB rows. The section it replaced, from run
 # 35811462374 on 86a7ade, put libuv 141 to 230 above what every run since the fix measured below
 # 64 KiB. `bench/results/echo-checked-github-epyc-9v74-2026-09-24.md` holds the run.
-# On 2026-09-25, by the owner's ruling of that day, each row became the higher of the row above and
+# On 2026-09-25, by Camilo's ruling of that day, each row became the higher of the row above and
 # the ratios of runs 36103210871 and 36169146913, from commits 1ccbd4e and 92a97d4: too few runs of
 # this processor to retake it whole. `bench/results/echo-retake-github-2026-09-25.md` holds them.
 processor AMD EPYC 9V74 80-Core Processor
@@ -90,7 +90,7 @@ echo 64 65536 std.Io.Threaded 687
 # The old libuv row at 64 connections and 64 KiB is the one that failed the EPYC section, and it
 # is why the file is split by processor.
 # `bench/results/echo-checked-github-xeon-6973p-c-2026-09-24.md` holds the retake.
-# On 2026-09-25, by the owner's ruling of that day, each row became the higher of the row above and
+# On 2026-09-25, by Camilo's ruling of that day, each row became the higher of the row above and
 # the ratios of run 36169162449, from commits 92a97d4: too few runs of this processor to retake it
 # whole. `bench/results/echo-retake-github-2026-09-25.md` holds them.
 processor Intel(R) Xeon(R) 6973P-C
@@ -136,7 +136,7 @@ echo 64 65536 libuv 1092
 echo 64 65536 libxev 1047
 echo 64 65536 std.Io.Threaded 763
 
-# Retaken on 2026-09-25 by the owner's ruling of that day: each row is the highest ratio of seven
+# Retaken on 2026-09-25 by Camilo's ruling of that day: each row is the highest ratio of seven
 # runs on seven runners, from commits 1ccbd4e, 219dc9c and 92a97d4, whose echo server is the same:
 # runs 36103203911, 36106681928, 36169101935, 36169117548, 36169124894, 36169132110, 36169154243.
 # A run whose rows disagreed gives no ratio for that row. The section before, from runs
@@ -239,7 +239,7 @@ echo 64 65536 std.Io.Threaded 794
 # Run 36028154840, commit a31f1a4, on 2026-09-24: the first comparison after db9e39e. No row is
 # left out: the runs agreed on every one, and the job's CPU step agreed with the 64 KiB rows.
 # `bench/results/echo-github-xeon-8370c-2026-09-24.md` holds the run.
-# On 2026-09-25, by the owner's ruling of that day, each row became the higher of the row above and
+# On 2026-09-25, by Camilo's ruling of that day, each row became the higher of the row above and
 # the ratios of run 36103217522, from commits 1ccbd4e: too few runs of this processor to retake it
 # whole. `bench/results/echo-retake-github-2026-09-25.md` holds them.
 processor Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz
@@ -285,7 +285,7 @@ echo 64 65536 libuv 1017
 echo 64 65536 libxev 983
 echo 64 65536 std.Io.Threaded 709
 
-# Taken on 2026-09-25 by the owner's ruling of that day, the first section of this processor: each
+# Taken on 2026-09-25 by Camilo's ruling of that day, the first section of this processor: each
 # row is the highest ratio of four runs on four runners, from commits 219dc9c and 92a97d4, whose
 # echo server is the same: runs 36106675599, 36169109632, 36169139849, 36169169246.
 # A run whose rows disagreed gives no ratio for that row.

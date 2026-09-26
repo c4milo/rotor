@@ -134,7 +134,7 @@ second timer between the ticks replaces its queued fire with `canceled`. The nex
 event over as the timer's final one: it says canceled and no `more`, and the slot is free under a
 new generation, so no later event carries the handle.
 
-Until the owner's ruling of 2026-09-23 this theorem was `lost_cancel`, and it proved the opposite:
+Until Camilo's ruling of 2026-09-23 this theorem was `lost_cancel`, and it proved the opposite:
 `cancellable` refused a finishing slot, so the cancel changed nothing, and the next tick handed the
 fire over with `more` and armed the timer again. -/
 theorem cancel_not_lost (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ b)

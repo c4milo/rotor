@@ -1,6 +1,6 @@
 # 2. Scope of version one
 
-Status: accepted for implementation on 2026-09-19. The owner gave the instruction to implement and
+Status: accepted for implementation on 2026-09-19. Camilo gave the instruction to implement and
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
@@ -35,7 +35,7 @@ The four additions:
    cross-core message (C17, C18). A version one without it cannot test the claim.
 
    **Amended on 2026-09-25 by `0021-loops-in-several-processes.md`: a post may cross a process.**
-   The owner asked for loops in several processes that post to each other through shared memory,
+   Camilo asked for loops in several processes that post to each other through shared memory,
    and ruled that they are in version one. The group's processes share the mailbox rings and
    inherit each loop's wake from the process that created the registry; no descriptor moves between
    them after they start.
@@ -49,7 +49,7 @@ TLS, DNS, Windows and process spawning, as proposed, and also:
 - **UDP and Unix sockets.** No consumer needs them yet. colibri's QUIC will want UDP, but
   colibri owns no I/O, so the need arrives with whoever embeds colibri.
 
-  **Amended on 2026-09-20 by `0015-datagrams.md`: UDP is in version one.** The owner asked for
+  **Amended on 2026-09-20 by `0015-datagrams.md`: UDP is in version one.** Camilo asked for
   datagrams and named colibri's and chapulin's QUIC transport as the consumers, so the need arrived.
   `receive_from`, `send_to`, a datagram buffer group, multishot receive, GSO, GRO and ECN are built
   and covered by six conformance scenarios. **Unix sockets are still excluded**, and nothing has
@@ -99,13 +99,13 @@ record did not weigh: the loop still starts no thread, and the consumer decides.
 available and stops being the default, because a measured 2.8 ms stall that nothing reports is
 worse than a refusal.
 
-**Amended on 2026-09-22 by the owner: macOS is a production platform, which happens also to be the
+**Amended on 2026-09-22 by Camilo: macOS is a production platform, which happens also to be the
 development platform.** The paragraph above it is withdrawn. What that changes:
 
 - **A macOS number is a claim.** It stops being "kqueue on a laptop" and starts being a result the
   project stands behind, for sockets, timers, datagrams and files alike. It still names its machine,
   as every number does.
-- **The bar is parity or better.** The owner set it the same day: on macOS rotor is at least as fast
+- **The bar is parity or better.** Camilo set it the same day: on macOS rotor is at least as fast
   as libuv and libxev on every workload of milestone 4. A row where rotor is behind is a defect to
   explain and fix, not a platform to excuse. CLAUDE.md's milestone 4 carries it, and
   `bench/alternatives/README.md` is where each row is read.
@@ -149,7 +149,7 @@ the first consumer could not move, and `0006-stompy-lineage.md` would have nothi
 workload. Neither changes whether the main claims hold.
 
 **Support kernels before 6.1.** Every feature absent is a second code path and a second
-harness column. The target machines are the owner's own, so the kernel is a choice.
+harness column. The target machines are Camilo's own, so the kernel is a choice.
 
 ## How it is checked
 

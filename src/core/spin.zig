@@ -5,7 +5,7 @@
 //! without a wait, and a call that takes a `*Loop` stays in the backend (CLAUDE.md, Layout).
 //!
 //! The budget is off unless the caller sets it (`spin_budget_ns` in the loop's options, 0 by
-//! default), which is what the owner accepted on 2026-09-24: a loop spends a core it was not given
+//! default), which is what Camilo accepted on 2026-09-24: a loop spends a core it was not given
 //! only when its caller asks.
 const std = @import("std");
 const assert = std.debug.assert;

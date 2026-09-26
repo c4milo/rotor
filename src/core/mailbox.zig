@@ -7,7 +7,7 @@
 //! It is in `core` because every backend needs it and it names no kernel type: a message crosses
 //! in user space on each, and only the wake differs, which is the loop's job. It lived in
 //! `src/kqueue/` until epoll needed it, on 2026-09-22. io_uring's posts moved onto it on
-//! 2026-09-25, when the owner ruled that loops talk through shared memory (decision 4).
+//! 2026-09-25, when Camilo ruled that loops talk through shared memory (decision 4).
 //!
 //! Nothing here enters the kernel, so this file compiles on every host. The tests that start a
 //! thread are in `src/kqueue/kqueue_mailbox_test.zig`, which says why they are there.

@@ -57,5 +57,5 @@ What this means for a short ring:
   it goes back on the work list (read the same day). A short ring on those kernels has no bound
   below the number of receives armed on the group.
 
-The owner ruled the same day that rotor does not build a short ring. An application sizes its
+Camilo ruled the same day that rotor does not build a short ring. An application sizes its
 group to the buffers it has in flight, as `docs/using.md` says.

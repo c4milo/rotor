@@ -1,14 +1,14 @@
 # 18. A caller-supplied thread pool for blocking file operations
 
-Status: **accepted** on 2026-09-20, and **built on 2026-09-21** except the harness row. The owner
+Status: **accepted** on 2026-09-20, and **built on 2026-09-21** except the harness row. Camilo
 ruled "let's allow a thread pool" after the comparison below showed what the kqueue backend costs
 and what libxev does instead. This record amends `0002-scope.md`'s correction "files on macOS" and
 adds a row to the choice that record made.
 
 What is built: the three policies, the hand-off, the cancel of an offloaded operation, the
 conformance scenarios and the halt scenarios. What is not: the harness row, because measurement is
-deferred (`0003-speed-sources.md`'s rule, and the owner's ruling of 2026-09-20). **No number is
-claimed for the offload.** The owner brought the work forward on 2026-09-21, ahead of open
+deferred (`0003-speed-sources.md`'s rule, and Camilo's ruling of 2026-09-20). **No number is
+claimed for the offload.** Camilo brought the work forward on 2026-09-21, ahead of open
 question 4's proposed answer, which is recorded there.
 
 ## Context
@@ -68,7 +68,7 @@ written: the loop starts no thread.
 
 ### What a loop does with a file operation, by what it was given
 
-Proposed, and the implementation follows it until the owner rules otherwise. A kqueue loop takes
+Proposed, and the implementation follows it until Camilo rules otherwise. A kqueue loop takes
 one file policy at init:
 
 | policy | behaviour | for |
@@ -133,7 +133,7 @@ decides the consumer's threading, which rotor refuses to do everywhere else — 
 enables thread-per-core without choosing it, and `post` exists so a consumer can build what it
 wants.
 
-**Keep the inline call and change nothing.** Rejected by the owner on 2026-09-20. The measurement
+**Keep the inline call and change nothing.** Rejected by Camilo on 2026-09-20. The measurement
 above is why: a 2.8 ms stall that nothing reports is not a development inconvenience, it is a
 result nobody can see.
 
@@ -207,7 +207,7 @@ Done on 2026-09-21, except the last:
    init, because a consumer that wants both shapes can run two loops and decision 4 already says
    a loop belongs to one thread. Per-operation would let one connection stall the loop while
    another does not, which is harder to reason about and no consumer has asked for.
-4. **When is this built?** **Overtaken by the owner on 2026-09-21**, who brought it forward: the
+4. **When is this built?** **Overtaken by Camilo on 2026-09-21**, who brought it forward: the
    comparison's file rows set a rotor with no pool against a libuv with four threads, which measures
    the pool and not the loops, and milestone 4's own rule is that a comparison matches what each
    candidate holds. The proposed answer was: after milestone 4 reports, so the offload is measured

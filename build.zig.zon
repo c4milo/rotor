@@ -12,7 +12,7 @@
             .lazy = true,
         },
         // The two alternatives below are what the harness measures rotor against, pinned so that
-        // a comparison names the exact source it ran (CLAUDE.md, Milestones 2 and 4). The owner's
+        // a comparison names the exact source it ran (CLAUDE.md, Milestones 2 and 4). Camilo's
         // brief requires both, so they are sanctioned dependencies. They are bench-only and never
         // linked into the library. Both are lazy, and build/alternatives.zig requests them only
         // under `zig build bench-alternatives`, so neither `zig build test` nor a project that

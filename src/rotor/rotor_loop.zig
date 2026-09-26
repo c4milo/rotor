@@ -1,5 +1,5 @@
 //! The public `Loop`, `Registry` and `Remote`, and the choice of backend they follow (decision 20,
-//! open question 5, which the owner ruled on 2026-09-22: a fallback at init).
+//! open question 5, which Camilo ruled on 2026-09-22: a fallback at init).
 //!
 //! **On Linux a process runs one of two backends.** `uring` where the kernel gives it a ring, and
 //! `epoll` where the kernel refuses one, as Docker's default seccomp profile does. The choice is
