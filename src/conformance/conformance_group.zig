@@ -264,6 +264,7 @@ const handshake_ticks_max = 1 << 20;
 const tag_stop = 3;
 
 const status_parent_stalled: u8 = 7;
+const status_parent_never_ran: u8 = 8;
 
 fn spin(iterations: u64) void {
     for (0..iterations) |iteration| std.mem.doNotOptimizeAway(iteration);
@@ -280,6 +281,23 @@ fn wait_for(member: *Registry, comptime condition: enum { drained, sleeping }) b
         if (met) return true;
     }
     return false;
+}
+
+/// Spins until a loop runs at `id` of `registry`, or the spins run out. Each side waits for the
+/// other's loop before its first round. A post to an id that no loop holds is refused, and a tick
+/// timed before the child's loop runs measures how long the child took to start.
+fn wait_until_running(registry: *const Registry, id: core.LoopId) bool {
+    for (0..handshake_wait_spins_max) |_| {
+        if (registry.get(id) >= 0) return true;
+    }
+    return false;
+}
+
+/// Waits for a child that stopped doing its part, and fails with the status it exited with.
+fn child_failed(child: process.Pid) anyerror {
+    const status = process.wait(child) catch |err| return err;
+    std.debug.print("the child exited with status {d}; seed 0x{x}\n", .{ status, handshake_seed });
+    return error.ChildFailed;
 }
 
 /// Posts `count` messages numbered from `first` in one submit, so one flush posts them all.
@@ -307,6 +325,7 @@ fn post_at_drawn_moments(memory: Memory) u8 {
     var harness: Harness = undefined;
     harness.init(1, &member) catch return status_loop_failed;
     defer harness.deinit();
+    if (!wait_until_running(&member, 0)) return status_parent_never_ran;
     var random = core.random.Random.init(handshake_seed);
     var sent: u64 = 0;
     for (0..handshake_rounds) |_| {
@@ -333,6 +352,7 @@ test "no wake is lost between processes: a loop that sleeps is woken by the post
     var harness: Harness = undefined;
     try harness.init(0, &group.registry);
     defer harness.deinit();
+    if (!wait_until_running(&group.registry, 1)) return child_failed(child);
 
     var events: [handshake_burst_max]Event = undefined;
     var received: u64 = 0;
@@ -342,6 +362,11 @@ test "no wake is lost between processes: a loop that sleeps is woken by the post
         const before = backend.testing.monotonic_ns();
         const produced = try harness.loop.tick(&events, handshake_sleep_ns);
         if (backend.testing.monotonic_ns() - before >= handshake_lost_ns) {
+            // A lost wake leaves a message for the parent: the tick takes it when it times out, or
+            // it stays in the ring. A long tick that took nothing and left the ring empty means the
+            // child posted nothing.
+            const ring_empty = group.registry.mailbox(1, 0).is_empty();
+            if (produced == 0 and ring_empty) return child_failed(child);
             std.debug.print("a wake was lost after {d} messages; seed 0x{x}\n", .{ received, handshake_seed });
             return error.LostWake;
         }
