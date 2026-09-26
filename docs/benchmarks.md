@@ -191,15 +191,25 @@ Two loops on two cores send a message back and forth, each waiting in its tick f
 One message is half a round trip. rotor's message carries a 16-byte payload; libuv's and libxev's
 carry none.
 
-### `mac`, kqueue, 2026-09-22
+### `mac`, kqueue, 2026-09-25
 
-[run](../bench/results/crosscore-mac-2026-09-22-after.md)
+[run](../bench/results/crosscore-kqueue-skip-poll-mac-2026-09-25.md)
 
-| candidate | messages per second | p50 ns | p99 ns | spread % |
-|---|---:|---:|---:|---|
-| rotor | 384,127 | 2,007 | 8,031 | 14 **RUNS DISAGREE** |
-| libuv | 518,732 | 1,500 | 6,000 | 4 |
-| libxev | 434,027 | 2,007 | 8,031 | 8 |
+Six rounds of five runs each. A row is the median of the six rounds' medians, and its spread is
+taken across those six medians. Every round was marked **OTHER WORK**, and in 9 of the 18 round
+rows the runs disagreed by 10 percent or more, so this table decides nothing on its own. rotor was
+slower than libuv in all six rounds, and faster than libxev in five.
+
+| candidate | messages per second | p50 ns | p99 ns | spread across rounds % |
+|---|---:|---:|---:|---:|
+| rotor | 474,017 | 2,007 | 5,023 | 2 |
+| libuv | 562,818 | 1,500 | 4,500 | 6 |
+| libxev | 465,845 | 2,007 | 5,263 | 5 |
+
+The earlier run of 2026-09-22 is
+[`crosscore-mac-2026-09-22-after.md`](../bench/results/crosscore-mac-2026-09-22-after.md). Between
+the two, a polling tick with nothing to ask the kernel stopped making its `kevent` call (decision
+12, point 6).
 
 ### `github` on an AMD EPYC 7763, io_uring, 2026-09-22
 

@@ -34,7 +34,13 @@ const source_directories = [_][]const u8{ "bench", "build", "examples", "src", "
 const lint_rule_directories = [_][]const u8{ "bench", "build", "examples", "src", "tools", "docs" };
 
 /// The Markdown files at the top of the tree, which the markdown rule reads beside `docs`.
-const lint_rule_files = [_][]const u8{ "CLAUDE.md", "README.md", "proofs/README.md" };
+const lint_rule_files = [_][]const u8{
+    "CLAUDE.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "SECURITY.md",
+    "proofs/README.md",
+};
 
 /// Every tool built on pepegrillo whose own tests `zig build test` runs. A build that does not
 /// run the checkers' own tests lets a rule lose its own test without the build reporting it.
