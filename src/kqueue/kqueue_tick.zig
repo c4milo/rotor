@@ -4,7 +4,9 @@
 //! posted, make the one `kevent` call, and perform what became ready.
 //!
 //! "One system call per tick" is not claimed here (decision 12, point 1): every transfer is its
-//! own call. The one `kevent` call carries the tick's registrations in and its readiness out.
+//! own call. The one `kevent` call carries the tick's registrations in and its readiness out. A
+//! call that blocks carries no timeout, because the loop's wait timer bounds it; when that timer
+//! fires before this tick's deadline, the tick waits again (decision 12, point 7).
 const std = @import("std");
 const assert = std.debug.assert;
 const core = @import("core");
@@ -18,6 +20,7 @@ const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
 const Event = core.Event;
+const Kevent = queue_module.Kevent;
 
 pub const TickError = queue_module.ExchangeError;
 
@@ -52,10 +55,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
     const idle = wait == null and quiet;
     if (wait == null and room != 0 and !idle) arm_poll(loop);
-    const changes = loop.changes[0..loop.changes_used];
     const nothing: queue_module.ExchangeError!u32 = 0;
     const readiness = loop.readiness[0..room];
-    const ready = if (idle) nothing else loop.queue.exchange(changes, readiness, wait);
+    const ready = if (idle) nothing else call_kernel(loop, readiness, wait);
     loop.changes_used = 0;
     loop.wake_up();
     const ready_count = try ready;
@@ -96,6 +98,72 @@ pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 
         if (produced != 0) return produced;
     }
     return tick(loop, events, core.spin.remaining_ns(wait_ns, start_ns, tables.now_ns));
+}
+
+/// The tick's one `kevent` call, carrying the changelist. A poll returns at once. A call that blocks
+/// carries no timeout, because the loop's wait timer bounds it (decision 12, point 7). It carries
+/// the timeout itself only when the changelist has no room left to arm the timer.
+fn call_kernel(loop: *Loop, readiness: []Kevent, wait: ?u64) queue_module.ExchangeError!u32 {
+    const bound_ns = wait orelse
+        return loop.queue.exchange(loop.changes[0..loop.changes_used], readiness, null);
+    assert(readiness.len >= 1);
+    const deadline_ns = loop.tables.now_ns + bound_ns;
+    if (!arm_wait_timer(loop, bound_ns)) {
+        return loop.queue.exchange(loop.changes[0..loop.changes_used], readiness, bound_ns);
+    }
+    const count = try loop.queue.wait(loop.changes[0..loop.changes_used], readiness);
+    return wait_past_early_timer(loop, readiness, count, deadline_ns);
+}
+
+/// A wait timer an earlier tick armed can fire before this tick's deadline. When its event is all
+/// the call returned, the tick arms the timer for the time that is left and waits again, so a tick
+/// with nothing to hand over takes its whole wait, as the conformance suite requires. Returns what
+/// the last call wrote into `readiness`, which the reap then serves.
+fn wait_past_early_timer(
+    loop: *Loop,
+    readiness: []Kevent,
+    first_count: u32,
+    deadline_ns: u64,
+) queue_module.ExchangeError!u32 {
+    var count = first_count;
+    for (0..constants.wait_timer_rearms_max) |_| {
+        if (!only_wait_timer(readiness[0..count])) return count;
+        const now_ns = clock_ns();
+        if (now_ns >= deadline_ns) return count;
+        const again = [1]Kevent{queue_module.wait_timer(deadline_ns - now_ns)};
+        loop.wait_timer_deadline_ns = deadline_ns;
+        count = try loop.queue.wait(&again, readiness);
+    }
+    return count;
+}
+
+/// True when the call returned the wait timer's event and nothing else. A timer the kernel refused
+/// to arm comes back with `EV_ERROR`, and waiting again would not end.
+fn only_wait_timer(readiness: []const Kevent) bool {
+    if (readiness.len != 1) return false;
+    const ready = &readiness[0];
+    return ready.filter == std.c.EVFILT.TIMER and ready.flags & std.c.EV.ERROR == 0;
+}
+
+/// Decision 12, point 7: on macOS a `kevent` call with a timeout costs about 1,000 more
+/// instructions in the kernel than one without, whatever the timeout, and an `EVFILT_TIMER` that is
+/// already armed costs a call nothing (measured on macOS 26.6.2 on 2026-09-26). So a wait carries
+/// no timeout, and the loop's one wait timer bounds it. The timer is left in place when it fires
+/// no later than this wait's deadline and has not fired yet, so a loop that waits often arms it
+/// about once per wait bound. Such a timer can fire before a later wait's own deadline, and
+/// `wait_past_early_timer` then waits out the rest. Returns false when the changelist is full, and
+/// the call must carry the timeout instead.
+fn arm_wait_timer(loop: *Loop, bound_ns: u64) bool {
+    assert(bound_ns >= 1);
+    const now_ns = loop.tables.now_ns;
+    const deadline_ns = now_ns + bound_ns;
+    const armed_ns = loop.wait_timer_deadline_ns;
+    if (armed_ns > now_ns and armed_ns <= deadline_ns) return true;
+    if (loop.changes_used == constants.changes_max) return false;
+    loop.changes[loop.changes_used] = queue_module.wait_timer(bound_ns);
+    loop.changes_used += 1;
+    loop.wait_timer_deadline_ns = deadline_ns;
+    return true;
 }
 
 /// A poll carries the loop's own wake trigger in its changelist. On macOS a `kevent` that finds
@@ -231,6 +299,97 @@ test "a loop whose own wake trigger came back skips the poll again" {
     try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
     try testing.expect(events[0].flags.message);
     try testing.expectEqual(@as(u32, 1), try loop.queue.exchange(&.{}, loop.readiness[0..1], 0));
+}
+
+test "the wait timer stays armed for a later deadline and moves for an earlier one" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
+
+    // A wake ends each wait below at once, before its timer fires, and the tick hands over nothing,
+    // as a wasted wake does. So each tick shows what it did with the timer and nothing else.
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, core.constants.ns_per_s));
+    const first_ns = loop.wait_timer_deadline_ns;
+    try testing.expect(first_ns > loop.tables.now_ns);
+
+    // A later deadline leaves the timer where it was: no change, no system call's worth of work.
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 2 * core.constants.ns_per_s));
+    try testing.expectEqual(first_ns, loop.wait_timer_deadline_ns);
+
+    // An earlier deadline arms it again, to fire first.
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 10 * core.constants.ns_per_ms));
+    try testing.expect(loop.wait_timer_deadline_ns < first_ns);
+}
+
+test "a wait timer an earlier tick armed does not cut a later wait short" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+
+    // A wake ends a short wait at once, and its timer stays armed.
+    const short_ns = 20 * core.constants.ns_per_ms;
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, short_ns));
+    try testing.expect(loop.wait_timer_deadline_ns != 0);
+
+    // The next wait is longer, so it keeps that timer, which fires first. The tick waits out the
+    // rest: a quiet tick takes its whole wait, as the conformance suite requires of every backend.
+    const long_ns = 3 * short_ns;
+    const before = clock_ns();
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, long_ns));
+    const waited = clock_ns() - before;
+    try testing.expect(waited >= long_ns - core.constants.ns_per_ms);
+    // The last timer fired, and the reap took its event.
+    try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
+}
+
+test "a wait whose changelist is full carries its timeout and leaves the timer alone" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+
+    // A changelist with no room left: each change triggers the loop's own wake event, which is a
+    // change the kernel takes, and makes the wait end at once.
+    @memset(&loop.changes, queue_module.poll_trigger());
+    loop.changes_used = constants.changes_max;
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
+    try testing.expectEqual(@as(u32, 0), loop.changes_used);
+}
+
+test "a wait timer the kernel refused is not waited on again" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+
+    // The kernel reports a change it refused as the change itself, flagged `EV_ERROR`. Waiting
+    // again on a timer that never armed would wait for nothing to fire.
+    var refused = queue_module.wait_timer(core.constants.ns_per_s);
+    refused.flags |= std.c.EV.ERROR;
+    var readiness = [1]Kevent{refused};
+    const before = clock_ns();
+    const deadline_ns = before + core.constants.ns_per_s;
+    try testing.expectEqual(@as(u32, 1), try wait_past_early_timer(&loop, &readiness, 1, deadline_ns));
+    try testing.expect(clock_ns() - before < 100 * core.constants.ns_per_ms);
 }
 
 fn sync_close(descriptor: i32) void {

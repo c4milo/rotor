@@ -60,6 +60,26 @@ pub const Queue = struct {
             .sec = @intCast(nanoseconds / core.constants.ns_per_s),
             .nsec = @intCast(nanoseconds % core.constants.ns_per_s),
         };
+        return queue.call(changes, readiness, &timeout);
+    }
+
+    /// The tick's one `kevent` call when it blocks with no timeout: `changes` in, readiness out.
+    /// It returns only when an event is ready, so the caller must have armed the loop's wait timer
+    /// before the call, or in `changes` (decision 12, point 7). On macOS a call with a timeout costs
+    /// about 1,000 more instructions in the kernel than one without, whatever the timeout.
+    pub fn wait(queue: *Queue, changes: []const Kevent, readiness: []Kevent) ExchangeError!u32 {
+        assert(queue.descriptor >= 0);
+        assert(changes.len <= constants.changes_max);
+        assert(readiness.len >= 1 and readiness.len <= constants.readiness_max);
+        return queue.call(changes, readiness, null);
+    }
+
+    fn call(
+        queue: *Queue,
+        changes: []const Kevent,
+        readiness: []Kevent,
+        timeout: ?*const std.c.timespec,
+    ) ExchangeError!u32 {
         var retry: u32 = 0;
         while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
             const rc = std.c.kevent(
@@ -68,7 +88,7 @@ pub const Queue = struct {
                 @intCast(changes.len),
                 readiness.ptr,
                 @intCast(readiness.len),
-                &timeout,
+                timeout,
             );
             if (rc >= 0) return @intCast(rc);
             if (std.posix.errno(rc) != .INTR) return error.Unexpected;
@@ -92,6 +112,21 @@ pub const Queue = struct {
 /// (`kqueue_tick.zig`, `arm_poll`).
 pub fn poll_trigger() Kevent {
     return user_event(0, std.c.NOTE.TRIGGER);
+}
+
+/// The change that arms the loop's wait timer to fire once, `bound_ns` from now (decision 12,
+/// point 7). Adding it again moves the one timer, so a loop holds at most one.
+pub fn wait_timer(bound_ns: u64) Kevent {
+    assert(bound_ns >= 1);
+    assert(bound_ns <= core.constants.wait_ns_max);
+    return .{
+        .ident = constants.wait_timer_identifier,
+        .filter = std.c.EVFILT.TIMER,
+        .flags = std.c.EV.ADD | std.c.EV.ONESHOT,
+        .fflags = std.c.NOTE.NSECONDS,
+        .data = @intCast(bound_ns),
+        .udata = 0,
+    };
 }
 
 fn user_event(flags: u16, fflags: u32) Kevent {

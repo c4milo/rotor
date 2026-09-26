@@ -282,6 +282,19 @@ fn tick_with_a_wait_above_the_limit() void {
     _ = loop.tick(&one_event, core.constants.wait_ns_max + 1) catch {};
 }
 
+/// The wait timer bounds a tick's wait (decision 12, point 7), so it never fires at once and never
+/// later than a tick may wait. Only the tick arms it, and a scenario reaches its bounds through the
+/// change's own parameter.
+fn arm_a_wait_timer_of_nothing() void {
+    scenario.reached_violation();
+    _ = kqueue.queue_module.wait_timer(0);
+}
+
+fn arm_a_wait_timer_above_the_wait_limit() void {
+    scenario.reached_violation();
+    _ = kqueue.queue_module.wait_timer(core.constants.wait_ns_max + 1);
+}
+
 /// The group's memory, aligned forward at run time for the reason the scenario above gives.
 fn aligned_group_memory() []align(group_scenario_alignment) u8 {
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
@@ -370,6 +383,11 @@ const scenarios = [_]scenario.Scenario{
         .run = tick_with_more_events_than_a_batch,
     },
     .{ .name = "tick: tick with a wait above the limit", .run = tick_with_a_wait_above_the_limit },
+    .{ .name = "tick: arm a wait timer of 0 ns", .run = arm_a_wait_timer_of_nothing },
+    .{
+        .name = "tick: arm a wait timer above the wait limit",
+        .run = arm_a_wait_timer_above_the_wait_limit,
+    },
     .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
     .{ .name = "buffers: register the buffers twice", .run = register_buffers_twice },
     .{

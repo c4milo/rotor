@@ -77,6 +77,11 @@ pub const Loop = struct {
     /// A poll whose readiness filled its room leaves the trigger set, and a tick that skipped its
     /// call (`kqueue_tick.zig`) would leave it for the next wait, which would then end at once.
     trigger_armed: bool,
+    /// When the loop's wait timer fires, on the tick's clock, or 0 when it is not armed. A tick
+    /// that blocks leaves an armed timer in place when it fires no later than the tick's own
+    /// deadline, so the timer is armed about once per wait bound and not once per tick (decision
+    /// 12, point 7). The reap sets it to 0 when the timer's event comes back.
+    wait_timer_deadline_ns: u64,
     /// The read end of this loop's wake pipe in a group, as the `ident` of the readiness that
     /// reports it, or `group_watch_none` (decision 21, point 3).
     group_watch: usize,
@@ -205,6 +210,7 @@ pub const Loop = struct {
         });
         loop.changes_used = 0;
         loop.trigger_armed = false;
+        loop.wait_timer_deadline_ns = 0;
         loop.group_watch = group_watch_none;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_group = .{};

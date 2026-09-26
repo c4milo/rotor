@@ -189,6 +189,69 @@ operation that waits for readiness unlinks it from its descriptor's list and end
 with `canceled`. The filter is left to fire: it is one-shot, and the reap finds no operation
 waiting and does nothing.
 
+**Amended on 2026-09-26, by Camilo's ruling of that day: a timer event bounds the wait, and the
+`kevent` call that waits carries no timeout.** On macOS a `kevent` call with a timeout costs about
+1,000 more instructions in the kernel than the same call with none, whatever the timeout is. A
+tick always blocked with a timeout, because its wait is bounded (`wait_ns_max`) even when no
+deadline is due. libuv passes no timeout when no timer is due, and this was the largest part of
+rotor's loss to libuv on the cross-core message. Measured with two threads on two kqueues sending
+an `EVFILT_USER` trigger back and forth, without rotor, three runs of 200,000 round trips each on
+`mac` on 2026-09-26, in instructions per round trip as `/usr/bin/time -l` counts them, user and
+kernel together:
+
+| how each side bounds its wait | instructions per round trip |
+|---|---:|
+| no timeout | 28,900 to 30,048 |
+| no timeout, and an `EVFILT_TIMER` armed once | 29,208 to 29,535 |
+| a 1 ms timeout | 31,284 to 31,837 |
+| a 10 s timeout | 31,067 to 31,386 |
+| no timeout, and an `EVFILT_TIMER` armed again by every call | 31,140 to 31,800 |
+
+So an armed timer costs a wait nothing, and arming it costs what a timeout costs. The design:
+
+- Each loop has one `EVFILT_TIMER`, one-shot, and `Loop.wait_timer_deadline_ns` records when it
+  fires, or 0 when it is not armed. A tick that blocks arms it in its changelist and waits with no
+  timeout.
+- The timer is left in place when it fires no later than this wait's deadline and has not fired
+  yet. A loop that waits often, such as the two loops of a ping-pong, arms it about once per wait
+  bound instead of once per tick.
+- A timer an earlier tick armed can fire before this tick's deadline. When its event is all the
+  call returned, the tick arms the timer for the time left and waits again, at most
+  `wait_timer_rearms_max` times, so a quiet tick still takes its whole wait.
+- A changelist with no room for the timer makes the call carry the timeout, as before.
+- The reap drops the timer's event, which names no operation, and sets the deadline back to 0.
+
+What it costs: 8 bytes in `Loop`, and in a loop that waits often, one more `kevent` call about once
+per wait bound, when a timer fires before a later tick's deadline. `rotor_post` in `waiting` mode,
+two loops of a ping-pong, counted 37,631 and 37,788 instructions per round trip before the change
+and 35,550 and 35,902 after, in two sets of ten alternating runs on `mac` on 2026-09-26. The
+machine's load average was 12 to 20, so no rate is claimed here; the rate is taken on a quiet `mac`.
+
+Alternatives:
+
+- **A wait with no bound in the API**, as libuv's and libxev's loops have. The backend would pass no
+  timeout when no deadline is due. It changes the public API and the named limit `wait_ns_max`, and
+  only a caller that asks for it gains. Declined the same day in favor of this design.
+- **A longer wait bound.** A 10 s timeout costs what a 1 ms one does, above.
+- **Arming the timer on every wait.** It costs what the timeout costs, above.
+
+The io_uring and epoll backends do not change.
+
+Mutations, measured against `zig build test-kqueue`, and against `zig build halt-check` for the two
+assertions on the timer's bound:
+
+| mutation | result |
+|---|---|
+| the timer armed again on every wait | CAUGHT |
+| no second wait after a timer that fired early | CAUGHT |
+| the reap leaves the deadline set | CAUGHT |
+| no check for a full changelist | CAUGHT |
+| a timer the kernel refused waited on again | CAUGHT |
+| no check that the deadline passed before waiting again | CAUGHT |
+| a second wait whatever the call returned | CAUGHT |
+| a timer of 0 ns allowed | CAUGHT |
+| a timer above `wait_ns_max` allowed | CAUGHT |
+
 ## 8. Accepted sockets
 
 macOS has no `accept4`. The backend sets `O_NONBLOCK` and `FD_CLOEXEC` on an accepted socket

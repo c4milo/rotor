@@ -39,6 +39,12 @@ pub fn reap(loop: *Loop, readiness: []const Kevent, events: []Event) u32 {
             group_module.drain(@intCast(ready.ident));
             continue;
         }
+        if (ready.filter == std.c.EVFILT.TIMER) {
+            // The timer that bounds a wait (decision 12, point 7), which names no operation. It
+            // fires once, so it is no longer armed.
+            loop.wait_timer_deadline_ns = 0;
+            continue;
+        }
         const filter = filter_of(ready) orelse {
             // The wake event: whatever armed it, it is no longer set.
             loop.trigger_armed = false;
