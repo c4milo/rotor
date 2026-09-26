@@ -132,8 +132,8 @@ file may be filled from a machine of another architecture, however convenient it
 | C21 | thread-local variable read and compare | 1 | recalled | 1.55 (2.44) | 0.93 (1.72) | 1.00 (1.85) | |
 | C22 | `send` plus `recv` of 64 KiB on a connected loopback socket, the two syscalls alone | no prior | none | | | 11,204 (21,257) | |
 | C23 | copy 64 KiB from one buffer to another | no prior | none | | | 1,587 (2,032) | |
-| C24 | one message between processes by a shared ring when the receiver is already awake | as C19 | decision 21 | | | | |
-| C25 | one message between processes by a shared ring plus decision 21's wake, post to reap: a pipe watched with `EVFILT_READ` on macOS, an eventfd polled from io_uring on Linux | near C17 and C18 | decision 21 | | | | |
+| C24 | one message between processes by a shared ring when the receiver is already awake | as C19 | decision 21 | 93.1 (94.1) | 91.8 (118) | | |
+| C25 | one message between processes by a shared ring plus decision 21's wake, post to reap: a pipe watched with `EVFILT_READ` on macOS, an eventfd polled from io_uring on Linux | near C17 and C18 | decision 21 | 25,709 (34,667) | 31,500 (49,375) | | |
 
 C22 and C23 have a `github` cell and no other. Both were added after the `mac` and `orbstack` runs
 of that day, and this machine has not been idle since: rule 1 stands, so their two cells stay empty
@@ -148,11 +148,18 @@ before any argument about a large payload, zero-copy send among them.
 Rows C24 and C25 exist because decision 21 lets loops in several processes post to each other.
 Their prior is that crossing a process costs nothing more than crossing a core: the ring is the same
 memory, so C24 should read as C19, and the wake is one more system call before a sleeping thread
-wakes, so C25 should read near C17 and C18. Their cells are empty until a quiet run fills them:
-the probes were written on 2026-09-25, when this machine's load average was 7.8. Run 36177323493
-of the CI job `costs` measured both that day on an AMD EPYC 7763, where C24 read as C19 and C25 as
-C17 (decision 21, "Measured on `github`"); the `github` column describes a Xeon Platinum 8573C and is
-replaced whole, so that run did not fill it.
+wakes, so C25 should read near C17 and C18. The `mac` and `orbstack` cells are run 1 of three,
+taken on 2026-09-26 at a load average of 1.0 to 1.3 (`bench/results/decision-21-mac-2026-09-26.md`
+and `bench/results/decision-21-orbstack-2026-09-26.md`). On `mac` C24 read 93.1 to 97.0 ns across
+the runs and C19 95.4 to 102 in the same runs; C25 read 25,709 and 26,125 ns in runs 1 and 3, where
+C18 read 25,042 and 25,084, and run 2 read 15,667 for C25 and 10,875 for C18, with a C18 p99 of
+939,000 ns. On `orbstack` C24 read 91.8 to 102 ns and C25 31,417 to 32,500 ns. C25 is three times
+C17 there, because the two measure differently: C25 wakes a process that slept 100 µs, and C17 is a
+round trip between two rings that each went to sleep a moment before; `rotor_post` with the same
+method on both sides found no difference between a peer thread and a peer process (decision 21).
+Run 36177323493 of the CI job `costs` measured both rows on 2026-09-25 on an AMD EPYC 7763, where C24
+read as C19 and C25 as C17; the `github` column describes a Xeon Platinum 8573C and is replaced
+whole, so that run did not fill it.
 
 Rows C17 to C19 exist because the threading model is the main claim
 (`docs/decisions/0004-threading.md`), and one cross-core message is the unit that model pays in.

@@ -344,5 +344,50 @@ What the runs say:
   on both backends and each spreads by 4 to 5 µs.
 
 These cells do not enter `docs/costs.md`: its `github` column describes a Xeon Platinum 8573C and is
-replaced whole or not at all. The `mac` and `orbstack` cells wait for a quiet run.
+replaced whole or not at all.
+
+### Measured on `mac` and `orbstack`, 2026-09-26
+
+The same probes and `rotor_post` rounds, from binaries built at `26da902`, run once the machine's
+5-minute load average had stayed under 1.5 (`bench/results/decision-21-mac-2026-09-26.md` and
+`bench/results/decision-21-orbstack-2026-09-26.md`). The probes, run 2 and run 3 of three, median
+and p99 in ns. Run 1 on `mac` agrees with run 3; run 1 on `orbstack` was taken a minute after
+OrbStack's engine started, and its C19 and C17 were disturbed.
+
+| row | `mac`, run 2 | `mac`, run 3 | `orbstack`, run 2 | `orbstack`, run 3 |
+|---|---:|---:|---:|---:|
+| C19, between threads, awake | 102 (103) | 95.4 (99.3) | 101 (137) | 98.6 (141) |
+| C24, between processes, awake | 97.0 (555) | 93.1 (96.7) | 102 (132) | 96.0 (122) |
+| C18, `EVFILT_USER` wake between threads | 10,875 (939,000) | 25,084 (33,000) | not applicable | not applicable |
+| C17, `MSG_RING` wake between threads | not applicable | not applicable | 9,936 (12,301) | 9,808 (11,910) |
+| C25, the group's wake between processes | 15,667 (37,958) | 26,125 (40,416) | 32,500 (45,375) | 31,417 (44,000) |
+
+`rotor_post`, one message, the median and the range of three rounds' medians, in ns:
+
+| backend | mode | peer thread | peer process |
+|---|---|---:|---:|
+| kqueue, `mac` | waiting | 2,511 (2,511 to 4,015) | 2,511 (2,511 to 4,015) |
+| kqueue, `mac` | spinning | 0 (0 to 0) | 0 (0 to 0) |
+| io_uring, `orbstack` | waiting | 10,943 (10,879 to 11,263) | 11,263 (11,199 to 11,391) |
+| io_uring, `orbstack` | spinning | 959 (939 to 1,335) | 1,335 (959 to 1,335) |
+| epoll, `orbstack` | waiting | 10,687 (7,263 to 10,751) | 10,879 (6,975 to 11,135) |
+| epoll, `orbstack` | spinning | 1,359 (1,335 to 1,359) | 1,335 (959 to 1,359) |
+
+On `mac` the clock advances in 1,000 ns steps, so a message moves in steps of about 500 ns and 0 is
+a round trip shorter than one step.
+
+What the runs say:
+
+- **A process boundary costs a message nothing on any machine measured.** C24 reads as C19 on
+  `mac`, `orbstack` and `github`, and rotor's own loops post in the same time with a peer thread or a
+  peer process on all three backends, awake or asleep, within the rounds' spread.
+- **On `mac` the group's wake costs what `EVFILT_USER` costs.** C25 read as C18 in the two runs
+  where C18 was not disturbed, 26,125 against 25,084 ns in run 3.
+- **On `orbstack` C25 reads three times C17, and the method explains it.** C25 wakes a process that
+  slept 100 µs; C17 is a round trip between two rings that each went to sleep a moment before.
+  `rotor_post`, which measures both peers alike, found them level there too. A C17 taken the way C25
+  is would compare the two wakes directly; it does not exist yet.
+- **The spinning rounds on `orbstack` are bimodal**, near 950 or near 1,335 ns, for a thread and a
+  process alike: which host cores the two virtual CPUs land on, most likely, which the guest cannot
+  see.
 
