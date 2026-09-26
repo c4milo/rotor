@@ -149,7 +149,10 @@ and its mutation is measured against the Linux gate.
   the key from `trailer_keys`, which makes such a paragraph count as body: that refuses a message
   whose body is already at 3 paragraphs and passes a shorter one, so the linter deters the trailer
   and does not refuse it. Refusing it needs a forbidden-trailer rule the pinned pepegrillo does
-  not have. Commits up to `fd153c5` carry the trailer; rewriting them is the owner's call.
+  not have. Commits up to `fd153c5` carry the trailer, and they keep it: history is not rewritten,
+  and `main` is not force-pushed to remove it (ruled 2026-09-26).
+- **A commit message is written as Camilo, its author.** Where it needs a person, it says "I" and
+  "my". It never speaks to Camilo, never says "the owner", and uses simple English.
 
 ### Parallel sessions
 
