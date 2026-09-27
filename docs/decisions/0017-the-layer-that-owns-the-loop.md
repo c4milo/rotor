@@ -195,6 +195,7 @@ it describes (CLAUDE.md).
    handed through that vtable can be an fd. colibri links it by `-Dchapulin-client=<checkout>` and
    `-Dchapulin-server=<checkout>`. The transport is glue and not a rewrite.
 2. **Which tree owns it?** Its own, or a binary in colibri's tree that is not colibri the library.
+   **Deferred on 2026-09-27** by Camilo, with this record.
 3. **Does colibri speak HTTP/3?** **Answered on 2026-09-20: yes.** colibri's own CLAUDE.md calls
    it "an HTTP/2 and HTTP/3 library — client and server", and its modules include `quic`, `h3`
    and `qpack`. So `0015-datagrams.md`'s two-consumer argument stands as written, and this layer
@@ -227,3 +228,4 @@ it describes (CLAUDE.md).
    `getaddrinfo` worker uses the same door.
 6. **What does a TLS handshake cost rotor's buffer group?** The measurement named above. It is the
    one number that could send a requirement back to rotor.
+   **Deferred on 2026-09-27** by Camilo, until the transport exists.

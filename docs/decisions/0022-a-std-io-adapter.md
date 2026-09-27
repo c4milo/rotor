@@ -1,6 +1,7 @@
 # 22. A std.Io adapter
 
-Status: **proposed** on 2026-09-26, not ruled on. Decision 1 chose a completion-based core with a
+Status: **accepted** on 2026-09-27 by Camilo, to be built on two conditions: it keeps rotor's
+performance, and its API follows rotor's own primitives (open question 1). Proposed on 2026-09-26. Decision 1 chose a completion-based core with a
 `std.Io` adapter over it, and decision 2 left the adapter out of version one: "deferred, not
 refused". Version one is built, and on 2026-09-26 Camilo asked whether rotor can be offered through
 the `std.Io` interface. This record says what the adapter would be, what it would cost, and what
@@ -189,15 +190,21 @@ Nothing below is measured. Each cost is an estimate from recorded rows where one
 
 1. **Build it, and when?** Proposed: after the macOS cross-core work and a number on the Linux
    machine, and only if the fiber switch measures small against the calls it wraps.
+   **Answered on 2026-09-27: build it**, on two conditions Camilo set: it keeps rotor's performance,
+   and its API follows rotor's own primitives. The fiber switch is measured first, as check 1 asks.
 2. **The edge from `adapter` to the public module.** Proposed: allow it. The adapter needs the
    backend the process chose, and only the public module knows it.
+   **Answered on 2026-09-27: allowed, as proposed**, with the ruling to build the adapter.
 3. **Guard pages.** One page below each stack, protected with `mprotect` at init, turns an overflow
    into a fault. It costs a page per fiber and one system call per fiber at init. Proposed: yes.
+   **Answered on 2026-09-27: yes, as proposed.**
 4. **Vectored send and receive in rotor**, so that `netRead` and `netWrite` need no copy and no
    extra operations. io_uring has `sendmsg` and `recvmsg`, and kqueue and epoll have `writev` and
    `readv`. It changes the core's `Operation`, so it is its own record if the harness shows the cost.
+   **Deferred on 2026-09-27** by Camilo, until the adapter's numbers show whether the copy matters.
 5. **`fsync` in rotor**, so that `fileSync` runs on the loop. **Answered on 2026-09-26:** Camilo
    ruled it in, and rotor has an `fsync` operation beside `fdatasync` (decision 2, its amendment of
    that day).
 6. **Which Zig versions.** Proposed: the adapter follows the Zig version rotor pins, 0.16.0 today,
    and a Zig upgrade reads the table again.
+   **Answered on 2026-09-27: as proposed.**

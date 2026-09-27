@@ -314,7 +314,8 @@ Not built, and each one is a separate piece of work:
 
 - The macOS probe of point 3 above. The RFC 3542 options are set by their numbers and the
   conformance suite passes, which is evidence and not the probe this record asked for.
-- `IORING_RECVSEND_BUNDLE` and incremental buffer consumption, both above the 6.1 floor.
+- `IORING_RECVSEND_BUNDLE` and incremental buffer consumption, both above the 6.1 floor this was
+  written against. Decision 2's floor is 6.17 since 2026-09-27, which has both.
 - A datagram workload in `bench/` for milestone 4. No speed claim is made for any of this.
 
 ## How it is checked
@@ -372,6 +373,10 @@ The implementation follows the proposed answer to each until Camilo rules.
 3. Does `sync.open_datagram` set `IP_DONTFRAG` by default, so an oversized datagram returns
    `message_too_long` instead of being fragmented? **Proposed: yes; QUIC needs the DF bit for
    path MTU discovery, and `EMSGSIZE` maps to `unexpected` today either way.**
+   **Answered on 2026-09-27: yes, as proposed.** The open ignores a refusal, so a test on each
+   kernel reads the option back (`linux_shared_sync_socket.zig`, `kqueue_sync_socket_test.zig`), and
+   on macOS sends a datagram larger than the loopback's MTU, which only the bit refuses. `EMSGSIZE`
+   maps to `message_too_long` since this record added that code.
 4. Does `send_to` refuse a zero-length datagram, as `assert_transfer` refuses every zero-length
    transfer today? **Proposed: yes, and the record notes QUIC never sends one.**
    **Answered on 2026-09-27: yes, as proposed.** `tools/halt/core_scenarios.zig` holds it: a
@@ -382,6 +387,8 @@ The implementation follows the proposed answer to each until Camilo rules.
    recalled as above Linux 6.1.**
    **Answered on 2026-09-27: yes, as proposed.** A caller sizes the group for its datagrams and
    submits the receive again on `buffers_exhausted`.
+   The floor is 6.17 since 2026-09-27, which has incremental consumption; using it is a change of
+   its own.
 6. `Event.Code` gains `message_too_long` and `unsupported`, appended so no published value moves.
    **Proposed: yes.**
    **Answered on 2026-09-27: yes, as proposed.** Appending kept every published value's meaning.

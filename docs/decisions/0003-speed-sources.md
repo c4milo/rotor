@@ -254,5 +254,8 @@ is made of small ones.
 
 1. Is CPU per operation, and the throughput per core that follows from it, the right headline,
    given that the arithmetic rules out a latency headline?
+   **Answered on 2026-09-27: a fast event loop.** Camilo named the headline that way. The numbers
+   under it are what is published: throughput on one core, with latency beside it, against libuv and
+   libxev.
 2. Answered on 2026-09-19: the libuv and libxev columns are verified against the pinned sources
    above, and five cells changed. `bench/alternatives/README.md` holds the pins.

@@ -235,6 +235,10 @@ that side is a thread or a process.
    inbound rings could sit on that loop's NUMA node, so its polls read local memory. It matters only
    on a machine with more than one socket, and no named machine has one. Proposed: build the region
    as above, and keep each loop's block of rings page-aligned so an application can place it.
+   **Answered on 2026-09-27: page-aligned on a machine with more than one CPU socket, and not
+   otherwise.** Not built: rotor reads nothing of the host's hardware on its own, so the caller
+   would say how many sockets the machine has, as an option of the group, and no machine with more
+   than one socket is named to measure it on.
 2. **Members that `exec`.** rotor creates every descriptor with `FD_CLOEXEC` set. A member forked
    without `exec` inherits the wakes regardless. A member started with `exec` needs them kept open,
    which the application does in its spawn. Proposed: rotor creates the group's wakes without

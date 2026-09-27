@@ -204,3 +204,4 @@ spreads TCP load across cores on kqueue", and needs no change.
 3. **When does the Linux-only N-core row come back?** Proposed: when the one-core rows are published
    and the threading claim needs its own evidence. The work is the fourth alternative above, and it
    is two alternative servers, not a harness change.
+   **Deferred on 2026-09-27** by Camilo, until the Linux machine is named.
