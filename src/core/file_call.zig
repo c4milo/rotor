@@ -129,7 +129,7 @@ const intr: Answer(std.posix.E) = .{ .errno = .INTR };
 /// The descriptor a test's request names. The script never passes it to a kernel.
 const test_descriptor = 3;
 const test_bytes_len = 8;
-var test_bytes: [test_bytes_len]u8 = undefined;
+threadlocal var test_bytes: [test_bytes_len]u8 = undefined;
 
 fn read_request() Request {
     return .{ .code = .read, .descriptor = test_descriptor, .bytes = &test_bytes, .offset = 0 };

@@ -48,9 +48,9 @@ const modules = struct {
     const kqueue = @import("kqueue");
 };
 
-/// The process's choice, as a `Tag`'s value, or `undecided` before anything asked.
-var linux_choice: std.atomic.Value(u8) align(@alignOf(std.atomic.Value(u8))) = .init(undecided);
-const undecided: u8 = std.math.maxInt(u8);
+/// The process's choice, kept in a file of its own: it is the one `var` under `src/` that every
+/// thread shares (`rotor_choice.zig` says why).
+const choice = @import("rotor_choice.zig");
 
 /// The backend this process runs. On Linux it asks the kernel the first time, the way a uring loop
 /// would ask, and keeps the answer; on Darwin there is nothing to ask.
@@ -59,11 +59,10 @@ const undecided: u8 = std.math.maxInt(u8);
 /// every thread gets, so no two loops of a process can disagree.
 pub fn chosen() Tag {
     if (comptime !linux) return .kqueue;
-    const known = linux_choice.load(.acquire);
-    if (known != undecided) return @enumFromInt(known);
+    const known = choice.load();
+    if (known != choice.undecided) return @enumFromInt(known);
     const decided: Tag = if (uring.refused()) .epoll else .uring;
-    const stored = linux_choice.cmpxchgStrong(undecided, @intFromEnum(decided), .acq_rel, .acquire);
-    return @enumFromInt(stored orelse @intFromEnum(decided));
+    return @enumFromInt(choice.settle(@intFromEnum(decided)));
 }
 
 pub const Registry = @import("rotor_loop_registry.zig").Registry;
@@ -370,8 +369,8 @@ test "a kept choice is what every later ask gets, whatever the kernel would say 
     // is the answer. Planted here as the opposite of what this kernel says, then restored.
     const kernel_says = chosen();
     const planted: Tag = if (kernel_says == .uring) .epoll else .uring;
-    linux_choice.store(@intFromEnum(planted), .release);
-    defer linux_choice.store(@intFromEnum(kernel_says), .release);
+    choice.plant(@intFromEnum(planted));
+    defer choice.plant(@intFromEnum(kernel_says));
     try testing.expectEqual(planted, chosen());
     try testing.expectEqual(planted, chosen());
 }

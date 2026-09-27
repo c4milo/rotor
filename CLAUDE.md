@@ -229,9 +229,12 @@ was about to push.
 - Build: `zig build`. `-Drelease` builds ReleaseSafe; ReleaseFast and ReleaseSmall are not
   offered, because assertions stay on in production.
 - Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src`, `tools` and the
-  files `build/examples.zig` lists as `sources`, then the `tools/lint` rules: heap, determinism, unbounded-loop, relative-import,
-  markdown, file-length, magic-numbers and static-alignment. A canary tree in `build/lint.zig` proves every
-  rule runs.
+  files `build/examples.zig` lists as `sources`, then the `tools/lint` rules: heap, determinism,
+  unbounded-loop, relative-import, markdown, file-length, magic-numbers, defer-order,
+  unreleased-acquire, static-alignment and global-state. A canary tree in `build/lint.zig` proves
+  every rule runs. global-state refuses a container-level `var` under `src/` that is not
+  `threadlocal`, outside the tests and `src/rotor/rotor_choice.zig`, the one value a process
+  shares by design (non-negotiable 4, decision 20).
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
