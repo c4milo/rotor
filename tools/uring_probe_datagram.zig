@@ -10,8 +10,8 @@
 //!      control block are inside the count or beside it.
 //!   3. Are `UDP_SEGMENT` and `UDP_GRO` accepted, and do `IP_PKTINFO` and `IP_RECVTOS` deliver?
 //!
-//! A kernel without any of it is not a fault here: the checks are optional, because decision 2's
-//! floor is Linux 6.1 and none of this is required to run rotor today. What they must not do is
+//! A kernel without any of it is not a fault here: the checks are optional, because rotor needs
+//! none of this to run today, though decision 2's floor, Linux 6.17 since 2026-09-27, has all of it. What they must not do is
 //! disagree silently with the record.
 const std = @import("std");
 const probe = @import("uring_probe.zig");
@@ -51,10 +51,9 @@ const name_bytes = 32;
 
 const single_shot: Feature = .{ .name = "single-shot recvmsg layout", .need = .optional };
 
-/// The two features above decision 2's Linux 6.1 floor that this tree has a use for. Neither is
-/// built: building one means raising the floor or carrying a conditional path, which decision 2
-/// forbids doing silently, and both are Camilo's call. Probing says whether raising the floor
-/// would buy anything on the kernel in front of us, which is what that call needs.
+/// Two features this tree has a use for that were above decision 2's floor until 2026-09-27, when
+/// Camilo raised it from 6.1 to 6.17, which has both. Neither is built; building one is a change
+/// of its own. Probing says whether the kernel in front of us has them.
 const pbuf_ring_inc: Feature = .{ .name = "IOU_PBUF_RING_INC", .need = .optional };
 const recvsend_bundle: Feature = .{ .name = "IORING_RECVSEND_BUNDLE", .need = .optional };
 

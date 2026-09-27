@@ -13,7 +13,7 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 
 | | |
 |---|---|
-| Backends | io_uring on Linux 6.1 or later; epoll on Linux where io_uring is refused; kqueue on macOS |
+| Backends | io_uring on Linux 6.17 or later; epoll on Linux where io_uring is refused; kqueue on macOS |
 | Model | Completion-based. A program submits operations in batches, and each operation ends with exactly one final event. |
 | Operations | TCP, UDP with ECN, files, timers and repeating timers, deadlines, cancellation, and messages between loops |
 | Memory | rotor allocates nothing. A program gives each loop its memory once, at startup, and every table has a fixed limit. |
@@ -56,8 +56,8 @@ public API, passes on all three backends, and CI runs it on every push.
 
 | system | backend | requires | tested on |
 |---|---|---|---|
-| Linux | io_uring | Linux 6.1 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 6.17 on x86-64 (GitHub runners), Linux 7.0 on aarch64 (a virtual machine on Apple silicon) |
-| Linux, where io_uring is refused or lacks a feature rotor needs | epoll | Linux 6.1 or later | both of the above, under Docker's default seccomp profile |
+| Linux | io_uring | Linux 6.17 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 6.17 on x86-64 (GitHub runners), Linux 7.0 on aarch64 (a virtual machine on Apple silicon) |
+| Linux, where io_uring is refused or lacks a feature rotor needs | epoll | Linux 6.17 or later | both of the above, under Docker's default seccomp profile |
 | macOS | kqueue | no minimum version is set | macOS 26.6 on Apple silicon |
 
 > [!IMPORTANT]
@@ -226,7 +226,7 @@ and the commands to take every number again.
 | [19](docs/decisions/0019-the-comparison-measures-one-core.md) | the comparison measures one core | accepted |
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
 | [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
-| [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | proposed |
+| [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | accepted, not built |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why.

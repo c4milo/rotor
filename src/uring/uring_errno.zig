@@ -7,7 +7,7 @@
 //! so the map names each errno and writes no number.
 //!
 //! The comment on each arm names the kernel situation that produces the errno. A comment that
-//! cites a kernel source file states what was read there, in Linux 6.1, the floor of decision 2,
+//! cites a kernel source file states what was read there, in Linux 6.1, decision 2's floor when it was read,
 //! unless it names another version. A comment that cites a manual page states what is recalled
 //! of that page. "Recalled" alone marks a situation that was read nowhere for this file.
 const std = @import("std");

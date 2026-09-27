@@ -380,7 +380,7 @@ Each has a proposed answer, and the implementation follows it until Camilo rules
 
 1. **`epoll_wait` or `epoll_pwait2`?** The first takes a timeout in milliseconds, which is coarser
    than every deadline rotor accepts; the second takes a `timespec` and arrived in Linux 5.11, below
-   decision 2's floor of 6.1. *Proposed: `epoll_pwait2`, and `Unsupported` at init on a kernel
+   decision 2's floor, 6.1 then and 6.17 since 2026-09-27. *Proposed: `epoll_pwait2`, and `Unsupported` at init on a kernel
    without it, matching how `uring_ring.zig` refuses a kernel missing a flag it needs.*
    **Answered on 2026-09-27: `epoll_pwait2`, as proposed.**
 2. **Level or edge triggered?** *Proposed: level triggered. Edge triggering requires draining until

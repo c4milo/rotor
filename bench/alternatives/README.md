@@ -259,7 +259,7 @@ That is a property of how this server uses the group, not of the group; whether 
 lets a server do better, and whether the same gap appears on kqueue, is the first thing to settle
 before any 64 KiB claim is made.
 
-That experiment is still the right one and it needs no kernel above the 6.1 floor: rotor's
+That experiment is still the right one and it needs no kernel above decision 2's floor: rotor's
 surface already offers a receive into a caller-named buffer, so a second `rotor_echo` shape that
 accumulates a whole message and sends once separates this explanation from the Nagle one in two
 runs.

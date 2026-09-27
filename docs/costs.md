@@ -29,7 +29,7 @@ cannot carry. The `linux` column is empty, because that machine is not named.
 | `mac` | development, kqueue backend | Apple M1 Pro, 128-byte cache line; performance cores 128 KiB L1d and 12 MiB L2, efficiency cores 64 KiB and 4 MiB | 8 performance, 2 efficiency | 32 GiB | macOS 26.6.2, Darwin 25.6.0 | internal NVMe | 2026-09-19 |
 | `orbstack` | **named measurement machine**, io_uring backend, and where the Linux gate runs | the `mac` machine's cores, through OrbStack's virtual machine; the guest reports CPU implementer `0x61`, Apple's | 10, as the guest reports them | 15.66 GiB (`MemTotal` 16,425,400 kB), plus a 16 GiB `zram0` swap | Linux 7.0.14-orbstack-00380-ga7e0a2dc9535, aarch64 | virtio: `vda` 415 MiB, `vdb` 460 GiB, `vdc` 1 GiB, each backed by a file on the `mac` machine's APFS | 2026-09-20 |
 | `github` | x86-64 cross-check, io_uring backend | Intel Xeon Platinum 8573C, as this run's `/proc/cpuinfo` named it; the run that first filled this column got a 8370C, which is why a column is replaced whole | 4 virtual | 15.61 GiB (`MemTotal` 16,372,436 kB) | Linux 6.17.0-1022-azure, x86_64 | an Azure cloud volume, not an NVMe | 2026-09-22 |
-| `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.1 or later | to name, NVMe | no |
+| `linux` | target, io_uring backend | to name | to name | to name | to name, kernel 6.17 or later | to name, NVMe | no |
 
 The `mac` row comes from `sysctl` and `sw_vers` on the machine this tree was started on.
 

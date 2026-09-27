@@ -400,7 +400,7 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 
 ## What the kernel must have
 
-- Linux 6.1 or later, with io_uring: `IORING_FEAT_NODROP`, `IORING_FEAT_EXT_ARG`, `MSG_RING`,
+- Linux 6.17 or later, with io_uring: `IORING_FEAT_NODROP`, `IORING_FEAT_EXT_ARG`, `MSG_RING`,
   multishot accept and receive, provided buffer rings, `SINGLE_ISSUER` and `DEFER_TASKRUN`. A
   kernel that lacks one of these, or refuses io_uring itself as Docker's default seccomp profile
   does, gets the epoll backend instead (above): the process asks for a ring with the same flags,

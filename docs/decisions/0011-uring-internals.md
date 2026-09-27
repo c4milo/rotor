@@ -43,7 +43,8 @@ compare it already makes for a failed operation. The cost to the caller: a tag s
 
 The alternative is `IORING_MSG_RING_FLAGS_PASS`, which lets the sender choose the completion's
 flags and leaves all 32 bits to the tag. It needs a kernel later than the 6.1 floor of decision
-2 (recalled: 6.3). A tag of 31 bits is not worth a higher floor.
+2 (recalled: 6.3). A tag of 31 bits is not worth a higher floor. The floor is 6.17 since
+2026-09-27, which has it; the tag stays at 31 bits until something asks for the last one.
 
 The sender's own completion says whether the post reached the target's ring: 0, or
 `mailbox_full` when the target's completion ring could take no more, or `loop_not_found`. A

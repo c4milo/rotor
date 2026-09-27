@@ -30,7 +30,7 @@
 //! `timerfd_settime` clears it when the timer is armed again.
 //!
 //! `epoll_pwait2` and not `epoll_wait`: the latter takes a timeout in milliseconds, coarser than
-//! every deadline rotor accepts. It arrived in Linux 5.11, below decision 2's floor of 6.1, and
+//! every deadline rotor accepts. It arrived in Linux 5.11, below decision 2's floor of 6.17, and
 //! `init` answers `Unsupported` on a kernel that refuses it, as `uring_ring.zig` refuses a kernel
 //! missing a flag it needs. `std.os.linux` has no wrapper for it, so this file makes the call.
 const std = @import("std");

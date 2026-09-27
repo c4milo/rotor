@@ -12,7 +12,7 @@
 # one Docker's virtual machine runs. On a Linux host it is the host's own.
 #
 # Before any test the script prints the kernel release the container sees (`uname -r`).
-# docs/decisions/0002-scope.md sets the floor at Linux 6.1, and a pass or a measured number from
+# docs/decisions/0002-scope.md sets the floor at Linux 6.17, and a pass or a measured number from
 # an older kernel shows something else. The script does not compare version numbers, because a
 # vendor's kernel can carry a feature under an older number. The probe decides instead. It runs
 # first, asks the kernel for every feature that record lists, and exits non-zero naming the first
@@ -104,7 +104,7 @@ readonly mount_point='/t'
 # Where an executable is copied before it runs, on the container's own filesystem.
 readonly run_directory='/tmp/bin'
 # The kernel floor of docs/decisions/0002-scope.md, printed beside the release for the reader.
-readonly kernel_floor='6.1'
+readonly kernel_floor='6.17'
 
 cd "$(dirname "$0")/.."
 readonly out="$PWD/$install_directory"

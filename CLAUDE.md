@@ -254,7 +254,7 @@ was about to push.
   by what the kernel allows, and each run takes the other branch. `conformance-uring` and
   `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's.
   Each example then runs both ways too, against its checker when it has one. It prints the kernel release the container sees, because decision 2 sets the floor at
-  Linux 6.1, and the probe exits non-zero naming the first feature of that record's table that
+  Linux 6.17, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. Last, the script runs the halt check, built for Linux, on the scenarios a Mac
   cannot prove (`tools/halt/*_linux_scenarios.zig`) and on the canary: uring's with
   `seccomp=unconfined`, epoll's under the default profile. `zig build test` does not run it: it
@@ -380,7 +380,8 @@ Every row of decision 2's scope table is built. Camilo added posts between proce
 memory, and it was built the same day; crossing a process measured as costing a message nothing on
 `mac`, `orbstack` and `github`. Every other decision record
 has code,
-except two: decision 16, which Camilo declined on 2026-09-24, and decision 17, which is proposed
+except three: decision 16, which Camilo declined on 2026-09-24; decision 22, which he accepted on
+2026-09-27 on two conditions, and which is not built yet; and decision 17, which is proposed
 and names a component this repository does not hold. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every

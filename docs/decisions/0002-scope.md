@@ -127,7 +127,7 @@ development platform.** The paragraph above it is withdrawn. What that changes:
 
 ### Minimum kernel
 
-Linux 6.1. The io_uring features version one depends on, with the kernel each arrived in, as
+Linux 6.17, by Camilo's ruling of 2026-09-27 on open question 1; until then, Linux 6.1. The io_uring features version one depends on, with the kernel each arrived in, as
 recalled and to be verified by the init probe in milestone 2:
 
 | feature | recalled kernel | used for |
@@ -146,6 +146,16 @@ rings, and the floor rises if the kernel refuses the post.
 Init probes every one of these and returns `error.Unsupported` naming the first that is missing.
 It never falls back to a slower path without saying so: a fallback makes the harness's number
 depend on which path ran.
+
+**Amended on 2026-09-27: the floor is Linux 6.17.** The first run of rotor on a 6.1 kernel, Debian
+12's 6.1.187 under QEMU (`bench/results/linux-6.1-check-2026-09-27.md`), found every feature the
+table names, and one difference no probe checks: an io_uring multishot receive ended with
+`buffers_exhausted` once its group had no buffer left, though no data waited for one, where the
+kernels rotor is tested on end it with 0 when the peer shuts. Camilo set the floor at 6.17, the
+kernel GitHub's runners run, so CI tests the floor itself. rotor does not check the version: init
+probes the features, as before. Three features above the old floor that this tree has a use for
+are within the new one: `IORING_MSG_RING_FLAGS_PASS` (decision 11), and `IORING_RECVSEND_BUNDLE`
+and incremental buffer consumption (decision 15). None is used yet.
 
 ## Alternatives it beat
 
@@ -167,6 +177,8 @@ union.
 ## Open questions for review
 
 1. Is Linux 6.1 acceptable as the floor? The machine named in `docs/costs.md` decides.
+   **Answered on 2026-09-27: no. The floor is Linux 6.17**, as the amendment under "Minimum kernel"
+   says.
 2. Is inline blocking file I/O on macOS acceptable, given that macOS is development only?
    **Closed on 2026-09-27.** Both premises changed: this record's amendment of 2026-09-22 made macOS
    a production platform, and decision 18 made inline blocking file I/O the `blocking` policy a
