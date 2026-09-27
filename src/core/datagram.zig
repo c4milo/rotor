@@ -150,6 +150,24 @@ pub fn prefix_bytes(options: GroupOptions) u32 {
     return prefix;
 }
 
+/// The one datagram shape a loop serves: the reserve every datagram group of the loop uses. The
+/// loop reads a datagram at the offset `prefix_bytes` gives for this shape, whichever group its
+/// buffer came from, so the first `provide_datagram_buffers` fixes the shape and a later group must
+/// take the same one (decision 15, question 2, ruled on 2026-09-26). A group cannot be withdrawn,
+/// so the shape stays fixed for the loop's life.
+pub const Shape = struct {
+    options: GroupOptions = .{},
+    fixed: bool = false,
+
+    /// Fixes the shape at `options`. Halts when an earlier group fixed a different one: the loop
+    /// would then read the earlier group's datagrams at the wrong offset.
+    pub fn fix(shape: *Shape, options: GroupOptions) void {
+        if (shape.fixed) assert(std.meta.eql(shape.options, options));
+        shape.* = .{ .options = options, .fixed = true };
+        assert(shape.fixed);
+    }
+};
+
 /// The bytes of one datagram a buffer of `buffer_bytes` in such a group can hold.
 pub fn payload_capacity(buffer_bytes: u32, options: GroupOptions) u32 {
     const prefix = prefix_bytes(options);
@@ -226,6 +244,17 @@ test "the prefix is the head and both reserves, and the payload capacity is what
     // The default holds IPv6's three control messages, which is what the reserve is for.
     const ipv6_control = 40 + 24 + 24;
     try testing.expect(control_reserve_default >= ipv6_control);
+}
+
+test "the first group fixes the shape, and a later group of the same shape keeps it" {
+    var shape: Shape = .{};
+    try testing.expect(!shape.fixed);
+    const larger: GroupOptions = .{ .control_reserve = control_reserve_default + 64 };
+    shape.fix(larger);
+    try testing.expect(shape.fixed);
+    try testing.expectEqual(larger, shape.options);
+    shape.fix(larger);
+    try testing.expectEqual(larger, shape.options);
 }
 
 test "a reply goes back to the peer, from the address the datagram was sent to" {

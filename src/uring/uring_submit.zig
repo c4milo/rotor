@@ -86,7 +86,7 @@ fn datagram_extra(loop: *Loop) Extra {
     assert(loop.messages_used < loop.messages.len);
     const message = &loop.messages[loop.messages_used];
     loop.messages_used += 1;
-    return .{ .message = message, .group = loop.datagram_group };
+    return .{ .message = message, .group = loop.datagram_shape.options };
 }
 
 fn connect_extra(loop: *Loop, slot: *const Slot) Extra {

@@ -263,8 +263,9 @@ names an index instead of a descriptor. A `close` always names a descriptor of t
 
 A datagram group is a provided-buffer group with room in front of every buffer for the peer
 address and the control messages: `provide_datagram_buffers(&loop, group_id, memory, count,
-buffer_bytes, .{})`, from one block as above. One loop serves one datagram shape. `receive_from`
-receives into it, one event per datagram, and `loop.datagram(group_id, event)` is the only reader
+buffer_bytes, .{})`, from one block as above. One loop serves one datagram shape: the first
+datagram group fixes it, and a later group with different options halts, because the loop reads
+every datagram at the offset that shape gives. `receive_from` receives into it, one event per datagram, and `loop.datagram(group_id, event)` is the only reader
 of such a buffer: it returns a `Delivery` with the peer, the local address when the socket was asked
 for it, the ECN
 codepoint, the segment size when the kernel coalesced several datagrams into one, and the bytes.

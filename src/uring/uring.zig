@@ -97,12 +97,12 @@ pub const Loop = struct {
     /// and is reused the same way (decision 15).
     messages: []datagram_module.Message,
     messages_used: u32,
-    /// The reserve every datagram group of this loop uses, set by `provide_datagram_buffers`.
-    /// One loop serves one shape, so the prefix a reap subtracts is a constant it already holds
-    /// rather than a lookup per completion (decision 15).
-    datagram_group: core.datagram.GroupOptions,
-    /// `core.datagram.prefix_bytes(datagram_group)`, held here because the reap subtracts it from
-    /// every datagram completion and must not recompute it per event.
+    /// The reserve every datagram group of this loop uses, fixed by the first
+    /// `provide_datagram_buffers`. One loop serves one shape, so the prefix a reap subtracts is a
+    /// constant it already holds rather than a lookup per completion (decision 15).
+    datagram_shape: core.datagram.Shape,
+    /// `core.datagram.prefix_bytes(datagram_shape.options)`, held here because the reap subtracts
+    /// it from every datagram completion and must not recompute it per event.
     datagram_prefix: i32,
     /// The mailbox rings other loops post to this one through, and the sleep flag they read to
     /// know whether to wake it (decision 12, point 6).
@@ -219,7 +219,7 @@ pub const Loop = struct {
         loop.cancels.init(handles);
         loop.addresses_used = 0;
         loop.messages_used = 0;
-        loop.datagram_group = .{};
+        loop.datagram_shape = .{};
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
         loop.wakes = .{};
@@ -312,11 +312,12 @@ pub const Loop = struct {
     /// no stream caller gains a precondition.
     ///
     /// One loop serves one datagram shape: a second group with a different reserve would make
-    /// the prefix a per-completion lookup, which is what the constant exists to avoid.
+    /// the prefix a per-completion lookup, which is what the constant exists to avoid. The first
+    /// call fixes the shape, and a later call with a different one halts (`core.datagram.Shape`).
     ///
-    /// The shape is recorded after `provide` returns, so a call from another thread halts on
-    /// `provide`'s owner check before it writes anything, and a group the kernel refused leaves
-    /// the shape as it was.
+    /// The shape is checked and recorded after `provide` returns, so a call from another thread
+    /// halts on `provide`'s owner check before it writes anything, and a group the kernel refused
+    /// leaves the shape as it was.
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
@@ -327,7 +328,7 @@ pub const Loop = struct {
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
         try buffers.provide(loop, group_id, memory, count, buffer_bytes);
-        loop.datagram_group = group;
+        loop.datagram_shape.fix(group);
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
     }
 
@@ -339,7 +340,7 @@ pub const Loop = struct {
         assert(event.flags.buffer);
         const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
-        return datagram_module.delivery(buffer, bytes, loop.datagram_group);
+        return datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
     }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
@@ -428,7 +429,7 @@ test "a datagram group the kernel refuses leaves the loop's datagram shape as it
         refused_group_shape,
     ));
     try std.testing.expectEqual(prefix_before, loop.datagram_prefix);
-    try std.testing.expectEqual(core.datagram.GroupOptions{}, loop.datagram_group);
+    try std.testing.expectEqual(core.datagram.Shape{}, loop.datagram_shape);
 }
 
 test "entries default to the operations rounded up to a power of two, capped at the ring's most" {

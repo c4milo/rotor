@@ -18,6 +18,7 @@ const owner = @import("epoll_scenarios_owner.zig");
 const scenario = @import("scenario.zig");
 
 const Loop = epoll.Loop;
+const datagram_shapes = @import("datagram_shapes.zig").Scenario(Loop, epoll.buffers);
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
@@ -290,6 +291,12 @@ fn post_a_tag_above_the_limit() void {
     _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
 }
 
+/// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
+fn provide_datagram_groups_of_two_shapes() void {
+    loop.init_tables(&memory, options);
+    datagram_shapes.provide_two_shapes(&loop);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{
         .name = "loop: end a loop with an operation in flight",
@@ -322,6 +329,10 @@ const scenarios = [_]scenario.Scenario{
         .run = provide_a_group_that_is_not_aligned,
     },
     .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
+    .{
+        .name = "datagrams: provide groups of two shapes",
+        .run = provide_datagram_groups_of_two_shapes,
+    },
     .{ .name = "buffers: register the buffers twice", .run = register_buffers_twice },
     .{
         .name = "buffers: give back a buffer the group does not hold",

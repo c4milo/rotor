@@ -360,7 +360,14 @@ The implementation follows the proposed answer to each until Camilo rules.
 1. Does a datagram group get a new `provide_datagram_buffers`, leaving `provide_buffers` and its
    callers untouched? **Proposed: yes.**
 2. Is the control reserve chosen per group at registration, rather than by one global constant?
-   **Proposed: yes.**
+   **Proposed: yes.** **Answered on 2026-09-26: one shape per loop.** Camilo ruled it after the
+   open questions were read against the code. The reserve is chosen at registration, as proposed,
+   but a loop reads every datagram at the offset one shape gives, whichever group its buffer came
+   from. So a second group with a different reserve would have moved where the first group's
+   datagrams are read, and nothing refused it. Now the first `provide_datagram_buffers` fixes the
+   shape (`core.datagram.Shape`), and a later call with a different one halts. The scenario is
+   `tools/halt/datagram_shapes.zig`, run by each backend's halt scenarios. A reserve per group
+   would make the prefix a lookup per completion; a record that needs one can ask for it.
 3. Does `sync.open_datagram` set `IP_DONTFRAG` by default, so an oversized datagram returns
    `message_too_long` instead of being fragmented? **Proposed: yes; QUIC needs the DF bit for
    path MTU discovery, and `EMSGSIZE` maps to `unexpected` today either way.**

@@ -9,6 +9,7 @@ const owner = @import("kqueue_scenarios_owner.zig");
 const scenario = @import("scenario.zig");
 
 const Loop = kqueue.Loop;
+const datagram_shapes = @import("datagram_shapes.zig").Scenario(Loop, kqueue.buffers);
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
@@ -342,6 +343,12 @@ fn give_back_a_buffer_the_group_does_not_hold() void {
     loop.give_back_buffer(0, group_scenario_buffers);
 }
 
+/// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
+fn provide_datagram_groups_of_two_shapes() void {
+    loop.init_tables(&memory, options);
+    datagram_shapes.provide_two_shapes(&loop);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{
         .name = "loop: end a loop with an operation in flight",
@@ -389,6 +396,10 @@ const scenarios = [_]scenario.Scenario{
         .run = arm_a_wait_timer_above_the_wait_limit,
     },
     .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
+    .{
+        .name = "datagrams: provide groups of two shapes",
+        .run = provide_datagram_groups_of_two_shapes,
+    },
     .{ .name = "buffers: register the buffers twice", .run = register_buffers_twice },
     .{
         .name = "buffers: give back a buffer the group does not hold",

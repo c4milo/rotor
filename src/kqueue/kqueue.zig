@@ -95,9 +95,10 @@ pub const Loop = struct {
     offload: ?core.offload.Offload,
     /// One per slot, filled when an operation is handed out. Empty unless the policy is `offload`.
     works: []core.offload.Work,
-    /// The reserve every datagram group of this loop uses (decision 15). One loop serves one
-    /// shape, so a receive knows where a datagram starts without a lookup per completion.
-    datagram_group: core.datagram.GroupOptions,
+    /// The reserve every datagram group of this loop uses, fixed by the first
+    /// `provide_datagram_buffers` (decision 15). One loop serves one shape, so a receive knows
+    /// where a datagram starts without a lookup per completion.
+    datagram_shape: core.datagram.Shape,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
@@ -213,7 +214,7 @@ pub const Loop = struct {
         loop.wait_timer_deadline_ns = 0;
         loop.group_watch = group_watch_none;
         loop.groups = @splat(buffers.Group.none);
-        loop.datagram_group = .{};
+        loop.datagram_shape = .{};
     }
 
     /// Every operation must have had its final event (decision 5, rule 7).
@@ -293,10 +294,11 @@ pub const Loop = struct {
 
     /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
     /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a
-    /// precondition. One loop serves one datagram shape.
+    /// precondition. One loop serves one datagram shape: the first call fixes it, and a later
+    /// call with a different one halts (`core.datagram.Shape`).
     ///
-    /// The shape is recorded after `provide` returns, so a call from another thread halts on
-    /// `provide`'s owner check before it writes anything.
+    /// The shape is checked and recorded after `provide` returns, so a call from another thread
+    /// halts on `provide`'s owner check before it writes anything.
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
@@ -307,7 +309,7 @@ pub const Loop = struct {
     ) buffers.ProvideError!void {
         assert(buffer_bytes > core.datagram.prefix_bytes(group));
         try buffers.provide(loop, group_id, memory, count, buffer_bytes);
-        loop.datagram_group = group;
+        loop.datagram_shape.fix(group);
     }
 
     /// The datagram an event of group `group_id` names: the only supported reader of that
@@ -318,7 +320,7 @@ pub const Loop = struct {
         assert(event.flags.buffer);
         const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
-        return datagram_module.delivery(buffer, bytes, loop.datagram_group);
+        return datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
     }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.

@@ -182,7 +182,7 @@ fn attempt_receive_from(loop: *Loop, slot: *const Slot) Attempt {
     const target = target_of(loop, slot) orelse {
         return Attempt.done(core.event.result_of(.buffers_exhausted));
     };
-    const answer = datagram.receive_into(slot.descriptor, target.bytes, loop.datagram_group);
+    const answer = datagram.receive_into(slot.descriptor, target.bytes, loop.datagram_shape.options);
     if (!answer.would_block and answer.result >= 0) {
         return .{ .outcome = .done, .result = answer.result, .buffer_id = target.buffer_id };
     }

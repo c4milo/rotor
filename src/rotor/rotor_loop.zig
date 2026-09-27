@@ -314,7 +314,8 @@ pub const Loop = struct {
     }
 
     /// A buffer group for datagrams, with room in front of every buffer for what a datagram
-    /// carries (decision 15). One loop serves one datagram shape.
+    /// carries (decision 15). One loop serves one datagram shape: the first call fixes it, and a
+    /// later call with a different `GroupOptions` halts.
     pub fn provide_datagram_buffers(
         loop: *Loop,
         group_id: u16,
