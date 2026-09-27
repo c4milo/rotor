@@ -20,8 +20,22 @@ pub const readiness_max: u32 = 256;
 /// below holds that.
 pub const wake_user_data: u64 = std.math.maxInt(u64);
 
+/// What the readiness of a loop's wait timer carries as its `user_data`: the timerfd that bounds a
+/// tick's wait, so that the `epoll_pwait2` call that waits carries no timeout (decision 20, "The
+/// wait timer"). Above every descriptor for the reason `wake_user_data` is.
+pub const wait_timer_user_data: u64 = std.math.maxInt(u64) - 1;
+
+/// The most times one tick arms its wait timer again after the timer fired before the tick's own
+/// deadline: kqueue's `wait_timer_rearms_max`, for the same reason. The first such timer is armed
+/// for exactly the time left, so it ends the wait unless the kernel's clock and the tick's disagree
+/// by a little. A tick that uses them all hands over no event.
+pub const wait_timer_rearms_max: u32 = 4;
+
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
     assert(wake_user_data > std.math.maxInt(i32));
+    assert(wait_timer_user_data > std.math.maxInt(i32));
+    assert(wait_timer_user_data != wake_user_data);
+    assert(wait_timer_rearms_max >= 1);
 }

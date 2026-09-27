@@ -70,7 +70,12 @@ fn cancel_every_operation_on_this_thread() void {
 /// ends the empty loop and returns without a system call.
 fn end_a_loop_from_another_thread() void {
     loop.init_tables(&memory, options);
-    loop.queue = .{ .descriptor = -1, .wake_descriptor = -1, .owns_wake = true };
+    loop.queue = .{
+        .descriptor = -1,
+        .wake_descriptor = -1,
+        .owns_wake = true,
+        .wait_timer_descriptor = -1,
+    };
     on_another_thread(end_the_loop_on_this_thread);
 }
 

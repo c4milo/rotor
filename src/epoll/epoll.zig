@@ -91,6 +91,11 @@ pub const Loop = struct {
     /// `epoll_ctl` has no batched form, so each registration is its own call as it is needed
     /// (decision 20, "The shape").
     readiness: [constants.readiness_max]queue_module.Event,
+    /// When the wait timer fires, on the tick's clock, or 0 when it is not armed. A tick that
+    /// blocks leaves an armed timer in place when it fires no later than the tick's own deadline,
+    /// so the timer is armed about once per wait bound and not once per tick (decision 20, "The
+    /// wait timer"). The reap sets it to 0 when the timer's readiness comes back.
+    wait_timer_deadline_ns: u64,
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
     inbox: core.inbox.Inbox,
     /// What this loop does with a file operation it cannot perform without blocking (decision 18).
@@ -204,6 +209,7 @@ pub const Loop = struct {
         const completions = offload_module.init_rings(options.offload_memory, workers);
         loop.inbox = core.inbox.Inbox.init(options.registry, completions);
         loop.file_policy = options.file_policy;
+        loop.wait_timer_deadline_ns = 0;
         loop.offload = options.offload;
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,

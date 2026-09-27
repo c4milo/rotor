@@ -2,7 +2,7 @@
 //! `epoll_pwait2` call that waits. Everything here enters the kernel, so it is tested under Linux
 //! alone.
 //!
-//! Two things differ from `kqueue_queue.zig`, which this file otherwise mirrors (decision 20).
+//! Four things differ from `kqueue_queue.zig`, which this file otherwise mirrors (decision 20).
 //!
 //! **A registration is its own system call.** kqueue carries up to 256 changes in the call that
 //! waits; `epoll_ctl` takes one descriptor at a time and there is no batched form. libuv batches
@@ -22,6 +22,12 @@
 //! user event, so the loop owns an eventfd registered for read readiness, and another thread wakes
 //! it with one 8-byte write. The counter is drained when the wake is reaped, so a loop that was
 //! woken many times waits again rather than spinning.
+//!
+//! **The wait timer is a timerfd.** A call that waits with a timeout costs the kernel an hrtimer
+//! armed and cancelled per call, whatever the timeout, so a call that blocks carries none and a
+//! timerfd in the set bounds it, armed only when its deadline must move (decision 20, "The wait
+//! timer"). It is registered edge triggered, so an expiry is reported once without a read, and
+//! `timerfd_settime` clears it when the timer is armed again.
 //!
 //! `epoll_pwait2` and not `epoll_wait`: the latter takes a timeout in milliseconds, coarser than
 //! every deadline rotor accepts. It arrived in Linux 5.11, below decision 2's floor of 6.1, and
@@ -88,6 +94,9 @@ pub const Queue = struct {
     wake_descriptor: core.Descriptor,
     /// False in a group, whose creator made the eventfd and keeps it (decision 21, point 3).
     owns_wake: bool,
+    /// The timerfd that bounds a wait (decision 20, "The wait timer"). Registered at init, edge
+    /// triggered, and never removed.
+    wait_timer_descriptor: core.Descriptor,
 
     /// Opens the epoll instance and the eventfd that wakes it.
     pub fn init() InitError!Queue {
@@ -109,6 +118,7 @@ pub const Queue = struct {
             .descriptor = descriptor,
             .wake_descriptor = -1,
             .owns_wake = group_wake == null,
+            .wait_timer_descriptor = -1,
         };
         errdefer queue.deinit();
 
@@ -125,6 +135,7 @@ pub const Queue = struct {
             &wake_event,
         );
         if (linux.errno(added) != .SUCCESS) return error.SystemResources;
+        try queue.open_wait_timer();
 
         // A kernel without `epoll_pwait2` refuses it with ENOSYS, and this backend has no second
         // path: a millisecond timeout cannot hold a deadline rotor accepts.
@@ -134,7 +145,30 @@ pub const Queue = struct {
         return queue;
     }
 
+    /// Creates the wait timer and registers it, edge triggered, so the reap needs no read to keep
+    /// an expiry from being reported again.
+    fn open_wait_timer(queue: *Queue) InitError!void {
+        assert(queue.wait_timer_descriptor == -1);
+        const flags: linux.TFD = .{ .CLOEXEC = true, .NONBLOCK = true };
+        queue.wait_timer_descriptor = try descriptor_of(linux.timerfd_create(.MONOTONIC, flags));
+        var timer_event: Event = .{
+            .events = linux.EPOLL.IN | linux.EPOLL.ET,
+            .data = .{ .u64 = constants.wait_timer_user_data },
+        };
+        const added = linux.epoll_ctl(
+            queue.descriptor,
+            linux.EPOLL.CTL_ADD,
+            queue.wait_timer_descriptor,
+            &timer_event,
+        );
+        if (linux.errno(added) != .SUCCESS) return error.SystemResources;
+    }
+
     pub fn deinit(queue: *Queue) void {
+        if (queue.wait_timer_descriptor >= 0) {
+            _ = linux.close(queue.wait_timer_descriptor);
+            queue.wait_timer_descriptor = -1;
+        }
         if (queue.wake_descriptor >= 0) {
             if (queue.owns_wake) _ = linux.close(queue.wake_descriptor);
             queue.wake_descriptor = -1;
@@ -186,14 +220,47 @@ pub const Queue = struct {
     /// Fills `readiness` and returns how many. With `wait_ns` above 0, blocks until a descriptor is
     /// ready, the loop is woken, or the wait passes; with 0, returns at once.
     pub fn wait(queue: *const Queue, readiness: []Event, wait_ns: u64) WaitError!u32 {
-        assert(queue.descriptor >= 0);
-        assert(readiness.len >= 1);
-        assert(readiness.len <= constants.readiness_max);
         assert(wait_ns <= core.constants.wait_ns_max);
         const timeout: linux.timespec = .{
             .sec = @intCast(wait_ns / core.constants.ns_per_s),
             .nsec = @intCast(wait_ns % core.constants.ns_per_s),
         };
+        return queue.pwait2(readiness, &timeout);
+    }
+
+    /// Fills `readiness` and returns how many, blocking with no timeout until a descriptor is
+    /// ready or the loop is woken. The wait timer, armed by `arm_wait_timer`, is what ends a wait
+    /// that nothing else ends.
+    pub fn wait_for_timer(queue: *const Queue, readiness: []Event) WaitError!u32 {
+        return queue.pwait2(readiness, null);
+    }
+
+    /// Arms the wait timer to fire once, `after_ns` from now, replacing any earlier setting and
+    /// clearing an expiry not yet read. Returns false when the kernel refuses, and the caller then
+    /// waits with a timeout instead. `after_ns` of 0 would disarm the timer, so it is refused.
+    pub fn arm_wait_timer(queue: *const Queue, after_ns: u64) bool {
+        assert(after_ns >= 1);
+        assert(after_ns <= core.constants.wait_ns_max);
+        assert(queue.wait_timer_descriptor >= 0);
+        const setting: linux.itimerspec = .{
+            .it_interval = .{ .sec = 0, .nsec = 0 },
+            .it_value = .{
+                .sec = @intCast(after_ns / core.constants.ns_per_s),
+                .nsec = @intCast(after_ns % core.constants.ns_per_s),
+            },
+        };
+        const rc = linux.timerfd_settime(queue.wait_timer_descriptor, .{}, &setting, null);
+        return linux.errno(rc) == .SUCCESS;
+    }
+
+    fn pwait2(
+        queue: *const Queue,
+        readiness: []Event,
+        timeout: ?*const linux.timespec,
+    ) WaitError!u32 {
+        assert(queue.descriptor >= 0);
+        assert(readiness.len >= 1);
+        assert(readiness.len <= constants.readiness_max);
         var retry: u32 = 0;
         while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
             const rc = linux.syscall6(
@@ -201,7 +268,7 @@ pub const Queue = struct {
                 @bitCast(@as(isize, queue.descriptor)),
                 @intFromPtr(readiness.ptr),
                 readiness.len,
-                @intFromPtr(&timeout),
+                @intFromPtr(timeout),
                 0,
                 @sizeOf(linux.sigset_t),
             );
@@ -363,4 +430,25 @@ fn pipe_pair() ![pipe_ends]core.Descriptor {
     const rc = linux.pipe2(&ends, .{ .CLOEXEC = true });
     if (linux.errno(rc) != .SUCCESS) return error.Unexpected;
     return .{ ends[0], ends[1] };
+}
+
+test "the wait timer reports an expiry once, and arming it again clears an expiry not yet read" {
+    if (!supported) return error.SkipZigTest;
+    var queue = try Queue.init();
+    defer queue.deinit();
+    var readiness: [4]Event = undefined;
+    const short_ns = core.constants.ns_per_ms;
+
+    try testing.expect(queue.arm_wait_timer(short_ns));
+    try testing.expectEqual(@as(u32, 1), try queue.wait_for_timer(&readiness));
+    try testing.expectEqual(constants.wait_timer_user_data, readiness[0].data.u64);
+    // Edge triggered: the expiry, never read, is not reported by the next call.
+    try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
+
+    // An expiry that no call has seen yet is cleared by arming the timer again.
+    try testing.expect(queue.arm_wait_timer(short_ns));
+    const pause: linux.timespec = .{ .sec = 0, .nsec = 3 * short_ns };
+    _ = linux.nanosleep(&pause, null);
+    try testing.expect(queue.arm_wait_timer(core.constants.ns_per_s));
+    try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
 }

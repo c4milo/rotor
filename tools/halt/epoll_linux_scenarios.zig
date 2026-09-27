@@ -90,7 +90,27 @@ fn tick_with_a_wait_above_the_limit() void {
     _ = loop.tick(&one_event, core.constants.wait_ns_max + 1) catch {};
 }
 
+/// The wait timer's bounds (decision 20, "The wait timer"). A timer of 0 ns would disarm it and
+/// leave the wait unbounded. With a check deleted, `timerfd_settime` takes the value and the
+/// scenario returns.
+fn arm_a_wait_timer_of_nothing() void {
+    loop.init(&memory, options) catch return;
+    scenario.reached_violation();
+    _ = loop.queue.arm_wait_timer(0);
+}
+
+fn arm_a_wait_timer_above_the_wait_limit() void {
+    loop.init(&memory, options) catch return;
+    scenario.reached_violation();
+    _ = loop.queue.arm_wait_timer(core.constants.wait_ns_max + 1);
+}
+
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "tick: arm a wait timer of 0 ns", .run = arm_a_wait_timer_of_nothing },
+    .{
+        .name = "tick: arm a wait timer above the wait limit",
+        .run = arm_a_wait_timer_above_the_wait_limit,
+    },
     .{ .name = "tick: tick with no room for an event", .run = tick_with_no_room_for_an_event },
     .{
         .name = "tick: tick with more events than a batch",

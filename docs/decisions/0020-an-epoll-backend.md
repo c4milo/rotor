@@ -252,6 +252,79 @@ decided this anyway, because one message at a time is the common case and the lo
 round. Open question 2 makes the same argument against edge triggering, which also needs a call
 that answers EAGAIN. A later attempt needs a way to know a socket is empty without that call.
 
+## The wait timer
+
+**Added on 2026-09-26: an `epoll_pwait2` call that blocks carries no timeout.** Linux arms an
+hrtimer when a thread sleeps with a timeout and cancels it when the thread wakes, and a tick always
+blocked with one, because its wait is bounded (`wait_ns_max`) even when no deadline is due. This is
+decision 12, point 7, on Linux. Measured without rotor, with two threads on two epoll instances
+waking each other through an eventfd each, 200,000 round trips a run, five runs a mode. The kernel
+was the `orbstack` machine's, Linux 7.0.14, booted under QEMU with a plugin that counts every
+instruction the two threads execute, user and kernel together, because the `orbstack` virtual
+machine offers no hardware counters. The change is per blocking wait, against the same call with no
+timeout:
+
+| how each side bounds its wait | instructions per wait |
+|---|---:|
+| `epoll_pwait2` with a 1 ms timeout | +900 |
+| `epoll_pwait2` with a 10 s timeout | +881 |
+| no timeout, and a timerfd in the set armed once | +3 |
+| no timeout, and a timerfd armed again before every wait | +1,146 |
+
+So an armed timerfd costs a wait nothing, and arming it costs more than a timeout, because arming is
+a `timerfd_settime` call of its own. kqueue arms its timer in the changelist of the call that waits.
+The design is kqueue's all the same, which arms the timer rarely:
+
+- Each loop has one timerfd, registered at init edge triggered, so an expiry is reported once and
+  the reap need not read it. `timerfd_settime` clears an expiry nobody read when it arms the timer
+  again. `Loop.wait_timer_deadline_ns` records when the timer fires, or 0 when it is not armed.
+- A tick that blocks arms the timer and calls `epoll_pwait2` with no timeout. The timer is left in
+  place when it fires no later than this wait's deadline and has not fired yet, so a loop that waits
+  often, such as the two loops of a ping-pong, arms it about once per wait bound.
+- A timer an earlier tick armed can fire before this tick's deadline. When its readiness is all the
+  call returned, the tick arms the timer for the time left and waits again, at most
+  `wait_timer_rearms_max` times, so a quiet tick still takes its whole wait.
+- A timer the kernel refuses to arm makes the call carry the timeout, as before.
+- The reap drops the timer's readiness, which names no operation, and sets the deadline back to 0.
+
+What it costs: one descriptor and 8 bytes a loop, and one `timerfd_settime` call about once per
+wait bound.
+
+Measured on 2026-09-26 with `post_epoll` in `waiting` mode, the two loops of a ping-pong, 20,000
+round trips a run, five runs of each build alternating. The kernel was the `orbstack` machine's
+under QEMU, with the plugin counting both threads between markers placed around the measured round
+trips in a copy of `rotor_post.zig` built for the count alone. Instructions per round trip, user
+and kernel together, median and range:
+
+| build | instructions per round trip |
+|---|---:|
+| before, `5e376b2` | 14,808 (14,671 to 15,269) |
+| with the wait timer | 13,316 (13,223 to 13,793) |
+
+The ranges do not overlap. The kernel's share fell by about 1,500 and user space rose by 16.
+Under emulation a round trip takes about five times as long as on the `orbstack` machine, so the
+timer, armed for the benchmark's 1 ms wait, fires about five times as often per round trip as it
+would there. Ten alternating runs on the `orbstack` machine itself, at a host load average of 14,
+did not separate: the peer's CPU per round trip varied by up to twice between runs, and the median
+of the paired differences, +168 ns, was inside that noise. No rate is claimed here.
+
+Mutations, measured against `zig build test-epoll`, against the `epoll` test executable in the Linux
+gate, and against the Linux gate's halt check for the two bounds of `Queue.arm_wait_timer`:
+
+| mutation | caught by | result |
+|---|---|---|
+| the timer armed again on every wait | `epoll`, Linux gate | CAUGHT |
+| no second wait after a timer that fired early | `epoll`, Linux gate | CAUGHT |
+| the reap leaves the deadline set | `test-epoll` | CAUGHT |
+| no timeout when the kernel refuses the timer | `epoll`, Linux gate: the test hangs | CAUGHT |
+| no timeout when the kernel refuses to arm it again | `epoll`, Linux gate: the test hangs | CAUGHT |
+| no check that the deadline passed before waiting again | `epoll`, Linux gate | CAUGHT |
+| a second wait whatever the call returned | `epoll`, Linux gate | CAUGHT |
+| more than the timer counted as only the timer | `test-epoll` | CAUGHT |
+| the timer registered level triggered | `epoll`, Linux gate | CAUGHT |
+| a timer of 0 ns allowed | the Linux gate's halt check | CAUGHT |
+| a timer above `wait_ns_max` allowed | the Linux gate's halt check | CAUGHT |
+
 ## Open questions
 
 Each has a proposed answer, and the implementation follows it until Camilo rules otherwise.

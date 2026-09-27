@@ -56,6 +56,12 @@ pub fn reap(loop: *Loop, readiness: []const Readiness, events: []Event) u32 {
             loop.queue.drain_wake();
             continue;
         }
+        if (ready.data.u64 == constants.wait_timer_user_data) {
+            // The timer that bounds a wait (decision 20, "The wait timer"), which names no
+            // operation. It fires once, so it is no longer armed.
+            loop.wait_timer_deadline_ns = 0;
+            continue;
+        }
         const descriptor: core.Descriptor = @intCast(ready.data.u64);
         produced += serve_ready(loop, descriptor, ready.events, events[produced..]);
     }
@@ -184,4 +190,20 @@ test "every bit that ends or advances an operation wakes the direction it belong
     // Being writable says nothing of being readable, and the other way round.
     try testing.expect(read_bits & linux.EPOLL.OUT == 0);
     try testing.expect(write_bits & linux.EPOLL.IN == 0);
+}
+
+test "the wait timer's readiness makes no event and leaves the timer disarmed" {
+    // A loop with tables and no epoll instance: the timer's readiness enters no kernel.
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    loop.init_tables(&memory, options);
+    loop.wait_timer_deadline_ns = 1;
+    const readiness = [1]Readiness{.{
+        .events = linux.EPOLL.IN,
+        .data = .{ .u64 = constants.wait_timer_user_data },
+    }};
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), reap(&loop, &readiness, &events));
+    try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 }
