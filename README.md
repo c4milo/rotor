@@ -20,7 +20,7 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 | Threads | One loop per thread, with no locks. Loops post messages to each other, across threads or processes. |
 | Safety | Assertions stay on in release builds. Misuse stops the program at a named check. |
 | Dependencies | None. Zig 0.16.0 and its standard library. |
-| Version | 0.4.0 |
+| Version | 0.5.0 |
 | License | Apache-2.0 |
 
 ## Why rotor
@@ -49,7 +49,7 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 
 ## Status
 
-rotor is at version 0.4.0. Everything planned for version one is built: TCP, UDP with ECN on
+rotor is at version 0.5.0. Everything planned for version one is built: TCP, UDP with ECN on
 both kernels and segmentation offload on Linux, files, timers, deadlines and cancellation, and
 messages between loops, in one process or several. One conformance suite, written against the
 public API, passes on all three backends, and CI runs it on every push.
@@ -77,7 +77,7 @@ public API, passes on all three backends, and CI runs it on every push.
 Add rotor to a project:
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#v0.4.0
+zig fetch --save git+https://github.com/c4milo/rotor#v0.5.0
 ```
 
 In `build.zig`:
