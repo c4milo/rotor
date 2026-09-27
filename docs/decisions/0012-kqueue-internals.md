@@ -266,6 +266,26 @@ The epoll backend took this design on 2026-09-26 with a timerfd (decision 20, "T
 the io_uring backend on 2026-09-27 with one armed `IORING_OP_TIMEOUT` (decision 6, "The wait
 timer").
 
+**Fixed on 2026-09-27: the wait timer asks to fire when it is due (`NOTE_CRITICAL`).** Without that
+flag macOS may fire an `EVFILT_TIMER` late, to coalesce it with other timers, by more the lower the
+process's priority tier. A tick's wait then ended late, and so did every timer deadline a tick
+waited for. The conformance suite's test that a repeating timer does not drift failed on GitHub's
+macOS runners in four of the nine runs after this point landed, and in none of the fifteen before.
+Measured on `mac` with a probe outside rotor, a 5 ms wait 40 times, the median lateness and its p90:
+
+| how the wait is bounded | normal | the process marked background (`taskpolicy -b`) | the thread marked background |
+|---|---:|---:|---:|
+| `EVFILT_TIMER` | 1,180 µs (1,305) | 99,147 µs (100,848) | 99,294 µs (100,607) |
+| `EVFILT_TIMER` with `NOTE_CRITICAL` | 33 µs (55) | 36 µs (303) | 50 µs (900) |
+| a `kevent` timeout, before this point | 636 µs (662) | 642 µs (680) | 645 µs (1,038) |
+
+So with the flag a wait ends closer to its deadline than the timeout did. The conformance suite run
+as a background process failed three times of three without it and passed five of five with it; the
+tree before the wait timer passed three of three. `kqueue_tick.zig` marks its own thread background
+and requires the best of five quiet ticks of 5 ms to end within 20 ms of the wait. With the flag
+removed that test fails: CAUGHT. The cross-core rate above was measured before the fix, in a
+ping-pong whose timer rarely fires, and was not measured again.
+
 **Amended the same day: the tick reads `CLOCK_MONOTONIC_RAW`.** `CLOCK_MONOTONIC` on macOS counts in
 1,000 ns steps and costs 20.1 ns a read; `CLOCK_MONOTONIC_RAW` counts in 41 ns steps and costs 14.5
 ns, and both keep counting while the machine sleeps. So `Loop.now_ns` counts in 41 ns steps on this

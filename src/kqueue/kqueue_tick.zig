@@ -400,3 +400,32 @@ test "a wait timer the kernel refused is not waited on again" {
 fn sync_close(descriptor: i32) void {
     _ = std.c.close(descriptor);
 }
+
+/// Darwin's `setpriority`, which Zig's standard library does not declare. With `PRIO_DARWIN_THREAD`
+/// it marks the calling thread as background, the tier macOS delays timers for the most.
+extern "c" fn setpriority(which: c_int, who: u32, priority: c_int) c_int;
+
+test "the wait timer fires when it is due, even for a thread the system runs as background" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const prio_darwin_thread: c_int = 3;
+    const prio_darwin_bg: c_int = 0x1000;
+    try testing.expectEqual(@as(c_int, 0), setpriority(prio_darwin_thread, 0, prio_darwin_bg));
+    defer _ = setpriority(prio_darwin_thread, 0, 0);
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+
+    // Without `NOTE_CRITICAL` macOS fired this timer about 100 ms late for a background thread,
+    // measured on 2026-09-27. The best of five quiet ticks must end within 20 ms of its wait.
+    const wait_ns = 5 * core.constants.ns_per_ms;
+    var best_late_ns: u64 = std.math.maxInt(u64);
+    for (0..5) |_| {
+        const before = clock_ns();
+        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, wait_ns));
+        best_late_ns = @min(best_late_ns, (clock_ns() - before) -| wait_ns);
+    }
+    try testing.expect(best_late_ns < 20 * core.constants.ns_per_ms);
+}

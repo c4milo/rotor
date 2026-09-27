@@ -116,6 +116,12 @@ pub fn poll_trigger() Kevent {
 
 /// The change that arms the loop's wait timer to fire once, `bound_ns` from now (decision 12,
 /// point 7). Adding it again moves the one timer, so a loop holds at most one.
+///
+/// `NOTE_CRITICAL` asks the kernel to fire the timer when it is due. Without it macOS may fire it
+/// late to coalesce it with other timers, by more the lower the process's priority tier: run as a
+/// background process (`taskpolicy -b`), a tick's wait of 5 ms came back more than 7.5 ms late, and
+/// the conformance suite's test of a repeating timer that must not drift failed on GitHub's macOS
+/// runners from 2026-09-27. The `kevent` timeout this timer replaced was not delayed that way.
 pub fn wait_timer(bound_ns: u64) Kevent {
     assert(bound_ns >= 1);
     assert(bound_ns <= core.constants.wait_ns_max);
@@ -123,7 +129,7 @@ pub fn wait_timer(bound_ns: u64) Kevent {
         .ident = constants.wait_timer_identifier,
         .filter = std.c.EVFILT.TIMER,
         .flags = std.c.EV.ADD | std.c.EV.ONESHOT,
-        .fflags = std.c.NOTE.NSECONDS,
+        .fflags = std.c.NOTE.NSECONDS | std.c.NOTE.CRITICAL,
         .data = @intCast(bound_ns),
         .udata = 0,
     };
