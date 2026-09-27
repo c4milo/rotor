@@ -16,7 +16,7 @@ epoll.
 ## Getting the module
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#v0.5.0
+zig fetch --save git+https://github.com/c4milo/rotor#v0.6.0
 ```
 
 In `build.zig`:
