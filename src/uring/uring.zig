@@ -104,6 +104,15 @@ pub const Loop = struct {
     /// `core.datagram.prefix_bytes(datagram_shape.options)`, held here because the reap subtracts
     /// it from every datagram completion and must not recompute it per event.
     datagram_prefix: i32,
+    /// When the wait timer fires, on the tick's clock, or 0 when it is not armed. A tick that
+    /// blocks leaves an armed timer in place when it fires no later than the tick's own deadline,
+    /// so the timer is armed about once per wait bound and not once per tick (decision 6, amended
+    /// 2026-09-27). The reap sets it to 0 when the timer's completion comes back.
+    wait_timer_deadline_ns: u64,
+    /// The absolute time the wait timer's entries carry. The kernel reads it when it takes an
+    /// entry, which can be a later tick's enter when the completion ring was full, so it lives in
+    /// the loop and always holds the deadline the loop wants.
+    wait_timer_timespec: std.os.linux.kernel_timespec,
     /// The mailbox rings other loops post to this one through, and the sleep flag they read to
     /// know whether to wake it (decision 12, point 6).
     inbox: core.inbox.Inbox,
@@ -221,6 +230,8 @@ pub const Loop = struct {
         loop.messages_used = 0;
         loop.datagram_shape = .{};
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
+        loop.wait_timer_deadline_ns = 0;
+        loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
         loop.wakes = .{};
         loop.group_wake = -1;

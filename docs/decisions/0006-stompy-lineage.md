@@ -9,6 +9,10 @@ rotor changes", reason 2 of "Why stompy should depend on rotor" and open questio
 hold. stompy keeps its own simulator, which presents rotor's surface or sits behind stompy's `io`
 facade.
 
+Amended on 2026-09-27 by Camilo's ruling: one timeout entry stays armed, the loop's wait timer.
+The row of "What rotor keeps" on `IORING_FEAT_EXT_ARG` gave "no timeout entry stays armed" as its
+reason, and "The wait timer" below says what changed and why.
+
 ## Context
 
 stompy carries `src/io/`, 974 lines: `io.zig` 478, `linux.zig` 374, `stub.zig` 63 and
@@ -25,7 +29,7 @@ non-negotiable and is not a consumer.
 |---|---|---|
 | Completion-based, not readiness-based | `Io.read`, `Io.write`, `Io.fdatasync` | It is io_uring's own shape, and the simulator can order completions |
 | A fixed entry count named at init, a power of two | `Io.init(entries)` | Bounded queues |
-| `IORING_FEAT_NODROP` and `IORING_FEAT_EXT_ARG` required, else `Unsupported` | `linux.zig` `init` | No lost completion; the wait timeout is an argument and no timeout entry stays armed |
+| `IORING_FEAT_NODROP` and `IORING_FEAT_EXT_ARG` required, else `Unsupported` | `linux.zig` `init` | No lost completion; the wait timeout is an argument and no timeout entry stays armed (amended: one does, the wait timer, below) |
 | A bounded overflow queue when the submission ring is full | `unqueued_head`, `flush_unqueued` | More operations than entries can be in flight |
 | Bounded resubmission on `EAGAIN` and `EINTR` | `transfer_retries_max`, `enter_retries_max` | A transient refusal is not a result the caller can act on |
 | Reap before retry on `EBUSY` | `submit_and_wait` | The overflow signal clears only by reaping |
@@ -53,6 +57,106 @@ The sector rules move up, not away. rotor asserts what O_DIRECT itself requires,
 the device's logical block. stompy's stricter rule, that every offset and length is a multiple
 of its 4 KiB `sector_size`, is stompy's format decision and stays in stompy, in a thin wrapper
 over rotor.
+
+## The wait timer
+
+**Amended on 2026-09-27: a tick's wait is bounded by one armed timeout entry, and the enter that
+waits carries no timeout.** Linux arms an hrtimer when a thread sleeps in `io_uring_enter` with a
+timeout and cancels it when the thread wakes, and a tick always blocked with one, because its wait is
+bounded (`wait_ns_max`) even when no deadline is due. The same cost moved kqueue and epoll to a
+timer of their own (decision 12, point 7; decision 20, "The wait timer"). Measured without rotor,
+with two threads on two rings waking each other with `IORING_OP_MSG_RING`, 200,000 round trips a run,
+five runs a mode. The kernel was the `orbstack` machine's, Linux 7.0.14, booted under QEMU with a
+plugin that counts every instruction the two threads execute, user and kernel together, because the
+`orbstack` virtual machine offers no hardware counters. The change is per blocking wait, against the
+same enter with no timeout:
+
+| how each side bounds its wait | instructions per wait |
+|---|---:|
+| `EXT_ARG` with a 1 ms timeout | +608 |
+| `EXT_ARG` with a 10 s timeout | +581 |
+| `EXT_ARG` with no timeout | +23 |
+| no timeout, and one `IORING_OP_TIMEOUT` armed once | -9 |
+| no timeout, and that timeout moved with `TIMEOUT_UPDATE` before every wait | +1,004 |
+| no timeout, and a new `IORING_OP_TIMEOUT` before every wait | +1,774 |
+
+So an armed timeout costs a wait nothing, and arming one before every wait costs more than the
+timeout argument. The design is kqueue's, which arms the timer rarely:
+
+- Each loop has one `IORING_OP_TIMEOUT`, with a count of 0 and an absolute time on
+  `CLOCK_MONOTONIC`, the clock the tick reads. `Loop.wait_timer_deadline_ns` records when it fires,
+  or 0 when it is not armed. Its entry rides in the same enter as the tick's other entries, so
+  arming it costs no system call, and the enter waits for one completion with no timeout.
+- The timer is left in place when it fires no later than this wait's deadline. A loop that waits
+  often, such as the two loops of a ping-pong, arms it about once per wait bound. One that fires
+  after this deadline is moved earlier with `TIMEOUT_UPDATE`.
+- A timer that fires before this tick's deadline, or a move that answers, leaves the ring holding
+  the timer's completions and nothing else. The tick takes them, arms the timer again if it fired,
+  and waits for the time that is left, at most `wait_timer_rearms_max` times, so a quiet tick still
+  takes its whole wait.
+- A submission ring with no room for the timer's entry makes the enter carry the timeout, as before,
+  which is why `EXT_ARG` stays required.
+- The reap turns the timer's completions into no event, and a fired timer's sets the deadline back
+  to 0. Neither reaches the path of an operation that succeeded, in `uring_reap.zig`, one of
+  decision 7's hot files.
+
+Absolute and not relative, because an entry can wait in the submission ring past its tick when the
+completion ring is full, and a relative time would then fire late. A move is answered with a
+completion, which ends the wait it was made for; the tick takes it and waits again, one more enter.
+`IOSQE_CQE_SKIP_SUCCESS` would spare that enter, and would add a feature to decision 2's table; a
+loop that keeps one wait bound never moves its timer.
+
+What it costs: 24 bytes in `Loop`, `TIMEOUT` and `TIMEOUT_REMOVE` among the opcodes `init` probes,
+and in a loop that waits often, one more enter about once per wait bound, when the timer fires
+before a later tick's deadline.
+
+Measured on 2026-09-27 with `post_uring` in `waiting` mode, the two loops of a ping-pong, 20,000
+round trips a run, five runs of each build alternating, counted as decision 20's wait timer was:
+the `orbstack` machine's kernel under QEMU, the plugin counting both threads between markers placed
+around the measured round trips in a copy of `rotor_post.zig` built for the count alone.
+Instructions per round trip, user and kernel together, median and range:
+
+| build | instructions per round trip |
+|---|---:|
+| before, `0d0634b` | 13,701 (13,689 to 13,711) |
+| with the wait timer | 12,888 (12,830 to 12,903) |
+
+The ranges do not overlap. The kernel's share fell by about 1,040, and user space rose by about 190,
+which is the tick reading the completion ring after each wait.
+
+The time was measured on `github`, an AMD EPYC 7763 under Azure with Linux 6.17, the same day:
+`post_uring` built at `5e376b2` and with the wait timer, fifteen alternating rounds
+(`bench/results/wait-timer-linux-github-2026-09-27.md`). Medians over the rounds, and the median of
+the paired differences:
+
+| measure | before | with the wait timer | change | rounds better |
+|---|---:|---:|---:|---:|
+| the answering loop's CPU per round trip | 15,818 ns | 13,131 ns | -16.1 percent | 15 of 15 |
+| messages per second | 63,959 | 76,920 | +20.3 percent | 15 of 15 |
+| p50 | 16,767 ns | 11,839 ns | -29.4 percent | 15 of 15 |
+| p99 | 18,559 ns | 19,071 ns | +2.8 percent | 1 of 15 |
+
+The time fell by more than the instructions did. Arming and cancelling an hrtimer on every wait
+reprograms the timer, and on a virtual machine that can cost more than its instructions. The p99
+rose a little in 14 rounds of 15: the timer, armed for the benchmark's 1 ms wait, fires about once a
+millisecond in each loop, and a round trip that meets a fire waits for it.
+
+Mutations, measured against `zig build test-uring` and against the `uring` test executable in the
+Linux gate:
+
+| mutation | caught by | result |
+|---|---|---|
+| the timer armed again on every wait | `uring`, Linux gate | CAUGHT |
+| no second wait after a timer that fired early | `uring`, Linux gate | CAUGHT |
+| the reap leaves the deadline set | `test-uring` | CAUGHT |
+| no timeout when the ring has no room for the timer | `uring`, Linux gate: the test hangs | CAUGHT |
+| no timeout when there is no room to arm it again | `uring`, Linux gate: the test hangs | CAUGHT |
+| no check that the deadline passed before arming again | `uring`, Linux gate: the assertion | CAUGHT |
+| a second wait whatever the ring holds | `uring`, Linux gate: the assertion | CAUGHT |
+| other completions counted as the timer's | `uring`, Linux gate: the assertion | CAUGHT |
+| a wake counted as the timer | `test-uring` | CAUGHT |
+| the timer armed with a relative time | `uring`, Linux gate: the test hangs | CAUGHT |
+| the timer moved with a relative time | `uring`, Linux gate: the test hangs | CAUGHT |
 
 ## Why stompy should depend on rotor
 

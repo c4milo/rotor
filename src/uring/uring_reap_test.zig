@@ -319,3 +319,16 @@ test "a stream receive's completion keeps every byte the kernel counted" {
     const event = fixture.complete(handle.to_bits(), counted, 0).?;
     try testing.expectEqual(@as(u32, @intCast(counted)), try event.outcome());
 }
+
+test "the wait timer's completions yield no event, and one that fired leaves it disarmed" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    fixture.loop.wait_timer_deadline_ns = 5;
+    // A move that worked, and one that came after the timer fired: neither is the timer firing.
+    const update = constants.user_data_wait_timer_update;
+    try testing.expectEqual(none, fixture.cancel_answer(update, null));
+    try testing.expectEqual(none, fixture.cancel_answer(update, .NOENT));
+    try testing.expectEqual(@as(u64, 5), fixture.loop.wait_timer_deadline_ns);
+    try testing.expectEqual(none, fixture.cancel_answer(constants.user_data_wait_timer, .TIME));
+    try testing.expectEqual(@as(u64, 0), fixture.loop.wait_timer_deadline_ns);
+}

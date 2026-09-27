@@ -37,8 +37,9 @@ pub const setup_flags: u32 = linux.IORING_SETUP_SINGLE_ISSUER | linux.IORING_SET
 const flags_need_enter: u32 = linux.IORING_SQ_TASKRUN | linux.IORING_SQ_CQ_OVERFLOW;
 
 /// `NODROP`: a full completion ring keeps completions and refuses submissions, and never drops
-/// one. `EXT_ARG`: a wait takes its timeout as an argument, so no timeout entry stays armed
-/// after the call (decision 6, kept from stompy).
+/// one. `EXT_ARG`: a wait that cannot arm the loop's wait timer takes its timeout as an argument.
+/// Decision 6 kept it from stompy so that no timeout entry stayed armed after the call; its
+/// amendment of 2026-09-27 keeps one, the wait timer, because a timeout costs every wait.
 pub const features_required: u32 = linux.IORING_FEAT_NODROP | linux.IORING_FEAT_EXT_ARG;
 
 /// Every opcode version one submits. `init` probes each, and `set_opcode` refuses at compile time
@@ -60,6 +61,8 @@ pub const opcodes_required = [_]linux.IORING_OP{
     .ASYNC_CANCEL,
     .MSG_RING,
     .NOP,
+    .TIMEOUT,
+    .TIMEOUT_REMOVE,
 };
 
 /// Sets the opcode of `sqe`. The backend sets every opcode it submits here, so an opcode that
@@ -79,6 +82,16 @@ fn is_required(comptime opcode: linux.IORING_OP) bool {
 
 /// The two counts `IORING_REGISTER_IOWQ_MAX_WORKERS` takes: bounded and unbounded workers.
 const worker_kinds = 2;
+
+/// How long an enter may block.
+const Wait = union(enum) {
+    /// Not at all.
+    none,
+    /// Until one completion is ready, or this many nanoseconds pass: the timeout as an argument.
+    bounded: u64,
+    /// Until one completion is ready, with no timeout.
+    until_completion,
+};
 
 pub const Entered = enum {
     /// The kernel took every submission entry.
@@ -156,13 +169,24 @@ pub const Ring = struct {
     /// wait passes. Makes no call at all when there is nothing to submit, nothing to wait for,
     /// and no completion work pending.
     pub fn enter(ring: *Ring, wait_ns: ?u64) EnterError!Entered {
+        return ring.enter_with(if (wait_ns) |nanoseconds| .{ .bounded = nanoseconds } else .none);
+    }
+
+    /// Submits what `get_sqe` handed out and blocks, with no timeout, until one completion is
+    /// ready. The loop's wait timer, armed in the same batch, is what ends a wait nothing else
+    /// ends (decision 6, amended 2026-09-27).
+    pub fn enter_until_completion(ring: *Ring) EnterError!Entered {
+        return ring.enter_with(.until_completion);
+    }
+
+    fn enter_with(ring: *Ring, wait: Wait) EnterError!Entered {
         const to_submit = ring.io.flush_sq();
-        if (to_submit == 0 and wait_ns == null and !ring.completions_wait_behind_an_enter()) {
+        if (to_submit == 0 and wait == .none and !ring.completions_wait_behind_an_enter()) {
             return .submitted;
         }
         var retry: u32 = 0;
         while (retry <= constants.enter_retries_max) : (retry += 1) {
-            return ring.enter_once(to_submit, wait_ns) catch |err| switch (err) {
+            return ring.enter_once(to_submit, wait) catch |err| switch (err) {
                 error.Interrupted => continue,
                 error.Unexpected => return error.Unexpected,
             };
@@ -176,7 +200,7 @@ pub const Ring = struct {
     fn enter_once(
         ring: *Ring,
         to_submit: u32,
-        wait_ns: ?u64,
+        wait: Wait,
     ) error{ Interrupted, Unexpected }!Entered {
         var timespec: linux.kernel_timespec = .{ .sec = 0, .nsec = 0 };
         var argument: linux.io_uring_getevents_arg = .{
@@ -189,15 +213,19 @@ pub const Ring = struct {
         var min_complete: u32 = 0;
         var argument_pointer: usize = 0;
         var argument_size: usize = 0;
-        if (wait_ns) |nanoseconds| {
-            assert(nanoseconds >= 1);
-            assert(nanoseconds <= core.constants.wait_ns_max);
-            timespec.sec = @intCast(nanoseconds / core.constants.ns_per_s);
-            timespec.nsec = @intCast(nanoseconds % core.constants.ns_per_s);
-            flags |= linux.IORING_ENTER_EXT_ARG;
-            min_complete = 1;
-            argument_pointer = @intFromPtr(&argument);
-            argument_size = @sizeOf(linux.io_uring_getevents_arg);
+        switch (wait) {
+            .none => {},
+            .until_completion => min_complete = 1,
+            .bounded => |nanoseconds| {
+                assert(nanoseconds >= 1);
+                assert(nanoseconds <= core.constants.wait_ns_max);
+                timespec.sec = @intCast(nanoseconds / core.constants.ns_per_s);
+                timespec.nsec = @intCast(nanoseconds % core.constants.ns_per_s);
+                flags |= linux.IORING_ENTER_EXT_ARG;
+                min_complete = 1;
+                argument_pointer = @intFromPtr(&argument);
+                argument_size = @sizeOf(linux.io_uring_getevents_arg);
+            },
         }
         const fd: usize = @bitCast(@as(isize, ring.io.fd));
         const rc = linux.syscall6(

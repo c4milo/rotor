@@ -262,8 +262,9 @@ Alternatives:
 - **A longer wait bound.** A 10 s timeout costs what a 1 ms one does, above.
 - **Arming the timer on every wait.** It costs what the timeout costs, above.
 
-The epoll backend took this design on 2026-09-26 with a timerfd (decision 20, "The wait timer"). The
-io_uring backend does not change.
+The epoll backend took this design on 2026-09-26 with a timerfd (decision 20, "The wait timer"), and
+the io_uring backend on 2026-09-27 with one armed `IORING_OP_TIMEOUT` (decision 6, "The wait
+timer").
 
 **Amended the same day: the tick reads `CLOCK_MONOTONIC_RAW`.** `CLOCK_MONOTONIC` on macOS counts in
 1,000 ns steps and costs 20.1 ns a read; `CLOCK_MONOTONIC_RAW` counts in 41 ns steps and costs 14.5

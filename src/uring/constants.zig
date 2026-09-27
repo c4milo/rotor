@@ -33,6 +33,20 @@ pub const user_data_wake: u64 = 3;
 /// reap notes that it completed, so the next flush queues it again, and turns it into no event.
 pub const user_data_group_wake: u64 = 4;
 
+/// The `user_data` of the loop's wait timer: one `IORING_OP_TIMEOUT` that bounds a tick's wait, so
+/// the enter that waits carries no timeout (decision 6, amended 2026-09-27). The reap turns its
+/// completion into no event, and notes that the timer is no longer armed.
+pub const user_data_wait_timer: u64 = 5;
+
+/// The `user_data` of the entry that moves the wait timer earlier (`TIMEOUT_REMOVE` with
+/// `IORING_TIMEOUT_UPDATE`). Its completion is consumed like `user_data_cancel`.
+pub const user_data_wait_timer_update: u64 = 6;
+
+/// The most times one tick arms its wait timer again after it fired, or moved, before the tick's
+/// own deadline: kqueue's `wait_timer_rearms_max`, for the same reason. A tick that uses them all
+/// hands over no event.
+pub const wait_timer_rearms_max: u32 = 4;
+
 /// Submission entries the ring a `Remote` creates holds: it submits only wakes, one at a time, in
 /// an enter of its own, so one is enough, and the kernel's completion ring of two holds the answers
 /// the next wake drops before it is submitted.
@@ -59,4 +73,9 @@ comptime {
     assert(user_data_group_wake != user_data_wake);
     assert(user_data_group_wake != user_data_cancel);
     assert(user_data_group_wake != user_data_close_cancel);
+    assert(user_data_wait_timer >> 32 == 0);
+    assert(user_data_wait_timer_update >> 32 == 0);
+    assert(user_data_wait_timer > user_data_group_wake);
+    assert(user_data_wait_timer_update > user_data_wait_timer);
+    assert(wait_timer_rearms_max >= 1);
 }

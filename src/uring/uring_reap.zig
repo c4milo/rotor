@@ -76,9 +76,12 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
 }
 
 /// A completion of an entry the backend submitted for itself, which yields no event. The read of a
-/// group's eventfd is noted, so the next flush queues it again (decision 21, point 3).
+/// group's eventfd is noted, so the next flush queues it again (decision 21, point 3), and so is the
+/// wait timer's (decision 6, amended 2026-09-27).
 fn own(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     if (cqe.user_data == constants.user_data_group_wake) group_wake.completed(loop, cqe.res);
+    // The wait timer fired, or was cancelled with the ring: either way it is no longer armed.
+    if (cqe.user_data == constants.user_data_wait_timer) loop.wait_timer_deadline_ns = 0;
     return null;
 }
 

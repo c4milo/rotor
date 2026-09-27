@@ -227,6 +227,42 @@ pub fn prepare_wake(sqe: *linux.io_uring_sqe, target_ring: core.Descriptor) void
     sqe.user_data = constants.user_data_wake;
 }
 
+/// Makes `sqe` arm the loop's wait timer (decision 6, amended 2026-09-27): a timeout that fires once
+/// at the absolute time `timespec` holds, on `CLOCK_MONOTONIC`, the clock the tick reads. Absolute,
+/// so an entry that waits in the submission ring past its tick still fires at its deadline. The
+/// kernel reads `timespec` when it takes the entry. The timer's completion, ETIME, carries
+/// `constants.user_data_wait_timer`, and the reap drops it.
+pub fn prepare_wait_timer(sqe: *linux.io_uring_sqe, timespec: *const linux.kernel_timespec) void {
+    assert(timespec.sec >= 0 and timespec.nsec >= 0);
+    sqe.* = std.mem.zeroes(linux.io_uring_sqe);
+    ring_module.set_opcode(sqe, .TIMEOUT);
+    sqe.fd = -1;
+    sqe.addr = @intFromPtr(timespec);
+    sqe.len = 1;
+    // A count of 0: the timeout waits for no completions, only for its time.
+    sqe.off = 0;
+    sqe.rw_flags = linux.IORING_TIMEOUT_ABS;
+    sqe.user_data = constants.user_data_wait_timer;
+}
+
+/// Makes `sqe` move the armed wait timer to the absolute time `timespec` holds. Its completion
+/// carries `constants.user_data_wait_timer_update`: 0 when the timer moved, and ENOENT when it had
+/// fired already, whose own completion then follows. The reap drops both.
+pub fn prepare_wait_timer_update(
+    sqe: *linux.io_uring_sqe,
+    timespec: *const linux.kernel_timespec,
+) void {
+    assert(timespec.sec >= 0 and timespec.nsec >= 0);
+    sqe.* = std.mem.zeroes(linux.io_uring_sqe);
+    ring_module.set_opcode(sqe, .TIMEOUT_REMOVE);
+    sqe.fd = -1;
+    sqe.addr = constants.user_data_wait_timer;
+    // The kernel's `addr2`, where the new time is, shares `off`.
+    sqe.off = @intFromPtr(timespec);
+    sqe.rw_flags = linux.IORING_TIMEOUT_UPDATE | linux.IORING_TIMEOUT_ABS;
+    sqe.user_data = constants.user_data_wait_timer_update;
+}
+
 /// The entry that asks the kernel to cancel the operation whose `user_data` is `target`. The
 /// backend consumes its completion: the target's final event is the answer (decision 5, rule 2).
 pub fn prepare_cancel(sqe: *linux.io_uring_sqe, target: u64) void {
