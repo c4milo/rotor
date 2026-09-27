@@ -1,7 +1,9 @@
 # 22. A std.Io adapter
 
 Status: **accepted** on 2026-09-27 by Camilo, to be built on two conditions: it keeps rotor's
-performance, and its API follows rotor's own primitives (open question 1). Proposed on 2026-09-26. Decision 1 chose a completion-based core with a
+performance, and its API follows rotor's own primitives (open question 1). **Deferred** the same
+day: nothing is started, the fiber switch's measurement included, until Camilo asks for it.
+Proposed on 2026-09-26. Decision 1 chose a completion-based core with a
 `std.Io` adapter over it, and decision 2 left the adapter out of version one: "deferred, not
 refused". Version one is built, and on 2026-09-26 Camilo asked whether rotor can be offered through
 the `std.Io` interface. This record says what the adapter would be, what it would cost, and what

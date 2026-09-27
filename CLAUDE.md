@@ -381,7 +381,7 @@ memory, and it was built the same day; crossing a process measured as costing a 
 `mac`, `orbstack` and `github`. Every other decision record
 has code,
 except three: decision 16, which Camilo declined on 2026-09-24; decision 22, which he accepted on
-2026-09-27 on two conditions, and which is not built yet; and decision 17, which is proposed
+2026-09-27 on two conditions and deferred the same day; and decision 17, which is proposed
 and names a component this repository does not hold. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
