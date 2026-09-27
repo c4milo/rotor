@@ -320,9 +320,42 @@ the paired differences:
 | p50 | 15,935 ns | 12,159 ns | -23.7 percent | 15 of 15 |
 | p99 | 18,047 ns | 18,431 ns | +2.1 percent | 0 of 15 |
 
-The time fell by more than the instructions did, as it did for io_uring (decision 6, "The wait
-timer"). The p99 rose a little in every round: the timer, armed for the benchmark's 1 ms wait, fires
-about once a millisecond in each loop, and a round trip that meets a fire waits for it.
+**Corrected on 2026-09-27: most of that gain is not the wait timer's own.** Two more runs the same
+day ask why the time fell by more than the instructions did
+(`bench/results/wait-timer-linux-github-2026-09-27-wait.md` and
+`bench/results/wait-timer-linux-github-2026-09-27-ticker.md`). Each cell is the median of the paired
+differences against the tree before the change, in `post_epoll`:
+
+| run | wait | CPU per round trip | messages per second | p50 | p99 |
+|---|---:|---:|---:|---:|---:|
+| EPYC 7763, above | 1 ms | -19.9% | +24.6% | -23.7% | +2.1% |
+| EPYC 7763, again | 1 ms | -24.0% | +28.5% | -27.4% | +2.0% |
+| EPYC 7763, same run | 10 ms | -3.7% | +1.2% | -1.1% | -2.0% |
+| Xeon Platinum 8573C | 1 ms | -21.6% | +24.4% | -12.0% | -2.2% |
+| Xeon Platinum 8573C, the tree before the change beside a 1 ms ticker | 1 ms | -16.6% | +17.9% | -10.7% | +55.2% |
+
+- The tree before the change measures the same at either wait. The wait timer is ahead by far more
+  at a 1 ms wait than at 10 ms, and a saving from leaving the timeout out of every wait would be the
+  same at both. So the part of the gain that is this change's own is the 10 ms row: about 4 percent
+  of the answering loop's CPU per round trip.
+- The rest comes from something that wakes each core about once a millisecond. At a 1 ms wait the
+  timer left in place fires that often in each loop. The last row is the tree before the change,
+  unchanged, run beside a helper whose two threads, on the benchmark's two cores, only sleep 1 ms at
+  a time: it takes 16.6 points of 21.6 of the wait timer's gain in CPU on the same machine. Why
+  periodic wakeups help is not measured. One explanation, not tested: a core with a timer due within
+  its 1 ms tick keeps the tick running while it idles, where a core with nothing due stops the tick
+  and starts it again, and on a virtual machine each is a timer write the hypervisor traps.
+- The p99 moved with the processor: above the tree before the change on the EPYC 7763, below it on
+  the Xeon. The ticker's own p99 is its threads taking the benchmark's cores from it.
+
+So the saving this record claims for the wait timer is the 10 ms row, measured on `github`. An
+earlier version of this section explained the difference as the cost of reprogramming the timer on a
+virtual machine; these runs do not show that.
+
+Tried the same day and dropped: moving a busy loop's timer out before it fires, so that it would not
+fire while the loop waits. It removed the wakeups that were helping: against the timer left in
+place, on the Xeon, it raised CPU per round trip 13.6 percent and cut the rate 12.9 percent, for a
+p99 5.3 percent lower.
 
 Mutations, measured against `zig build test-epoll`, against the `epoll` test executable in the Linux
 gate, and against the Linux gate's halt check for the two bounds of `Queue.arm_wait_timer`:
