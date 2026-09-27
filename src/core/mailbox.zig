@@ -56,6 +56,10 @@
 //!   M1 Pro the handshake test of `kqueue/kqueue_mailbox_test.zig` loses a wake when any one of
 //!   the four is weakened to a different instruction. A `.release` store of `tail` is the
 //!   instruction a `.seq_cst` store is, STLR, so there the argument is the only evidence.
+//! - `spec/tla/wake/Wake.tla` models the handshake, with the offload's flag of decision 18 and a
+//!   flush's one wake per receiver, and TLC checks it with `zig build tla`: no receiver blocks on
+//!   a message with no wake on its way. Its mutants break one step each, and TLC finds the lost
+//!   wake in every one, including the two orders a weaker ordering would allow.
 //! - `end_sleep` stores `sleeping` with `.seq_cst` too, so every access to the flag has a place
 //!   in the one order and the argument needs no case for a weaker store. A producer that still
 //!   sees the flag set wakes a consumer that is awake: wasted, harmless. It runs once per

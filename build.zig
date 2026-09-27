@@ -11,6 +11,9 @@
 //! the scenarios only Linux can prove, for Linux under zig-out/linux/, and runs none of them;
 //! tools/linux_test.sh runs them in Docker (build/linux.zig).
 //!
+//! `zig build tla` checks the TLA+ models under spec/tla/ with TLC, and `zig build proofs` the Lean
+//! proofs; each needs a toolchain `zig build test` does not (build/tla.zig, build/proofs.zig).
+//!
 //! The library has no dependencies. The tools take one: pepegrillo, a lazy package in
 //! build.zig.zon that only the root build requests, so a project depending on rotor never fetches
 //! it. The module graph is build/modules.zig.
@@ -24,6 +27,7 @@ const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
 const race = @import("build/race.zig");
 const proofs = @import("build/proofs.zig");
+const tla = @import("build/tla.zig");
 const examples = @import("build/examples.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
@@ -157,6 +161,10 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(race.add(b).compile);
     bench_linux.add(b);
     proofs.add(b);
+    test_step.dependOn(tla.add(b, b.addExecutable(.{
+        .name = "tla",
+        .root_module = tool_module(b, pepegrillo, "tools/tla.zig"),
+    })));
 
     test_step.dependOn(add_hook_check_step(b, pepegrillo_dependency));
     add_commit_lint_step(b, pepegrillo, install_step);

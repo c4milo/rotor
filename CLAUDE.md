@@ -202,6 +202,9 @@ was about to push.
   rule implementations come from pepegrillo, a lazy package in `build.zig.zon`; `tools/` holds
   rotor's configuration of each rule.
 - `proofs/` holds the Lean proofs, a Lake project outside the Zig build's module graph.
+- `spec/tla/` holds the TLA+ models, one directory a model, which TLC checks through
+  `tools/tla.zig`. A configuration under a model's `mutants/` breaks the model on purpose and must
+  fail.
 - `examples/` holds complete programs that import the public module as a dependent package does,
   and `examples/consumer/`, a project of its own whose `build.zig` holds the README's lines.
   `zig build test` runs each program, against its checker in `tools/` when it has one
@@ -280,14 +283,20 @@ was about to push.
   timer lifecycle. It needs the Lean toolchain `proofs/lean-toolchain` names, which `elan`
   installs, so it is a step of its own and not part of `zig build test`. A change to a function a
   model mirrors changes the model in the same commit; `proofs/README.md` lists the models.
+- Models: `zig build tla` — TLC over every configuration under `spec/tla/`, through pepegrillo's
+  `tla` tool. `spec/tla/wake/` models the sleep handshake of decision 12, point 6, and decision 18:
+  its configurations must hold, and each mutant, which breaks one step of the handshake, must fail.
+  It needs Java 11 or newer, and fetches the TLC release `tools/tla.zig` pins, checked against its
+  SHA-256, so it is a step of its own and not part of `zig build test`, which only compiles the
+  tool. A change to the handshake changes the model in the same commit.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
-  request. Six jobs, each the command a developer runs by hand: `zig build test` on macOS, the
-  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` on Ubuntu, the call gate
-  on Ubuntu, and `zig build lint-commits` on a pull request. The x86-64 comparison against libuv
-  and libxev, held to `bench/baseline/echo.txt`, runs every night at 06:17 UTC and when started by
-  hand; the cost probes run only by hand. Zig is downloaded from ziglang.org
-  and Lean from its GitHub release, each checked against a pinned SHA-256; no third-party action
-  runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
+  request. Seven jobs, each the command a developer runs by hand: `zig build test` on macOS, the
+  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` and `zig build tla` on
+  Ubuntu, the call gate on Ubuntu, and `zig build lint-commits` on a pull request. The x86-64
+  comparison against libuv and libxev, held to `bench/baseline/echo.txt`, runs every night at
+  06:17 UTC and when started by hand; the cost probes run only by hand. Zig is downloaded from
+  ziglang.org, Lean from its GitHub release and TLC from the tlaplus release, each checked against
+  a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.
 - Call gate: the kernel calls rotor's echo servers make per echo, held to
   `bench/baseline/calls.txt`. On a Linux host: `zig build bench-echo`, then three rounds of

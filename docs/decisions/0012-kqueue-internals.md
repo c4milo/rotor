@@ -129,6 +129,28 @@ Decision 4 settled the shape. The details:
 These rings are the one place in rotor where two threads touch the same memory. They are tested
 with two real threads under load, not only by the conformance suite's single message.
 
+**Added on 2026-09-26: the sleep handshake is modelled.** A test with two threads shows the
+interleavings that ran, and the race gate the same. `spec/tla/wake/Wake.tla` models one receiver,
+the loops that post to it, and its offload's workers, and TLC checks every interleaving of a small
+configuration (`zig build tla`, and a job of its own in CI). Two properties hold: the receiver never
+blocks with a message in a ring and no wake on its way, and every message is handed over in the
+end. Each mutant breaks one step, and TLC must find a lost wake in it:
+
+| mutant | step broken |
+|---|---|
+| `skip_recheck` | the receiver blocks without reading the rings after it sets its flag |
+| `flag_after_recheck` | the receiver's flag is seen after it reads the rings |
+| `sender_reads_first` | a sender reads the flag before its push is seen |
+| `clear_before_wait` | the receiver clears its flag before it blocks |
+| `no_offload_flag` | the receiver never sets the flag its workers read |
+| `flush_sends_no_wake` | a flush notes the receiver and sends no wake |
+| `never_delivered` | the same, checked against the second property alone |
+
+The second and third are what a store waiting in a store buffer past a later load would allow,
+which is why the four accesses of `src/core/mailbox.zig`'s argument are `.seq_cst`. The model
+assumes that ordering and does not prove the code has it. The AArch64 test of that file is the
+evidence for the code.
+
 **Amended on 2026-09-22: a polling tick carries the loop's own wake trigger.** On macOS 26.6.2 a
 `kevent` that finds nothing ready parks the thread through the scheduler even with a zero timeout:
 12 µs, measured on the `mac` machine, against 444 ns for a call that finds one event ready. `poll()`
