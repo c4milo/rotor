@@ -239,6 +239,8 @@ that side is a thread or a process.
    without `exec` inherits the wakes regardless. A member started with `exec` needs them kept open,
    which the application does in its spawn. Proposed: rotor creates the group's wakes without
    `FD_CLOEXEC`, since inheritance is what they are for, and says so where `init` is documented.
+   **Answered on 2026-09-27: yes, as proposed.** Only the group's wakes skip close-on-exec, so
+   nothing else is inherited by accident.
 
 ## Built, 2026-09-25
 

@@ -67,3 +67,5 @@ the opposite of what both trees are for.
    hq-interop server runs chapulin's QUIC mode over one rotor socket (`src/testing/quic_udp.zig`
    in colibri). So chapulin's server role now runs under rotor's loop over QUIC. Its TCP role
    does not yet, and that harness would also live in colibri's tree or chapulin's, not in rotor.
+   **Closed on 2026-09-27.** Decision 16 is declined, and what is left of this harness belongs to
+   colibri.

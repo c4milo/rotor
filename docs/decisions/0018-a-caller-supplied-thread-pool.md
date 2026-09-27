@@ -196,6 +196,10 @@ Done on 2026-09-21, except the last:
    hand work out and one the worker calls when it is done, so rotor names no thread type and no
    pool. The alternative is for rotor to define a queue the caller drains, which moves the
    wake-up problem to the caller and is worth comparing before either is built.
+   **Answered on 2026-09-27: the caller's context and functions, as proposed.** The loop hands work
+   out through the caller's function, and a worker hands its result back through a ring the loop
+   drains, so rotor names no thread type and no pool. It measured level with libuv's pool on the
+   file rows (`bench/alternatives/README.md`).
 2. **Does an offloaded operation keep its cancellation semantics?** **Built to the proposed answer
    on 2026-09-21.** Decision 5 says every operation ends with exactly one final event. A `pread`
    already running on a worker cannot be cancelled, so a cancel means "end it when it returns" and
@@ -203,10 +207,13 @@ Done on 2026-09-21, except the last:
    whose result is what the event carries. That is what `0005-cancellation.md` already says for an
    operation the kernel owns. A conformance scenario holds a worker, cancels, releases it, and
    requires exactly one event.
+   **Answered on 2026-09-27: yes, as built.** A cancel means "end it when it returns", as decision 5
+   says for an operation the kernel owns.
 3. **Does the file policy belong on the loop or on the operation?** Proposed: the loop, once at
    init, because a consumer that wants both shapes can run two loops and decision 4 already says
    a loop belongs to one thread. Per-operation would let one connection stall the loop while
    another does not, which is harder to reason about and no consumer has asked for.
+   **Answered on 2026-09-27: the loop, as proposed.**
 4. **When is this built?** **Overtaken by Camilo on 2026-09-21**, who brought it forward: the
    comparison's file rows set a rotor with no pool against a libuv with four threads, which measures
    the pool and not the loops, and milestone 4's own rule is that a comparison matches what each

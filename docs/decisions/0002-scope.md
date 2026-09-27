@@ -168,3 +168,6 @@ union.
 
 1. Is Linux 6.1 acceptable as the floor? The machine named in `docs/costs.md` decides.
 2. Is inline blocking file I/O on macOS acceptable, given that macOS is development only?
+   **Closed on 2026-09-27.** Both premises changed: this record's amendment of 2026-09-22 made macOS
+   a production platform, and decision 18 made inline blocking file I/O the `blocking` policy a
+   caller names, with `refuse` the default.

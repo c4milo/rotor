@@ -389,4 +389,9 @@ from `dcc95fb` or `57dbc22`; "after" is `1ccbd4e`, with epoll on the same runner
 ## Open questions for review
 
 1. Is "reads need no owner" acceptable, or does stompy want the stricter rule as a guard?
+   **Answered on 2026-09-27: acceptable, as proposed.** rotor cannot know which writes conflict, and
+   sending every read through one owner would add a cross-core message to each read from another
+   core.
 2. Should `Remote` be in version one, or is "only loops post" enough for the first consumers?
+   **Answered on 2026-09-27: in version one.** `Remote` was built on 2026-09-22 on Camilo's
+   instruction (decision 17, question 5), and the public module exports it.

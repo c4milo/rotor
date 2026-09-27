@@ -359,6 +359,7 @@ The implementation follows the proposed answer to each until Camilo rules.
 
 1. Does a datagram group get a new `provide_datagram_buffers`, leaving `provide_buffers` and its
    callers untouched? **Proposed: yes.**
+   **Answered on 2026-09-27: yes, as proposed.** No stream caller gained a precondition.
 2. Is the control reserve chosen per group at registration, rather than by one global constant?
    **Proposed: yes.** **Answered on 2026-09-26: one shape per loop.** Camilo ruled it after the
    open questions were read against the code. The reserve is chosen at registration, as proposed,
@@ -373,17 +374,25 @@ The implementation follows the proposed answer to each until Camilo rules.
    path MTU discovery, and `EMSGSIZE` maps to `unexpected` today either way.**
 4. Does `send_to` refuse a zero-length datagram, as `assert_transfer` refuses every zero-length
    transfer today? **Proposed: yes, and the record notes QUIC never sends one.**
+   **Answered on 2026-09-27: yes, as proposed.** `tools/halt/core_scenarios.zig` holds it: a
+   `send_to` of no bytes halts.
 5. Is it accepted that a datagram spends a whole provided buffer, so a burst of small datagrams
    can empty a group sized for coalescing and end a multishot receive with `buffers_exhausted`?
    **Proposed: yes, until a record raises the floor for incremental buffer consumption, which is
    recalled as above Linux 6.1.**
+   **Answered on 2026-09-27: yes, as proposed.** A caller sizes the group for its datagrams and
+   submits the receive again on `buffers_exhausted`.
 6. `Event.Code` gains `message_too_long` and `unsupported`, appended so no published value moves.
    **Proposed: yes.**
+   **Answered on 2026-09-27: yes, as proposed.** Appending kept every published value's meaning.
 7. Does the kqueue drain loop named above belong to this record or a later one? **Proposed: a
    later one, because it changes the TCP path too and has no measurement behind it yet.**
+   **Closed on 2026-09-27.** The drain loop was done later, as proposed, and decision 12 records it.
 8. Two files must be split before this is written: `uring_sync.zig` is at 498 lines of 500 and
    `kqueue_sync_socket.zig` would cross it. Are those splits their own commits? **Proposed: yes,
    landed first and separately.**
+   **Closed on 2026-09-27.** The splits were done in the proposed order.
 9. Is it accepted that no cell of `docs/costs.md` is filled until this lands, because the paths it
    touches are the paths that table measures? **Proposed: yes, which is the order Camilo
    already gave: finish the implementation, then benchmark.**
+   **Closed on 2026-09-27.** It was done in the proposed order.

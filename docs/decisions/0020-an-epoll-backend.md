@@ -382,14 +382,19 @@ Each has a proposed answer, and the implementation follows it until Camilo rules
    than every deadline rotor accepts; the second takes a `timespec` and arrived in Linux 5.11, below
    decision 2's floor of 6.1. *Proposed: `epoll_pwait2`, and `Unsupported` at init on a kernel
    without it, matching how `uring_ring.zig` refuses a kernel missing a flag it needs.*
+   **Answered on 2026-09-27: `epoll_pwait2`, as proposed.**
 2. **Level or edge triggered?** *Proposed: level triggered. Edge triggering requires draining until
    EAGAIN, which turns one transfer into several syscalls and makes a short read indistinguishable
-   from an empty socket. Level triggering costs a re-arm that level triggering does not need.*
+   from an empty socket. Level triggering costs a re-arm that edge triggering does not need.*
+   **Answered on 2026-09-27: level triggered, as proposed.** The measurement of 2026-09-23 under "A
+   readiness serves one operation per direction" supports it.
 3. **Does `post` between two epoll loops share the mailbox rings?** *Proposed: yes, unchanged from
    decision 4. The rings are `core`'s and the wake is the only backend-specific part, so an eventfd
    write replaces the `EVFILT_USER` trigger and nothing else moves.*
+   **Answered on 2026-09-27: yes, as proposed.** Every backend now posts through the mailbox rings.
 4. **Does the comparison gain an epoll row?** *Proposed: no. There is no speed claim to make, and a
    row invites one. A person who wants the number runs the harness by hand.*
+   **Answered on 2026-09-27: no, as proposed.**
 5. **How does a caller get this backend?** Two shapes were put to Camilo: a build option that
    makes the public module wrap `epoll` on Linux, and a fallback at `init` that tries io_uring and
    runs epoll when the kernel refuses it. **Camilo ruled on 2026-09-22: the fallback at init.**

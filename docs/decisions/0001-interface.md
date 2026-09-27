@@ -162,4 +162,8 @@ cache lines of 64 bytes read in order. The callback helper remains for callers t
 
 1. Is a loop-owned slot table acceptable for stompy's journal, which today embeds its
    completions in its own structures?
+   **Answered on 2026-09-27: acceptable, as the record proposes.** The whole surface is built on the
+   slot table: `Handle`, and decision 5's rule for a stale handle. The journal keeps its own state
+   per operation in an array indexed by the slot's index.
 2. Should the adapter be promised at all before the harness shows what a fiber switch costs?
+   **Closed on 2026-09-27.** Decision 22, question 1, asks it again, with a gate to decide by.

@@ -230,5 +230,8 @@ and changing them later means changing every call site twice.
    boundary. rotor proposes no fault code in real backends. Either stompy's harness keeps a
    small wrapper that refuses operations above rotor, or rotor carries a Debug-only fault hook
    as stompy does. The wrapper is proposed, because it keeps the production path clean.
+   **Answered on 2026-09-27: the wrapper, as proposed.** The real backends carry no fault code,
+   which decision 10 already assumes. The wrapper is stompy's to write when it moves onto rotor.
 2. Should rotor's simulator own the op clock alone, or should it accept stompy's scheduler as
    the owner, so that one clock drives disk, sockets and stompy's message network together?
+   **Closed on 2026-09-27.** rotor carries no simulator (decision 10), so it owns no clock to share.

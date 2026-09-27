@@ -177,5 +177,9 @@ final `buffers_exhausted` on every backend. CLAUDE.md's non-negotiable 5 and the
 
 1. Should `cancel` of a stale handle be legal, as proposed, or a programmer error that halts?
    Legal is proposed because the caller cannot avoid the race.
+   **Answered on 2026-09-27: legal, as proposed.** The caller cannot avoid the race, so halting on
+   it would halt a correct program.
 2. Is a transfer's partial byte count on timeout what stompy's callers want, or do they want
    the whole operation failed? The kernel reports the bytes either way.
+   **Answered on 2026-09-27: the byte count, as proposed.** The peer or the disk has seen those
+   bytes already, and a caller that wants all or nothing can treat a short count as a failure.

@@ -208,6 +208,7 @@ it describes (CLAUDE.md).
    `nsswitch.conf`, macOS split-horizon DNS, `.local`, `ndots` and source-port randomization are
    each a way to resolve differently from the rest of the machine. Whichever it is, the answer
    reaches the loop by one of the three routes named in "The gap" above.
+   **Closed on 2026-09-27.** Question 5 of this record answers it.
 5. **Should `Remote` be built, or should decision 4 drop it?** **Answered on 2026-09-20: built.**
    Still owed on 2026-09-21: `0018-a-caller-supplied-thread-pool.md` was built that day and needed
    less than `Remote` — a worker hands back one operation's result through a function pointer and a
