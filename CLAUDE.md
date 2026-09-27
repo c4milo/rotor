@@ -412,7 +412,8 @@ quarter of both; and the cross-core row, rotor's loss by four times, was a 12 µ
 every polling `kevent`, removed the same day (decision 12, point 6): rotor posts in 2.0 µs there
 against libuv's 1.5. On 2026-09-25 a polling tick with nothing to ask the kernel stopped making its
 call, and on a quieter `mac` rotor's cross-core rate rose 17.9 percent, past libxev and 16 percent
-behind libuv (decision 12, point 6). The load
+behind libuv (decision 12, point 6). On 2026-09-26 a tick that blocks stopped carrying a timeout, and
+on 2026-09-27 the rate rose 5.2 percent more, 10 percent behind libuv (decision 12, point 7). The load
 mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.

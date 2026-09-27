@@ -247,7 +247,12 @@ What it costs: 8 bytes in `Loop`, and in a loop that waits often, one more `keve
 per wait bound, when a timer fires before a later tick's deadline. `rotor_post` in `waiting` mode,
 two loops of a ping-pong, counted 37,631 and 37,788 instructions per round trip before the change
 and 35,550 and 35,902 after, in two sets of ten alternating runs on `mac` on 2026-09-26. The
-machine's load average was 12 to 20, so no rate is claimed here; the rate is taken on a quiet `mac`.
+machine's load average was 12 to 20, so no rate is claimed there. The rate was taken on 2026-09-27,
+once the load had stayed under 1.5: six alternating rounds of each build, every row still marked for
+other work (`bench/results/crosscore-kqueue-wait-timer-mac-2026-09-27.md`). rotor's cross-core rate
+rose 5.2 percent, from 481,174 to 506,099 messages per second, and its p50 fell from 2,007 to 1,503 ns;
+libuv and libxev, which the change does not reach, moved -0.2 and 0.5 percent. rotor is 10 percent
+behind libuv and 9 percent ahead of libxev on this workload.
 
 Alternatives:
 

@@ -995,6 +995,21 @@ On 2026-09-25 a polling tick that has nothing to ask the kernel stopped making i
 rotor gained 17.9 percent where libuv and libxev, which the change does not reach, moved 1.6 and 1.8.
 rotor now passes libxev here and is 16 percent behind libuv.
 
+On 2026-09-26 a tick that blocks stopped carrying a timeout, and an `EVFILT_TIMER` armed about once
+per wait bound bounds it instead (decision 12, point 7). Six alternating rounds of each build on
+2026-09-27, once the machine's load had stayed under 1.5, every row still marked for other work
+(`bench/results/crosscore-kqueue-wait-timer-mac-2026-09-27.md`):
+
+| candidate | messages per second, before | messages per second, after | p50 ns, after | p99 ns, after |
+|---|---:|---:|---:|---:|
+| rotor | 481,174 | 506,099 | 1,503 | 4,511 |
+| libuv | 565,156 | 564,101 | 1,500 | 4,000 |
+| libxev | 461,541 | 463,733 | 2,007 | 5,023 |
+
+rotor gained 5.2 percent, and the ranges of its rounds do not overlap, where libuv and libxev moved
+-0.2 and 0.5 percent. rotor's p50 went from 2,007 to 1,503 ns. rotor is now 10 percent behind libuv
+and 9 percent ahead of libxev here, so the parity bar of decision 2 is still not met.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is

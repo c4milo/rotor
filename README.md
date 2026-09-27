@@ -168,8 +168,8 @@ Other workloads:
 
 rotor's timers keep their full rate on both machines. At 4,096 timers, libxev's fires are closer to
 their deadlines than rotor's on macOS, and further from them on the EPYC 7763. On the cross-core
-message on macOS, rotor was slower than libuv in every round of the latest run, and level with
-libxev. On the EPYC 7763 the three have about the same median latency.
+message on macOS, rotor was slower than libuv in every round of the latest run, by about 10 percent,
+and faster than libxev in every round. On the EPYC 7763 the three have about the same median latency.
 [`docs/benchmarks.md`](docs/benchmarks.md) has the full tables, with latency, memory, the machines,
 and the commands to take every number again.
 

@@ -195,25 +195,28 @@ Two loops on two cores send a message back and forth, each waiting in its tick f
 One message is half a round trip. rotor's message carries a 16-byte payload; libuv's and libxev's
 carry none.
 
-### `mac`, kqueue, 2026-09-25
+### `mac`, kqueue, 2026-09-27
 
-[run](../bench/results/crosscore-kqueue-skip-poll-mac-2026-09-25.md)
+[run](../bench/results/crosscore-kqueue-wait-timer-mac-2026-09-27.md)
 
-Six rounds of five runs each. A row is the median of the six rounds' medians, and its spread is
-taken across those six medians. Every round was marked **OTHER WORK**, and in 9 of the 18 round
-rows the runs disagreed by 10 percent or more, so this table decides nothing on its own. rotor was
-slower than libuv in all six rounds, and faster than libxev in five.
+Six rounds of five runs each, of the build with the wait timer of decision 12, point 7. A row is
+the median of the six rounds' medians, and its spread is taken across those six medians. Every round
+was marked **OTHER WORK**, and in 6 of the 18 round rows the runs disagreed by 10 percent or more,
+so this table decides nothing on its own. rotor was slower than libuv in all six rounds, and faster
+than libxev in all six.
 
 | candidate | messages per second | p50 ns | p99 ns | spread across rounds % |
 |---|---:|---:|---:|---:|
-| rotor | 474,017 | 2,007 | 5,023 | 2 |
-| libuv | 562,818 | 1,500 | 4,500 | 6 |
-| libxev | 465,845 | 2,007 | 5,263 | 5 |
+| rotor | 506,099 | 1,503 | 4,511 | 6 |
+| libuv | 564,101 | 1,500 | 4,000 | 8 |
+| libxev | 463,733 | 2,007 | 5,023 | 3 |
 
-The earlier run of 2026-09-22 is
-[`crosscore-mac-2026-09-22-after.md`](../bench/results/crosscore-mac-2026-09-22-after.md). Between
-the two, a polling tick with nothing to ask the kernel stopped making its `kevent` call (decision
-12, point 6).
+The earlier runs are
+[`crosscore-mac-2026-09-22-after.md`](../bench/results/crosscore-mac-2026-09-22-after.md) and
+[`crosscore-kqueue-skip-poll-mac-2026-09-25.md`](../bench/results/crosscore-kqueue-skip-poll-mac-2026-09-25.md).
+Between the first two, a polling tick with nothing to ask the kernel stopped making its `kevent`
+call (decision 12, point 6). Between the last two, a tick that blocks stopped carrying a timeout
+(decision 12, point 7).
 
 ### `github` on an AMD EPYC 7763, io_uring, 2026-09-22
 
