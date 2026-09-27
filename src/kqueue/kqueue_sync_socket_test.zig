@@ -28,6 +28,7 @@ const listen_error = socket_calls.listen_error;
 const socket_call_error = socket_calls.socket_call_error;
 const open_datagram = socket_calls.open_datagram;
 const set_buffer_bytes = socket_calls.set_buffer_bytes;
+const datagram_options = @import("kqueue_datagram.zig");
 const socket_buffer_bytes_max = socket_calls.socket_buffer_bytes_max;
 
 const testing = std.testing;
@@ -363,4 +364,40 @@ fn read_buffer_bytes(descriptor: Descriptor, which: socket_calls.SocketBuffer) !
     try testing.expectEqual(E.SUCCESS, posix.errno(rc));
     try testing.expect(value >= 0);
     return @intCast(value);
+}
+
+test "a datagram socket asks the kernel not to fragment, unless told otherwise" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    // `IP_DONTFRAG` and `IPV6_DONTFRAG`: an oversized datagram ends with `message_too_long` rather
+    // than leaving in pieces (decision 15, question 3). The open ignores a refusal, so a wrong
+    // option number would pass unseen; the kernel is asked what it holds.
+    const ipv4 = try open_datagram(.ipv4, null, .{});
+    defer close_now(ipv4);
+    try expect_option(ipv4, posix.IPPROTO.IP, datagram_options.ip_dontfrag, true);
+    const ipv6 = try open_datagram(.ipv6, null, .{});
+    defer close_now(ipv6);
+    try expect_option(ipv6, posix.IPPROTO.IPV6, datagram_options.ipv6_dontfrag, true);
+
+    const fragmenting = try open_datagram(.ipv4, null, .{ .dont_fragment = false });
+    defer close_now(fragmenting);
+    try expect_option(fragmenting, posix.IPPROTO.IP, datagram_options.ip_dontfrag, false);
+
+    // What the option does, whatever its number: the loopback's MTU is 16 KiB, so a datagram of
+    // 20,000 bytes is refused with the bit set and leaves in pieces without it. Both send buffers
+    // grow first, because macOS refuses a datagram larger than a socket's send buffer, 9,216 bytes
+    // by default (`net.inet.udp.maxdgram`), whatever the bit says.
+    _ = try set_buffer_bytes(ipv4, .send, 64 << 10);
+    _ = try set_buffer_bytes(fragmenting, .send, 64 << 10);
+    const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const receiver = try open_datagram(.ipv4, &loopback, .{});
+    defer close_now(receiver);
+    const to = try local_address(receiver);
+    var storage: kqueue_address.Storage = undefined;
+    const to_len = kqueue_address.to_kernel(&to, &storage);
+    var oversized: [20_000]u8 = undefined;
+    @memset(&oversized, 0);
+    const refused = c.sendto(ipv4, &oversized, oversized.len, 0, @ptrCast(&storage), to_len);
+    try testing.expectEqual(E.MSGSIZE, posix.errno(refused));
+    const sent = c.sendto(fragmenting, &oversized, oversized.len, 0, @ptrCast(&storage), to_len);
+    try testing.expectEqual(E.SUCCESS, posix.errno(sent));
 }

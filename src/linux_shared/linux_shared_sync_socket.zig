@@ -403,19 +403,22 @@ test "a socket's buffer is set to what the kernel allows, and read back in the s
     const socket = try open_socket(.ipv4, blocking);
     defer close_now(socket);
 
-    // **What the call answers is what the kernel has**, which a raw read finds, and on this kernel
-    // it is never the request: 512 KiB became 1 MiB on 2026-09-22, because Linux stores twice what
-    // it is asked for. A call that handed the request back would fail here.
-    const large = try set_buffer_bytes(socket, .receive, 512 << 10);
+    // **What the call answers is what the kernel has**, which a raw read finds, and it is never the
+    // request: Linux stores twice what it is asked for. A call that handed the request back would
+    // fail here. The request stays under the default `net.core.rmem_max`, 208 KiB, which caps it:
+    // 512 KiB became 1 MiB on a host that raised the limit, and 416 KiB on a stock 6.1 kernel,
+    // which failed this test when it asked for more than it was given (2026-09-27).
+    const large_request = 128 << 10;
+    const large = try set_buffer_bytes(socket, .receive, large_request);
     try testing.expectEqual(large, try read_buffer_bytes(socket, .receive));
-    try testing.expect(large > 512 << 10);
+    try testing.expect(large > large_request);
 
     // A larger request cannot answer smaller, and this kernel floors a small one: 1 byte became
     // 2,304 for a receive buffer and 4,608 for a send buffer that day.
     const small = try set_buffer_bytes(socket, .receive, 32 << 10);
     try testing.expect(small <= large);
     try testing.expect(try set_buffer_bytes(socket, .receive, 1) > 1);
-    _ = try set_buffer_bytes(socket, .receive, 512 << 10);
+    _ = try set_buffer_bytes(socket, .receive, large_request);
 
     // The receive and the send buffer are two settings, read without going through the call under
     // test: one that named a single option would show both the same.
@@ -448,4 +451,27 @@ fn read_buffer_bytes(descriptor: Descriptor, which: SocketBuffer) !u32 {
     try testing.expectEqual(E.SUCCESS, linux.errno(rc));
     try testing.expect(value >= 0);
     return @intCast(value);
+}
+
+test "a datagram socket asks the kernel not to fragment, unless told otherwise" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    // `IP_PMTUDISC_DO` sets the don't-fragment bit, so an oversized datagram ends with
+    // `message_too_long` rather than leaving in pieces (decision 15, question 3). The open ignores a
+    // refusal, so a wrong option number would pass unseen; the kernel is asked what it holds.
+    const pmtudisc_do: c_int = 2;
+    const ipv4 = try open_datagram(.ipv4, null, .{}, blocking);
+    defer close_now(ipv4);
+    try expect_option(ipv4, linux.IPPROTO.IP, linux.IP.MTU_DISCOVER, pmtudisc_do);
+    const ipv6 = try open_datagram(.ipv6, null, .{}, blocking);
+    defer close_now(ipv6);
+    try expect_option(ipv6, linux.IPPROTO.IPV6, linux.IPV6.MTU_DISCOVER, pmtudisc_do);
+
+    // Told not to, the socket keeps the kernel's default, which is not `IP_PMTUDISC_DO`.
+    const fragmenting = try open_datagram(.ipv4, null, .{ .dont_fragment = false }, blocking);
+    defer close_now(fragmenting);
+    var value: c_int = -1;
+    var len: linux.socklen_t = @sizeOf(c_int);
+    const rc = linux.getsockopt(fragmenting, linux.IPPROTO.IP, linux.IP.MTU_DISCOVER, std.mem.asBytes(&value), &len);
+    try testing.expectEqual(E.SUCCESS, linux.errno(rc));
+    try testing.expect(value != pmtudisc_do);
 }
