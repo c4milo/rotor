@@ -306,7 +306,23 @@ Under emulation a round trip takes about five times as long as on the `orbstack`
 timer, armed for the benchmark's 1 ms wait, fires about five times as often per round trip as it
 would there. Ten alternating runs on the `orbstack` machine itself, at a host load average of 14,
 did not separate: the peer's CPU per round trip varied by up to twice between runs, and the median
-of the paired differences, +168 ns, was inside that noise. No rate is claimed here.
+of the paired differences, +168 ns, was inside that noise.
+
+The time was measured on `github`, an AMD EPYC 7763 under Azure with Linux 6.17, on 2026-09-27:
+`post_epoll` built at `5e376b2` and with the wait timer, fifteen alternating rounds
+(`bench/results/wait-timer-linux-github-2026-09-27.md`). Medians over the rounds, and the median of
+the paired differences:
+
+| measure | before | with the wait timer | change | rounds better |
+|---|---:|---:|---:|---:|
+| the answering loop's CPU per round trip | 16,535 ns | 13,243 ns | -19.9 percent | 15 of 15 |
+| messages per second | 65,931 | 81,113 | +24.6 percent | 15 of 15 |
+| p50 | 15,935 ns | 12,159 ns | -23.7 percent | 15 of 15 |
+| p99 | 18,047 ns | 18,431 ns | +2.1 percent | 0 of 15 |
+
+The time fell by more than the instructions did, as it did for io_uring (decision 6, "The wait
+timer"). The p99 rose a little in every round: the timer, armed for the benchmark's 1 ms wait, fires
+about once a millisecond in each loop, and a round trip that meets a fire waits for it.
 
 Mutations, measured against `zig build test-epoll`, against the `epoll` test executable in the Linux
 gate, and against the Linux gate's halt check for the two bounds of `Queue.arm_wait_timer`:
