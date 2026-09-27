@@ -51,11 +51,24 @@ trace of a seed is the same with statistics off, on at 1 in 32, or on at 1 in 1.
 - In the simulator, a sampled operation's start and end are op clock values. The statistics of
   a seed are therefore as reproducible as its trace.
 - On a real backend, the loop reads the monotonic clock once per tick, which it needs for the
-  timer heap anyway (`0005-cancellation.md`). A sampled operation is stamped with the tick's
-  time at submit and at reap, which costs no extra clock read and gives tick resolution. A
+  timer heap anyway (`0005-cancellation.md`), and once more after a wait that blocked. A sampled
+  operation is stamped with the tick's time at submit and at reap, which costs no extra clock
+  read and gives tick resolution. A
   caller that wants finer resolution for sampled operations turns on a per-sample clock read,
   C20, about 20 ns, paid by 1 operation in `sample_mask + 1`. At 1 in 32 that is under 1 ns per
   operation on average.
+
+**Amended on 2026-09-27, by Camilo's ruling on issue #6: a tick that blocked reads the clock again
+before it hands anything over.** Until then a tick read it again only when its wait produced
+nothing, so a tick woken by a completion, a readiness or a message kept the reading from before its
+wait. Three things read that stale value: `Loop.now_ns`, the reap's stamp on a sampled operation
+that completed during the wait, and the spin window of decision 13, which then started before the
+wait. colibri's QUIC client stamps a datagram's arrival with `now_ns`, and on a path with a 30 ms
+round trip it estimated 289 µs. The added read costs C20, about 20 ns on Linux, and 14.5 ns on
+macOS (decision 12, point 7), on a tick that has just made a blocking system call. Two conformance
+scenarios hold every backend to it: a post to a loop that sleeps (`conformance_post.zig`), and a
+datagram to one (`conformance_udp.zig`). With the old reading put back, each fails on io_uring,
+epoll and kqueue, and no other scenario does: CAUGHT.
 
 ### Rule 5: hardware counters stay in `bench/`
 

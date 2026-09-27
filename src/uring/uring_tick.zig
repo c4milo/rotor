@@ -41,6 +41,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const entering = enter_bounded(loop, wait);
     loop.wake_up();
     const entered = try entering;
+    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
+    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
+    // ended it (decision 9, rule 4, amended 2026-09-27).
+    if (wait != null) tables.now_ns = clock_ns();
     // The kernel has read every address of this flush's connects, and every message header of
     // its datagram operations, unless it took no entry. Both scratches are one per entry and are
     // reused from the start each tick; a counter that only rose would stop the loop after
@@ -52,8 +56,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     produced += reap_module.reap(loop, events[produced..]);
     produced += loop.drain_mailboxes(events[produced..]);
     if (produced == 0 and wait != null) {
-        // The wait may have ended because a deadline came due.
-        tables.now_ns = clock_ns();
+        // The wait may have ended because a deadline came due, which the reading after it shows.
         loop.tables.expire(loop, cancel_module.request);
         produced += tables.drain_finished(events[produced..]);
     }

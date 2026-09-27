@@ -87,6 +87,8 @@ const Sleeper = struct {
     /// How long the tick after it took, with nothing posted: the wake must be spent, or a backend
     /// whose wake stays set would end every later wait at once.
     after_ns: u64 = 0,
+    /// The loop's `now_ns` after the tick the message woke.
+    now_after_wake_ns: u64 = 0,
     failure: ?anyerror = null,
 
     fn run(sleeper: *Sleeper) void {
@@ -104,6 +106,7 @@ const Sleeper = struct {
         var events: [1]Event = undefined;
         const before = backend.testing.monotonic_ns();
         const count = try harness.loop.tick(&events, core.constants.ns_per_s);
+        sleeper.now_after_wake_ns = harness.loop.now_ns();
         if (count == 1 and events[0].flags.message) {
             sleeper.waited_ns = backend.testing.monotonic_ns() - before;
         }
@@ -128,14 +131,18 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
     var sleeper: Sleeper = .{ .registry = &registry };
     const thread = try std.Thread.spawn(.{}, Sleeper.run, .{&sleeper});
 
-    // Give the other loop time to start and to fall asleep, then post once it is there.
+    // Give the other loop time to start and to fall asleep, then post once it is there. Once it
+    // says it sleeps, its tick has read the clock; the pause after that makes this thread's
+    // reading later than the tick's, even on a clock that counts in 41 ns steps.
     var posted = false;
+    var posted_at_ns: u64 = 0;
     var attempt: u32 = 0;
     var events: [1]Event = undefined;
     while (!posted and attempt < post_attempts_max) : (attempt += 1) {
         try harness.pause(pause_ns);
-        if (registry.get(1) < 0) continue;
+        if (registry.get(1) < 0 or !registry.must_wake(1)) continue;
         try harness.pause(pause_ns);
+        posted_at_ns = backend.testing.monotonic_ns();
         try harness.submit(&.{Operation.post(1, 1, .{ .payload = 7, .tag = tag_ping })}, &.{});
         try harness.collect(&events);
         posted = (try events[0].outcome()) == 0;
@@ -148,4 +155,8 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
     // The wake was spent by the tick it woke. A kernel wake that stays set, as a level-triggered
     // eventfd does until it is read, would end this wait at once.
     try testing.expect(sleeper.after_ns >= quiet_wait_ns / 2);
+    // The tick the post woke read the clock after its wait, not only before it (decision 9, rule
+    // 4, amended 2026-09-27): a caller that takes `now_ns` as the instant the message came must
+    // not get the instant the loop fell asleep.
+    try testing.expect(sleeper.now_after_wake_ns >= posted_at_ns);
 }

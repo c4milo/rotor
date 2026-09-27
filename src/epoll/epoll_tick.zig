@@ -58,6 +58,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const ready = if (room == 0 or idle) nothing else call_kernel(loop, readiness, wait);
     loop.wake_up();
     const ready_count = try ready;
+    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
+    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
+    // ended it (decision 9, rule 4, amended 2026-09-27).
+    if (wait != null) tables.now_ns = clock_ns();
 
     produced += reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
     // A worker may have answered while this tick waited, and the wake is what ended the wait.
@@ -66,8 +70,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     }
     produced += loop.drain_mailboxes(events[produced..]);
     if (produced == 0 and wait != null) {
-        // The wait may have ended because a deadline came due.
-        tables.now_ns = clock_ns();
+        // The wait may have ended because a deadline came due, which the reading after it shows.
         loop.tables.expire(loop, cancel_module.request);
         produced += tables.drain_finished(events[produced..]);
     }

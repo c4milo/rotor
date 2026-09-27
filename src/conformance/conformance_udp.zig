@@ -344,3 +344,89 @@ test "a datagram longer than UDP can carry ends with message_too_long" {
     // The uring backend's map had no arm for EMSGSIZE and answered `unexpected`.
     try testing.expectError(error.MessageTooLong, events[0].outcome());
 }
+
+/// How long the test below pauses between two looks at whether loop 1 sleeps, and after it does.
+const wake_pause_ns = core.constants.ns_per_ms;
+
+/// Looks at whether loop 1 sleeps, at most: with a pause of a millisecond after each, a fifth of a
+/// second.
+const asleep_attempts_max = 200;
+
+/// Loop 1 of the test below: a loop on its own thread that blocks on one datagram.
+const Receiver = struct {
+    registry: *backend.Registry,
+    socket: core.Descriptor,
+    /// The loop's `now_ns` after the tick that handed the datagram over.
+    now_after_wake_ns: u64 = 0,
+    failure: ?anyerror = null,
+
+    fn run(receiver: *Receiver) void {
+        receiver.receive() catch |err| {
+            receiver.failure = err;
+        };
+    }
+
+    fn receive(receiver: *Receiver) !void {
+        var harness: Harness = undefined;
+        try harness.init(1, receiver.registry);
+        defer harness.deinit();
+        try provide(&harness);
+        var handles: [1]core.Handle = undefined;
+        try harness.submit(&.{Operation.receive_from(1, receiver.socket, group_id)}, &handles);
+        var events: [1]Event = undefined;
+        var count: u32 = 0;
+        var tick: u32 = 0;
+        while (count == 0 and tick < asleep_attempts_max) : (tick += 1) {
+            count = try harness.loop.tick(&events, core.constants.ns_per_s);
+        }
+        if (count != 1) return error.NoDatagram;
+        receiver.now_after_wake_ns = harness.loop.now_ns();
+        harness.loop.give_back_buffer(group_id, events[0].flags.buffer_id);
+        try end(&harness, handles[0]);
+    }
+};
+
+test "a tick a datagram wakes reads the clock after its wait" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const registry_alignment = core.layout.memory_alignment;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
+    registry.init(&registry_memory, 2);
+    var harness: Harness = undefined;
+    try harness.init(0, &registry);
+    defer harness.deinit();
+    const pair = try Pair.open();
+    defer pair.close();
+    var receiver: Receiver = .{ .registry = &registry, .socket = pair.receiver };
+    const thread = try std.Thread.spawn(.{}, Receiver.run, .{&receiver});
+
+    // Once loop 1 says it sleeps, its tick has read the clock; the pause after that makes this
+    // thread's reading later than the tick's.
+    var asleep = false;
+    var attempt: u32 = 0;
+    while (!asleep and attempt < asleep_attempts_max) : (attempt += 1) {
+        try harness.pause(wake_pause_ns);
+        asleep = registry.get(1) >= 0 and registry.must_wake(1);
+    }
+    try harness.pause(wake_pause_ns);
+    const sent_at_ns = backend.testing.monotonic_ns();
+    var out: Outbound = .{
+        .peer = pair.address,
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    try harness.submit(&.{Operation.send_to(2, pair.sender, message, &out)}, &.{});
+    var events: [1]Event = undefined;
+    try harness.collect(&events);
+    thread.join();
+
+    try testing.expect(asleep);
+    try testing.expectEqual(@as(?anyerror, null), receiver.failure);
+    try testing.expectEqual(@as(u32, message.len), try events[0].outcome());
+    // The tick the datagram woke read the clock after its wait (decision 9, rule 4, amended
+    // 2026-09-27): a caller that stamps the datagram's arrival with `now_ns` gets the instant it
+    // came, not the instant the loop fell asleep.
+    try testing.expect(receiver.now_after_wake_ns >= sent_at_ns);
+}

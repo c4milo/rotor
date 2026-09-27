@@ -5,7 +5,7 @@ const linux = std.os.linux;
 const core = @import("core");
 
 /// The monotonic clock, in nanoseconds. A tick reads it once, and once more after a wait that
-/// produced nothing (decision 9, rule 4). The tests read it too, so a test measures with the clock
+/// blocked (decision 9, rule 4). The tests read it too, so a test measures with the clock
 /// the tick reads.
 pub fn clock_ns() u64 {
     var now: linux.timespec = undefined;
