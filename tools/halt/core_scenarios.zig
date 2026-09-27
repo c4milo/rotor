@@ -88,6 +88,21 @@ fn submit_a_transfer_of_no_bytes() void {
     operation.assert_valid();
 }
 
+/// A datagram of no bytes (decision 15, question 4). `send_to` refuses it as every transfer does.
+/// Every other check of the operation passes, so with that one deleted `assert_valid` returns.
+fn send_a_datagram_of_no_bytes() void {
+    const to: core.datagram.Outbound = .{
+        .peer = core.Address.ipv4(.{ 127, 0, 0, 1 }, 9),
+        .local = undefined,
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{ .peer = true },
+    };
+    const operation = core.Operation.send_to(1, 3, &.{}, &to);
+    scenario.reached_violation();
+    operation.assert_valid();
+}
+
 fn submit_a_timer_with_a_deadline_of_its_own() void {
     const operation: core.Operation = .{
         .user_data = 1,
@@ -372,6 +387,7 @@ const scenarios = [_]scenario.Scenario{
         .run = disarm_a_slot_that_is_not_armed,
     },
     .{ .name = "operation: submit a transfer of no bytes", .run = submit_a_transfer_of_no_bytes },
+    .{ .name = "operation: send a datagram of no bytes", .run = send_a_datagram_of_no_bytes },
     .{ .name = "operation: sync a negative descriptor", .run = sync_a_negative_descriptor },
     .{
         .name = "operation: submit a timer with a deadline of its own",
