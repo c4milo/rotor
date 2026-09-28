@@ -470,6 +470,9 @@ test "a round that comes back whole moves its connection to its next round" {
     client.deadline_ns = 0;
     connections[0].received = 0;
     connections[0].round = 1;
+    // The round's latency is taken from this. `connections` is `undefined`, which was 0 under LLVM
+    // and above the clock under Zig's own x86-64 backend, where the subtraction overflowed.
+    connections[0].started_ns = now_ns();
     const payload_bytes = client.options.payload_bytes;
     try testing.expect(!handle(&client, Event.success(user_data_of(.receive, 0), payload_bytes)));
     try testing.expectEqual(@as(?SpanError, null), client.failure);
