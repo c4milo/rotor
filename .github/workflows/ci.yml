@@ -1,25 +1,34 @@
-# What runs on every push to main and every pull request.
+# What runs on every push to main and every pull request, on three kinds of GitHub-hosted runner:
+# macOS on Apple silicon (`macos-latest`), Linux on x86-64 (`ubuntu-24.04`) and Linux on arm64
+# (`ubuntu-24.04-arm`).
 #
-# Six gates, the same six a developer runs by hand:
+# The gates, each the command a developer runs by hand:
 #
-#   - `macos`: `zig build test`, which is the lint, every module's unit tests, the kqueue
-#     conformance suite, the halt check, the tools' tests, the bench compile, the hook check and
-#     the format check.
-#   - `linux`: the io_uring conformance suite and the uring unit tests, in the container
+#   - `test`: `zig build test` on all three. It is the lint, every module's unit tests, the
+#     conformance suite of each backend the host runs, the halt check, the tools' tests, the bench
+#     programs' tests and compile, every example, the hook check and the format check. On macOS the
+#     kqueue suite runs. On Linux the io_uring and epoll suites run on the runner's own kernel.
+#   - `linux`: the Linux gate, on both Linux processors. The io_uring suites run in the container
 #     `tools/linux_test.sh` pins by digest, with `seccomp=unconfined` because Docker's default
-#     profile refuses `io_uring_setup`.
-#   - `race`: the same suites under ThreadSanitizer, which needs Docker and a dynamic glibc.
+#     profile refuses `io_uring_setup`. The epoll suites run under that default profile.
+#   - `race`: the same suites under ThreadSanitizer, on both Linux processors. It needs Docker and
+#     a dynamic glibc.
 #   - `proofs`: `zig build proofs`, the Lean proofs of the timer heap and the timer lifecycle.
 #   - `tla`: `zig build tla`, TLC over the model of the sleep handshake and over each of its
 #     mutants, which must fail.
 #   - `calls`: the kernel calls rotor's echo servers make per echo, counted by the kernel's
-#     tracepoints three times and held to `bench/baseline/calls.txt` by `calls_gate`.
+#     tracepoints three times and held to `bench/baseline/calls.txt` by `calls_gate`, on both Linux
+#     processors.
+#   - `commits`: `zig build lint-commits`, on a pull request only.
 #
-# Two more jobs run only when asked: `comparison`, every night and by hand, which holds rotor's
-# echo throughput against libuv and libxev to `bench/baseline/echo.txt`, and `costs`, by hand.
+# The proofs and the models do not depend on the processor, so they run on x86-64 only.
+#
+# Two more jobs run only when asked, on x86-64 only. `comparison` runs every night and by hand, and
+# holds rotor's echo throughput against libuv and libxev to `bench/baseline/echo.txt`. `costs` runs
+# by hand.
 #
 # **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
-# both the macOS and the Linux job bound the loop's own work: a poll, a timer fire and a submit.
+# every `test` and `linux` job bounds the loop's own work: a poll, a timer fire and a submit.
 # Each bound is checked against the best of twenty attempts and sits an order of magnitude above
 # what was measured, so a busy runner costs attempts and not a false failure. A failure here is a
 # regression. If one of these ever proves flaky the answer is to raise that bound deliberately,
@@ -29,9 +38,11 @@
 # from a probe run on a named machine. These runners are neither named nor quiet, and the gate
 # above is a tripwire and not a measurement.
 #
-# Zig is downloaded from ziglang.org and checked against the SHA-256 the release index published
-# for 0.16.0, so the toolchain is pinned as the container and the alternatives are. No third-party
-# action runs here; `actions/checkout` is GitHub's own.
+# Zig is installed by `.github/actions/zig`, which downloads it from ziglang.org and checks it
+# against the SHA-256 the release index published for 0.16.0 on the runner's system and processor.
+# So the toolchain is pinned as the container and the alternatives are. No third-party action runs
+# here; `actions/checkout` is GitHub's own. Every job has a time limit several times its usual
+# length, so a test that hangs ends the job instead of holding the runner for six hours.
 name: ci
 
 on:
@@ -47,43 +58,37 @@ on:
 permissions:
   contents: read
 
-env:
-  ZIG_VERSION: "0.16.0"
-
 jobs:
-  macos:
-    name: macOS, kqueue
-    runs-on: macos-latest
+  test:
+    name: zig build test, ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: macOS arm64, runner: macos-latest }
+          - { name: Linux x86-64, runner: ubuntu-24.04 }
+          - { name: Linux arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-aarch64-macos-${ZIG_VERSION}.tar.xz"
-          sha="b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | shasum -a 256 -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-aarch64-macos-${ZIG_VERSION}" >> "$GITHUB_PATH"
-      - run: zig version
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: The whole local gate
         run: zig build test
 
   linux:
-    name: Linux, io_uring
-    runs-on: ubuntu-24.04
+    name: Linux gate, ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86-64, runner: ubuntu-24.04 }
+          - { name: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
-      - run: zig version
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: Build the Linux test executables
         run: zig build test-linux
       # A consumer reported on 2026-09-22 that GitHub's runners "disable io_uring". On this image
@@ -111,19 +116,18 @@ jobs:
         run: bash tools/linux_test.sh
 
   race:
-    name: Linux, ThreadSanitizer
-    runs-on: ubuntu-24.04
+    name: ThreadSanitizer, ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86-64, runner: ubuntu-24.04 }
+          - { name: arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: Build the sanitized executables
         run: zig build test-race
       - name: Run them
@@ -134,19 +138,12 @@ jobs:
   proofs:
     name: Lean proofs
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     env:
       LEAN_VERSION: "4.34.0"
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: Install Lean
         run: |
           set -euo pipefail
@@ -166,17 +163,10 @@ jobs:
   tla:
     name: TLA+ models
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - run: java -version
       - name: Check the models, and refuse every mutant
         run: zig build tla
@@ -189,18 +179,11 @@ jobs:
   costs:
     name: Linux x86-64, cost probes
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     if: github.event_name == 'workflow_dispatch'
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: What this runner is
         run: |
           grep -m1 "model name" /proc/cpuinfo || true
@@ -312,18 +295,11 @@ jobs:
   comparison:
     name: Linux x86-64, the comparison
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: What this runner is
         run: |
           grep -m1 "model name" /proc/cpuinfo || true
@@ -372,22 +348,21 @@ jobs:
   # every row, and the gate judges the smallest count any round gave, because other work on the
   # runner raises some rounds and a change that adds a call raises all of them.
   calls:
-    name: Linux x86-64, calls per echo
-    runs-on: ubuntu-24.04
+    name: Calls per echo, ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux x86-64, runner: ubuntu-24.04 }
+          - { name: Linux arm64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
       - name: What this runner is
         run: |
-          grep -m1 "model name" /proc/cpuinfo || true
+          grep -m1 "model name" /proc/cpuinfo || grep -m2 -E "CPU (implementer|part)" /proc/cpuinfo
           nproc; uname -r
       - name: Build rotor's echo servers, the client and the gate
         run: zig build bench-echo
@@ -406,19 +381,12 @@ jobs:
   commits:
     name: Commit messages
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - name: Install Zig
-        run: |
-          set -euo pipefail
-          url="https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
-          sha="70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00"
-          curl -fsSL "$url" -o zig.tar.xz
-          echo "$sha  zig.tar.xz" | sha256sum -c -
-          tar -xf zig.tar.xz
-          echo "$PWD/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
+      - uses: ./.github/actions/zig
       - name: Every commit of this branch is a Conventional Commit
         run: zig build lint-commits

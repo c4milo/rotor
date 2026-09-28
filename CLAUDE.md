@@ -242,7 +242,8 @@ was about to push.
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
   executables' compile, every example built and checked, the hook check and the format check. Every change passes it before it
-  is committed.
+  is committed. It passes on a Linux host too, where the kqueue suite and its halt scenarios are
+  not built, because that backend names libc's kevent types.
   `zig build test-<module>` and `zig build test-tools` run one target alone.
 - Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
   module's test executable that runs under Linux, and the io_uring probe `tools/uring_probe.zig`,
@@ -290,13 +291,14 @@ was about to push.
   SHA-256, so it is a step of its own and not part of `zig build test`, which only compiles the
   tool. A change to the handshake changes the model in the same commit.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
-  request. Seven jobs, each the command a developer runs by hand: `zig build test` on macOS, the
-  Linux gate and the race gate on Ubuntu with Docker, `zig build proofs` and `zig build tla` on
-  Ubuntu, the call gate on Ubuntu, and `zig build lint-commits` on a pull request. The x86-64
+  request, on three kinds of GitHub-hosted runner: macOS on Apple silicon, Linux on x86-64 and
+  Linux on arm64. Each job is the command a developer runs by hand: `zig build test` on all three;
+  the Linux gate, the race gate and the call gate on both Linux processors; `zig build proofs` and
+  `zig build tla` on x86-64 Linux; and `zig build lint-commits` on a pull request. The x86-64
   comparison against libuv and libxev, held to `bench/baseline/echo.txt`, runs every night at
   06:17 UTC and when started by hand; the cost probes run only by hand. Zig is downloaded from
-  ziglang.org, Lean from its GitHub release and TLC from the tlaplus release, each checked against
-  a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
+  ziglang.org by `.github/actions/zig`, Lean from its GitHub release and TLC from the tlaplus
+  release, each checked against a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.
 - Call gate: the kernel calls rotor's echo servers make per echo, held to
   `bench/baseline/calls.txt`. On a Linux host: `zig build bench-echo`, then three rounds of
