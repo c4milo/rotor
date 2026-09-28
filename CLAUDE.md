@@ -434,8 +434,8 @@ project's CBMC run, and was not recorded: `orbstack` runs on this machine's core
 are only as quiet as this machine is. GitHub's hosted macOS runners were tried as a stand-in on
 2026-09-24 and were no quieter: the cross-core comparison's rounds spread by 9 to 96 percent there.
 On 2026-09-27 four echo comparisons on them disagreed on 134 of 160 rows, with other work busy on
-all three processors, so the echo baseline holds no section for them
-(`bench/results/echo-github-macos-2026-09-27.md`). They are not a named machine, and kqueue is
+all three processors. Four more with Spotlight's indexing turned off disagreed on 138, so the echo
+baseline holds no section for them (`bench/results/echo-github-macos-2026-09-27.md`). They are not a named machine, and kqueue is
 measured on `mac` when it is quiet.
 
 A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
