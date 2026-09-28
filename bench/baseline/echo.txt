@@ -30,8 +30,10 @@
 # runs disagreed, and a row another step of the same job contradicts, and its comment names each. A
 # run reports a row its section lacks and does not gate it. On 2026-09-25 the EPYC 7763's section
 # was retaken from seven runs, the Xeon 8573C's was added from four, and the sections of processors
-# with fewer runs that day kept each row or raised it to what those runs measured.
-# `bench/results/` holds every run.
+# with fewer runs that day kept each row or raised it to what those runs measured. On 2026-09-27
+# the arm64 section was added from four runs on GitHub-hosted ubuntu-24.04-arm runners. GitHub's
+# macOS runners gave no section: their runs disagreed in 134 of 160 rows
+# (`bench/results/echo-github-macos-2026-09-27.md`). `bench/results/` holds every run.
 
 # Run 36032383576, commit 5b441cc, on 2026-09-24: the first comparison on this processor with the
 # fix of db9e39e and the client check of 34763cc. No row is left out: the runs agreed on every one,
@@ -332,3 +334,51 @@ echo 64 65536 rotor (accumulate) 1003
 echo 64 65536 libuv 1063
 echo 64 65536 libxev 1012
 echo 64 65536 std.Io.Threaded 762
+
+# Run 36373291870, commit 0218875, on 2026-09-27: four jobs, each on its own ubuntu-24.04-arm
+# runner, all reporting this processor, which is how the harness names an arm64 core by its
+# implementer and part. Each row is the highest of the four runs' ratios. One run's libxev row at 16
+# connections and 16 KiB disagreed and gave none. `bench/results/echo-github-arm64-2026-09-27.md`
+# holds the runs.
+processor CPU implementer 0x41 part 0xd49
+# workload connections payload candidate ratio
+echo 16 4096 rotor 1000
+echo 16 4096 rotor (accumulate) 996
+echo 16 4096 libuv 863
+echo 16 4096 libxev 918
+echo 16 4096 std.Io.Threaded 641
+echo 16 8192 rotor 1000
+echo 16 8192 rotor (accumulate) 977
+echo 16 8192 libuv 846
+echo 16 8192 libxev 901
+echo 16 8192 std.Io.Threaded 653
+echo 16 16384 rotor 1000
+echo 16 16384 rotor (accumulate) 1025
+echo 16 16384 libuv 933
+echo 16 16384 libxev 970
+echo 16 16384 std.Io.Threaded 732
+echo 16 65536 rotor 1000
+echo 16 65536 rotor (accumulate) 1032
+echo 16 65536 libuv 1075
+echo 16 65536 libxev 1074
+echo 16 65536 std.Io.Threaded 1036
+echo 64 4096 rotor 1000
+echo 64 4096 rotor (accumulate) 965
+echo 64 4096 libuv 845
+echo 64 4096 libxev 942
+echo 64 4096 std.Io.Threaded 618
+echo 64 8192 rotor 1000
+echo 64 8192 rotor (accumulate) 993
+echo 64 8192 libuv 910
+echo 64 8192 libxev 961
+echo 64 8192 std.Io.Threaded 665
+echo 64 16384 rotor 1000
+echo 64 16384 rotor (accumulate) 981
+echo 64 16384 libuv 929
+echo 64 16384 libxev 976
+echo 64 16384 std.Io.Threaded 756
+echo 64 65536 rotor 1000
+echo 64 65536 rotor (accumulate) 1001
+echo 64 65536 libuv 1045
+echo 64 65536 libxev 1001
+echo 64 65536 std.Io.Threaded 991
