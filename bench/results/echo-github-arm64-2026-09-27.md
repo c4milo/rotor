@@ -1,63 +1,73 @@
 # Echo on GitHub's arm64 Linux runners, 2026-09-27
 
-Four `comparison` jobs of `.github/workflows/ci.yml`, started by hand on commit `0218875` as run
-36373291870, from 03:20 UTC on 2026-09-28, with `comparison_runs` set to `[1, 2, 3, 4]`. Each job
-ran on its own `ubuntu-24.04-arm` runner, image `ubuntu24-arm64/20260920.129`: `echo_runner
---baseline bench/baseline/echo.txt`, io_uring, one core, three runs per row. Every runner reported
-the same processor, `CPU implementer 0x41 part 0xd49`, which is how the harness names an arm64
-processor (`bench/harness/machine_proc.zig`). Arm numbers the Neoverse N2 0xd49, which is recalled
-and was not read from the runner. Each had 4 processors and Linux 6.17.0-1022-azure.
+Eight `comparison` jobs of `.github/workflows/ci.yml`, each on its own `ubuntu-24.04-arm` runner:
+`echo_runner --baseline bench/baseline/echo.txt`, io_uring, one core, three runs per row.
 
-The baseline named no such processor, so no job was gated, and each printed its ratios in the
-baseline's format. The four runs became that processor's section of `bench/baseline/echo.txt`,
-by the rule of 2026-09-25: each row is the highest ratio among the runs, and a run whose row
-disagreed gives no ratio for it. One of the 160 rows disagreed, and no row reported other work.
+- Run 36373291870, started by hand on commit `0218875` from 03:20 UTC on 2026-09-28, with
+  `comparison_runs` set to `[1, 2, 3, 4]`: runs A1 to A4, on image `ubuntu24-arm64/20260920.129`.
+  The baseline named no arm64 processor, so no job was gated, and each printed its ratios.
+- Run 36376749918, started by hand from 04:13 UTC the same day on a branch commit whose echo
+  servers and client were the same: runs B1 to B4. They were held to the section taken from A1 to
+  A4. B1 and B3 failed on libxev at 16 connections and 16 KiB, at 1029 and 1030 against a row of
+  970, and B2 and B4 passed.
+
+Every runner reported the same processor, `CPU implementer 0x41 part 0xd49`, which is how the
+harness names an arm64 processor (`bench/harness/machine_proc.zig`). Arm numbers the Neoverse N2
+0xd49, which is recalled and was not read from the runner. Each had 4 processors and Linux
+6.17.0-1022-azure.
+
+The processor's section of `bench/baseline/echo.txt` is taken from all eight, by the rule of
+2026-09-25: each row is the highest ratio among the runs. A run gives no ratio for a row when that
+row, or rotor's row of the same configuration, disagreed. Three of the 320 rows disagreed, and no
+row reported other work. The libxev row that failed B1 and B3 spread from 933 to 1030 over the
+eight runs: four runs had not shown how far it moves.
 
 ## Rows of the section
 
-The ratio is the candidate's median per second times 1000 divided by rotor's, rounded down. Each
-row lists the runs in order and leaves out a run whose row disagreed.
+The ratio is the candidate's median per second times 1000 divided by rotor's, rounded down, from
+each run's table. It is what A1 to A4 printed for their own rows. Each row lists A1 to A4, then B1
+to B4, and `-` for a run that gave none.
 
 | connections | payload bytes | candidate | ratio of each run | row |
 |---:|---:|---|---|---:|
-| 16 | 4096 | rotor (accumulate) | 964, 996, 988, 946 | 996 |
-| 16 | 4096 | libuv | 797, 863, 828, 844 | 863 |
-| 16 | 4096 | libxev | 902, 895, 887, 918 | 918 |
-| 16 | 4096 | std.Io.Threaded | 635, 641, 636, 624 | 641 |
-| 16 | 8192 | rotor (accumulate) | 977, 963, 948, 949 | 977 |
-| 16 | 8192 | libuv | 846, 819, 827, 844 | 846 |
-| 16 | 8192 | libxev | 884, 892, 885, 901 | 901 |
-| 16 | 8192 | std.Io.Threaded | 653, 652, 647, 638 | 653 |
-| 16 | 16384 | rotor (accumulate) | 1025, 948, 995, 967 | 1025 |
-| 16 | 16384 | libuv | 933, 899, 894, 850 | 933 |
-| 16 | 16384 | libxev | 970, 934, 933; one run disagreed | 970 |
-| 16 | 16384 | std.Io.Threaded | 732, 696, 704, 687 | 732 |
-| 16 | 65536 | rotor (accumulate) | 1032, 996, 1024, 1020 | 1032 |
-| 16 | 65536 | libuv | 1061, 1018, 1024, 1075 | 1075 |
-| 16 | 65536 | libxev | 1027, 963, 988, 1074 | 1074 |
-| 16 | 65536 | std.Io.Threaded | 1000, 967, 956, 1036 | 1036 |
-| 64 | 4096 | rotor (accumulate) | 921, 957, 965, 955 | 965 |
-| 64 | 4096 | libuv | 832, 845, 814, 816 | 845 |
-| 64 | 4096 | libxev | 942, 899, 894, 902 | 942 |
-| 64 | 4096 | std.Io.Threaded | 618, 595, 599, 609 | 618 |
-| 64 | 8192 | rotor (accumulate) | 908, 993, 916, 950 | 993 |
-| 64 | 8192 | libuv | 862, 910, 862, 898 | 910 |
-| 64 | 8192 | libxev | 879, 961, 905, 914 | 961 |
-| 64 | 8192 | std.Io.Threaded | 635, 665, 657, 631 | 665 |
-| 64 | 16384 | rotor (accumulate) | 980, 944, 976, 981 | 981 |
-| 64 | 16384 | libuv | 929, 892, 917, 924 | 929 |
-| 64 | 16384 | libxev | 940, 916, 961, 976 | 976 |
-| 64 | 16384 | std.Io.Threaded | 727, 708, 724, 756 | 756 |
-| 64 | 65536 | rotor (accumulate) | 974, 999, 982, 1001 | 1001 |
-| 64 | 65536 | libuv | 1017, 1024, 1040, 1045 | 1045 |
-| 64 | 65536 | libxev | 975, 1001, 982, 999 | 1001 |
-| 64 | 65536 | std.Io.Threaded | 991, 963, 970, 990 | 991 |
+| 16 | 4096 | rotor (accumulate) | 964, 996, 988, 946, 960, 968, 958, 964 | 996 |
+| 16 | 4096 | libuv | 797, 863, 828, 844, 817, 836, 801, 819 | 863 |
+| 16 | 4096 | libxev | 902, 895, 887, 918, 889, 905, 881, 900 | 918 |
+| 16 | 4096 | std.Io.Threaded | 635, 641, 636, 624, 635, 624, 620, 627 | 641 |
+| 16 | 8192 | rotor (accumulate) | 977, 963, 948, 949, 959, 977, 958, 952 | 977 |
+| 16 | 8192 | libuv | 846, 819, 827, 844, 825, 822, 825, 816 | 846 |
+| 16 | 8192 | libxev | 884, 892, 885, 901, 891, 875, 913, 875 | 913 |
+| 16 | 8192 | std.Io.Threaded | 653, 652, 647, 638, 632, 641, 636, 637 | 653 |
+| 16 | 16384 | rotor (accumulate) | 1025, 948, 995, 967, 1045, -, 1038, 1022 | 1045 |
+| 16 | 16384 | libuv | 933, 899, 894, 850, 922, 909, 957, 928 | 957 |
+| 16 | 16384 | libxev | 970, 934, 933, -, 1029, 956, 1030, 1005 | 1030 |
+| 16 | 16384 | std.Io.Threaded | 732, 696, 704, 687, 744, 710, 755, 732 | 755 |
+| 16 | 65536 | rotor (accumulate) | 1032, 996, 1024, 1020, 1034, 963, -, 978 | 1034 |
+| 16 | 65536 | libuv | 1061, 1018, 1024, 1075, 1051, 987, 1082, 982 | 1082 |
+| 16 | 65536 | libxev | 1027, 963, 988, 1074, 1020, 940, 1014, 981 | 1074 |
+| 16 | 65536 | std.Io.Threaded | 1000, 967, 956, 1036, 993, 898, 985, 916 | 1036 |
+| 64 | 4096 | rotor (accumulate) | 921, 957, 965, 955, 944, 950, 926, 947 | 965 |
+| 64 | 4096 | libuv | 832, 845, 814, 816, 831, 830, 843, 848 | 848 |
+| 64 | 4096 | libxev | 942, 899, 894, 902, 921, 919, 960, 935 | 960 |
+| 64 | 4096 | std.Io.Threaded | 618, 595, 599, 609, 607, 610, 618, 616 | 618 |
+| 64 | 8192 | rotor (accumulate) | 908, 993, 916, 950, 990, 930, 947, 930 | 993 |
+| 64 | 8192 | libuv | 862, 910, 862, 898, 899, 844, 865, 880 | 910 |
+| 64 | 8192 | libxev | 879, 961, 905, 914, 986, 883, 890, 913 | 986 |
+| 64 | 8192 | std.Io.Threaded | 635, 665, 657, 631, 681, 633, 638, 652 | 681 |
+| 64 | 16384 | rotor (accumulate) | 980, 944, 976, 981, 987, 983, 990, 995 | 995 |
+| 64 | 16384 | libuv | 929, 892, 917, 924, 920, 930, 915, 919 | 930 |
+| 64 | 16384 | libxev | 940, 916, 961, 976, 948, 959, 977, 975 | 977 |
+| 64 | 16384 | std.Io.Threaded | 727, 708, 724, 756, 731, 717, 748, 743 | 756 |
+| 64 | 65536 | rotor (accumulate) | 974, 999, 982, 1001, 998, 977, 959, 988 | 1001 |
+| 64 | 65536 | libuv | 1017, 1024, 1040, 1045, 1037, 1038, 1057, 990 | 1057 |
+| 64 | 65536 | libxev | 975, 1001, 982, 999, 1006, 986, 939, 947 | 1006 |
+| 64 | 65536 | std.Io.Threaded | 991, 963, 970, 990, 987, 999, 1000, 930 | 1000 |
 
 ## Each run
 
-The echo rows each job printed.
+The echo rows each job printed, and for B1 to B4 the verdict against the section of A1 to A4.
 
-### Run 1, job 108773890061
+### Run A1: run 36373291870, job 108773890061
 
 ```text
 | workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
@@ -101,9 +111,10 @@ The echo rows each job printed.
 | echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 52472 | 209945 | 1187839 | 1417215 | 1482751 | 1744895 | 5980160 | 6 | 3 | 0 |  |
 | echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 50305 | 201264 | 1277951 | 1556479 | 1736703 | 2260991 | 5275648 | 2 | 0 | 0 |  |
 | echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 51125 | 204542 | 1253375 | 1359871 | 1417215 | 2162687 | 26382336 | 6 | 43 | 7 |  |
+
 ```
 
-### Run 2, job 108773890046
+### Run A2: run 36373291870, job 108773890046
 
 ```text
 | workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
@@ -147,9 +158,10 @@ The echo rows each job printed.
 | echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 53114 | 212480 | 1204223 | 1368063 | 1474559 | 1523711 | 5980160 | 1 | 3 | 0 |  |
 | echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 51931 | 207773 | 1228799 | 1556479 | 1769471 | 2457599 | 5275648 | 1 | 3 | 0 |  |
 | echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 49973 | 199914 | 1277951 | 1351679 | 1376255 | 2097151 | 26382336 | 1 | 3 | 0 |  |
+
 ```
 
-### Run 3, job 108773890009
+### Run A3: run 36373291870, job 108773890009
 
 ```text
 | workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
@@ -193,9 +205,10 @@ The echo rows each job printed.
 | echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 56859 | 227480 | 1130495 | 1556479 | 1728511 | 1892351 | 5980160 | 4 | 0 | 0 |  |
 | echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 53685 | 214787 | 1196031 | 1515519 | 1744895 | 2392063 | 5275648 | 1 | 3 | 0 |  |
 | echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 53012 | 212071 | 1204223 | 1277951 | 1335295 | 1875967 | 26382336 | 4 | 3 | 0 |  |
+
 ```
 
-### Run 4, job 108773890057
+### Run A4: run 36373291870, job 108773890057
 
 ```text
 | workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
@@ -239,4 +252,195 @@ The echo rows each job printed.
 | echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 51755 | 207044 | 1220607 | 1351679 | 1425407 | 1843199 | 5980160 | 3 | 3 | 1 |  |
 | echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 49497 | 198045 | 1294335 | 1531903 | 1695743 | 2539519 | 5275648 | 4 | 3 | 0 |  |
 | echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 49061 | 196287 | 1302527 | 1392639 | 1433599 | 1982463 | 26382336 | 3 | 3 | 0 |  |
+
+```
+
+### Run B1: run 36376749918, job 108784054050
+
+```text
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 231822 | 927304 | 68607 | 78335 | 84991 | 115711 | 3993600 | 1 | 11 | 2 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 4096 | even | 3 | 222716 | 890882 | 71679 | 84479 | 104447 | 113151 | 3993600 | 2 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 4096 | even | 3 | 189453 | 757831 | 75775 | 159743 | 171007 | 185343 | 1654784 | 0 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 4096 | even | 3 | 206230 | 824933 | 77311 | 88063 | 112639 | 122367 | 1097728 | 0 | 15 | 3 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 4096 | even | 3 | 147282 | 589136 | 107007 | 143359 | 167935 | 1044479 | 7114752 | 2 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 8192 | even | 3 | 210815 | 843269 | 75263 | 88063 | 97791 | 120831 | 4124672 | 2 | 7 | 2 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 8192 | even | 3 | 202200 | 808812 | 78335 | 104447 | 116735 | 129023 | 3993600 | 3 | 7 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 8192 | even | 3 | 173934 | 695754 | 80383 | 172031 | 187391 | 204799 | 1785856 | 1 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 8192 | even | 3 | 187853 | 751429 | 84991 | 96255 | 121855 | 147455 | 1228800 | 1 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 8192 | even | 3 | 133317 | 533277 | 118271 | 150527 | 169983 | 454655 | 7114752 | 3 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 16384 | even | 3 | 157542 | 630178 | 99327 | 138239 | 151551 | 176127 | 4386816 | 2 | 0 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 16384 | even | 3 | 164673 | 658710 | 96255 | 129023 | 143359 | 164863 | 4124672 | 3 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 16384 | even | 3 | 145323 | 581311 | 95231 | 203775 | 220159 | 241663 | 1916928 | 0 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 16384 | even | 3 | 162111 | 648460 | 98815 | 132095 | 146431 | 164863 | 1384448 | 2 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 16384 | even | 3 | 117320 | 469290 | 135167 | 172031 | 193535 | 344063 | 7114752 | 1 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 65536 | even | 3 | 52243 | 208979 | 305151 | 417791 | 454655 | 485375 | 5959680 | 7 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 65536 | even | 3 | 54068 | 216286 | 294911 | 387071 | 448511 | 485375 | 4911104 | 1 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 65536 | even | 3 | 54916 | 219677 | 290815 | 354303 | 430079 | 446463 | 2703360 | 3 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 65536 | even | 3 | 53322 | 213299 | 299007 | 405503 | 585727 | 643071 | 2113536 | 0 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 65536 | even | 3 | 51880 | 207530 | 309247 | 331775 | 378879 | 684031 | 7114752 | 0 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 226147 | 904625 | 282623 | 307199 | 321535 | 405503 | 4386816 | 2 | 0 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 4096 | even | 3 | 213514 | 854109 | 301055 | 391167 | 440319 | 462847 | 4124672 | 2 | 7 | 2 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 4096 | even | 3 | 188153 | 752682 | 333823 | 659455 | 692223 | 712703 | 2506752 | 1 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 4096 | even | 3 | 208343 | 833433 | 311295 | 415743 | 458751 | 475135 | 2506752 | 1 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 4096 | even | 3 | 137494 | 549991 | 462847 | 528383 | 544767 | 806911 | 26382336 | 0 | 19 | 3 |  |
+| echo | rotor | this tree | 0 | 64 | 8192 | even | 3 | 190807 | 763278 | 333823 | 440319 | 493567 | 511999 | 4911104 | 7 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 8192 | even | 3 | 189029 | 756175 | 346111 | 452607 | 501759 | 528383 | 4386816 | 5 | 7 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 8192 | even | 3 | 171641 | 686642 | 360447 | 724991 | 757759 | 778239 | 2707456 | 0 | 7 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 8192 | even | 3 | 188236 | 753008 | 346111 | 444415 | 501759 | 540671 | 2707456 | 3 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 8192 | even | 3 | 130128 | 520526 | 491519 | 544767 | 565247 | 696319 | 26382336 | 1 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 16384 | even | 3 | 151906 | 607669 | 415743 | 573439 | 622591 | 647167 | 5959680 | 2 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 16384 | even | 3 | 150054 | 600261 | 428031 | 552959 | 618495 | 655359 | 4911104 | 3 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 16384 | even | 3 | 139780 | 559189 | 397311 | 786431 | 876543 | 917503 | 3100672 | 0 | 0 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 16384 | even | 3 | 144023 | 576150 | 444415 | 577535 | 634879 | 675839 | 3100672 | 4 | 7 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 16384 | even | 3 | 111118 | 444483 | 577535 | 598015 | 634879 | 823295 | 26382336 | 2 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 65536 | even | 3 | 53407 | 213680 | 1196031 | 1548287 | 1687551 | 1794047 | 12251136 | 0 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 65536 | even | 3 | 53327 | 213354 | 1204223 | 1441791 | 1564671 | 1654783 | 8056832 | 1 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 55399 | 221621 | 1155071 | 1277951 | 1318911 | 1351679 | 5980160 | 1 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 53766 | 215117 | 1196031 | 1449983 | 1564671 | 1736703 | 5275648 | 1 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 52715 | 210877 | 1212415 | 1277951 | 1310719 | 1409023 | 26382336 | 1 | 0 | 0 |  |
+echo_runner: **libxev GAINED ON ROTOR** past the baseline
+echo_runner: 1 row(s) fell behind the baseline
+```
+
+### Run B2: run 36376749918, job 108784054508
+
+```text
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 221680 | 886734 | 71679 | 83967 | 95231 | 161791 | 3993600 | 1 | 7 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 4096 | even | 3 | 214763 | 859063 | 73727 | 87039 | 109055 | 131071 | 3993600 | 2 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 4096 | even | 3 | 185452 | 741826 | 76799 | 162815 | 175103 | 190463 | 1654784 | 4 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 4096 | even | 3 | 200805 | 803237 | 79359 | 96255 | 115199 | 129535 | 1097728 | 7 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 4096 | even | 3 | 138356 | 553429 | 114175 | 143359 | 178175 | 522239 | 7114752 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 8192 | even | 3 | 197687 | 790761 | 79871 | 92671 | 101887 | 125439 | 4124672 | 6 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 8192 | even | 3 | 193224 | 772912 | 82431 | 99327 | 121343 | 130559 | 3993600 | 6 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 8192 | even | 3 | 162589 | 650375 | 83967 | 177151 | 191487 | 211967 | 1785856 | 4 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 8192 | even | 3 | 173118 | 692488 | 91647 | 104959 | 128511 | 153599 | 1228800 | 5 | 11 | 2 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 8192 | even | 3 | 126793 | 507176 | 124927 | 140287 | 165887 | 368639 | 7114752 | 5 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 16 | 16384 | even | 3 | 151883 | 607552 | 103935 | 141311 | 159743 | 177151 | 4386816 | 4 | 7 | 2 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 16384 | even | 3 | 148488 | 593965 | 106495 | 135167 | 162815 | 184319 | 4124672 | 14 | 3 | 1 | **RUNS DISAGREE** |
+| echo | libuv | v1.52.1 | 0 | 16 | 16384 | even | 3 | 138123 | 552511 | 99327 | 200703 | 218111 | 239615 | 1908736 | 6 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 16384 | even | 3 | 145275 | 581119 | 109055 | 141311 | 161791 | 185343 | 1384448 | 4 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 16384 | even | 3 | 107879 | 431524 | 146431 | 189439 | 209919 | 468991 | 7114752 | 2 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 65536 | even | 3 | 55738 | 222963 | 284671 | 344063 | 436223 | 473087 | 5959680 | 7 | 0 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 65536 | even | 3 | 53701 | 214816 | 296959 | 389119 | 448511 | 487423 | 4911104 | 4 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 65536 | even | 3 | 55052 | 220216 | 288767 | 329727 | 356351 | 405503 | 2699264 | 0 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 65536 | even | 3 | 52407 | 209644 | 305151 | 454655 | 585727 | 626687 | 2113536 | 2 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 65536 | even | 3 | 50100 | 200411 | 319487 | 346111 | 378879 | 946175 | 7114752 | 5 | 7 | 1 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 212404 | 849640 | 301055 | 329727 | 346111 | 442367 | 4386816 | 1 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 4096 | even | 3 | 201784 | 807179 | 317439 | 364543 | 471039 | 495615 | 4124672 | 4 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 4096 | even | 3 | 176428 | 705788 | 333823 | 688127 | 716799 | 745471 | 2506752 | 2 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 4096 | even | 3 | 195240 | 781014 | 327679 | 366591 | 477183 | 499711 | 2506752 | 4 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 4096 | even | 3 | 129626 | 518534 | 493567 | 524287 | 557055 | 786431 | 26382336 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 8192 | even | 3 | 188534 | 754165 | 337919 | 372735 | 393215 | 532479 | 4911104 | 5 | 11 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 8192 | even | 3 | 175442 | 701831 | 366591 | 491519 | 540671 | 571185 | 4386816 | 7 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 8192 | even | 3 | 159196 | 636859 | 344063 | 712703 | 745471 | 774143 | 2707456 | 3 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 8192 | even | 3 | 166651 | 666643 | 385023 | 509951 | 557055 | 581631 | 2707456 | 3 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 8192 | even | 3 | 119450 | 477807 | 536575 | 557055 | 598015 | 733183 | 26382336 | 1 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 64 | 16384 | even | 3 | 148717 | 594926 | 430079 | 581631 | 630783 | 659455 | 5959680 | 3 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 16384 | even | 3 | 146313 | 585307 | 436223 | 518143 | 606207 | 651263 | 4911104 | 3 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 16384 | even | 3 | 138422 | 553740 | 448511 | 704511 | 790527 | 839679 | 3100672 | 6 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 16384 | even | 3 | 142749 | 571049 | 448511 | 501759 | 622591 | 675839 | 3100672 | 0 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 16384 | even | 3 | 106702 | 426833 | 598015 | 651263 | 675839 | 962559 | 26382336 | 1 | 7 | 2 |  |
+| echo | rotor | this tree | 0 | 64 | 65536 | even | 3 | 51866 | 207519 | 1228799 | 1597439 | 1720319 | 1826815 | 12251136 | 7 | 11 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 65536 | even | 3 | 50692 | 202819 | 1261567 | 1482751 | 1638399 | 1753087 | 8056832 | 7 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 53863 | 215493 | 1187839 | 1376255 | 1761279 | 1884159 | 5980160 | 1 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 51161 | 204698 | 1253375 | 1433599 | 1564671 | 1646591 | 5275648 | 2 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 51821 | 207317 | 1236991 | 1302527 | 1343487 | 1998847 | 26382336 | 2 | 3 | 0 |  |
+echo_runner: 0 row(s) fell behind the baseline
+```
+
+### Run B3: run 36376749918, job 108784054070
+
+```text
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 220670 | 882695 | 71679 | 83967 | 101887 | 149503 | 3993600 | 2 | 7 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 4096 | even | 3 | 211420 | 845694 | 75263 | 93183 | 114175 | 153599 | 3993600 | 3 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 4096 | even | 3 | 176942 | 707787 | 80895 | 171007 | 188415 | 233471 | 1654784 | 3 | 0 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 4096 | even | 3 | 194504 | 778032 | 81407 | 102399 | 123391 | 169983 | 1097728 | 1 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 4096 | even | 3 | 136852 | 547415 | 115711 | 147455 | 179199 | 522239 | 7114752 | 0 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 8192 | even | 3 | 194243 | 776989 | 80895 | 105471 | 130559 | 282623 | 4124672 | 4 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 8192 | even | 3 | 186255 | 745030 | 84479 | 109055 | 133119 | 174079 | 3993600 | 2 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 8192 | even | 3 | 160365 | 641477 | 88063 | 190463 | 211967 | 246783 | 1785856 | 4 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 8192 | even | 3 | 177347 | 709401 | 89599 | 121343 | 143359 | 176127 | 1228800 | 2 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 8192 | even | 3 | 123678 | 494718 | 125951 | 166911 | 197631 | 374783 | 7114752 | 3 | 7 | 2 |  |
+| echo | rotor | this tree | 0 | 16 | 16384 | even | 3 | 139311 | 557259 | 112127 | 160767 | 191487 | 242687 | 4386816 | 6 | 0 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 16384 | even | 3 | 144685 | 578751 | 109055 | 154623 | 181247 | 221183 | 4124672 | 3 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 16384 | even | 3 | 133372 | 533506 | 102911 | 222207 | 249855 | 280575 | 1916928 | 3 | 0 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 16384 | even | 3 | 143516 | 574085 | 111103 | 153599 | 176127 | 210943 | 1384448 | 7 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 16384 | even | 3 | 105244 | 420980 | 149503 | 191487 | 243711 | 430079 | 7114752 | 1 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 16 | 65536 | even | 3 | 48723 | 194909 | 323583 | 438271 | 489471 | 581631 | 5959680 | 6 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 65536 | even | 3 | 50600 | 202410 | 315391 | 425983 | 493567 | 589823 | 4911104 | 11 | 7 | 1 | **RUNS DISAGREE** |
+| echo | libuv | v1.52.1 | 0 | 16 | 65536 | even | 3 | 52730 | 210932 | 303103 | 368639 | 405503 | 485375 | 2703360 | 3 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 65536 | even | 3 | 49451 | 197813 | 323583 | 473087 | 630783 | 774143 | 2113536 | 3 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 65536 | even | 3 | 47996 | 191992 | 333823 | 360447 | 434175 | 1064959 | 7114752 | 2 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 207279 | 829146 | 309247 | 333823 | 368639 | 440319 | 4386816 | 0 | 3 | 2 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 4096 | even | 3 | 191950 | 767846 | 335871 | 434175 | 493567 | 516095 | 4124672 | 6 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 4096 | even | 3 | 174902 | 699684 | 350207 | 712703 | 745471 | 765951 | 2506752 | 2 | 3 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 4096 | even | 3 | 199082 | 796383 | 329727 | 413695 | 473087 | 518143 | 2506752 | 5 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 4096 | even | 3 | 128220 | 512896 | 497663 | 557055 | 573439 | 741375 | 26382336 | 2 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 8192 | even | 3 | 183105 | 732459 | 348159 | 387071 | 432127 | 536575 | 4911104 | 2 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 8192 | even | 3 | 173513 | 694094 | 372735 | 489471 | 544767 | 569343 | 4386816 | 1 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 8192 | even | 3 | 158425 | 633777 | 387071 | 786431 | 823295 | 856063 | 2707456 | 2 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 8192 | even | 3 | 163006 | 652059 | 393215 | 489471 | 565247 | 593919 | 2707456 | 7 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 8192 | even | 3 | 116859 | 467463 | 544767 | 622591 | 671743 | 843775 | 26382336 | 0 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 16384 | even | 3 | 137577 | 550365 | 460799 | 602111 | 671743 | 708607 | 5959680 | 5 | 0 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 16384 | even | 3 | 136232 | 545000 | 468991 | 610303 | 663551 | 700415 | 4911104 | 7 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 16384 | even | 3 | 125993 | 504045 | 481279 | 913407 | 1019903 | 1056767 | 3100672 | 1 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 16384 | even | 3 | 134470 | 537916 | 477183 | 634879 | 700415 | 741375 | 3100672 | 4 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 16384 | even | 3 | 103025 | 412119 | 618495 | 692223 | 724991 | 983039 | 26382336 | 2 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 65536 | even | 3 | 49421 | 197722 | 1286143 | 1728511 | 1802239 | 1884159 | 12251136 | 4 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 65536 | even | 3 | 47419 | 189727 | 1351679 | 1581055 | 1744895 | 2146303 | 8056832 | 2 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 52286 | 209185 | 1220607 | 1359871 | 1425407 | 1515519 | 5980160 | 3 | 19 | 3 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 46453 | 185863 | 1368063 | 1646591 | 1818623 | 2146303 | 5275648 | 8 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 49464 | 197883 | 1294335 | 1384447 | 1425407 | 1507327 | 26382336 | 0 | 3 | 0 |  |
+echo_runner: **libxev GAINED ON ROTOR** past the baseline
+echo_runner: 1 row(s) fell behind the baseline
+```
+
+### Run B4: run 36376749918, job 108784054107
+
+```text
+| workload | candidate | version | cores | connections | payload bytes | load | runs | median per second | median operations | median p50 ns | median p99 ns | median p999 ns | median p9999 ns | median peak rss bytes | spread percent | other work peak /100 | other work mean /100 | verdict |
+| echo | rotor | this tree | 0 | 16 | 4096 | even | 3 | 231153 | 924623 | 68607 | 77311 | 84479 | 123391 | 3993600 | 3 | 7 | 2 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 4096 | even | 3 | 222942 | 891784 | 71167 | 81919 | 104959 | 130047 | 3993600 | 5 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 4096 | even | 3 | 189423 | 757709 | 76287 | 159743 | 171007 | 187391 | 1650688 | 3 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 4096 | even | 3 | 208104 | 832430 | 76799 | 87039 | 112127 | 127999 | 1097728 | 1 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 4096 | even | 3 | 145015 | 580063 | 108543 | 138239 | 168959 | 452607 | 7114752 | 2 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 16 | 8192 | even | 3 | 213766 | 855078 | 74239 | 86015 | 94207 | 125951 | 4124672 | 4 | 7 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 8192 | even | 3 | 203541 | 814175 | 77823 | 101375 | 117247 | 127999 | 3993600 | 2 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 8192 | even | 3 | 174447 | 697807 | 80383 | 172031 | 185343 | 202751 | 1785856 | 2 | 7 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 8192 | even | 3 | 187055 | 748235 | 84991 | 96767 | 122879 | 135167 | 1228800 | 1 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 8192 | even | 3 | 136179 | 544719 | 115711 | 147455 | 169983 | 419839 | 7114752 | 0 | 7 | 2 |  |
+| echo | rotor | this tree | 0 | 16 | 16384 | even | 3 | 158232 | 632938 | 98815 | 137215 | 151551 | 168959 | 4386816 | 1 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 16384 | even | 3 | 161773 | 647109 | 98303 | 132095 | 146431 | 160767 | 4124672 | 0 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 16384 | even | 3 | 146856 | 587445 | 94207 | 200703 | 215039 | 231423 | 1916928 | 0 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 16384 | even | 3 | 159026 | 636122 | 101375 | 137215 | 153599 | 164863 | 1384448 | 3 | 3 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 16384 | even | 3 | 115934 | 463746 | 136191 | 160767 | 193535 | 434175 | 7114752 | 4 | 3 | 1 |  |
+| echo | rotor | this tree | 0 | 16 | 65536 | even | 3 | 55793 | 223182 | 284671 | 389119 | 442367 | 464895 | 5959680 | 8 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 16 | 65536 | even | 3 | 54567 | 218280 | 292863 | 364543 | 405503 | 452607 | 4911104 | 2 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 16 | 65536 | even | 3 | 54789 | 219172 | 290815 | 323583 | 436223 | 466943 | 2703360 | 0 | 0 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 16 | 65536 | even | 3 | 54757 | 219041 | 290815 | 354303 | 387071 | 544767 | 2113536 | 2 | 3 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 16 | 65536 | even | 3 | 51131 | 204529 | 313343 | 333823 | 389119 | 765951 | 7114752 | 3 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 4096 | even | 3 | 221262 | 885089 | 288767 | 313343 | 325631 | 415743 | 4386816 | 2 | 7 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 4096 | even | 3 | 209566 | 838312 | 305151 | 350207 | 452607 | 473087 | 4124672 | 7 | 3 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 4096 | even | 3 | 187739 | 751032 | 327679 | 663551 | 696319 | 733183 | 2506752 | 4 | 7 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 4096 | even | 3 | 207074 | 828347 | 317439 | 413695 | 462847 | 483327 | 2506752 | 3 | 7 | 1 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 4096 | even | 3 | 136516 | 546101 | 466943 | 522239 | 544767 | 704511 | 26382336 | 1 | 0 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 8192 | even | 3 | 190746 | 763003 | 333823 | 370687 | 393215 | 491519 | 4911104 | 3 | 7 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 8192 | even | 3 | 177536 | 710192 | 360447 | 458751 | 514047 | 548863 | 4386816 | 5 | 3 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 8192 | even | 3 | 167973 | 671965 | 346111 | 712703 | 749567 | 798719 | 2707456 | 0 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 8192 | even | 3 | 174230 | 696981 | 366591 | 473087 | 532479 | 552959 | 2707456 | 7 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 8192 | even | 3 | 124421 | 497716 | 514047 | 557055 | 581631 | 798719 | 26382336 | 5 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 16384 | even | 3 | 148799 | 595236 | 425983 | 581631 | 638975 | 659455 | 5959680 | 3 | 3 | 1 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 16384 | even | 3 | 148093 | 592443 | 432127 | 573439 | 638975 | 671743 | 4911104 | 2 | 7 | 1 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 16384 | even | 3 | 136856 | 547484 | 450559 | 856063 | 892927 | 917503 | 3100672 | 5 | 3 | 0 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 16384 | even | 3 | 145121 | 580539 | 440319 | 540671 | 626687 | 663551 | 3100672 | 6 | 0 | 0 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 16384 | even | 3 | 110629 | 442535 | 577535 | 618495 | 626687 | 1019903 | 26382336 | 6 | 3 | 0 |  |
+| echo | rotor | this tree | 0 | 64 | 65536 | even | 3 | 54535 | 218189 | 1171455 | 1515519 | 1753087 | 1802239 | 12251136 | 3 | 3 | 0 |  |
+| echo | rotor (accumulate) | this tree | 0 | 64 | 65536 | even | 3 | 53900 | 215642 | 1187839 | 1523711 | 1671167 | 1802239 | 8056832 | 2 | 0 | 0 |  |
+| echo | libuv | v1.52.1 | 0 | 64 | 65536 | even | 3 | 54015 | 216085 | 1179647 | 1310719 | 1376255 | 1736703 | 5980160 | 0 | 7 | 1 |  |
+| echo | libxev | 9ce8e8e | 0 | 64 | 65536 | even | 3 | 51691 | 206817 | 1236991 | 1425407 | 1540095 | 1671167 | 5275648 | 4 | 35 | 6 |  |
+| echo | std.Io.Threaded | 0.16.0 | 0 | 64 | 65536 | even | 3 | 50772 | 203135 | 1261567 | 1359871 | 1392639 | 1400831 | 26382336 | 5 | 7 | 1 |  |
+echo_runner: 0 row(s) fell behind the baseline
 ```
