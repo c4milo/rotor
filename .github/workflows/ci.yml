@@ -322,8 +322,7 @@ jobs:
       # The runner prints the processor itself, as the baseline names it. This is for a reader of
       # the log: an arm64 /proc/cpuinfo has no model name, so its implementer and part stand in. On
       # macOS it also prints the memory and the most threads one process may start, which the timer
-      # step below depends on, and the processes using the most CPU. Other work kept all three
-      # processors of those runners busy in run 36373291870, and the log did not say what it was.
+      # step below depends on, and the processes using the most CPU.
       - name: What this runner is
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -354,9 +353,10 @@ jobs:
       - name: Accept storm
         if: ${{ !cancelled() }}
         run: ./zig-out/bin/echo_runner --workload storm --port-base 31000
-      # `std.Io.Threaded` holds a thread per sleeping timer, so 4096 timers is 4096 threads. On the
-      # macOS runners of run 36373291870 it failed at 4096 timers on all four, and ran at 256, so
-      # there it runs at 256 alone. Every other candidate runs at both counts everywhere.
+      # `std.Io.Threaded` holds a thread per sleeping timer, so 4096 timers is 4096 threads. A macOS
+      # runner lets a process start 2048 (`kern.num_taskthreads`), and on all four of run
+      # 36373291870 it failed at 4096 timers and ran at 256. So there it runs at 256 alone. Every
+      # other candidate runs at both counts everywhere.
       - name: Timer churn, each library in its cheapest mode
         if: ${{ !cancelled() }}
         run: |
