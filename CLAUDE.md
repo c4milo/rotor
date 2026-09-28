@@ -296,7 +296,9 @@ was about to push.
   the Linux gate, the race gate and the call gate on both Linux processors; `zig build proofs` and
   `zig build tla` on x86-64 Linux; and `zig build lint-commits` on a pull request. The comparison
   against libuv and libxev, held to `bench/baseline/echo.txt`, runs on all three every night at
-  06:17 UTC and when started by hand; the cost probes run only by hand, on x86-64. Zig is downloaded from
+  06:17 UTC and when started by hand. The file has sections for x86-64 and arm64 processors and none
+  for the macOS runners, so there the comparison reports and gates nothing. The cost probes run only
+  by hand, on x86-64. Zig is downloaded from
   ziglang.org by `.github/actions/zig`, Lean from its GitHub release and TLC from the tlaplus
   release, each checked against a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.
@@ -431,7 +433,10 @@ value, and `rotor_echo` keeps `--cpu` and `--loops` for a person running it by h
 project's CBMC run, and was not recorded: `orbstack` runs on this machine's cores, so its numbers
 are only as quiet as this machine is. GitHub's hosted macOS runners were tried as a stand-in on
 2026-09-24 and were no quieter: the cross-core comparison's rounds spread by 9 to 96 percent there.
-They are not a named machine, and kqueue is measured on `mac` when it is quiet.
+On 2026-09-27 four echo comparisons on them disagreed on 134 of 160 rows, with other work busy on
+all three processors, so the echo baseline holds no section for them
+(`bench/results/echo-github-macos-2026-09-27.md`). They are not a named machine, and kqueue is
+measured on `mac` when it is quiet.
 
 A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
 of 46 and was thrown away.

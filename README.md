@@ -56,7 +56,7 @@ public API, passes on all three backends, and CI runs it on every push.
 
 | system | backend | requires | tested on |
 |---|---|---|---|
-| Linux | io_uring | Linux 6.17 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 6.17 on x86-64 (GitHub runners), Linux 7.0 on aarch64 (a virtual machine on Apple silicon) |
+| Linux | io_uring | Linux 6.17 or later, with the io_uring features [listed in the guide](docs/using.md#what-the-kernel-must-have) | Linux 6.17 on x86-64 and aarch64 (GitHub runners), Linux 7.0 on aarch64 (a virtual machine on Apple silicon) |
 | Linux, where io_uring is refused or lacks a feature rotor needs | epoll | Linux 6.17 or later | both of the above, under Docker's default seccomp profile |
 | macOS | kqueue | no minimum version is set | macOS 26.6 on Apple silicon |
 
