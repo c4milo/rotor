@@ -320,14 +320,16 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/zig
       # The runner prints the processor itself, as the baseline names it. This is for a reader of
-      # the log: an arm64 /proc/cpuinfo has no model name, so its implementer and part stand in.
+      # the log: an arm64 /proc/cpuinfo has no model name, so its implementer and part stand in. On
+      # macOS it also prints the memory and the most threads one process may start, which the timer
+      # step below depends on.
       - name: What this runner is
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
             grep -m1 "model name" /proc/cpuinfo || grep -m2 -E "CPU (implementer|part)" /proc/cpuinfo
             nproc
           else
-            sysctl -n machdep.cpu.brand_string hw.ncpu
+            sysctl machdep.cpu.brand_string hw.ncpu hw.memsize kern.num_taskthreads
           fi
           uname -r
       - name: Build rotor's programs and the pinned alternatives
@@ -354,9 +356,19 @@ jobs:
         run: |
           ./zig-out/bin/echo_runner --workload storm --port-base 31000 \
             --baseline bench/baseline/echo.txt --write-baseline yes
+      # `std.Io.Threaded` holds a thread per sleeping timer, so 4096 timers is 4096 threads. On the
+      # macOS runners of run 36373291870 it failed at 4096 timers on all four, and ran at 256, so
+      # there it runs at 256 alone. Every other candidate runs at both counts everywhere.
       - name: Timer churn, each library in its cheapest mode
         if: ${{ !cancelled() }}
-        run: ./zig-out/bin/timers_runner
+        run: |
+          set -euo pipefail
+          if [ "$RUNNER_OS" = macOS ]; then
+            ./zig-out/bin/timers_runner --only "rotor,rotor (repeating),libuv,libuv (repeating),libxev"
+            ./zig-out/bin/timers_runner --only std.Io.Threaded --timers 256
+          else
+            ./zig-out/bin/timers_runner
+          fi
       - name: One cross-core message
         if: ${{ !cancelled() }}
         run: ./zig-out/bin/crosscore_runner
