@@ -43,18 +43,25 @@ pub fn add(
     const check = check_executable(b, b.graph.host);
     const step = b.step("halt-check", "Require every halt scenario to die by a signal");
 
-    // Each scenario file and the backend it proves, beside `core`, which all of them import.
-    const files = [_]struct { name: []const u8, backend: ?[]const u8 }{
+    // Each scenario file and the backend it proves, beside `core`, which all of them import. The
+    // kqueue scenarios build only for a Mac: that backend names libc's kevent types, which Linux
+    // does not have, where the uring and epoll backends compile on a Mac and refuse at init.
+    const files = [_]struct { name: []const u8, backend: ?[]const u8, darwin_only: bool = false }{
         .{ .name = "core_scenarios", .backend = null },
         .{ .name = "uring_scenarios", .backend = "uring" },
-        .{ .name = "kqueue_scenarios", .backend = "kqueue" },
+        .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true },
         .{ .name = "epoll_scenarios", .backend = "epoll" },
     };
+    const darwin = target.result.os.tag.isDarwin();
     inline for (files) |file| {
-        const executable = scenarios(b, file.name, target, optimize);
-        executable.root_module.addImport("core", graph.core);
-        if (file.backend) |name| executable.root_module.addImport(name, module_named(graph, name));
-        step.dependOn(&run_check(b, check, executable, &.{}).step);
+        if (darwin or !file.darwin_only) {
+            const executable = scenarios(b, file.name, target, optimize);
+            executable.root_module.addImport("core", graph.core);
+            if (file.backend) |name| {
+                executable.root_module.addImport(name, module_named(graph, name));
+            }
+            step.dependOn(&run_check(b, check, executable, &.{}).step);
+        }
     }
 
     const canary = scenarios(b, "canary_scenarios", target, optimize);

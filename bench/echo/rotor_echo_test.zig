@@ -62,7 +62,10 @@ const ticks_max = 10_000;
 /// Room for every piece of the overflowing message in one tick, and more.
 const events_max = 4 * pieces_module.pieces_max;
 
-const server_options: Loop.Options = .{ .operations = 16, .entries = 16 };
+/// The server's entries are `pieces_max`, because io_uring ends a multishot receive once its
+/// completion ring is full, and that ring holds two completions per entry. At 16 entries the
+/// overflowing message's receive ended at 33 pieces, before any tick, and never passed `pieces_max`.
+const server_options: Loop.Options = .{ .operations = 16, .entries = pieces_module.pieces_max };
 const client_options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
 const memory_alignment = core.layout.memory_alignment;

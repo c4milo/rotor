@@ -97,7 +97,11 @@ pub fn build(b: *std.Build) void {
         }),
     }));
 
-    const unit_test_modules = [_]struct { name: []const u8, module: *std.Build.Module }{
+    const unit_test_modules = [_]struct {
+        name: []const u8,
+        module: *std.Build.Module,
+        darwin_only: bool = false,
+    }{
         // The public module compiles on every host, and compiling it is the check that its
         // promises still hold.
         .{ .name = "rotor", .module = graph.rotor },
@@ -107,13 +111,16 @@ pub fn build(b: *std.Build) void {
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         .{ .name = "kqueue", .module = graph.kqueue },
-        .{ .name = "conformance-kqueue", .module = graph.conformance_kqueue },
+        // Built only on a Mac: the kqueue backend names libc's kevent types, which Linux does not
+        // have. The kqueue module's own tests compile on any host and skip off a Mac.
+        .{ .name = "conformance-kqueue", .module = graph.conformance_kqueue, .darwin_only = true },
         .{ .name = "epoll", .module = graph.epoll },
         // It skips off Linux like `conformance-uring`, so on a Mac this proves it compiles, and the
         // Linux gate is where it runs.
         .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
     };
     for (unit_test_modules) |entry| {
+        if (entry.darwin_only and !target.result.os.tag.isDarwin()) continue;
         const unit_tests = b.addTest(.{ .name = entry.name, .root_module = entry.module });
         install_step.dependOn(&unit_tests.step);
         const run = &b.addRunArtifact(unit_tests).step;

@@ -2,6 +2,7 @@
 //! is at the 500-line limit CLAUDE.md sets, and a program plus its tests is what that limit counts.
 //! Its own `test` block imports this file, so `zig build test-bench-programs` runs them.
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const backend = @import("backend");
 const reads = @import("rotor_reads.zig");
@@ -204,8 +205,12 @@ test "a real file's last block decides whether it is filled" {
 
     // The first block too, not only the sampled last one.
     var read_back: [block_bytes]u8 = undefined;
-    const count = std.c.pread(file, &read_back, read_back.len, 0);
-    try testing.expectEqual(@as(isize, block_bytes), count);
+    // Spelled twice, as `rotor_reads_setup.zig` spells it: Linux is built without libc here.
+    const count = if (builtin.os.tag == .linux)
+        std.os.linux.pread(file, &read_back, read_back.len, 0)
+    else
+        std.c.pread(file, &read_back, read_back.len, 0);
+    try testing.expect(count == block_bytes);
     for (read_back) |byte| try testing.expectEqual(file_module.fill_byte, byte);
 }
 
