@@ -191,6 +191,10 @@ pub const ready_wait_ns: u64 = 5 * std.time.ns_per_s;
 /// Where the servers are, under the install prefix.
 pub const directory_default = "zig-out/bin";
 
+/// The most bytes a baseline file may hold: every processor's section, each up to `rows_max` rows
+/// with its comments. At 16 KiB it held six x86-64 sections and not the arm64 and macOS ones.
+pub const baseline_bytes_max = 64 * 1024;
+
 pub const connections_default = [_]u32{ 16, 64 };
 /// The one entry the storm uses, because its message is one byte.
 pub const payloads_storm = [_]u32{4096};
@@ -342,6 +346,11 @@ test "a candidate blocked outright is blocked in every workload" {
 
 /// The most processors the committed baseline may name before its test refuses it.
 const baseline_processors_max = 16;
+
+test "the committed baseline fits the buffer the runner reads it into" {
+    // A file that does not fit fails the comparison with `BaselineTooLarge` before any row runs.
+    try testing.expect(@embedFile("echo_baseline").len < baseline_bytes_max);
+}
 
 test "the committed baseline parses, and every row names a workload and a candidate of this runner" {
     // A row whose candidate or workload this runner does not have never matches a measurement,

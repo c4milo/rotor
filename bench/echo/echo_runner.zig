@@ -102,8 +102,7 @@ pub fn main(init: std.process.Init) !void {
 /// process: a run reads its baseline once and holds it.
 var baseline_text: [baseline_bytes_max]u8 = undefined;
 
-/// The most bytes a baseline file may hold. `rows_max` rows of a line each, with room to spare.
-const baseline_bytes_max = 16 * 1024;
+const baseline_bytes_max = setup.baseline_bytes_max;
 
 fn read_baseline(
     init: std.process.Init,
