@@ -322,7 +322,8 @@ jobs:
       # The runner prints the processor itself, as the baseline names it. This is for a reader of
       # the log: an arm64 /proc/cpuinfo has no model name, so its implementer and part stand in. On
       # macOS it also prints the memory and the most threads one process may start, which the timer
-      # step below depends on.
+      # step below depends on, and the processes using the most CPU. Other work kept all three
+      # processors of those runners busy in run 36373291870, and the log did not say what it was.
       - name: What this runner is
         run: |
           if [ "$RUNNER_OS" = Linux ]; then
@@ -330,6 +331,7 @@ jobs:
             nproc
           else
             sysctl machdep.cpu.brand_string hw.ncpu hw.memsize kern.num_taskthreads
+            ps -Ao pcpu,comm -r | head -8
           fi
           uname -r
       - name: Build rotor's programs and the pinned alternatives
