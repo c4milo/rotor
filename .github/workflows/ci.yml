@@ -348,14 +348,10 @@ jobs:
       # echo on every push already.
       - name: Echo, against the baseline
         run: ./zig-out/bin/echo_runner --baseline bench/baseline/echo.txt
-      # The steps below measure other workloads, so they run whatever the echo gate decided. The
-      # storm is held to the same file: its rows are gated where the processor's section has them,
-      # and every run prints its ratios in the file's format, so a section can gain them.
+      # The steps below measure other workloads, so they run whatever the echo gate decided.
       - name: Accept storm
         if: ${{ !cancelled() }}
-        run: |
-          ./zig-out/bin/echo_runner --workload storm --port-base 31000 \
-            --baseline bench/baseline/echo.txt --write-baseline yes
+        run: ./zig-out/bin/echo_runner --workload storm --port-base 31000
       # `std.Io.Threaded` holds a thread per sleeping timer, so 4096 timers is 4096 threads. On the
       # macOS runners of run 36373291870 it failed at 4096 timers on all four, and ran at 256, so
       # there it runs at 256 alone. Every other candidate runs at both counts everywhere.
