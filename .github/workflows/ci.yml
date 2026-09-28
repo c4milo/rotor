@@ -23,9 +23,9 @@
 #
 # The proofs and the models do not depend on the processor, so they run on x86-64 only.
 #
-# Two more jobs run only when asked, on x86-64 only. `comparison` runs every night and by hand, and
-# holds rotor's echo throughput against libuv and libxev to `bench/baseline/echo.txt`. `costs` runs
-# by hand.
+# Two more jobs run only when asked. `comparison` runs every night and by hand, on all three kinds
+# of runner, and holds rotor's echo throughput against libuv and libxev to
+# `bench/baseline/echo.txt`. `costs` runs by hand, on x86-64 only.
 #
 # **The cost gate rides in the conformance suite** (`src/conformance/conformance_cost.zig`), so
 # every `test` and `linux` job bounds the loop's own work: a poll, a timer fire and a submit.
@@ -50,6 +50,13 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      comparison_runs:
+        description: >-
+          The comparison's runs on each kind of runner, as a JSON list with one entry a run, such
+          as [1, 2, 3, 4]. Each run gets a runner of its own, which is how a baseline section is
+          taken from several runners at once.
+        default: "[1]"
   # Every night at 06:17 UTC, for the comparison job below; every other job runs then too. The
   # minute is off the hour, when GitHub starts fewer scheduled runs late.
   schedule:
@@ -285,25 +292,44 @@ jobs:
               --port-base $((22100 + round * 200)) --directory zig-out/epoll-no-class-a
           done
 
-  # Every night, and when started by hand. It compares rotor on io_uring against libuv and libxev
-  # in one run on one runner, and holds the echo rows to `bench/baseline/echo.txt`, whose sections
-  # were taken from this job on 2026-09-22.
+  # Every night, and when started by hand, on each of the three kinds of runner: io_uring on both
+  # Linux processors, kqueue on macOS. It compares rotor against libuv and libxev in one run on one
+  # runner, and holds the echo rows to `bench/baseline/echo.txt`, whose first sections were taken
+  # from this job on 2026-09-22.
   #
   # It leaves the file workload out. Those rows read a file on an Azure cloud volume, which is what
   # keeps C12 and C13 out of the `github` column of `docs/costs.md`, and a number from it would
   # describe the volume rather than either library.
   comparison:
-    name: Linux x86-64, the comparison
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    name: The comparison, ${{ matrix.name }}, run ${{ matrix.run }}
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest]
+        # A night runs the comparison once on each kind of runner. By hand it runs as often as
+        # `comparison_runs` asks.
+        run: ${{ fromJSON(inputs.comparison_runs || '[1]') }}
+        include:
+          - { runner: ubuntu-24.04, name: Linux x86-64 }
+          - { runner: ubuntu-24.04-arm, name: Linux arm64 }
+          - { runner: macos-latest, name: macOS arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/zig
+      # The runner prints the processor itself, as the baseline names it. This is for a reader of
+      # the log: an arm64 /proc/cpuinfo has no model name, so its implementer and part stand in.
       - name: What this runner is
         run: |
-          grep -m1 "model name" /proc/cpuinfo || true
-          nproc; uname -r
+          if [ "$RUNNER_OS" = Linux ]; then
+            grep -m1 "model name" /proc/cpuinfo || grep -m2 -E "CPU (implementer|part)" /proc/cpuinfo
+            nproc
+          else
+            sysctl -n machdep.cpu.brand_string hw.ncpu
+          fi
+          uname -r
       - name: Build rotor's programs and the pinned alternatives
         run: |
           set -euo pipefail
@@ -320,10 +346,14 @@ jobs:
       # echo on every push already.
       - name: Echo, against the baseline
         run: ./zig-out/bin/echo_runner --baseline bench/baseline/echo.txt
-      # The steps below measure other workloads, so they run whatever the echo gate decided.
+      # The steps below measure other workloads, so they run whatever the echo gate decided. The
+      # storm is held to the same file: its rows are gated where the processor's section has them,
+      # and every run prints its ratios in the file's format, so a section can gain them.
       - name: Accept storm
         if: ${{ !cancelled() }}
-        run: ./zig-out/bin/echo_runner --workload storm --port-base 31000
+        run: |
+          ./zig-out/bin/echo_runner --workload storm --port-base 31000 \
+            --baseline bench/baseline/echo.txt --write-baseline yes
       - name: Timer churn, each library in its cheapest mode
         if: ${{ !cancelled() }}
         run: ./zig-out/bin/timers_runner
@@ -333,12 +363,13 @@ jobs:
       # The two measurements `bench/calls/` made on `orbstack`, taken here too. On 2026-09-22 this
       # runner showed rotor's group and accumulate shapes level, where `orbstack` showed the whole-
       # pool group well behind, and its CPU table showed why: a whole-pool group costs this runner's
-      # server no more than a small one (`bench/results/cpu-github-2026-09-22.md`).
+      # server no more than a small one (`bench/results/cpu-github-2026-09-22.md`). Both scripts
+      # read Linux's /proc and tracepoints, so they run on Linux only.
       - name: CPU per echo, server and client
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: BIN=zig-out/bin sh bench/calls/cpu_per_echo.sh
       - name: Kernel calls per echo
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: sudo BIN=zig-out/bin sh bench/calls/count_calls.sh
 
   # Kernel calls per echo, held to `bench/baseline/calls.txt` on every push and pull request. A

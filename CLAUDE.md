@@ -294,9 +294,9 @@ was about to push.
   request, on three kinds of GitHub-hosted runner: macOS on Apple silicon, Linux on x86-64 and
   Linux on arm64. Each job is the command a developer runs by hand: `zig build test` on all three;
   the Linux gate, the race gate and the call gate on both Linux processors; `zig build proofs` and
-  `zig build tla` on x86-64 Linux; and `zig build lint-commits` on a pull request. The x86-64
-  comparison against libuv and libxev, held to `bench/baseline/echo.txt`, runs every night at
-  06:17 UTC and when started by hand; the cost probes run only by hand. Zig is downloaded from
+  `zig build tla` on x86-64 Linux; and `zig build lint-commits` on a pull request. The comparison
+  against libuv and libxev, held to `bench/baseline/echo.txt`, runs on all three every night at
+  06:17 UTC and when started by hand; the cost probes run only by hand, on x86-64. Zig is downloaded from
   ziglang.org by `.github/actions/zig`, Lean from its GitHub release and TLC from the tlaplus
   release, each checked against a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.
