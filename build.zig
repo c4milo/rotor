@@ -14,6 +14,8 @@
 //! `zig build tla` checks the TLA+ models under spec/tla/ with TLC, and `zig build proofs` the Lean
 //! proofs; each needs a toolchain `zig build test` does not (build/tla.zig, build/proofs.zig).
 //!
+//! `zig build guide` installs pepegrillo's performance method to zig-out/docs/ (build/guide.zig).
+//!
 //! The library has no dependencies. The tools take one: pepegrillo, a lazy package in
 //! build.zig.zon that only the root build requests, so a project depending on rotor never fetches
 //! it. The module graph is build/modules.zig.
@@ -28,6 +30,7 @@ const linux = @import("build/linux.zig");
 const race = @import("build/race.zig");
 const proofs = @import("build/proofs.zig");
 const tla = @import("build/tla.zig");
+const guide = @import("build/guide.zig");
 const examples = @import("build/examples.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
@@ -79,6 +82,7 @@ pub fn build(b: *std.Build) void {
     if (b.pkg_hash.len != 0) return;
     const pepegrillo_dependency = b.lazyDependency("pepegrillo", .{}) orelse return;
     const pepegrillo = pepegrillo_dependency.module("pepegrillo");
+    guide.add(b, pepegrillo_dependency);
 
     const install_step = b.getInstallStep();
     const test_step = b.step("test", "Run the lint, then every module's unit tests");
