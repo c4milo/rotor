@@ -298,12 +298,14 @@ test "a timer that fired early with no room to arm it again leaves the rest to a
     try loop.init(&memory, .{ .operations = 2 });
     defer loop.deinit();
 
-    // A timer 5 ms out, given time to fire, and an enter that posts its completion.
+    // A timer 5 ms out, and an enter that waits for its completion. The enter ends when the
+    // completion is posted, so its bound only has to outlast a busy machine: at 20 ms it ended
+    // first once, on a GitHub arm64 runner running every test binary at once (run 36607058823).
     loop.tables.now_ns = clock_ns();
     const now_ns = loop.tables.now_ns;
     try testing.expect(arm_wait_timer(&loop, now_ns, now_ns + 5 * core.constants.ns_per_ms));
     _ = try loop.ring.enter(null);
-    _ = try loop.ring.enter(20 * core.constants.ns_per_ms);
+    _ = try loop.ring.enter(core.constants.ns_per_s);
     try testing.expectEqual(@as(u32, 1), loop.ring.cq_ready());
 
     const far: linux.kernel_timespec = .{ .sec = far_s, .nsec = 0 };
