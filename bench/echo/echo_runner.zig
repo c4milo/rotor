@@ -206,7 +206,8 @@ fn render_rows(
     recorded: []const baseline.Row,
     regressed: *u32,
 ) !void {
-    const rotor_per_second = rotor_throughput(built);
+    const rotor = rotor_series(built);
+    const rotor_per_second = if (rotor) |series| series.median_per_second() else 0;
     for (built) |maybe| {
         const series = maybe orelse continue;
         try series.render_markdown_row(writer);
@@ -215,21 +216,20 @@ fn render_rows(
             try baseline.render_row(writer, @tagName(options.workload), &series, rotor_per_second);
         }
         if (recorded.len != 0) {
-            try report_verdict(writer, options, recorded, &series, rotor_per_second, regressed);
+            try report_verdict(writer, options, recorded, &series, rotor, regressed);
         }
     }
 }
 
-/// rotor's own throughput from this configuration, which every ratio is taken against, or 0 when
+/// rotor's own series from this configuration, which every ratio is taken against, or null when
 /// rotor produced no row. The default shape is the baseline and not the accumulate one: two rotor
 /// rows would otherwise each be measured against whichever came first.
-fn rotor_throughput(built: *const [candidates.len]?Series) u64 {
+fn rotor_series(built: *const [candidates.len]?Series) ?*const Series {
     for (candidates, 0..) |candidate, index| {
         if (!std.mem.eql(u8, candidate.name, rotor_candidate_name)) continue;
-        const series = built[index] orelse return 0;
-        return series.median_per_second();
+        return if (built[index]) |*series| series else null;
     }
-    return 0;
+    return null;
 }
 
 /// The candidate every ratio is measured against.
@@ -243,11 +243,11 @@ fn report_verdict(
     options: Options,
     recorded: []const baseline.Row,
     series: *const Series,
-    rotor_per_second: u64,
+    rotor: ?*const Series,
     regressed: *u32,
 ) !void {
     const workload = @tagName(options.workload);
-    const verdict = baseline.judge(recorded, workload, series, rotor_per_second);
+    const verdict = baseline.judge(recorded, workload, series, rotor);
     const name = series.runs[0].candidate;
     switch (verdict) {
         .within => {},
@@ -256,7 +256,8 @@ fn report_verdict(
             try writer.print("echo_runner: **{s} GAINED ON ROTOR** past the baseline\n", .{name});
         },
         .undecided => try writer.print(
-            "echo_runner: {s} decides nothing against the baseline: the runs disagreed\n",
+            "echo_runner: {s} decides nothing against the baseline: " ++
+                "its runs or rotor's disagreed\n",
             .{name},
         ),
         .unrecorded => try writer.print(

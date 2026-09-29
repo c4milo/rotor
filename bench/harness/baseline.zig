@@ -192,21 +192,27 @@ pub const Verdict = enum {
     within,
     /// It is further ahead than the baseline plus the margin: rotor lost ground.
     regressed,
-    /// The runs disagreed too much to decide, so nothing is claimed either way.
+    /// The candidate's runs or rotor's disagreed too much to decide, so nothing is claimed either
+    /// way.
     undecided,
     /// The baseline has no row for this measurement.
     unrecorded,
 };
 
-/// Judges `candidate`'s series against the baseline, given rotor's throughput from the same run.
-/// `rotor_per_second` of 0 means rotor measured nothing, which is undecided and not a pass.
+/// Judges `candidate`'s series against the baseline, given rotor's series from the same run, or
+/// null when rotor produced no row. The ratio divides by rotor's median, so it decides nothing when
+/// rotor's runs disagreed, as when the candidate's did. A nightly run on 2026-09-28 failed two rows
+/// where only rotor's runs disagreed, by 10 percent, and the candidates' agreed.
 pub fn judge(
     rows: []const Row,
     workload: []const u8,
     candidate: *const Series,
-    rotor_per_second: u64,
+    rotor: ?*const Series,
 ) Verdict {
-    if (candidate.unreliable() or rotor_per_second == 0) return .undecided;
+    const reference = rotor orelse return .undecided;
+    if (candidate.unreliable() or reference.unreliable()) return .undecided;
+    const rotor_per_second = reference.median_per_second();
+    if (rotor_per_second == 0) return .undecided;
     const first = candidate.runs[0];
     const asked: Row = .{
         .workload = workload,
@@ -372,40 +378,73 @@ fn steady(candidate: []const u8, per_second: u64, storage: []report.Result) !Ser
     return Series.init(storage);
 }
 
+/// A series whose median is `per_second` and whose runs spread by 20 percent of it, twice what
+/// `Series.unreliable` refuses.
+fn unsteady(candidate: []const u8, per_second: u64, storage: []report.Result) !Series {
+    const series = try steady(candidate, per_second, storage);
+    storage[0].operations_per_second = per_second - per_second / 10;
+    storage[storage.len - 1].operations_per_second = per_second + per_second / 10;
+    return series;
+}
+
 test "a candidate further ahead than its row, past the margin, is a regression" {
     var storage: [series_module.runs_min]report.Result = undefined;
+    var rotor_storage: [series_module.runs_min]report.Result = undefined;
     var rows: [4]Row = undefined;
     const recorded = try parse_test(test_head ++ "echo 16 4096 libuv 1000", &rows);
+    const rotor = try steady("rotor", 200_000, &rotor_storage);
 
     // Parity, which is the row itself: within.
     var level = try steady("libuv", 200_000, &storage);
-    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &level, 200_000));
+    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &level, &rotor));
 
     // Ahead by exactly the margin: still within, because the margin is an allowance.
     var at_margin = try steady("libuv", 210_000, &storage);
-    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &at_margin, 200_000));
+    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &at_margin, &rotor));
 
     // Ahead by more than the margin: rotor lost ground.
     var past = try steady("libuv", 220_000, &storage);
-    try testing.expectEqual(Verdict.regressed, judge(recorded, "echo", &past, 200_000));
+    try testing.expectEqual(Verdict.regressed, judge(recorded, "echo", &past, &rotor));
 
     // rotor further ahead than the baseline is never a failure.
     var behind = try steady("libuv", 100_000, &storage);
-    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &behind, 200_000));
+    try testing.expectEqual(Verdict.within, judge(recorded, "echo", &behind, &rotor));
 }
 
 test "an unrecorded measurement and an idle rotor decide nothing" {
     var storage: [series_module.runs_min]report.Result = undefined;
+    var rotor_storage: [series_module.runs_min]report.Result = undefined;
+    var rows: [4]Row = undefined;
+    const recorded = try parse_test(test_head ++ "echo 16 4096 libuv 1000", &rows);
+    const rotor = try steady("rotor", 200_000, &rotor_storage);
+
+    var other = try steady("libxev", 200_000, &storage);
+    try testing.expectEqual(Verdict.unrecorded, judge(recorded, "echo", &other, &rotor));
+
+    var level = try steady("libuv", 200_000, &storage);
+    try testing.expectEqual(Verdict.unrecorded, judge(recorded, "storm", &level, &rotor));
+    // rotor produced no row, or a row of nothing, so no ratio exists and nothing is claimed.
+    try testing.expectEqual(Verdict.undecided, judge(recorded, "echo", &level, null));
+    const idle = try steady("rotor", 0, &rotor_storage);
+    try testing.expectEqual(Verdict.undecided, judge(recorded, "echo", &level, &idle));
+}
+
+test "a candidate ahead of a rotor whose runs disagreed decides nothing" {
+    var storage: [series_module.runs_min]report.Result = undefined;
+    var rotor_storage: [series_module.runs_min]report.Result = undefined;
     var rows: [4]Row = undefined;
     const recorded = try parse_test(test_head ++ "echo 16 4096 libuv 1000", &rows);
 
-    var other = try steady("libxev", 200_000, &storage);
-    try testing.expectEqual(Verdict.unrecorded, judge(recorded, "echo", &other, 200_000));
+    // Ahead past the margin, but measured against a rotor median that its own runs do not agree on.
+    var past = try steady("libuv", 220_000, &storage);
+    const rotor = try unsteady("rotor", 200_000, &rotor_storage);
+    try testing.expect(rotor.unreliable());
+    try testing.expectEqual(Verdict.undecided, judge(recorded, "echo", &past, &rotor));
 
-    var level = try steady("libuv", 200_000, &storage);
-    try testing.expectEqual(Verdict.unrecorded, judge(recorded, "storm", &level, 200_000));
-    // rotor measured nothing, so no ratio exists and nothing is claimed.
-    try testing.expectEqual(Verdict.undecided, judge(recorded, "echo", &level, 0));
+    // The same candidate's own disagreement decides nothing either.
+    const steady_rotor = try steady("rotor", 200_000, &rotor_storage);
+    var wide = try unsteady("libuv", 220_000, &storage);
+    try testing.expectEqual(Verdict.undecided, judge(recorded, "echo", &wide, &steady_rotor));
 }
 
 test "a row written by render_row parses back to the ratio it recorded" {
