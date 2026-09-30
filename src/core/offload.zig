@@ -217,6 +217,9 @@ const drain_rounds_max = constants.mailbox_messages / constants.messages_per_dra
 ///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
 pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
+    // A loop with no offload returns before `messages` exists. ReleaseSafe writes a pattern over
+    // `undefined` memory, 512 bytes here, and a tick calls this twice.
+    if (completions.len == 0) return 0;
     var finished: u32 = 0;
     var messages: [constants.messages_per_drain]operation.Message = undefined;
     for (completions) |*ring| {

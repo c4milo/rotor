@@ -98,12 +98,15 @@ pub const Queue = struct {
 
     /// Wakes the loop whose kqueue is `target` out of its `kevent` call. Any thread may call it:
     /// it is one system call on a descriptor, and it touches no memory of the target loop.
+    ///
+    /// The call asks for no events, and `kevent` waits only for the events it was asked for, so it
+    /// returns at once with no timeout. A zero timeout cost about 500 instructions more per round
+    /// trip of two wakes, measured with two threads and no rotor on macOS 26.6.2 on 2026-09-29.
     pub fn wake(target: core.Descriptor) void {
         assert(target >= 0);
         const trigger: [1]Kevent = .{user_event(0, std.c.NOTE.TRIGGER)};
         var none: [0]Kevent = .{};
-        const zero: std.c.timespec = .{ .sec = 0, .nsec = 0 };
-        _ = std.c.kevent(target, &trigger, trigger.len, &none, 0, &zero);
+        _ = std.c.kevent(target, &trigger, trigger.len, &none, 0, null);
     }
 };
 

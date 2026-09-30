@@ -203,6 +203,44 @@ Mutations, each measured against `zig build test-kqueue` and `zig build test-con
 | an armed trigger ignored | `test-conformance-kqueue` | CAUGHT |
 | arming a poll never sets the flag | `test-conformance-kqueue` | CAUGHT |
 
+**Amended on 2026-09-29: a tick does less of its own work per message.** rotor's cross-core rate was
+10 percent behind libuv's. Both make the same `kevent` calls per message, and rotor made about 4,000
+more instructions per round trip. Most were its own code, found with `sample` on a program that runs
+the ping-pong on two loops in one thread, where no call is made:
+
+- `drain_mailboxes` and the offload's `drain` each declared a 512-byte array of messages as
+  `undefined`, which ReleaseSafe fills with a pattern, and a tick called each of them twice. Now the
+  ring writes messages straight into the caller's events (`Mailbox.pop_as`), and a loop with no
+  offload returns before the array exists. This is in `core`, so epoll and io_uring run it too, and
+  no speed claim is made for them.
+- A tick that had events to hand over and made no call drained the rings and the offload a second
+  time. It now returns: what arrived since waits for the next tick, which does not block while a
+  ring holds it.
+- The clock is read with `clock_gettime_nsec_np`, which `clock_gettime` calls before it splits the
+  answer into a `timespec` that the tick joined again: 11.0 ns a read against 17.1.
+- A wake's call carries no timeout. It asks for no events, so it returns at once. A zero timeout
+  cost about 500 instructions per round trip in a probe of two threads and no rotor.
+
+rotor's own code per round trip went from 3,969 instructions and 775 cycles to 2,774 and 413, and the
+two-thread run from about 35,200 instructions to about 33,600, against libuv's 31,100. `mac` was busy
+that evening, so by Camilo's ruling of that day the rate was taken on three of GitHub's `macos-latest`
+runners, virtual M1s with 3 processors, 10 alternating rounds on each
+(`bench/results/crosscore-own-work-github-macos-2026-09-29.md`):
+
+| measure | result |
+|---|---|
+| rotor after over rotor before, each round | median 1.048, higher in 22 of 30 rounds |
+| rotor over libuv, before | 0.903 to 0.920, by runner |
+| rotor over libuv, after | 0.933 to 0.956, by runner |
+
+The rate on `mac` is still to be taken. What is left of the gap is not rotor's code: `sample` puts it
+at about 4 percent of the time a thread runs, and the rest is inside the kernel's wake path. The
+harness asks for the user-interactive QoS class for rotor and libxev and libuv's program asks for
+none, but on those runners removing it from rotor, or giving it to libuv, moved neither.
+
+Deleting the clock read's one assertion is **NOT CAUGHT** by `zig build halt-check`: no parameter
+reaches it, as none reached the checks on the return code it replaces (decision 8).
+
 ## 7. Timers, deadlines, cancellation
 
 As in `uring`, from `core`: the heap orders every deadline, the nearest one bounds the `kevent`
@@ -289,7 +327,8 @@ ping-pong whose timer rarely fires, and was not measured again.
 **Amended the same day: the tick reads `CLOCK_MONOTONIC_RAW`.** `CLOCK_MONOTONIC` on macOS counts in
 1,000 ns steps and costs 20.1 ns a read; `CLOCK_MONOTONIC_RAW` counts in 41 ns steps and costs 14.5
 ns, and both keep counting while the machine sleeps. So `Loop.now_ns` counts in 41 ns steps on this
-backend. The benchmark harness reads the same clock, so its spans and a loop's deadlines agree.
+backend. The benchmark harness reads the same clock, so its spans and a loop's deadlines agree. Since
+2026-09-29 the tick reads it with `clock_gettime_nsec_np` (point 6, its amendment of that day).
 
 Mutations, measured against `zig build test-kqueue`, and against `zig build halt-check` for the two
 assertions on the timer's bound:

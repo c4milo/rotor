@@ -426,7 +426,11 @@ every polling `kevent`, removed the same day (decision 12, point 6): rotor posts
 against libuv's 1.5. On 2026-09-25 a polling tick with nothing to ask the kernel stopped making its
 call, and on a quieter `mac` rotor's cross-core rate rose 17.9 percent, past libxev and 16 percent
 behind libuv (decision 12, point 6). On 2026-09-26 a tick that blocks stopped carrying a timeout, and
-on 2026-09-27 the rate rose 5.2 percent more, 10 percent behind libuv (decision 12, point 7). The load
+on 2026-09-27 the rate rose 5.2 percent more, 10 percent behind libuv (decision 12, point 7). On
+2026-09-29 a tick stopped doing about a third of its own work per message (decision 12, point 6). On
+three of GitHub's macOS runners the rate rose a median 4.8 percent, and rotor went from 8 to 10
+percent behind libuv there to 4 to 7; the change landed on that evidence by Camilo's ruling of that
+day, and the rate on `mac` is still to be taken. The load
 mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.
@@ -444,7 +448,8 @@ are only as quiet as this machine is. GitHub's hosted macOS runners were tried a
 On 2026-09-27 four echo comparisons on them disagreed on 134 of 160 rows, with other work busy on
 all three processors. Four more with Spotlight's indexing turned off disagreed on 138, so the echo
 baseline holds no section for them (`bench/results/echo-github-macos-2026-09-27.md`). They are not a named machine, and kqueue is
-measured on `mac` when it is quiet.
+measured on `mac` when it is quiet. The one exception is the change of 2026-09-29 above, which
+Camilo let land on paired before-and-after rounds there while `mac` was busy.
 
 A number is taken on an idle machine. The first attempt on 2026-09-20 was made at a load average
 of 46 and was thrown away.

@@ -1010,6 +1010,24 @@ rotor gained 5.2 percent, and the ranges of its rounds do not overlap, where lib
 -0.2 and 0.5 percent. rotor's p50 went from 2,007 to 1,503 ns. rotor is now 10 percent behind libuv
 and 9 percent ahead of libxev here, so the parity bar of decision 2 is still not met.
 
+On 2026-09-29 a kqueue tick stopped doing about a third of its own work per message (decision 12,
+point 6, its amendment of that day). `mac` was busy, so by Camilo's ruling of that day the rate was
+taken on three of GitHub's `macos-latest` runners, virtual M1s with 3 processors, 10 alternating
+rounds of each build on each (`bench/results/crosscore-own-work-github-macos-2026-09-29.md`). Each
+cell is the median of a runner's 10 round medians, in messages per second:
+
+| candidate | runner 1 | runner 2 | runner 3 |
+|---|---:|---:|---:|
+| rotor, before | 249,650 | 241,258 | 222,935 |
+| rotor, after | 260,314 | 234,798 | 249,255 |
+| libuv | 265,861 | 252,728 | 251,440 |
+| libxev | 223,340 | 209,224 | 199,240 |
+
+Paired by round, rotor after the change over rotor before it had a median of 1.048 and was higher in
+22 of 30 rounds. rotor over libuv in the same call went from 0.903 to 0.920 before to 0.933 to 0.956
+after. The rate on `mac` is still to be taken, so how far rotor is behind libuv there now is not
+measured.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is
