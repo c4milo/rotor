@@ -29,6 +29,9 @@
 #include <string.h>
 #include <time.h>
 #include <uv.h>
+#ifdef __APPLE__
+#include <pthread/qos.h>
+#endif
 
 #include "libuv_bench.h"
 
@@ -82,6 +85,11 @@ static bool pin_to(long cpu) {
     return pthread_setaffinity_np(pthread_self(), sizeof(set), &set) == 0;
 #else
     (void)cpu;
+    /* Experiment only, never for main: LIBUV_BENCH_QOS=on asks for rotor's QoS class. */
+    const char *qos = getenv("LIBUV_BENCH_QOS");
+    if (qos != NULL && strcmp(qos, "on") == 0) {
+        if (pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) != 0) abort();
+    }
     return false;
 #endif
 }

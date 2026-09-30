@@ -47,6 +47,10 @@ pub const Placement = enum {
 pub fn place_current_thread() Placement {
     switch (builtin.os.tag) {
         .macos => {
+            // Experiment only, never for main: ROTOR_BENCH_QOS=off leaves the QoS class alone.
+            if (std.c.getenv("ROTOR_BENCH_QOS")) |value| {
+                if (std.mem.eql(u8, std.mem.span(value), "off")) return .scheduler_default;
+            }
             const rc = std.c.pthread_set_qos_class_self_np(.USER_INTERACTIVE, 0);
             return if (rc == 0) .qos_user_interactive else .qos_refused;
         },

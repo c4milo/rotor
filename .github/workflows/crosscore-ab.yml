@@ -1,0 +1,26 @@
+# Experiment for the cross-core gap, never for main: it runs on a push to its own branch alone.
+# Each run takes a macOS runner of its own, so the before-and-after pairs come from several
+# machines of the pool.
+name: crosscore-ab
+
+on:
+  push:
+    branches: [experiment/crosscore-gap]
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    name: Cross-core before and after, macOS arm64, run ${{ matrix.run }}
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
+      - name: Before and after, alternating
+        run: bash bench/crosscore/scratch_ab.sh 7bce4d2ff55ae5350a31cb7327b8240af2e5bfb8 10
