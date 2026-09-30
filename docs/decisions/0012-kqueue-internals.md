@@ -320,7 +320,9 @@ Measured on `mac` with a probe outside rotor, a 5 ms wait 40 times, the median l
 So with the flag a wait ends closer to its deadline than the timeout did. The conformance suite run
 as a background process failed three times of three without it and passed five of five with it; the
 tree before the wait timer passed three of three. `kqueue_tick.zig` marks its own thread background
-and requires the best of five quiet ticks of 5 ms to end within 20 ms of the wait. With the flag
+and requires the best of twenty quiet ticks of 5 ms to end within 50 ms of the wait; until
+2026-09-30 it was the best of five within 20 ms, which failed three times on a machine at load
+averages of 36 to 98, where a background thread also waits for a core. With the flag
 removed that test fails: CAUGHT. The cross-core rate above was measured before the fix, in a
 ping-pong whose timer rarely fires, and was not measured again.
 

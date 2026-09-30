@@ -429,13 +429,21 @@ test "the wait timer fires when it is due, even for a thread the system runs as 
     var events: [4]Event = undefined;
 
     // Without `NOTE_CRITICAL` macOS fired this timer about 100 ms late for a background thread,
-    // measured on 2026-09-27. The best of five quiet ticks must end within 20 ms of its wait.
+    // measured on 2026-09-27, and the best of five quiet ticks here ended 168 to 193 ms late on
+    // 2026-09-30. With it the best of five ended 0.02 to 0.55 ms late at a load average of 8. A
+    // bound of 20 ms over the best of five failed three times on 2026-09-29 and 30, at load averages
+    // of 36 to 98, where a background thread waits for a core as well as for its timer; how late
+    // those runs were was not recorded. So the bound is the best of twenty, as the cost gates of
+    // `conformance_cost.zig` take it, and 50 ms, under a third of the lateness it guards against.
     const wait_ns = 5 * core.constants.ns_per_ms;
     var best_late_ns: u64 = std.math.maxInt(u64);
-    for (0..5) |_| {
+    for (0..background_attempts) |_| {
         const before = clock_ns();
         try testing.expectEqual(@as(u32, 0), try loop.tick(&events, wait_ns));
         best_late_ns = @min(best_late_ns, (clock_ns() - before) -| wait_ns);
     }
-    try testing.expect(best_late_ns < 20 * core.constants.ns_per_ms);
+    try testing.expect(best_late_ns < 50 * core.constants.ns_per_ms);
 }
+
+/// Waits the background test times, the best one deciding.
+const background_attempts = 20;
