@@ -1028,6 +1028,23 @@ Paired by round, rotor after the change over rotor before it had a median of 1.0
 after. The rate on `mac` is still to be taken, so how far rotor is behind libuv there now is not
 measured.
 
+Later the same night `rotor_post` began to send each message with `Loop.post`, a call that takes no
+operation and makes no event, as `uv_async_send` and libxev's `notify` make none (decision 4, its
+amendment of 2026-09-29). Until then it sent a post operation, whose event cost the sender a tick.
+The same three-runner experiment, from the tick change above to `Loop.post`
+(`bench/results/crosscore-loop-post-github-macos-2026-09-29.md`), each cell the median of a runner's
+10 rounds:
+
+| candidate | runner 1 | runner 2 | runner 3 |
+|---|---:|---:|---:|
+| rotor, post operations | 267,362 | 242,794 | 234,800 |
+| rotor, `Loop.post` | 285,740 | 251,034 | 238,888 |
+| libuv, in the rounds after | 271,513 | 254,871 | 245,817 |
+| libxev, in the rounds after | 228,978 | 208,952 | 208,126 |
+
+rotor over libuv in the same call went from 0.983, 0.965 and 0.945 to 1.034, 0.992 and 0.978.
+Paired by round, that ratio rose in 20 of 30 rounds. On one runner rotor's median passed libuv's.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is

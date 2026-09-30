@@ -190,6 +190,12 @@ instructions per round trip with post operations, 31,880 to 32,506 with `Loop.po
 operations: one submit carries it and one wake covers it, where `Loop.post` would make one wake
 call per message to a loop that is still asleep.
 
+The rate was taken on three of GitHub's `macos-latest` runners the same night, 10 alternating
+rounds of each build on each (`bench/results/crosscore-loop-post-github-macos-2026-09-29.md`).
+rotor over libuv in the same call went from 0.945 to 0.983 by runner to 0.978 to 1.034, and paired
+by round that ratio rose in 20 of 30 rounds, median 1.026. The evidence is weaker than that of the
+same night's change to the tick (decision 12, point 6). The rate on `mac` is still to be taken.
+
 Mutations, each measured against the target named:
 
 | mutation | caught by | result |
