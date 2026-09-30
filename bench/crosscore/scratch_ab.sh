@@ -21,8 +21,10 @@ runner="$after/crosscore_runner"
 
 sysctl machdep.cpu.brand_string hw.ncpu hw.memsize
 sw_vers
+sudo mdutil -a -i off > /dev/null || true
 uptime
-ps -Ao pcpu,comm -r | head -8
+# head closes the pipe early, which pipefail would report as a failure.
+ps -Ao pcpu,comm -r | head -8 || true
 
 count() {
   /usr/bin/time -l "$1" --samples "$2" --warmup 0 2>&1 >/dev/null |
