@@ -2,6 +2,7 @@
 //!
 //! Run:  rotor_post [--mode waiting|spinning|spin-then-wait|spin-budget] [--samples N] [--warmup N]
 //!                  [--cpu N] [--peer-cpu N] [--burst N] [--gap-us N] [--peer thread|process]
+//!                  [--post call|operation]
 //!
 //! Decision 4 calls the threading model rotor's main claim and names its unit of cost as one
 //! cross-core message; rows C17 to C19 of `docs/costs.md` are that unit measured against the
@@ -36,6 +37,12 @@
 //! `--peer process` runs the peer loop in a process of its own, made by `fork`, and the two loops
 //! share a group's registry in a shared mapping (decision 21): the message crosses a process
 //! boundary, and a wake is the group's wake. It is rotor against itself too.
+//!
+//! **A message goes by `Loop.post` unless `--post operation` asks for a post operation.** `Loop.post`
+//! sends it at once and makes no event (decision 4, amended 2026-09-29), as `uv_async_send` and
+//! libxev's `notify` make none; it is rotor's cheapest way to send one message, so it is what the
+//! comparison runs. A post operation ends with an event of its own, which costs the sender a tick
+//! to hand over; its row is rotor against itself. A burst is always post operations.
 //!
 //! **A round trip is two messages, so one message is half of it.** The two directions run the
 //! same mechanism over the same pair of loops, so halving is a fair split and not an average over
@@ -122,14 +129,19 @@ const Side = struct {
     /// libuv's program pays nothing like it.
     batch: [burst_max]core.Operation = undefined,
 
-    /// Posts `count` messages to `target` in one submit, so one flush posts them all. Each one's
-    /// own completion arrives as an event too, and `receive` skips it: an event is the peer's
+    /// Sends `count` messages to `target`. With `call`, one message by `Loop.post`, which makes no
+    /// event. Otherwise `count` post operations in one submit, so one flush posts them all. Each
+    /// one's own completion arrives as an event too, and `receive` skips it: an event is the peer's
     /// message only when `flags.message` says so.
-    fn post(side: *Side, target: core.LoopId, tag: u32, count: u32) void {
+    fn post(side: *Side, target: core.LoopId, tag: u32, count: u32, call: bool) !void {
         std.debug.assert(count >= 1 and count <= burst_max);
         std.debug.assert(tag == tag_ping or tag == tag_pong or tag == tag_stop);
-        const batch = &side.batch;
         const message: core.Message = .{ .payload = 0, .tag = tag };
+        if (call) {
+            std.debug.assert(count == 1);
+            return side.loop.post(target, message);
+        }
+        const batch = &side.batch;
         for (batch[0..count]) |*operation| operation.* = core.Operation.post(0, target, message);
         const taken = side.loop.submit(batch[0..count], &.{});
         std.debug.assert(taken == count);
@@ -177,6 +189,8 @@ const Peer = struct {
     mode: Mode,
     cpu: ?usize,
     burst: u32,
+    /// True when a message goes by `Loop.post`, as `Options.post_call` says.
+    post_call: bool,
     warmup: u32,
     samples: u32,
     failure: ?anyerror = null,
@@ -201,7 +215,7 @@ const Peer = struct {
         while (true) : (round += 1) {
             if (round == peer.warmup) cpu_start_ns = thread_cpu_ns();
             if (try peer.side.receive(peer.mode, peer.burst) == tag_stop) break;
-            peer.side.post(id_first, tag_pong, 1);
+            try peer.side.post(id_first, tag_pong, 1, peer.post_call);
             if (round == last_round) peer_cpu_ns = thread_cpu_ns() - cpu_start_ns;
         }
         std.debug.assert(round == last_round + 1);
@@ -218,7 +232,7 @@ fn ping_pong(options: Options) !u64 {
     while (round < options.warmup + options.samples) : (round += 1) {
         wait_gap(options.gap_us);
         const before = now_ns();
-        first.post(id_second, tag_ping, options.burst);
+        try first.post(id_second, tag_ping, options.burst, options.post_call());
         const tag = try first.receive(options.mode, 1);
         std.debug.assert(tag == tag_pong);
         const elapsed = now_ns() - before;
@@ -254,6 +268,7 @@ fn measure(options: Options) !Result {
         .mode = options.mode,
         .cpu = options.peer_cpu,
         .burst = options.burst,
+        .post_call = options.post_call(),
         .warmup = options.warmup,
         .samples = options.samples,
     };
@@ -265,7 +280,7 @@ fn measure(options: Options) !Result {
 
     const span_ns = try ping_pong(options);
 
-    first.post(id_second, tag_stop, 1);
+    try first.post(id_second, tag_stop, 1, options.post_call());
     try first.drain(options.mode);
     thread.join();
     if (peer.failure) |err| return err;
@@ -329,6 +344,7 @@ fn measure_across(options: Options) !Result {
         .mode = options.mode,
         .cpu = options.peer_cpu,
         .burst = options.burst,
+        .post_call = options.post_call(),
         .warmup = options.warmup,
         .samples = options.samples,
     }, .memory = memory }, serve_across);
@@ -338,7 +354,7 @@ fn measure_across(options: Options) !Result {
     try wait_for_peer(report);
 
     const span_ns = try ping_pong(options);
-    first.post(id_second, tag_stop, 1);
+    try first.post(id_second, tag_stop, 1, options.post_call());
     try first.drain(options.mode);
     if (try harness.process.wait(child) != harness.process.status_passed) return error.PeerFailed;
     if (report.failed) return error.PeerFailed;
