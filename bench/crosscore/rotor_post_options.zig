@@ -88,6 +88,15 @@ pub const Options = struct {
     /// True when the peer runs in a process of its own, made by `fork`, and the two loops share a
     /// group's registry (decision 21); false for a thread of this process.
     peer_process: bool = false,
+    /// True when a message is sent as a post operation, which ends with an event of its own; false
+    /// for `Loop.post`, which sends it at once and makes no event (decision 4, amended
+    /// 2026-09-29). A burst is always post operations, whose flush wakes the peer once.
+    post_operation: bool = false,
+
+    /// True when a message of this run goes by `Loop.post`.
+    pub fn post_call(options: Options) bool {
+        return options.burst == 1 and !options.post_operation;
+    }
 
     pub fn messages_per_round_trip(options: Options) u32 {
         return options.burst + 1;
@@ -100,6 +109,10 @@ const burst_candidate = "rotor (burst of posts, not a comparison)";
 /// The candidate name of a run with a gap before each ping, which is rotor against itself too.
 const gap_candidate = "rotor (idle gap, not a comparison)";
 
+/// The candidate name of a run that sends each message as a post operation: `Loop.post` is rotor's
+/// cheapest way to send one, so this one is rotor against itself.
+const operation_candidate = "rotor (post operation, not a comparison)";
+
 /// The candidate name of a run whose peer is in another process: rotor against itself, since libuv
 /// and libxev post only between threads of one process.
 const process_candidate = "rotor (peer in another process, not a comparison)";
@@ -109,6 +122,7 @@ pub fn candidate_of(options: Options) []const u8 {
     if (options.burst != 1) return burst_candidate;
     if (options.gap_us != 0) return gap_candidate;
     if (options.peer_process) return process_candidate;
+    if (options.post_operation) return operation_candidate;
     return options.mode.candidate();
 }
 
@@ -148,6 +162,8 @@ fn apply(options: *Options, name: []const u8, value: []const u8) !void {
         options.gap_us = try std.fmt.parseInt(u32, value, 10);
     } else if (std.mem.eql(u8, name, "--peer")) {
         options.peer_process = try peer_process_of(value);
+    } else if (std.mem.eql(u8, name, "--post")) {
+        options.post_operation = try post_operation_of(value);
     } else {
         return error.UnknownArgument;
     }
@@ -158,6 +174,13 @@ fn peer_process_of(value: []const u8) !bool {
     if (std.mem.eql(u8, value, "thread")) return false;
     if (std.mem.eql(u8, value, "process")) return true;
     return error.UnknownPeer;
+}
+
+/// How a message is sent: `call` for `Loop.post`, `operation` for a post operation.
+fn post_operation_of(value: []const u8) !bool {
+    if (std.mem.eql(u8, value, "call")) return false;
+    if (std.mem.eql(u8, value, "operation")) return true;
+    return error.UnknownPost;
 }
 
 /// A core, or `none` for a run that places nothing and reports that it did not.
@@ -271,4 +294,18 @@ test "the peer is a thread by default, a process when asked, and a process run i
     try apply(&options, "--peer", "thread");
     try testing.expect(!options.peer_process);
     try testing.expectError(error.UnknownPeer, apply(&options, "--peer", "fork"));
+}
+
+test "a message goes by Loop.post by default, and a run of post operations is no comparison" {
+    var options: Options = .{};
+    try testing.expect(options.post_call());
+    try apply(&options, "--post", "operation");
+    try testing.expect(!options.post_call());
+    try testing.expect(std.mem.indexOf(u8, candidate_of(options), "not a comparison") != null);
+    try apply(&options, "--post", "call");
+    try testing.expect(options.post_call());
+    try testing.expectEqualStrings("rotor", candidate_of(options));
+    options.burst = 2;
+    try testing.expect(!options.post_call());
+    try testing.expectError(error.UnknownPost, apply(&options, "--post", "sync"));
 }
