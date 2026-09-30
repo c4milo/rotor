@@ -18,6 +18,11 @@ const LoopId = operation.LoopId;
 const Mailbox = mailbox.Mailbox;
 const Registry = mailbox.Registry;
 
+/// The event that hands `message` over.
+fn message_event(message: operation.Message) Event {
+    return Event.message(message.payload, message.tag);
+}
+
 pub const Inbox = struct {
     /// Where loops find each other's mailboxes. Null for a loop that posts to none and that none
     /// posts to.
@@ -47,17 +52,12 @@ pub const Inbox = struct {
     pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event) u32 {
         const registry = inbox.registry orelse return 0;
         var produced: u32 = 0;
-        var messages: [constants.messages_per_drain]operation.Message = undefined;
         for (0..registry.loops()) |sender| {
             if (sender == receiver) continue;
             const room = @min(events.len - produced, constants.messages_per_drain);
             if (room == 0) break;
             const ring = registry.mailbox(@intCast(sender), receiver);
-            const moved = ring.pop_into(messages[0..room]);
-            for (messages[0..moved]) |message| {
-                events[produced] = Event.message(message.payload, message.tag);
-                produced += 1;
-            }
+            produced += ring.pop_as(Event, events[produced..][0..room], message_event);
         }
         assert(produced <= events.len);
         return produced;

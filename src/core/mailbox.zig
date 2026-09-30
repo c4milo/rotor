@@ -131,15 +131,27 @@ pub const Mailbox = extern struct {
     /// returns how many. An empty ring costs no store, so polling it leaves the producer's copy
     /// of the `head` line valid.
     pub fn pop_into(mailbox: *Mailbox, out: []Message) u32 {
+        return mailbox.pop_as(Message, out, same);
+    }
+
+    /// Consumer only. `pop_into`, writing each message into `out` as `convert` makes it. A loop
+    /// hands messages over as events, and this writes them there with no array of messages in
+    /// between, which ReleaseSafe would fill with a pattern first.
+    pub fn pop_as(
+        mailbox: *Mailbox,
+        comptime Out: type,
+        out: []Out,
+        comptime convert: fn (Message) Out,
+    ) u32 {
         const head = mailbox.head.load(.unordered);
         const tail = mailbox.tail.load(.seq_cst);
         const available = tail -% head;
         assert(available <= constants.mailbox_messages);
         const count: u32 = @intCast(@min(available, out.len));
         if (count == 0) return 0;
-        for (out[0..count], 0..) |*message, offset| {
+        for (out[0..count], 0..) |*item, offset| {
             const index = head +% @as(u32, @intCast(offset));
-            message.* = mailbox.messages[index & slot_mask];
+            item.* = convert(mailbox.messages[index & slot_mask]);
         }
         mailbox.head.store(head +% count, .release);
         assert(count <= available);
@@ -152,6 +164,10 @@ pub const Mailbox = extern struct {
         return mailbox.tail.load(.seq_cst) == mailbox.head.load(.seq_cst);
     }
 };
+
+fn same(message: Message) Message {
+    return message;
+}
 
 /// The bytes `init` may have to skip to reach an address aligned for a `Mailbox`.
 pub const alignment_slack_bytes: usize = @alignOf(Mailbox) - layout.memory_alignment;
