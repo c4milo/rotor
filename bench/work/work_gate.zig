@@ -9,8 +9,8 @@
 //! the counter this machine has:
 //!
 //! - macOS: `/usr/bin/time -l`, which reports the instructions the process retired, its own and
-//!   the kernel's on its behalf. GitHub's macOS runners are virtual machines and report 0, and the
-//!   gate then skips.
+//!   the kernel's on its behalf. GitHub's macOS runners are virtual machines and print no count,
+//!   and the gate then skips.
 //! - Linux: Valgrind's cachegrind, which counts the instructions the process runs in user space,
 //!   the same on every run. A machine without Valgrind skips.
 //!
@@ -201,7 +201,9 @@ fn count(gate: *Gate, program: []const u8, workload: []const u8, iterations: u64
         else => return error.ProgramFailed,
     }
     return switch (gate.counter) {
-        .time => time_instructions(run.stderr),
+        // A virtual Mac, such as GitHub's macOS runners, prints no line of instructions at all. It
+        // counts as none, and the gate skips.
+        .time => time_instructions(run.stderr) orelse 0,
         .cachegrind => cachegrind_instructions(run.stderr),
     } orelse error.NoCountInOutput;
 }
