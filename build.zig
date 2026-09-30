@@ -24,6 +24,7 @@ const assert = std.debug.assert;
 const modules = @import("build/modules.zig");
 const lint = @import("build/lint.zig");
 const bench = @import("build/bench.zig");
+const bench_work = @import("build/bench_work.zig");
 const halt = @import("build/halt.zig");
 const bench_linux = @import("build/bench_linux.zig");
 const linux = @import("build/linux.zig");
@@ -161,6 +162,9 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(bench_steps.harness_tests);
     test_step.dependOn(bench_steps.program_tests);
     test_step.dependOn(bench_steps.echo_smoke);
+    // rotor's own instructions per operation, held to bench/baseline/work.txt where this machine
+    // can count them.
+    test_step.dependOn(bench_work.add(b, target).gate);
     // The examples compile against the public module, so the README cannot show a program that no
     // longer builds.
     test_step.dependOn(examples.add(b, graph, target, optimize));

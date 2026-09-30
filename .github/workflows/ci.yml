@@ -418,6 +418,16 @@ jobs:
           done
       - name: Hold the counts to the baseline
         run: ./zig-out/bin/calls_gate bench/baseline/calls.txt calls-1.md calls-2.md calls-3.md
+      # rotor's own instructions per operation, on io_uring and on epoll, held to
+      # `bench/baseline/work.txt` (`bench/work/work_gate.zig`). Valgrind's cachegrind counts them,
+      # the same on every run whatever the runner is doing, so the gate holds them to 2 percent.
+      # Valgrind is Ubuntu's own package. A processor section the baseline lacks is printed and
+      # held to nothing, as the echo baseline does.
+      - name: Hold rotor's own instructions per operation to the baseline
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -q valgrind
+          zig build work-gate
 
   commits:
     name: Commit messages

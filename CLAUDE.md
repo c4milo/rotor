@@ -330,6 +330,18 @@ was about to push.
   attempts, because other work makes a run slower and never faster, and sits an order of magnitude
   above what was measured. A bound that proves flaky is raised deliberately with the number beside
   it, never retried until it passes.
+- Instruction gate: `zig build work-gate` counts rotor's own instructions per iteration of each
+  workload of `bench/work/work.zig` (a `Loop.post` round trip, a post-operation round trip, a timer,
+  a batch of 32 timers, a tick that blocks) and holds them to `bench/baseline/work.txt` within 2
+  percent. The loops never sleep, so the count is the same on every run whatever else the machine
+  does, and a tolerance of 2 percent catches what the cost gates' factor of ten cannot. It counts
+  with `/usr/bin/time -l` on macOS and Valgrind's cachegrind on Linux, and the programs are built
+  for the baseline processor so every machine of an architecture counts alike. `zig build test`
+  runs it and skips where there is no counter: GitHub's macOS runners report no instructions, and a
+  Linux host without Valgrind has none. CI's Linux runners install Valgrind and run it on every
+  push. A count under the baseline by more than the tolerance passes and asks for a lower
+  baseline, so a gain is kept. Added on 2026-09-30, after a fill of `undefined` arrays that took a
+  quarter of a tick's own cycles passed every other gate.
 - Commit messages: `zig build hooks` once after cloning points `core.hooksPath` at `.githooks`;
   `zig build lint-commits` checks `origin/main..HEAD`. `.githooks/pre-push` is a copy of
   pepegrillo's hook, and `zig build test` fails when the two differ.

@@ -1,0 +1,20 @@
+# The instruction gate's baseline: rotor's own instructions per iteration of each workload of
+# bench/work/work.zig, which bench/work/work_gate.zig counts and holds here (CLAUDE.md, Commands).
+#
+# One section per machine, `<os>-<arch>-<backend>`. A count over its line by more than the
+# tolerance fails the gate; a count under it by more asks for the line to be lowered. The programs
+# are built for the baseline processor of each architecture, so a section holds for every machine
+# of it. A machine the file has no section for is held to nothing, and the gate prints the section
+# to add, which is how the Linux sections are to be taken: from CI's first run on each runner.
+#
+# macos-aarch64-kqueue: `/usr/bin/time -l`, the process's user and kernel instructions, so `wait`
+# holds the kernel's work for its two `kevent` calls too, and a macOS update may move it. Taken on
+# `mac`, an Apple M1 Pro on macOS 26.6.2, on 2026-09-30, at a load average of about 22; four runs
+# agreed within 0.2 percent.
+tolerance_percent 2
+section macos-aarch64-kqueue
+post 1218
+post-operation 2965
+timer 1076
+batch 23928
+wait 5408

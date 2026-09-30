@@ -108,6 +108,11 @@ const tested = [_]Tested{
         .needs_loop = false,
     },
     .{
+        .name = "bench-work-gate-tests",
+        .root = "bench/work/work_gate.zig",
+        .needs_loop = false,
+    },
+    .{
         .name = "bench-timers-runner-tests",
         .root = "bench/timers/timers_runner.zig",
         .needs_loop = false,
