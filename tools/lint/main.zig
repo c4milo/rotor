@@ -33,6 +33,7 @@ const rules = .{
     @import("unreleased_acquire.zig"),
     @import("static_alignment.zig"),
     @import("global_state.zig"),
+    @import("undefined_fill.zig"),
 };
 
 const Linter = pepegrillo.lint.Linter(rules);
@@ -58,6 +59,7 @@ test "the registered rules are exactly the rules CLAUDE.md names" {
         "unreleased-acquire",
         "static-alignment",
         "global-state",
+        "undefined-fill",
     };
     try testing.expectEqual(expected.len, Linter.count);
     inline for (rules, 0..) |rule, index| {

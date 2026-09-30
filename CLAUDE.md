@@ -241,10 +241,14 @@ was about to push.
 - Lint: `zig build lint` — cognitive complexity over `build.zig`, `build`, `src`, `tools` and the
   files `build/examples.zig` lists as `sources`, then the `tools/lint` rules: heap, determinism,
   unbounded-loop, relative-import, markdown, file-length, magic-numbers, defer-order,
-  unreleased-acquire, static-alignment and global-state. A canary tree in `build/lint.zig` proves
-  every rule runs. global-state refuses a container-level `var` under `src/` that is not
-  `threadlocal`, outside the tests and `src/rotor/rotor_choice.zig`, the one value a process
-  shares by design (non-negotiable 4, decision 20).
+  unreleased-acquire, static-alignment, global-state and undefined-fill. A canary tree in
+  `build/lint.zig` proves every rule runs. global-state refuses a container-level `var` under `src/`
+  that is not `threadlocal`, outside the tests and `src/rotor/rotor_choice.zig`, the one value a
+  process shares by design (non-negotiable 4, decision 20). undefined-fill refuses a function's
+  local array set to `undefined` under `src/`, which ReleaseSafe fills on every call, unless its
+  length is a number of at most 8 or its configuration names it as a cold path. It is rotor's own
+  rule on pepegrillo's engine, and a file's tests, which it does not read, begin at
+  `const testing = std.testing;`.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench

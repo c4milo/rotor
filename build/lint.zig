@@ -27,6 +27,7 @@ const canary_rules = [_][]const u8{
     "unreleased-acquire",
     "static-alignment",
     "global-state",
+    "undefined-fill",
 };
 
 /// The most lines a hand-written file may hold (tools/lint/file_length.zig).
