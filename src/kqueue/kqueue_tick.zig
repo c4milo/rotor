@@ -60,6 +60,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const ready = if (idle) nothing else call_kernel(loop, readiness, wait);
     loop.changes_used = 0;
     loop.wake_up();
+    // A tick that had events to hand over and made no call is done. What arrived since the drains
+    // above waits for the next tick, which does not block while a ring holds it.
+    if (idle and produced != 0) return produced;
     const ready_count = try ready;
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
@@ -190,19 +193,23 @@ fn arm_poll(loop: *Loop) void {
 /// blocked (decision 9, rule 4). `kqueue_testing.zig` hands it to the tests, so a test
 /// measures with the clock the tick reads.
 ///
-/// It is `CLOCK_MONOTONIC_RAW`, which on macOS counts in 41 ns steps and costs 14.5 ns a read.
-/// `CLOCK_MONOTONIC` there counts in 1,000 ns steps and costs 20.1 ns, measured on macOS 26.6.2 on
-/// 2026-09-26. Both keep counting while the machine sleeps. `bench/harness/clock.zig` reads the
-/// same clock, so a benchmark's spans and a loop's deadlines agree.
+/// It is `CLOCK_MONOTONIC_RAW`, which on macOS counts in 41 ns steps. `CLOCK_MONOTONIC` there
+/// counts in 1,000 ns steps and costs 20.1 ns a read, measured on macOS 26.6.2 on 2026-09-26. Both
+/// keep counting while the machine sleeps. `bench/harness/clock.zig` reads the same clock, so a
+/// benchmark's spans and a loop's deadlines agree.
+///
+/// It is read with `clock_gettime_nsec_np`, which answers nanoseconds. `clock_gettime` calls it
+/// and then splits the answer into a `timespec`, which this function would join again: 17.1 ns a
+/// read against 11.0, measured on macOS 26.6.2 on 2026-09-29 at a load average of about 11.
 pub fn clock_ns() u64 {
-    var now: std.c.timespec = undefined;
-    const rc = std.c.clock_gettime(.MONOTONIC_RAW, &now);
-    assert(rc == 0);
-    assert(now.sec >= 0);
-    const seconds: u64 = @intCast(now.sec);
-    const nanoseconds: u64 = @intCast(now.nsec);
-    return seconds * core.constants.ns_per_s + nanoseconds;
+    const now = clock_gettime_nsec_np(.MONOTONIC_RAW);
+    // It answers 0 only for a clock it does not know, and it knows this one.
+    assert(now != 0);
+    return now;
 }
+
+/// Darwin's `clock_gettime_nsec_np`, which Zig's standard library does not declare.
+extern "c" fn clock_gettime_nsec_np(clock: std.c.clockid_t) u64;
 
 const testing = std.testing;
 const builtin = @import("builtin");
