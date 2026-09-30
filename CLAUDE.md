@@ -58,7 +58,9 @@ Zig and to this tree.
 - **Read the shared method before any performance change.** `zig build guide` installs
   pepegrillo's performance method, which every project on pepegrillo follows, to
   `zig-out/docs/performance/`, from the commit `build.zig.zon` pins. `performance.md` there is the
-  entry point. The rules below are rotor's own.
+  entry point. `docs/performance.md` is rotor's appendix to it: its instruments, admission rule,
+  baselines, costs and pitfalls, and what rotor does not yet do that the method asks. The rules
+  below are rotor's own.
 
 - **Estimate before building.** A design argument cites rows of `docs/costs.md` and shows its
   arithmetic. A prior may decide what to build first. Only a measured cell may support a claim.
