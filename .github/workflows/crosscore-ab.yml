@@ -1,0 +1,26 @@
+# Experiment for Loop.post, never for main: it runs on a push to its own branch alone.
+# Each run takes a macOS runner of its own, so the before-and-after pairs come from several
+# machines of the pool.
+name: crosscore-ab
+
+on:
+  push:
+    branches: [experiment/loop-post]
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    name: Cross-core before and after, macOS arm64, run ${{ matrix.run }}
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3]
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/zig
+      - name: Before and after, alternating
+        run: bash bench/crosscore/scratch_ab.sh 6e4c0b7f8158e9a6e69ec2527a396b364a8da7c3 10
