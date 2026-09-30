@@ -11,6 +11,12 @@
 # holds the kernel's work for its two `kevent` calls too, and a macOS update may move it. Taken on
 # `mac`, an Apple M1 Pro on macOS 26.6.2, on 2026-09-30, at a load average of about 22; four runs
 # agreed within 0.2 percent.
+#
+# linux-*: Valgrind's cachegrind, user instructions only, the same on every run. Printed by CI run
+# 36671917366 on commit d187080, 2026-09-30, with Valgrind 3.22.0: x86-64 on an AMD EPYC 7763,
+# arm64 on an Arm Neoverse N2 (CPU part 0xd49). The arm64 counts matched, workload for workload, a
+# run under Valgrind 3.23.0 in an arm64 container on `mac`. io_uring has no `wait`: its loop has no
+# call that wakes itself.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
@@ -18,3 +24,25 @@ post-operation 2965
 timer 1076
 batch 23928
 wait 5408
+section linux-x86_64-uring
+post 1146
+post-operation 2922
+timer 1066
+batch 25628
+section linux-x86_64-epoll
+post 1363
+post-operation 3305
+timer 1147
+batch 25459
+wait 822
+section linux-aarch64-uring
+post 1029
+post-operation 2734
+timer 1004
+batch 23043
+section linux-aarch64-epoll
+post 1212
+post-operation 3019
+timer 1061
+batch 23011
+wait 729
