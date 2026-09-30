@@ -57,8 +57,8 @@ Zig and to this tree.
 
 - **Read the shared method before any performance change.** `zig build guide` installs
   pepegrillo's performance method, which every project on pepegrillo follows, to
-  `zig-out/docs/performance-method.md`, from the commit `build.zig.zon` pins. The rules below are
-  rotor's own.
+  `zig-out/docs/performance/`, from the commit `build.zig.zon` pins. `performance.md` there is the
+  entry point. The rules below are rotor's own.
 
 - **Estimate before building.** A design argument cites rows of `docs/costs.md` and shows its
   arithmetic. A prior may decide what to build first. Only a measured cell may support a claim.
@@ -286,7 +286,7 @@ was about to push.
   `*_linux_scenarios.zig` files instead.
 - Format: `zig build fmt`.
 - Guide: `zig build guide` — installs pepegrillo's performance method to
-  `zig-out/docs/performance-method.md` (`build/guide.zig`). It builds nothing, and
+  `zig-out/docs/performance/` (`build/guide.zig`). It builds nothing, and
   `zig build test` does not run it.
 - Proofs: `zig build proofs` — `lake build` in `proofs/`, the Lean proofs of the timer heap and the
   timer lifecycle. It needs the Lean toolchain `proofs/lean-toolchain` names, which `elan`
