@@ -246,9 +246,9 @@ was about to push.
   that is not `threadlocal`, outside the tests and `src/rotor/rotor_choice.zig`, the one value a
   process shares by design (non-negotiable 4, decision 20). undefined-fill refuses a function's
   local array set to `undefined` under `src/`, which ReleaseSafe fills on every call, unless its
-  length is a number of at most 8 or its configuration names it as a cold path. It is rotor's own
-  rule on pepegrillo's engine, and a file's tests, which it does not read, begin at
-  `const testing = std.testing;`.
+  length is a number of at most 8, its declaration shows it under 64 bytes, or its configuration
+  names it as a cold path. It is pepegrillo's rule since 2026-09-30, and a file's tests, which it
+  does not read, begin at `const testing = std.testing;`.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
   50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
