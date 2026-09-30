@@ -9,6 +9,7 @@ const finish = @import("core_scenarios_finish.zig");
 const spin = @import("core_scenarios_spin.zig");
 const registry = @import("core_scenarios_registry.zig");
 const file_call = @import("core_scenarios_file_call.zig");
+const post = @import("core_scenarios_post.zig");
 
 const Slot = core.Slot;
 const SlotTable = core.slot_table.SlotTable;
@@ -462,7 +463,8 @@ const scenarios = [_]scenario.Scenario{
         .name = "tables: cancel a slot whose final event is queued",
         .run = cancel_a_slot_whose_final_event_is_queued,
     },
-} ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios ++ file_call.scenarios;
+} ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios ++ file_call.scenarios ++
+    post.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

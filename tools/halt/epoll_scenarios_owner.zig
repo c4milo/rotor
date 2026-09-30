@@ -66,6 +66,17 @@ fn cancel_every_operation_on_this_thread() void {
     loop.cancel_all();
 }
 
+/// With the check deleted, the loop has no registry, so `post` answers `LoopNotFound`.
+fn post_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(post_on_this_thread);
+}
+
+fn post_on_this_thread() void {
+    scenario.reached_violation();
+    loop.post(0, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
 /// The queue holds no descriptor, which `Queue.deinit` skips, so with the check deleted `deinit`
 /// ends the empty loop and returns without a system call.
 fn end_a_loop_from_another_thread() void {
@@ -198,6 +209,7 @@ pub const scenarios = [_]scenario.Scenario{
         .name = "owner: cancel every operation from another thread",
         .run = cancel_every_operation_from_another_thread,
     },
+    .{ .name = "owner: post from another thread", .run = post_from_another_thread },
     .{ .name = "owner: end a loop from another thread", .run = end_a_loop_from_another_thread },
     .{
         .name = "owner: register the buffers from another thread",

@@ -80,6 +80,18 @@ fn cancel_every_operation_on_this_thread() void {
     loop.cancel_all();
 }
 
+/// With the check deleted, the loop has no registry, so `post` answers `LoopNotFound`.
+fn post_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    const thread = std.Thread.spawn(.{}, post_on_this_thread, .{}) catch return;
+    thread.join();
+}
+
+fn post_on_this_thread() void {
+    scenario.reached_violation();
+    loop.post(0, .{ .payload = 0, .tag = 0 }) catch {};
+}
+
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
 /// for `deinit` to close, and a halt inside the ring's own close would pass for the wrong reason.
 fn end_a_loop_with_an_operation_in_flight() void {
@@ -249,6 +261,7 @@ fn post_a_tag_above_the_limit() void {
 const scenarios = [_]scenario.Scenario{
     .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "owner: cancel from another thread", .run = cancel_from_another_thread },
+    .{ .name = "owner: post from another thread", .run = post_from_another_thread },
     .{
         .name = "owner: cancel every operation from another thread",
         .run = cancel_every_operation_from_another_thread,

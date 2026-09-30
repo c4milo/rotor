@@ -93,6 +93,23 @@ pub fn send(
     return if (registry.must_wake(target)) wake else null;
 }
 
+/// A loop's `post` with no operation (decision 4, amended 2026-09-29): what `send` does, for a loop
+/// that may have no registry, which fails as a post operation does. A loop that posts to itself
+/// halts, as `Tables.submit` halts such an operation: nothing but its own tick could hand the
+/// message over. Answers the descriptor that wakes the target when it sleeps, and each backend's
+/// `Loop.post` makes its own wake call with it.
+pub fn post_now(
+    registry: ?*mailbox.Registry,
+    sender: LoopId,
+    target: LoopId,
+    message: Message,
+) SendError!?Descriptor {
+    assert(target != sender);
+    assert(message.tag <= constants.message_tag_max);
+    const known = registry orelse return error.LoopNotFound;
+    return send(known, sender, target, message);
+}
+
 /// The loops one flush posted to that asked to be woken. A flush notes each as `send` answers, and
 /// wakes each once when the flush is done, however many messages it sent it: decision 12, point 6
 /// says a burst costs one wake. The wake comes later than the push it follows, which the handshake

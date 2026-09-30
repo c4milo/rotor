@@ -10,14 +10,14 @@ const conformance = @import("conformance.zig");
 const Harness = conformance.Harness;
 const Event = core.Event;
 
-const tag_ping = 1;
-const tag_pong = 2;
+pub const tag_ping = 1;
+pub const tag_pong = 2;
 /// Posts the first loop sends before the second loop has published its ring, at most: with a
 /// pause of a millisecond after each, a fifth of a second.
-const post_attempts_max = 200;
+pub const post_attempts_max = 200;
 
 /// How long the first loop waits between two posts that found no ring.
-const pause_ns = core.constants.ns_per_ms;
+pub const pause_ns = core.constants.ns_per_ms;
 
 const Peer = struct {
     registry: *backend.Registry,
@@ -80,7 +80,7 @@ test "a message crosses to a loop on another thread and its answer comes back" {
     try testing.expectEqual(@as(i32, tag_pong), events[0].result);
 }
 
-const Sleeper = struct {
+pub const Sleeper = struct {
     registry: *backend.Registry,
     /// How long the one tick that received the message took, or 0 when none arrived.
     waited_ns: u64 = 0,
@@ -91,7 +91,7 @@ const Sleeper = struct {
     now_after_wake_ns: u64 = 0,
     failure: ?anyerror = null,
 
-    fn run(sleeper: *Sleeper) void {
+    pub fn run(sleeper: *Sleeper) void {
         sleeper.sleep() catch |err| {
             sleeper.failure = err;
         };
@@ -117,7 +117,7 @@ const Sleeper = struct {
 };
 
 /// The wait of the tick after the wake. Nothing is posted then, so it must take most of it.
-const quiet_wait_ns = 40 * core.constants.ns_per_ms;
+pub const quiet_wait_ns = 40 * core.constants.ns_per_ms;
 
 test "a post wakes a loop that sleeps in its tick, long before its wait is over" {
     if (conformance.unsupported()) return error.SkipZigTest;

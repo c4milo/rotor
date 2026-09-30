@@ -17,6 +17,7 @@ pub const loop_declarations = [_][]const u8{
     "deinit",
     "submit",
     "cancel",
+    "post",
     "tick",
     "in_flight",
     "now_ns",
@@ -69,6 +70,7 @@ const Complete = struct {
     pub fn deinit() void {}
     pub fn submit() void {}
     pub fn cancel() void {}
+    pub fn post() void {}
     pub fn tick() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}

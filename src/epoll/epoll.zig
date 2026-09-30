@@ -262,6 +262,17 @@ pub const Loop = struct {
         cancel_module.cancel(loop, handle);
     }
 
+    /// Sends `message` to loop `target` now, with no operation, so no slot and no event (decision
+    /// 4, amended 2026-09-29). It fails as a post operation's event does: `LoopNotFound` for an id
+    /// that runs no loop, `MailboxFull` when the ring to it has no room. A target that sleeps is
+    /// woken before this returns, one eventfd write per post, where post operations wake each
+    /// target once per flush. In a group the descriptor is the group's eventfd, written the same way.
+    pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) core.remote.SendError!void {
+        loop.tables.assert_owner();
+        const wake = try core.remote.post_now(loop.inbox.registry, loop.tables.id, target, message);
+        if (wake) |descriptor| queue_module.Queue.wake(descriptor);
+    }
+
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
             try tick_module.spin_then_wait(loop, events, wait_ns)
