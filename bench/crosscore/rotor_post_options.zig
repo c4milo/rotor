@@ -2,6 +2,7 @@
 //! length limit: the modes a loop waits in, the options a run takes, how they are parsed and
 //! checked, and the candidate name a run's row carries.
 const std = @import("std");
+const core = @import("core");
 const harness = @import("harness");
 
 const placement = harness.placement;
@@ -14,9 +15,16 @@ const warmup_default: u32 = 2_000;
 /// histogram is a fixed size whatever the count, but a run is a bounded loop (CLAUDE.md).
 const samples_max: u32 = 1_000_000;
 
-/// What a blocking tick is given. Long enough that a tick blocks rather than spins, short enough
-/// that a peer that died ends the run instead of hanging it.
+/// What a tick is given while the peer starts, when nothing wakes it: short, so the run notices the
+/// peer's registration soon after it happens, and so a peer process that failed ends the bounded
+/// wait for it (`peer_start_ticks_max`).
 pub const wait_ns: u64 = std.time.ns_per_ms;
+
+/// What a blocking tick is given while it waits for the peer's message: the most a tick allows,
+/// as libuv's and libxev's loops wait with no bound. The loop's wait timer is armed about once per
+/// wait bound (decision 12, point 7), so with the 1 ms this was until 2026-09-29 each loop armed it
+/// again about once a millisecond, and it sometimes fired and woke a loop waiting for its peer.
+pub const receive_wait_ns: u64 = core.constants.wait_ns_max;
 
 /// How long `spin-then-wait` polls before it blocks. Longer than a message takes when the peer is
 /// awake, and far shorter than the sleep it is trying to avoid.
@@ -47,7 +55,7 @@ pub const Mode = enum {
 
     /// What a tick of this mode is given when it is not polling.
     pub fn wait(mode: Mode) u64 {
-        return if (mode == .spinning) 0 else wait_ns;
+        return if (mode == .spinning) 0 else receive_wait_ns;
     }
 
     /// How long a tick of this mode polls before it blocks, in this program.

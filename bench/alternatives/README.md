@@ -1045,6 +1045,13 @@ The same three-runner experiment, from the tick change above to `Loop.post`
 rotor over libuv in the same call went from 0.983, 0.965 and 0.945 to 1.034, 0.992 and 0.978.
 Paired by round, that ratio rose in 20 of 30 rounds. On one runner rotor's median passed libuv's.
 
+Since the same night `rotor_post`'s ticks that wait for the peer's message are given 10 s, the most
+a tick allows, where they were given 1 ms. libuv's and libxev's loops wait with no bound, and a 1 ms
+bound made each of rotor's loops arm its wait timer again about once a millisecond (decision 12,
+point 7). Per 100,000 round trips on `mac`, counted with a library that wraps `kevent`, the calls
+that armed the timer went from 4,764 to 3 and the timer events from 3,577 to 1. Instructions per
+round trip did not move beyond the noise, so no speed is claimed for it.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is
