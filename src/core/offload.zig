@@ -111,41 +111,6 @@ pub fn assert_options(
     assert(memory.len >= memory_bytes(offload.?.workers));
 }
 
-const testing = std.testing;
-
-test "a policy is one of three, and refuse is the one a caller gets without asking" {
-    // Decision 18 chose this default so a caller who sets nothing is told, rather than slowed.
-    const policy: FilePolicy = .refuse;
-    try testing.expectEqual(FilePolicy.refuse, policy);
-    try testing.expectEqual(@as(usize, 3), @typeInfo(FilePolicy).@"enum".fields.len);
-}
-
-test "an offload is valid with workers the loop can hold, and not otherwise" {
-    const nothing: *const fn (?*anyopaque, *Work) void = undefined;
-    try testing.expect(!(Offload{ .context = null, .submit = nothing, .workers = 0 }).valid());
-    try testing.expect((Offload{ .context = null, .submit = nothing, .workers = 1 }).valid());
-    try testing.expect((Offload{
-        .context = null,
-        .submit = nothing,
-        .workers = constants.offload_workers_max,
-    }).valid());
-    try testing.expect(!(Offload{
-        .context = null,
-        .submit = nothing,
-        .workers = constants.offload_workers_max + 1,
-    }).valid());
-}
-
-test "the offloadable operations are the four that block, and no others" {
-    // Socket operations are never offloaded. kqueue reports their readiness, so they do not block
-    // the loop, and handing one to a thread would cost a hop and save nothing.
-    try testing.expectEqual(@as(usize, 4), @typeInfo(Work.Code).@"enum".fields.len);
-    try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
-    try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));
-    try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
-    try testing.expectEqual(@as(u2, 3), @intFromEnum(Work.Code.fsync));
-}
-
 /// A `Mailbox` is aligned to 128 and the caller's memory to 64, so `init_rings` may skip this many
 /// bytes to the first address a ring can sit at: the registry's slack, for the same reason.
 const alignment_slack_bytes = mailbox_module.alignment_slack_bytes;
@@ -217,32 +182,37 @@ const drain_rounds_max = constants.mailbox_messages / constants.messages_per_dra
 ///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
 pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
-    // A loop with no offload returns before `messages` exists. ReleaseSafe writes a pattern over
-    // `undefined` memory, 512 bytes here, and a tick calls this twice.
-    if (completions.len == 0) return 0;
+    const finisher: Finisher = .{ .tables = tables, .works_len = works_len };
     var finished: u32 = 0;
-    var messages: [constants.messages_per_drain]operation.Message = undefined;
     for (completions) |*ring| {
         var round: u32 = 0;
         while (round < drain_rounds_max) : (round += 1) {
-            const moved = ring.pop_into(&messages);
+            const moved = ring.pop_each(constants.messages_per_drain, &finisher, Finisher.finish);
             if (moved == 0) break;
-            for (messages[0..moved]) |message| {
-                // The payload is the slot index this loop wrote into the work before handing it
-                // out, so it names a slot of this loop's own table and nothing else.
-                assert(message.payload < works_len);
-                const index: u32 = @intCast(message.payload);
-                // A result can only come back for an operation that was handed out, and a hand-out
-                // marks such an operation `submitted`. A slot in any other state means the ring
-                // carried something this loop never sent.
-                assert(tables.table.at(index).state == .submitted);
-                tables.finish_local(index, result_of_tag(message.tag));
-                finished += 1;
-            }
+            finished += moved;
         }
     }
     return finished;
 }
+
+/// What `drain` hands the ring: the loop's tables, and how many works the loop holds. Each result
+/// ends its operation where it lies in the ring, so no array of messages is copied or filled.
+const Finisher = struct {
+    tables: *Tables,
+    works_len: usize,
+
+    fn finish(finisher: *const Finisher, message: operation.Message) void {
+        // The payload is the slot index this loop wrote into the work before handing it out, so it
+        // names a slot of this loop's own table and nothing else.
+        assert(message.payload < finisher.works_len);
+        const index: u32 = @intCast(message.payload);
+        // A result can only come back for an operation that was handed out, and a hand-out marks
+        // such an operation `submitted`. A slot in any other state means the ring carried something
+        // this loop never sent.
+        assert(finisher.tables.table.at(index).state == .submitted);
+        finisher.tables.finish_local(index, result_of_tag(message.tag));
+    }
+};
 
 /// True when any worker has pushed a result the loop has not taken. The check a loop makes after
 /// it has said it will sleep, so it never sleeps on a message already in a ring.
@@ -251,6 +221,41 @@ pub fn pending(completions: []const Mailbox) bool {
         if (!ring.is_empty()) return true;
     }
     return false;
+}
+
+const testing = std.testing;
+
+test "a policy is one of three, and refuse is the one a caller gets without asking" {
+    // Decision 18 chose this default so a caller who sets nothing is told, rather than slowed.
+    const policy: FilePolicy = .refuse;
+    try testing.expectEqual(FilePolicy.refuse, policy);
+    try testing.expectEqual(@as(usize, 3), @typeInfo(FilePolicy).@"enum".fields.len);
+}
+
+test "an offload is valid with workers the loop can hold, and not otherwise" {
+    const nothing: *const fn (?*anyopaque, *Work) void = undefined;
+    try testing.expect(!(Offload{ .context = null, .submit = nothing, .workers = 0 }).valid());
+    try testing.expect((Offload{ .context = null, .submit = nothing, .workers = 1 }).valid());
+    try testing.expect((Offload{
+        .context = null,
+        .submit = nothing,
+        .workers = constants.offload_workers_max,
+    }).valid());
+    try testing.expect(!(Offload{
+        .context = null,
+        .submit = nothing,
+        .workers = constants.offload_workers_max + 1,
+    }).valid());
+}
+
+test "the offloadable operations are the four that block, and no others" {
+    // Socket operations are never offloaded. kqueue reports their readiness, so they do not block
+    // the loop, and handing one to a thread would cost a hop and save nothing.
+    try testing.expectEqual(@as(usize, 4), @typeInfo(Work.Code).@"enum".fields.len);
+    try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
+    try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));
+    try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
+    try testing.expectEqual(@as(u2, 3), @intFromEnum(Work.Code.fsync));
 }
 
 test "only the three blocking operations map to offload work" {

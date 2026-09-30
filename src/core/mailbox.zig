@@ -143,15 +143,39 @@ pub const Mailbox = extern struct {
         out: []Out,
         comptime convert: fn (Message) Out,
     ) u32 {
+        const Writer = struct {
+            out: []Out,
+            written: u32 = 0,
+
+            fn write(writer: *@This(), message: Message) void {
+                writer.out[writer.written] = convert(message);
+                writer.written += 1;
+            }
+        };
+        var writer: Writer = .{ .out = out };
+        const count = mailbox.pop_each(@intCast(@min(out.len, constants.mailbox_messages)), &writer, Writer.write);
+        assert(writer.written == count);
+        return count;
+    }
+
+    /// Consumer only. Hands the oldest messages, at most `most`, to `each` with `context`, oldest
+    /// first, and returns how many. A consumer that acts on each message reads it where it lies,
+    /// with no copy and no array, and the ring takes the slots back once `each` has read them all.
+    pub fn pop_each(
+        mailbox: *Mailbox,
+        most: u32,
+        context: anytype,
+        comptime each: fn (@TypeOf(context), Message) void,
+    ) u32 {
         const head = mailbox.head.load(.unordered);
         const tail = mailbox.tail.load(.seq_cst);
         const available = tail -% head;
         assert(available <= constants.mailbox_messages);
-        const count: u32 = @intCast(@min(available, out.len));
+        const count: u32 = @intCast(@min(available, most));
         if (count == 0) return 0;
-        for (out[0..count], 0..) |*item, offset| {
+        for (0..count) |offset| {
             const index = head +% @as(u32, @intCast(offset));
-            item.* = convert(mailbox.messages[index & slot_mask]);
+            each(context, mailbox.messages[index & slot_mask]);
         }
         mailbox.head.store(head +% count, .release);
         assert(count <= available);
