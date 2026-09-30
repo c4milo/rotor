@@ -126,6 +126,8 @@ pub const Loop = struct {
         uring.buffers.ProvideError || epoll.buffers.ProvideError
     else
         kqueue.buffers.ProvideError;
+    /// Why `post` sent nothing: the same on every backend.
+    pub const PostError = core.remote.SendError;
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -229,6 +231,18 @@ pub const Loop = struct {
         switch (loop.inner) {
             inline else => |*inner| inner.cancel(handle),
         }
+    }
+
+    /// Sends `message` to loop `target` now, with no operation, so no slot and no event (decision
+    /// 4, amended 2026-09-29): `LoopNotFound` for an id that runs no loop, `MailboxFull` when the
+    /// ring to it has no room. The message is in the target's ring when this returns. A target that
+    /// sleeps is woken at once on kqueue and epoll, and by this loop's next tick on io_uring, whose
+    /// submit carries the wake. Post operations wake each target once per flush, which is cheaper
+    /// for a burst to one loop.
+    pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) PostError!void {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.post(target, message),
+        };
     }
 
     /// Delivers events and returns how many. `wait_ns` of 0 polls; otherwise the tick blocks until

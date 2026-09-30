@@ -284,6 +284,17 @@ pub const Loop = struct {
         cancel_module.cancel(loop, handle);
     }
 
+    /// Sends `message` to loop `target` now, with no operation, so no slot and no event (decision
+    /// 4, amended 2026-09-29). It fails as a post operation's event does: `LoopNotFound` for an id
+    /// that runs no loop, `MailboxFull` when the ring to it has no room. The message is in the
+    /// target's ring when this returns. A target that sleeps is woken by this loop's next tick,
+    /// whose flush sends the wakes its posts noted with the tick's own submit, one per target.
+    pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) core.remote.SendError!void {
+        loop.tables.assert_owner();
+        const wake = try core.remote.post_now(loop.inbox.registry, loop.tables.id, target, message);
+        if (wake != null) loop.wakes.note(target);
+    }
+
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
             try tick_module.spin_then_wait(loop, events, wait_ns)

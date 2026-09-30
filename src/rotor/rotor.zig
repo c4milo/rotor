@@ -197,7 +197,7 @@ const testing = std.testing;
 
 /// The declarations of `Loop` beyond the surface: its error sets, and nothing else.
 const loop_error_sets = [_][]const u8{
-    "InitError", "TickError", "DrainError", "RegisterError", "ProvideError",
+    "InitError", "TickError", "DrainError", "RegisterError", "ProvideError", "PostError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{
@@ -296,6 +296,34 @@ test "a registry and a remote work through the public module" {
     try testing.expectEqual(41, events[0].user_data);
     try testing.expectEqual(3, events[0].result);
     try testing.expectError(error.LoopNotFound, remote.post(2, .{ .payload = 0, .tag = 0 }));
+}
+
+test "a loop posts to another loop through the public module, with no event of its own" {
+    if (!supported) return error.SkipZigTest;
+    // Two loops on this thread, and a third id that runs nothing.
+    var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
+    var registry: Registry = undefined;
+    registry.init(&registry_memory, 3);
+    var options = test_options;
+    options.registry = &registry;
+    var sender_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var sender: Loop = undefined;
+    try sender.init(&sender_memory, options);
+    defer sender.deinit();
+    options.id = 1;
+    var receiver_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var receiver: Loop = undefined;
+    try receiver.init(&receiver_memory, options);
+    defer receiver.deinit();
+
+    try sender.post(1, .{ .payload = 41, .tag = 3 });
+    try testing.expectError(error.LoopNotFound, sender.post(2, .{ .payload = 0, .tag = 0 }));
+    var events: [4]Event = undefined;
+    try testing.expectEqual(0, try sender.tick(&events, 0));
+    try testing.expectEqual(1, try receiver.tick(&events, test_wait_ns));
+    try testing.expect(events[0].flags.message);
+    try testing.expectEqual(41, events[0].user_data);
+    try testing.expectEqual(3, events[0].result);
 }
 
 test "every public function compiles for this host, not only the ones something calls" {

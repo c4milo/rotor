@@ -432,7 +432,9 @@ on 2026-09-27 the rate rose 5.2 percent more, 10 percent behind libuv (decision 
 2026-09-29 a tick stopped doing about a third of its own work per message (decision 12, point 6). On
 three of GitHub's macOS runners the rate rose a median 4.8 percent, and rotor went from 8 to 10
 percent behind libuv there to 4 to 7; the change landed on that evidence by Camilo's ruling of that
-day, and the rate on `mac` is still to be taken. The load
+day, and the rate on `mac` is still to be taken. The same day Camilo ruled that a loop may also post
+with a call, `Loop.post`, that takes no operation and makes no event (decision 4, its amendment of
+that day), and `rotor_post` sends each message with it. The load
 mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.

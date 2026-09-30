@@ -157,6 +157,54 @@ reports the count. On a socket workload the count must be zero, and a worker the
 find. On a file workload it is a cost to report, with the filesystem named beside it, and not a
 load to spread across rings.
 
+**Amended on 2026-09-29, by Camilo's ruling of that day: a loop can also post with a call,
+`Loop.post(target, message)`, that needs no operation.** The post operation stays. The call pushes
+the message into the same ring now and returns: no slot, no event, and so no tick to hand an event
+over. It fails as the operation's event does, with `LoopNotFound` or `MailboxFull`, which the public
+module names `Loop.PostError`. A loop that posts to itself halts, as the operation does, and so does
+a tag above `message_tag_max`. What the backends share is `core.remote.post_now`. A target that
+sleeps is woken:
+
+- on kqueue and epoll, before the call returns, with the wake `Remote.post` makes: one `kevent`
+  trigger or one eventfd write per post;
+- on io_uring, by the posting loop's next tick. The call notes the target in `Loop.wakes`, and the
+  tick's flush sends one `MSG_RING` per noted target with the tick's own submit, as it does for
+  post operations. A loop that posts and then ends without a tick leaves its wakes unsent, and the
+  target reads the message when its own wait ends.
+
+Why: rotor's cross-core message was behind libuv's with the same kernel calls, and the difference
+was rotor's own work per message (decision 12, point 6, its amendment of the same day). A post
+operation takes a slot, the pending list, the flush, the finished list and an event, and the event
+costs the sender a tick of its own, where `uv_async_send` is one call. `rotor_post`'s ping-pong on
+two loops in one thread, where no tick blocks, measured on `mac` at a load average of about 30:
+
+| how each side posts | instructions per round trip | cycles per round trip |
+|---|---:|---:|
+| post operation | 2,853 | 429 |
+| `Loop.post` | 1,236 | 187 |
+
+The two-thread `rotor_post`, user and kernel together, three runs each: 33,724 to 34,189
+instructions per round trip with post operations, 31,880 to 32,506 with `Loop.post`, and libuv
+31,132 to 31,443. So `rotor_post` sends each message with `Loop.post` unless asked for
+`--post operation`, whose row names itself and is rotor against itself. A burst stays post
+operations: one submit carries it and one wake covers it, where `Loop.post` would make one wake
+call per message to a loop that is still asleep.
+
+Mutations, each measured against the target named:
+
+| mutation | caught by | result |
+|---|---|---|
+| a post to the loop itself allowed | `halt-check` | CAUGHT |
+| a tag above the limit allowed | `halt-check` | CAUGHT |
+| kqueue's `post` from another thread allowed | `halt-check` | CAUGHT |
+| epoll's `post` from another thread allowed | `halt-check` | CAUGHT |
+| io_uring's `post` from another thread allowed | `halt-check` | CAUGHT |
+| kqueue's `post` never wakes a target that sleeps | `test-conformance-kqueue` | CAUGHT |
+| io_uring's `post` never notes the wake | `conformance-uring`, the Linux gate | CAUGHT |
+| epoll's `post` never wakes a target that sleeps | `conformance-epoll`, the Linux gate | CAUGHT |
+| a loop with no registry not answered `LoopNotFound` | `test-conformance-kqueue` | CAUGHT |
+| the public module's `post` forwards nothing | `test-rotor` | CAUGHT |
+
 ### When one core is hot
 
 The loop accepts the imbalance. It never migrates anything on its own, because a loop that
