@@ -314,7 +314,10 @@ was about to push.
   for the macOS runners, so there the comparison reports and gates nothing. The cost probes run only
   by hand, on x86-64. Zig is downloaded from
   ziglang.org by `.github/actions/zig`, Lean from its GitHub release and TLC from the tlaplus
-  release, each checked against a pinned SHA-256; no third-party action runs. **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
+  release, each checked against a pinned SHA-256; no third-party action runs. GitHub's own
+  `actions/cache` keeps the Zig tarball, checked against its SHA-256 on every run whatever its
+  source, and Zig's package cache, between runs; the download gives up on a stalled transfer and
+  tries again (2026-10-01, after one stalled a job for its whole 15 minutes). **No number from CI enters `docs/costs.md`**: those runners are neither named nor quiet,
   and rule 1 of that file stands.
 - Call gate: the kernel calls rotor's echo servers make per echo, held to
   `bench/baseline/calls.txt`. On a Linux host: `zig build bench-echo`, then three rounds of

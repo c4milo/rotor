@@ -3,19 +3,33 @@
 # so the toolchain is pinned as the container images and the alternatives are. Every job of
 # .github/workflows/ci.yml installs Zig here, so each pin is written once.
 #
+# GitHub's cache keeps the tarball between runs. A tarball from the cache is checked against the
+# same SHA-256 as one from ziglang.org, and one that fails the check is downloaded again, so a cache
+# entry cannot change the toolchain. The download gives up on a transfer that stalls and tries
+# again: on 2026-10-01 one stalled for the whole of a job's 15 minutes and the job was cancelled.
+# The cache also keeps Zig's package cache, the dependencies build.zig.zon pins, so a run does not
+# fetch them from the network either; each is checked against its hash by Zig as it is read.
+#
 # To move to another release, read the new tarballs' `shasum` fields from
-# https://ziglang.org/download/index.json and replace the version and all four lines below.
+# https://ziglang.org/download/index.json and replace the version, the cache key's version, and all
+# four lines below.
 name: Install Zig
-description: Download Zig 0.16.0 for this runner, check its SHA-256 and put it on the PATH
+description: Take Zig 0.16.0 for this runner from the cache or ziglang.org, check its SHA-256 and put it on the PATH
 runs:
   using: composite
   steps:
+    - name: Restore the Zig tarball from the cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/zig-tarball
+        key: zig-tarball-0.16.0-${{ runner.os }}-${{ runner.arch }}
     - name: Install Zig
       shell: bash
       env:
         ZIG_VERSION: "0.16.0"
         RUNNER_SYSTEM: ${{ runner.os }}
         RUNNER_PROCESSOR: ${{ runner.arch }}
+        TARBALL_DIRECTORY: ${{ runner.temp }}/zig-tarball
       run: |
         set -euo pipefail
         case "$RUNNER_SYSTEM/$RUNNER_PROCESSOR" in
@@ -26,9 +40,30 @@ runs:
           *) echo "no Zig is pinned for $RUNNER_SYSTEM/$RUNNER_PROCESSOR" >&2; exit 1 ;;
         esac
         directory="zig-$name-$ZIG_VERSION"
+        mkdir -p "$TARBALL_DIRECTORY"
+        tarball="$TARBALL_DIRECTORY/$directory.tar.xz"
+        if [ -f "$tarball" ] && echo "$sha  $tarball" | shasum -a 256 -c - > /dev/null 2>&1; then
+          echo "Zig $ZIG_VERSION from the cache"
+        else
+          rm -f "$tarball"
+          # A connection that does not open in 20 seconds, a transfer slower than 1 KiB/s for a
+          # minute, or an attempt longer than five minutes is abandoned, and tried again five times.
+          curl -fsSL --connect-timeout 20 --speed-limit 1024 --speed-time 60 --max-time 300 \
+            --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://ziglang.org/download/$ZIG_VERSION/$directory.tar.xz" -o "$tarball"
+        fi
+        echo "$sha  $tarball" | shasum -a 256 -c -
         cd "$RUNNER_TEMP"
-        curl -fsSL "https://ziglang.org/download/$ZIG_VERSION/$directory.tar.xz" -o zig.tar.xz
-        echo "$sha  zig.tar.xz" | shasum -a 256 -c -
-        tar -xf zig.tar.xz
+        tar -xf "$tarball"
         echo "$RUNNER_TEMP/$directory" >> "$GITHUB_PATH"
+        # One place for Zig's global cache on every runner, which the step below keeps.
+        echo "ZIG_GLOBAL_CACHE_DIR=$HOME/.cache/zig" >> "$GITHUB_ENV"
         "$RUNNER_TEMP/$directory/zig" version
+    # The packages only: the compiled artifacts beside them are large, and a run that kept them would
+    # no longer show what a build from nothing does.
+    - name: Restore Zig's package cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/zig/p
+        key: zig-packages-${{ runner.os }}-${{ hashFiles('build.zig.zon') }}
+        restore-keys: zig-packages-${{ runner.os }}-
