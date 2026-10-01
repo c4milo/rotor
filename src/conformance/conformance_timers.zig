@@ -261,9 +261,9 @@ test "now_ns is 0 before the first tick, and the tick that fires a timer has rea
     try testing.expect(submitted_ns >= 1);
     try testing.expect(submitted_ns <= now_ns());
 
-    // The next tick arms the timer at its own reading plus the wait, and that reading is at or past
-    // this one, so the tick that hands the fire over read at least this one plus the wait. Each
-    // tick's reading is at or past the one before.
+    // The timer's delay runs from this reading (decision 14, rule 6), so the tick that hands the
+    // fire over read at least this one plus the wait. Each tick's reading is at or past the one
+    // before.
     var handles: [1]core.Handle = undefined;
     try harness.submit(&.{Operation.timer(9, period_ns, 0)}, &handles);
     var previous_ns = submitted_ns;
@@ -276,4 +276,51 @@ test "now_ns is 0 before the first tick, and the tick that fires a timer has rea
     try testing.expectEqual(@as(u32, 1), count);
     try testing.expectEqual(@as(u64, 9), events[0].user_data);
     try testing.expect(harness.loop.now_ns() >= submitted_ns + period_ns);
+}
+
+/// How long the caller holds the loop off before it submits, in the scenario of a timer's start.
+const held_ns = 50 * ms;
+
+/// That scenario's delay: twice the hold, so a timer that started at the submit, or at the tick
+/// after it, cannot fire within one delay of the submit.
+const delay_ns = 2 * held_ns;
+
+test "a timer's delay runs from now_ns as the caller saw it, not from the tick after the submit" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    const seen_ns = harness.loop.now_ns();
+
+    // The caller works for a while after the tick, then arms a timer. Its delay started at the
+    // reading it saw, so it is due half a delay after the submit (decision 14, rule 6).
+    hold_off(held_ns);
+    const submitted_ns = now_ns();
+    try harness.submit(&.{Operation.timer(12, delay_ns, 0)}, &.{});
+    var count: u32 = 0;
+    while (count == 0) count = try harness.loop.tick(&events, core.constants.ns_per_s);
+    const fired_ns = now_ns();
+    try testing.expectEqual(@as(u64, 12), events[0].user_data);
+    // Never earlier than the reading plus the delay, which is the promise.
+    try testing.expect(harness.loop.now_ns() >= seen_ns + delay_ns);
+    // And sooner than a whole delay after the submit, which a start at the next tick cannot be.
+    try testing.expect(fired_ns - submitted_ns < delay_ns);
+}
+
+test "a timer submitted before any tick runs its delay from the first tick's reading" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    // No tick has read the clock, so `now_ns` is 0 and cannot be the start: the first tick is.
+    try harness.submit(&.{Operation.timer(13, period_ns, 0)}, &.{});
+    hold_off(2 * period_ns);
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    const first_ns = harness.loop.now_ns();
+    var count: u32 = 0;
+    while (count == 0) count = try harness.loop.tick(&events, core.constants.ns_per_s);
+    try testing.expect(harness.loop.now_ns() >= first_ns + period_ns);
 }

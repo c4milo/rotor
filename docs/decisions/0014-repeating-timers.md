@@ -62,6 +62,40 @@ pub const Timer = struct { after_ns: u64, repeat_ns: u64 = 0 };
    the final one and says `canceled`, and the fire is not handed over. A cancel of a timer whose
    deadline passed before the loop expired it drops that fire the same way, so the caller gets one
    answer whichever happened first.
+6. **A timer's delay runs from `now_ns` as the caller saw it at submit.** Added on 2026-09-30, by
+   Camilo's ruling of that day. A timer submitted after a tick is due at that tick's reading plus
+   its `after_ns`. `submit` keeps the reading in `Slot.buffer`, which `fill` leaves at 0 for a
+   timer, and `Tables.arm` starts the delay there. A timer submitted before any tick read the
+   clock starts at the first tick's reading. An operation's deadline (`timeout_ns`) still runs
+   from the tick that hands the operation to the kernel.
+
+   Until then every timer started at the reading of the tick that armed it, the one after the
+   submit. A caller that re-arms timers while it works through a batch of fires gave every one of
+   them the batch's remaining time as well: at 4,096 timers of 1 ms, all 4,096 fired in one burst
+   every 1.95 ms, one `kevent` call per burst, and the loop slept through most of each period.
+   libuv's and libxev's timers run from the loop's cached time, as rotor's do now. The promise
+   `now_ns` documents is unchanged: a timer fires no earlier than `now_ns` plus its `after_ns`. A
+   caller that works long after a tick before it arms a timer gets a timer due that much sooner
+   after the call, as with libuv.
+
+   `rotor_timers` in its one-shot mode, five alternating rounds on `mac` on 2026-09-30 at load
+   averages of 7 to 16, the median of the rounds with their range
+   (`bench/results/timers-start-mac-2026-09-30.md`):
+
+   | 4,096 timers | fires per second | p50 late | p99 late |
+   |---|---:|---:|---:|
+   | rotor one-shot, from the next tick | 2,359,683 (2,303,712 to 2,655,815) | 557 µs | 2,226 µs |
+   | rotor one-shot, from `now_ns` | 3,552,253 (3,483,205 to 3,836,501) | 95 µs | 580 µs |
+   | libxev | 3,027,815 (2,702,115 to 3,406,339) | 263 µs | 1,218 µs |
+   | libuv | 2,077,177 (1,990,885 to 2,194,012) | 854 µs | 1,313 µs |
+
+   At 256 timers the one-shot mode fired 225,325 per second against 216,199 before and libxev's
+   187,154, with a p50 of 51 µs against 127 µs and 347 µs; the p99s of those rounds spread from
+   71 µs to 6.7 ms and decide nothing.
+
+   Mutations, each measured against `zig build test-conformance-kqueue`: every timer started at
+   the tick that arms it, CAUGHT; a timer submitted before any tick started at 0, CAUGHT; `submit`
+   keeping no reading, CAUGHT.
 
 ## What it costs in memory: nothing
 
@@ -71,7 +105,8 @@ and `assert_valid` proves it:
 - `Slot.timeout_ns` holds `repeat_ns`. A timer may not carry a deadline — `assert_valid` halts on
   a timer whose `timeout_ns` is not 0 — so the field is free precisely when a timer needs it.
 - `Slot.buffer` holds the deadline the timer last fired for, which rule 3 needs to schedule the
-  next one. `fill` sets a timer's `buffer` to 0 and nothing reads it.
+  next one. `fill` sets a timer's `buffer` to 0, and since rule 6 `submit` keeps in it the reading
+  the timer's delay starts from, until the timer is armed.
 - `Slot.flags.multishot` marks it repeating, which is the flag a multishot accept and receive
   already use and which the reap paths already read.
 

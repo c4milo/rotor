@@ -20,6 +20,7 @@ const statistics_module = @import("statistics.zig");
 const spin_module = @import("spin.zig");
 const timer_heap_module = @import("timer_heap.zig");
 const waiters_module = @import("waiters.zig");
+const deadline = @import("tables_deadline.zig");
 
 const Code = event_module.Code;
 const Descriptor = operation_module.Descriptor;
@@ -174,6 +175,9 @@ pub const Tables = struct {
             const index = tables.table.claim() orelse break;
             const slot = tables.table.at(index);
             slot.fill(operation);
+            // A timer's delay runs from the reading the caller sees now (decision 14, rule 6).
+            // `fill` left a timer's buffer at 0, and `arm` reads this from it.
+            if (slot.code == .timer) slot.buffer = tables.now_ns;
             // A buffer the loop never registered: kqueue and epoll would ignore the index and
             // io_uring would hand the kernel a bad one, so the mistake halts on every backend.
             if (slot.flags.buffer_registered) assert(slot.buffer_index < tables.buffers_registered);
@@ -463,29 +467,10 @@ pub const Tables = struct {
         }
     }
 
-    /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a
-    /// timer. A slot being resubmitted keeps the deadline it has.
-    pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
-        const after_ns = if (slot.code == .timer) slot.offset else slot.timeout_ns;
-        assert_class_a(after_ns <= constants.timeout_ns_max);
-        if (slot.code != .timer and after_ns == 0) return;
-        if (tables.timers.is_armed(index)) return;
-        const due_ns = tables.now_ns + after_ns;
-        // A repeating timer measures every later period from this deadline (decision 14, rule 3).
-        if (slot.code == .timer) slot.buffer = due_ns;
-        tables.timers.arm(index, due_ns);
-    }
-
-    /// How long a tick may block: not at all while queued work waits for the next flush, and
-    /// never past the nearest deadline. Null means do not block.
-    pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
-        assert(wait_ns <= constants.wait_ns_max);
-        if (wait_ns == 0) return null;
-        if (tables.pending.count != 0 or tables.finished.count != 0) return null;
-        const earliest = tables.timers.earliest_ns() orelse return wait_ns;
-        if (earliest <= tables.now_ns) return null;
-        return @min(wait_ns, earliest - tables.now_ns);
-    }
+    /// Arms an operation's deadline or a timer's delay: `tables_deadline.zig`.
+    pub const arm = deadline.arm;
+    /// How long a tick may block: `tables_deadline.zig`.
+    pub const wait_bound = deadline.wait_bound;
 };
 
 /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its

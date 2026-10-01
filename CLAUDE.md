@@ -450,7 +450,11 @@ three of GitHub's macOS runners the rate rose a median 4.8 percent, and rotor we
 percent behind libuv there to 4 to 7; the change landed on that evidence by Camilo's ruling of that
 day, and the rate on `mac` is still to be taken. The same day Camilo ruled that a loop may also post
 with a call, `Loop.post`, that takes no operation and makes no event (decision 4, its amendment of
-that day), and `rotor_post` sends each message with it. The load
+that day), and `rotor_post` sends each message with it. On 2026-09-30 a timer's delay began to run
+from `now_ns` as the caller saw it, as libuv's and libxev's run from the loop's cached time
+(decision 14, rule 6): at 4,096 one-shot timers on `mac`, rotor went from 2.36 to 3.55 million fires
+per second, past libxev's 3.03 million, and its p50 lateness from 557 to 95 µs, against libxev's
+263. The load
 mark of 2026-09-22 was tripped by the harness's own load, and `bench/harness/other_work.zig` replaced
 it the same day with a reading of the machine's busy CPU in a pause before and after every run. The
 io_uring comparison waits on the `linux` machine.

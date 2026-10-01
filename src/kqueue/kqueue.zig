@@ -239,9 +239,9 @@ pub const Loop = struct {
     }
 
     /// The monotonic clock in nanoseconds, as the last `tick` read it: at its start, or after its
-    /// wait when it waited. Timers expire against this reading. The next tick arms a timer
-    /// submitted now at that tick's own reading plus its `after_ns`, so the timer fires no earlier
-    /// than this reading plus its `after_ns`. 0 until the first tick. Reading it makes no system
+    /// wait when it waited. Timers expire against this reading. A timer submitted now
+    /// runs its `after_ns` from this reading, so it is due at this reading plus its `after_ns`, and
+    /// fires no earlier (decision 14, rule 6). 0 until the first tick. Reading it makes no system
     /// call.
     pub fn now_ns(loop: *const Loop) u64 {
         return loop.tables.now_ns;

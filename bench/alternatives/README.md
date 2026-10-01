@@ -1102,6 +1102,23 @@ clock at that moment, so their deadlines slide forward and each individual fire 
 the cost of firing less often. Both are honest, and they are different promises: rotor's is the rate,
 theirs is the interval since the last fire.
 
+**rotor's one-shot mode, the shape libxev's row has, lost for a reason of its own until 2026-09-30.**
+A timer's delay started at the reading of the tick after the submit, so a timer the program re-armed
+while it worked through a batch of fires also waited out the rest of the batch: at 4,096 timers all
+of them fired in one burst every 1.95 ms. Since that day a timer's delay runs from `now_ns` as the
+caller saw it, as libuv's and libxev's run from the loop's cached time (decision 14, rule 6). Five
+alternating rounds on `mac` that day, at 4,096 timers (`bench/results/timers-start-mac-2026-09-30.md`):
+
+| candidate | fires per second | p50 late | p99 late |
+|---|---:|---:|---:|
+| rotor one-shot, from the next tick | 2,359,683 | 557 µs | 2,226 µs |
+| rotor one-shot, from `now_ns` | 3,552,253 | 95 µs | 580 µs |
+| libxev | 3,027,815 | 263 µs | 1,218 µs |
+| libuv | 2,077,177 | 854 µs | 1,313 µs |
+
+The one-shot mode now passes libxev on the rate and on both percentiles. The repeating mode's p50,
+536 µs that evening, is the queue of the paragraph above and is unchanged.
+
 ### File rows: the offload puts rotor level with libuv's pool
 
 `reads_runner` swept reads, unsynced writes and synced writes (an `fdatasync` after each write,

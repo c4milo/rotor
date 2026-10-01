@@ -132,8 +132,12 @@ result when either is wanted, and write the struct out for a receive into a regi
 - `now_ns` returns the monotonic clock in nanoseconds as the last `tick` read it, at its start or
   after its wait. Timers expire against that reading. It is 0 until the first tick, and reading it
   makes no system call. A caller that keeps timeouts of its own can read the time here instead of
-  reading a clock itself. A timer submitted now fires no earlier than `now_ns` plus its `after_ns`,
-  because the next tick arms it at that tick's own reading.
+  reading a clock itself. A timer submitted now runs its `after_ns` from `now_ns`, as libuv's and
+  libxev's timers run from the loop's cached time: it is due at `now_ns` plus its `after_ns`, and
+  fires no earlier. A caller that works long after a tick before it arms a timer gets a timer that
+  is due that much sooner after the call. A timer submitted before the first tick runs from that
+  tick's reading. An operation's deadline (`timeout_ns`) still runs from the tick that hands the
+  operation to the kernel.
 - Batch first. One `submit` of many operations and one `tick` returning many events is the shape
   rotor is built for; one operation per call works and costs a system call each.
 
