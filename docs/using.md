@@ -42,9 +42,18 @@ epoll has none of io_uring's speed sources, and rotor makes no speed claim for i
 program runs where io_uring does not. A program that must have io_uring checks `backend()` at
 start and refuses to go on without it.
 
-What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, `backend`
-and `Backend`, the flags `files_block`, `post_bounded` and `supported`, `offload_memory_bytes`,
-`memory_alignment`, and the
+A program that cannot take whichever backend the kernel allows names one itself:
+`rotor.require_backend(.epoll)`, or `.uring` or `.kqueue` (decision 23). It is the first call the
+program makes on the module, because `sync`, a `Registry`, a `Loop` and `backend()` each make the
+choice when none is made, and the choice holds for the life of the process. The call answers
+`RequireError`: `OtherBackendChosen` when the process already runs another backend, and
+`Unsupported` when this host cannot run the one asked for, which covers `.uring` on a kernel that
+refuses a ring. It never falls back, and an error stores nothing. Requiring the backend the process
+already runs succeeds.
+
+What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, `backend`,
+`require_backend`, `Backend` and `RequireError`, the flags `files_block`, `post_bounded` and
+`supported`, `offload_memory_bytes`, `memory_alignment`, and the
 types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
 `Address`, `Message`, `LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces
 `constants`, `datagram`, `offload`, `statistics`).
@@ -382,6 +391,42 @@ loop of its own. What that needs:
   against the loop's groups. The application sizes the loop for both.
 - `timeout_ns` on a `receive_from` and a `timer` per retry are what a query needs; `cancel` with
   the handle ends either early.
+
+## A host that owns the wait
+
+Some programs cannot block inside `tick`, because other things must wake them too: a worker that
+runs inside another program's wait, for example. Such a host sleeps in a wait of its own and ticks
+the loop when the loop has something to deliver (decision 23).
+
+- **On Linux the host requires epoll first**: `rotor.require_backend(.epoll)`, before anything else
+  of the module. An io_uring loop has nothing a host can wait on: the kernel posts a completion
+  only when the loop's own thread enters the ring, so nothing wakes that thread while it sleeps
+  elsewhere. On macOS there is nothing to require.
+- **`loop.wait_descriptor()` is what the host waits on**: the loop's kqueue, or its epoll instance.
+  It answers null on io_uring. The host adds it to its own wait for read readiness. rotor's tests
+  wait with a second epoll instance on Linux and a second kqueue on macOS.
+- **The host's cycle**: wait for the descriptor to be readable, call `tick` with a wait of 0 until
+  a tick delivers nothing, and wait again. It runs the same ticks after it submits or cancels,
+  before it waits, because an operation reaches the kernel in a tick.
+- **Every tick gets a wait of 0.** A tick that blocks arms the loop's wait timer, which makes the
+  descriptor readable later for no operation.
+- **The host does nothing else to the descriptor.** It does not read it, close it, or change what
+  it holds, and it stops waiting on it before `deinit`.
+
+What the descriptor does not report, so that the host wakes for it by its own means:
+
+- **A timer or an operation's deadline that comes due.** A tick finds those by reading the clock.
+  A host bounds its own wait by its nearest timer, or wakes on a period.
+- **A message another loop or a `Remote` posts, and an offload worker's result.** Only a loop that
+  blocks in `tick` asks to be woken for those.
+
+There is one more limit. While an operation of the loop waits on a descriptor, the wait descriptor
+is not readable after a tick that delivers nothing. While none waits, a tick with a wait of 0 asks
+the kernel nothing, so readiness the kernel holds for no operation stays, and the host's wait ends
+at once each time until an operation waits again. On epoll that is bytes that arrive on a socket
+whose last receive has completed. On kqueue it is bytes that arrive on a socket whose receive was
+cancelled or ended by its timeout. A host that keeps an operation waiting, such as a receive on
+its socket, meets neither. Decision 23 has the measurements under its open questions.
 
 ## Statistics
 

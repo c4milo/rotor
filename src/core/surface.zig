@@ -21,6 +21,7 @@ pub const loop_declarations = [_][]const u8{
     "tick",
     "in_flight",
     "now_ns",
+    "wait_descriptor",
     "statistics",
     "cancel_all",
     "drain",
@@ -74,6 +75,7 @@ const Complete = struct {
     pub fn tick() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}
+    pub fn wait_descriptor() void {}
     pub fn statistics() void {}
     pub fn cancel_all() void {}
     pub fn drain() void {}

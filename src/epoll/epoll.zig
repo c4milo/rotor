@@ -250,6 +250,18 @@ pub const Loop = struct {
         return loop.tables.now_ns;
     }
 
+    /// The loop's epoll instance: what a host that owns the wait sleeps on, in a wait of its own
+    /// (decision 23). It turns readable when a descriptor an operation waits on is ready. It is the
+    /// epoll instance and not the eventfd that wakes the loop, which reports a post and nothing
+    /// else. The public `Loop.wait_descriptor` says what such a host does and what the descriptor
+    /// does not report. Never null on this backend.
+    pub fn wait_descriptor(loop: *const Loop) ?core.Descriptor {
+        // A loop that has ended holds no epoll instance, and a host that waited on -1 would never
+        // wake.
+        assert(loop.queue.descriptor >= 0);
+        return loop.queue.descriptor;
+    }
+
     /// Claims a slot per operation until the table is full, and returns how many it took. Makes
     /// no system call: the next `tick` tries them.
     pub fn submit(loop: *Loop, operations: []const Operation, handles: []Handle) u32 {

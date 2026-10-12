@@ -263,7 +263,9 @@ was about to push.
   failure. The two epoll executables, `epoll` and `conformance-epoll`, run under Docker's default
   seccomp profile instead, which refuses io_uring: that is the environment decision 20 exists for.
   `rotor`, the public module's tests, runs both ways, because the module chooses io_uring or epoll
-  by what the kernel allows, and each run takes the other branch. `conformance-uring` and
+  by what the kernel allows, and each run takes the other branch. The run with io_uring is also the
+  only one that shows a process that requires epoll running epoll where the kernel gives a ring
+  (decision 23). `conformance-uring` and
   `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's.
   Each example then runs both ways too, against its checker when it has one. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.17, and the probe exits non-zero naming the first feature of that record's table that
@@ -402,7 +404,12 @@ in Docker under the default seccomp profile, and the race gate. No speed claim i
 exists so rotor runs where io_uring is refused, and the comparison gains no row. **The public module
 falls back to it**, by Camilo's ruling of 2026-09-22 on decision 20's open question 5: a process
 asks the kernel for an io_uring ring once, runs epoll where it is refused, and `rotor.backend()`
-reports which. Building it found four things outside the backend, which that record lists: a kqueue
+reports which. **A process may name its backend first**, by Camilo's ruling of 2026-10-12 (decision
+23): `rotor.require_backend` stores the choice before anything else asks and never falls back, and
+`Loop.wait_descriptor` names what a program that sleeps in a wait of its own holds in that wait, the
+loop's kqueue or epoll instance, and is null on io_uring. That record's open questions say what the
+descriptor does not report. Building the epoll backend found four things outside it, which decision
+20 lists: a kqueue
 poll trigger left set, the second half of decision 18's teardown order, a SIGPIPE check no Zig test
 could see, and halt scenarios a Mac cannot prove for a Linux backend. Building the fallback found a
 fifth: the public module's `register_descriptors` and `register_buffers` did not compile for Linux,

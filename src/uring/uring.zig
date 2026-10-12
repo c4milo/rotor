@@ -272,6 +272,16 @@ pub const Loop = struct {
         return loop.tables.now_ns;
     }
 
+    /// Null: an io_uring loop has nothing a host that owns the wait can sleep on (decision 23). The
+    /// ring is set up with `DEFER_TASKRUN`, so the kernel posts a completion only when the loop's
+    /// thread enters the ring. While that thread sleeps in another wait, with the ring's descriptor
+    /// among what it waits on, no completion wakes it. A process whose host must sleep elsewhere
+    /// requires the epoll backend before it makes a loop.
+    pub fn wait_descriptor(loop: *const Loop) ?core.Descriptor {
+        _ = loop;
+        return null;
+    }
+
     /// Claims a slot per operation until the table is full, and returns how many it took. Makes
     /// no system call: the next `tick` submits.
     pub fn submit(loop: *Loop, operations: []const Operation, handles: []Handle) u32 {

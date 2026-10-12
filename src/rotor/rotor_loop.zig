@@ -1,16 +1,6 @@
-//! The public `Loop`, `Registry` and `Remote`, and the choice of backend they follow (decision 20,
-//! open question 5, which Camilo ruled on 2026-09-22: a fallback at init).
-//!
-//! **On Linux a process runs one of two backends.** `uring` where the kernel gives it a ring, and
-//! `epoll` where the kernel refuses one, as Docker's default seccomp profile does. The choice is
-//! made once, the first time anything needs it, and kept for the life of the process. Once and not
-//! per loop, because the sockets `sync` opens before any loop exists must suit the backend the
-//! loops will run: uring's sockets block, since the ring does the waiting, and epoll's must not,
-//! since its loop makes each call itself. It is the one value rotor keeps outside the memory a
-//! caller hands it.
-//!
-//! **The choice is reported, not silent.** `uring_ring.zig` promises never to fall back to a slower
-//! path without saying so; `rotor.backend()` says which one this process runs.
+//! The public `Loop` and `Remote`, which wrap the backend this process runs.
+//! `rotor_loop_backend.zig` says how a process comes to run one, and `rotor_loop_registry.zig`
+//! holds the public `Registry`.
 //!
 //! Each type below wraps a tagged union with one member per backend this build carries. On Darwin
 //! that is kqueue alone, so a call there has no branch to take.
@@ -20,50 +10,17 @@ const core = @import("core");
 const uring = @import("uring");
 const epoll = @import("epoll");
 const kqueue = @import("kqueue");
+const backend_module = @import("rotor_loop_backend.zig");
 
 const linux = builtin.os.tag == .linux;
 
-comptime {
-    if (!linux and !builtin.os.tag.isDarwin()) {
-        @compileError("rotor has no backend for this operating system");
-    }
-}
-
-/// A backend a process can run, as `rotor.backend()` reports it.
-pub const Backend = enum { uring, epoll, kqueue };
-
-/// The backends this build carries: one member of each union below per value.
-pub const Tag = if (linux) enum { uring, epoll } else enum { kqueue };
-
-/// The module of the backend `tag` names.
-pub fn module(comptime tag: Tag) type {
-    return @field(modules, @tagName(tag));
-}
-
-/// Each backend's module under its tag's name, for `module`. A module this build does not carry is
-/// never named, so it is never analysed.
-const modules = struct {
-    const uring = @import("uring");
-    const epoll = @import("epoll");
-    const kqueue = @import("kqueue");
-};
-
-/// The process's choice, kept in a file of its own: it is the one `var` under `src/` that every
-/// thread shares (`rotor_choice.zig` says why).
-const choice = @import("rotor_choice.zig");
-
-/// The backend this process runs. On Linux it asks the kernel the first time, the way a uring loop
-/// would ask, and keeps the answer; on Darwin there is nothing to ask.
-///
-/// Two threads that ask first at once both ask the kernel, and the first answer stored is the one
-/// every thread gets, so no two loops of a process can disagree.
-pub fn chosen() Tag {
-    if (comptime !linux) return .kqueue;
-    const known = choice.load();
-    if (known != choice.undecided) return @enumFromInt(known);
-    const decided: Tag = if (uring.refused()) .epoll else .uring;
-    return @enumFromInt(choice.settle(@intFromEnum(decided)));
-}
+// The choice of backend, which every file of this module reaches through this one.
+pub const Backend = backend_module.Backend;
+pub const Tag = backend_module.Tag;
+pub const module = backend_module.module;
+pub const chosen = backend_module.chosen;
+pub const RequireError = backend_module.RequireError;
+pub const require = backend_module.require;
 
 pub const Registry = @import("rotor_loop_registry.zig").Registry;
 
@@ -269,6 +226,42 @@ pub const Loop = struct {
         };
     }
 
+    /// The descriptor a host that owns the wait sleeps on, or null when this loop has none
+    /// (decision 23). Some programs cannot block inside `tick`, because other things must wake
+    /// them too. Such a host sleeps in a wait of its own, with this descriptor among what it waits
+    /// on, and ticks the loop when the descriptor is readable.
+    ///
+    /// On kqueue it is the loop's kqueue, and on epoll the loop's epoll instance. It is readable
+    /// when a descriptor an operation of this loop waits on is ready. On io_uring there is none:
+    /// the kernel posts a completion only when the loop's thread enters the ring, so nothing wakes
+    /// that thread while it sleeps elsewhere. A host that must sleep elsewhere calls
+    /// `rotor.require_backend(.epoll)` first on Linux.
+    ///
+    /// What the host does:
+    /// - It waits for the descriptor to be readable, then calls `tick` with a wait of 0 until a
+    ///   tick delivers nothing, then waits again.
+    /// - It ticks that way after it submits or cancels too, before it waits: an operation reaches
+    ///   the kernel in a tick.
+    /// - It gives every tick a wait of 0. A tick that blocks arms the loop's wait timer, which
+    ///   makes the descriptor readable later for no operation.
+    /// - It does nothing else to the descriptor. It does not read it, close it, or change what it
+    ///   holds, and it stops waiting on it before `deinit`, which closes it.
+    ///
+    /// What does not make it readable, so the host wakes for it by its own means: a timer or an
+    /// operation's deadline that comes due, which a tick finds by reading the clock; and a message
+    /// another loop or a `Remote` posts, or an offload worker's result, because only a loop that
+    /// blocks in `tick` asks to be woken for those.
+    ///
+    /// While an operation of the loop waits on a descriptor, this one is not readable after a tick
+    /// that delivers nothing. While none waits, a tick with a wait of 0 asks the kernel nothing,
+    /// so readiness the kernel holds for no operation stays, and the descriptor stays readable
+    /// until an operation waits again (decision 23, open question 3).
+    pub fn wait_descriptor(loop: *const Loop) ?core.Descriptor {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.wait_descriptor(),
+        };
+    }
+
     pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
         return switch (loop.inner) {
             inline else => |*inner| inner.statistics(),
@@ -377,19 +370,6 @@ pub const group_alignment = core.buffer_group.group_alignment;
 
 const testing = std.testing;
 
-test "a kept choice is what every later ask gets, whatever the kernel would say now" {
-    if (comptime !linux) return error.SkipZigTest;
-    // Asking the kernel again could split one process's loops and sockets between two backends if
-    // its answer changed, as a seccomp filter installed later would change it. So the answer kept
-    // is the answer. Planted here as the opposite of what this kernel says, then restored.
-    const kernel_says = chosen();
-    const planted: Tag = if (kernel_says == .uring) .epoll else .uring;
-    choice.plant(@intFromEnum(planted));
-    defer choice.plant(@intFromEnum(kernel_says));
-    try testing.expectEqual(planted, chosen());
-    try testing.expectEqual(planted, chosen());
-}
-
 test "the memory a loop and a registry ask for fits whichever backend runs" {
     const options: Loop.Options = .{ .operations = 8 };
     inline for (comptime std.enums.values(Tag)) |tag| {
@@ -397,29 +377,4 @@ test "the memory a loop and a registry ask for fits whichever backend runs" {
         try testing.expect(Loop.memory_bytes(options) >= needed);
         try testing.expect(Registry.memory_bytes(4) >= module(tag).Registry.memory_bytes(4));
     }
-}
-
-test "a kept choice is read, not asked again: a thousand asks cost far less than one probe" {
-    if (comptime !linux) return error.SkipZigTest;
-    // Every `sync` call that opens a socket asks, so asking the kernel each time would put several
-    // system calls on each of them. The answer would not change, which is why only the cost shows.
-    //
-    // A kept answer is one atomic load, a few nanoseconds, so a burst of a thousand takes a few
-    // microseconds. Asking the kernel again costs a refused `io_uring_setup` at the least, about a
-    // microsecond under seccomp and far more where a ring is made and closed, so a burst that asked
-    // every time takes a millisecond or more. The bound sits between, and the best of twenty bursts
-    // decides, as the cost gates of `conformance_cost.zig` do: other work makes a burst slower and
-    // never faster. The clock is the backend's test helper, because this module reads none.
-    const asks = 1000;
-    const attempts = 20;
-    const bound_ns = 100 * core.constants.ns_per_us;
-    const monotonic_ns = uring.testing.monotonic_ns;
-    _ = chosen();
-    var best_ns: u64 = std.math.maxInt(u64);
-    for (0..attempts) |_| {
-        const before = monotonic_ns();
-        for (0..asks) |_| std.mem.doNotOptimizeAway(chosen());
-        best_ns = @min(best_ns, monotonic_ns() - before);
-    }
-    try testing.expect(best_ns < bound_ns);
 }

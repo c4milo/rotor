@@ -399,7 +399,8 @@ Each has a proposed answer, and the implementation follows it until Camilo rules
    makes the public module wrap `epoll` on Linux, and a fallback at `init` that tries io_uring and
    runs epoll when the kernel refuses it. **Camilo ruled on 2026-09-22: the fallback at init.**
    One binary runs everywhere, as libuv does; the price is a branch per call on Linux and both
-   backends linked. What was built (`src/rotor/rotor_loop.zig`):
+   backends linked. What was built (`src/rotor/rotor_loop.zig`, and since 2026-10-12 the choice
+   itself in `src/rotor/rotor_loop_backend.zig`):
    - **The choice is made once per process, not per loop.** The sockets `sync` opens before any
      loop exists must suit the backend: uring's block, because the ring does the waiting, and
      epoll's must not. So the first thing that needs the answer asks the kernel, with a ring of one
@@ -420,3 +421,9 @@ Each has a proposed answer, and the implementation follows it until Camilo rules
    The Linux gate runs the public module's tests twice, with io_uring and under the default seccomp
    profile, so each branch is tested where it is chosen. No build option to pin one backend was
    built: nothing asked for it yet, and the benchmarks use the backends directly.
+
+   **Added on 2026-10-12 by decision 23:** something asked. A program that sleeps in a wait of its
+   own, with a loop inside it, cannot use an io_uring loop. Camilo ruled that the process picks its
+   backend: `rotor.require_backend` stores the choice before anything else asks, as a call at run
+   time and not a build option. The fallback above is unchanged, and is what a process gets when
+   it requires nothing.

@@ -64,7 +64,8 @@ public API, passes on all three backends, and CI runs it on every push.
 > **In a container, Linux runs epoll unless io_uring is allowed.** Docker's default seccomp
 > profile refuses io_uring. Run with `--security-opt seccomp=unconfined`, or a profile that allows
 > the io_uring system calls, to get io_uring. `rotor.backend()` says which backend a process runs;
-> a program that needs io_uring checks it at startup.
+> a program that needs io_uring checks it at startup, or calls `rotor.require_backend(.uring)`
+> first, which fails where the kernel refuses io_uring.
 
 > [!IMPORTANT]
 > **On macOS and on epoll, file operations need a policy.** Those kernels cannot complete a file
@@ -227,6 +228,7 @@ and the commands to take every number again.
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
 | [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
 | [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | accepted, deferred |
+| [23](docs/decisions/0023-a-host-that-owns-the-wait.md) | a host that owns the wait | accepted |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why.

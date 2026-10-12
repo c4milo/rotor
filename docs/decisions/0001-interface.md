@@ -126,6 +126,10 @@ On Linux the host's backend is chosen per process since the same day: io_uring w
 gives a ring, epoll where it refuses one, and `backend()` reports which (decision 20, open question
 5). The module moved to `src/rotor/` then, being two files.
 
+**Added on 2026-10-12 by decision 23:** the surface gained one name, `wait_descriptor`, which a
+program that sleeps in a wait of its own holds in that wait, and the module gained one call,
+`require_backend`, by which a process names its backend before anything else asks.
+
 ## Alternatives it beat
 
 **Implement the std.Io table directly.** Cost: 109 functions to write and keep current against

@@ -10,10 +10,12 @@
 //!
 //! The backend is this host's. On Darwin it is `kqueue`. On Linux it is `uring` where the kernel
 //! gives the process a ring and `epoll` where the kernel refuses one, chosen once per process and
-//! reported by `backend()` (decision 20, open question 5; `rotor_loop.zig` says how). Every backend
-//! carries the surface (decision 1), so what a consumer writes is the same whichever runs. A
-//! consumer that needs a backend of its own, such as a deterministic twin for replay (decision 10),
-//! writes a module carrying this surface and imports it instead of this one.
+//! reported by `backend()` (decision 20, open question 5; `rotor_loop_backend.zig` says how). A
+//! process that cannot take whichever the kernel allows names one first, with `require_backend`
+//! (decision 23). Every backend carries the surface (decision 1), so what a consumer writes is the
+//! same whichever runs. A consumer that needs a backend of its own, such as a deterministic twin
+//! for replay (decision 10), writes a module carrying this surface and imports it instead of this
+//! one.
 const builtin = @import("builtin");
 const std = @import("std");
 const core = @import("core");
@@ -79,6 +81,26 @@ pub fn backend() Backend {
     return switch (loop_module.chosen()) {
         inline else => |tag| @field(Backend, @tagName(tag)),
     };
+}
+
+/// Why `require_backend` left the process's backend as it was: `Unsupported` when this host cannot
+/// run the backend asked for, and `OtherBackendChosen` when the process already runs another.
+pub const RequireError = loop_module.RequireError;
+
+/// Makes `wanted` the backend this process runs, for a caller that cannot take whichever backend
+/// the kernel allows (decision 23). A program that sleeps in a wait of its own, with a loop inside
+/// it, needs a loop with a descriptor that wait can hold (`Loop.wait_descriptor`). io_uring's loop
+/// has none, so on Linux such a program calls `require_backend(.epoll)`.
+///
+/// Call it before anything else of this module: `sync`, a `Registry`, a `Loop` and `backend` each
+/// make the choice when none is made, and it holds for the life of the process. It stores the
+/// choice when none is stored and succeeds when the process already runs `wanted`. It answers
+/// `OtherBackendChosen` when the process already runs another backend, and `Unsupported` when this
+/// host cannot run `wanted`: `epoll` or `uring` on Darwin, `kqueue` on Linux, and `uring` where the
+/// kernel refuses this process a ring. It never falls back, because the caller named the backend:
+/// an error stores nothing, and `backend()` reports the choice as before.
+pub fn require_backend(wanted: Backend) RequireError!void {
+    return loop_module.require(wanted);
 }
 
 /// Opening, closing and naming a socket or a file: the calls a caller makes before it has a loop,
@@ -337,6 +359,7 @@ test "every public function compiles for this host, not only the ones something 
         }
     }
     _ = &backend;
+    _ = &require_backend;
     _ = &offload_memory_bytes;
 }
 
@@ -375,6 +398,33 @@ test "the process runs io_uring where the kernel takes a ring, and epoll where i
     try testing.expectEqual(backend(), backend());
 }
 
+test "the public module requires a backend: the one that runs is granted, another is refused" {
+    // `rotor_loop_backend.zig` holds the tests of each outcome. This one holds the public call to
+    // them: a call that granted everything, or refused everything, fails here.
+    try require_backend(backend());
+    const others = [_]Backend{ .uring, .epoll, .kqueue };
+    for (others) |other| {
+        if (other == backend()) continue;
+        const refusal = require_backend(other);
+        const expected: RequireError = if (linux and other != .kqueue)
+            error.OtherBackendChosen
+        else
+            error.Unsupported;
+        try testing.expectError(expected, refusal);
+    }
+}
+
+test "a loop names a descriptor a host can wait on, on every backend but io_uring" {
+    if (!supported) return error.SkipZigTest;
+    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, test_options);
+    defer loop.deinit();
+    // The conformance suite holds each backend to what a host sees on this descriptor. This holds
+    // the public `Loop` to its backend's answer (decision 23).
+    try testing.expectEqual(backend() == .uring, loop.wait_descriptor() == null);
+}
+
 test "a socket from sync suits the backend: it does not block exactly when epoll runs" {
     if (!supported or !linux) return error.SkipZigTest;
     const os = std.os.linux;
@@ -397,5 +447,6 @@ test "a socket from sync suits the backend: it does not block exactly when epoll
 
 test {
     _ = loop_module;
+    _ = @import("rotor_loop_backend.zig");
     _ = @import("rotor_loop_registry.zig");
 }

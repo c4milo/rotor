@@ -60,6 +60,22 @@ fn submit_more_handles_than_operations() void {
     _ = loop.submit(&one_timer, &handles);
 }
 
+/// A loop that has ended holds no epoll instance, so it has nothing for a host to wait on
+/// (decision 23). `deinit` leaves every descriptor of the queue at -1, which this loop is given: it
+/// has tables and no epoll instance. With the check deleted the call answers -1 and returns, with
+/// no Linux call on the way.
+fn ask_an_ended_loop_for_its_wait_descriptor() void {
+    loop.init_tables(&memory, options);
+    loop.queue = .{
+        .descriptor = -1,
+        .wake_descriptor = -1,
+        .owns_wake = false,
+        .wait_timer_descriptor = -1,
+    };
+    scenario.reached_violation();
+    _ = loop.wait_descriptor();
+}
+
 // The offload's assertions (decision 18). Each is a mistake only the caller can make, and each
 // halts before the loop would enter the kernel, so these run on every host like the rest.
 
@@ -306,6 +322,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "loop: submit with more handles than operations",
         .run = submit_more_handles_than_operations,
+    },
+    .{
+        .name = "loop: ask an ended loop for its wait descriptor",
+        .run = ask_an_ended_loop_for_its_wait_descriptor,
     },
     .{
         .name = "offload: answer as a worker the loop has no ring for",

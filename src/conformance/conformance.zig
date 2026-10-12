@@ -151,4 +151,5 @@ test {
     _ = @import("conformance_reuse_port.zig");
     _ = @import("conformance_timers.zig");
     _ = @import("conformance_udp.zig");
+    _ = @import("conformance_wait_descriptor.zig");
 }
