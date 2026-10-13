@@ -125,7 +125,10 @@ and its mutation is measured against the Linux gate.
   off its boundary. The lint's static-alignment rule, pepegrillo's, reports a static that omits it.
 - Write all prose in **simple English**, in active voice, with plain words: short sentences with
   one idea each, terms defined before use, lists for list-like content, no metaphors. Name what
-  literally happens.
+  literally happens. Write it in ASD-STE100 Simplified Technical English too: descriptive sentences
+  of 25 words or fewer and procedural ones of 20 or fewer, one topic in each sentence, simple
+  tenses, one word for one meaning, no -ing form used as a noun or a modifier, and no noun cluster
+  of more than three words.
 - **No mannered prose.** Say the thing plainly and stop. No flourishes, no sentence inversions for
   effect, no dramatic fragments, no "not X, but Y", no personifying code, no calling a thing "the
   point" or "the whole reason". A comment explains what the code does and why; it is not written to
