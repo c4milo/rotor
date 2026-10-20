@@ -10,6 +10,7 @@
 //! two for the backend a process runs where the kernel refuses io_uring (decision 20). Both are
 //! named `rotor_echo`, which is the program the runner's `rotor` candidate starts.
 const std = @import("std");
+const bench_memset = @import("bench_memset.zig");
 const modules = @import("modules.zig");
 
 /// Where the host backend's server with class A off is installed, under `zig-out/`.
@@ -72,6 +73,7 @@ fn install_echo(
         .target = target,
         .optimize = .ReleaseSafe,
     }));
+    bench_memset.link(b, module);
     const install = b.addInstallArtifact(
         b.addExecutable(.{ .name = "rotor_echo", .root_module = module }),
         .{ .dest_dir = .{ .override = .{ .custom = directory } } },

@@ -10,6 +10,7 @@
 //! time, as `uring_nop_no_class_a`: ReleaseSafe with decision 8's class A assertions compiled out
 //! and everything else kept, so its difference from `_safe` is what class A costs (step 2).
 const std = @import("std");
+const bench_memset = @import("bench_memset.zig");
 const linux = @import("linux.zig");
 const modules = @import("modules.zig");
 
@@ -39,6 +40,7 @@ pub fn add(b: *std.Build) void {
         });
         nop.root_module.addImport("core", graph.core);
         nop.root_module.addImport("uring", graph.uring);
+        bench_memset.link(b, nop.root_module);
         const install = b.addInstallArtifact(nop, .{
             .dest_dir = .{ .override = .{ .custom = install_directory } },
         });
@@ -111,6 +113,7 @@ fn add_program(
         .epoll => graph.epoll,
     });
     program.root_module.addImport("harness", harness);
+    bench_memset.link(b, program.root_module);
     const install = b.addInstallArtifact(program, .{
         .dest_dir = .{ .override = .{ .custom = install_directory } },
     });
@@ -133,6 +136,7 @@ fn add_post(
     });
     post.root_module.addImport("core", graph.core);
     post.root_module.addImport("uring", graph.uring);
+    bench_memset.link(b, post.root_module);
     const install = b.addInstallArtifact(post, .{
         .dest_dir = .{ .override = .{ .custom = install_directory } },
     });

@@ -12,6 +12,7 @@
 //! which are virtual and report no instructions, or a Linux host without Valgrind, skips it and
 //! says so. CI's Linux runners install Valgrind and run `zig build work-gate`.
 const std = @import("std");
+const bench_memset = @import("bench_memset.zig");
 const modules = @import("modules.zig");
 
 pub const Steps = struct {
@@ -39,6 +40,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
             .optimize = .Debug,
         }),
     });
+    bench_memset.link(b, gate.root_module);
     install.dependOn(&b.addInstallArtifact(gate, .{}).step);
 
     const run = b.addRunArtifact(gate);
@@ -73,5 +75,6 @@ fn work_program(
     });
     module.addImport("core", graph.core);
     module.addImport("backend", backend);
+    bench_memset.link(b, module);
     return b.addExecutable(.{ .name = name, .root_module = module });
 }

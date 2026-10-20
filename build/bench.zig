@@ -7,6 +7,7 @@
 //!
 //! The pinned alternatives are wired by build/alternatives.zig, under their own step.
 const std = @import("std");
+const bench_memset = @import("bench_memset.zig");
 const alternatives = @import("alternatives.zig");
 const modules = @import("modules.zig");
 const bench_class_a = @import("bench_class_a.zig");
@@ -41,6 +42,7 @@ pub fn add(b: *std.Build, target: std.Build.ResolvedTarget) Steps {
         .target = target,
         .optimize = .ReleaseSafe,
     }));
+    bench_memset.link(b, costs.root_module);
     const run_costs = b.addRunArtifact(costs);
     if (b.args) |arguments| run_costs.addArgs(arguments);
     const costs_step = b.step("bench-costs", "Run the cost probes that fill docs/costs.md");
@@ -395,6 +397,7 @@ fn add_echo(
     });
     for (programs) |program| {
         const module = program_module(b, target, graph, harness_module, program) orelse continue;
+        bench_memset.link(b, module);
         const install = &b.addInstallArtifact(
             b.addExecutable(.{ .name = program.name, .root_module = module }),
             .{},

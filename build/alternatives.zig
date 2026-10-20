@@ -15,6 +15,7 @@
 //! A alternative is built the way its own users ship it, optimized and with its assertions
 //! compiled out, so that no result of the harness comes from a handicapped build.
 const std = @import("std");
+const bench_memset = @import("bench_memset.zig");
 
 /// The mode every alternative is built in, which is the mode that favours them. libxev builds its
 /// own benchmarks ReleaseFast (its build.zig, line 213). Under ReleaseFast Zig compiles C with
@@ -236,6 +237,7 @@ const Programs = struct {
             .flags = &libuv_program_flags,
         });
         if (library) |linked| module.linkLibrary(linked);
+        bench_memset.link(b, module);
         const program = b.addExecutable(.{ .name = name, .root_module = module });
         return &b.addInstallArtifact(program, .{}).step;
     }
@@ -258,6 +260,7 @@ const Programs = struct {
             .target = programs.target,
             .optimize = alternative_optimize,
         }));
+        bench_memset.link(b, module);
         const program = b.addExecutable(.{ .name = name, .root_module = module });
         return &b.addInstallArtifact(program, .{}).step;
     }
