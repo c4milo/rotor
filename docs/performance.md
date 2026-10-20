@@ -93,6 +93,9 @@ counts per unit, rotor counts system calls; it does not count wakeups or context
   (`bench/alternatives/README.md`).
 - Each runs a program rotor wrote against its public API, in the cheapest mode it offers, and a row
   names the mode.
+- On Linux, every candidate links the same `memset` (`build/bench_memset.zig`). Zig 0.16's own
+  `memset` stores one byte at a time. The runs before and after this change moved no row past the
+  spread between runners (`bench/results/memset-override-github-2026-10-19.md`).
 - The regression baselines are `bench/baseline/echo.txt`, ratios per processor, and
   `bench/baseline/calls.txt`, ceilings per row.
 - **rotor has read their source.** `bench/alternatives/README.md` settled decision 3's table and
