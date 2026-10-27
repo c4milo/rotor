@@ -215,6 +215,8 @@ fn apply(
     options: core.sync.DatagramOptions,
 ) void {
     const set = sync_socket.set_option;
+    // UDP_GRO is a UDP option, the same for both families.
+    if (options.coalesce) set(socket, linux.IPPROTO.UDP, linux.UDP.GRO, true) catch {};
     if (options.control) {
         set(socket, @intCast(level), names.pktinfo, true) catch {};
         set(socket, @intCast(level), names.codepoint, true) catch {};

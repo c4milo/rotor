@@ -286,6 +286,15 @@ codepoint, the segment size when the kernel coalesced several datagrams into one
 cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmented send with
 `unsupported` (decision 15).
 
+The kernel coalesces received datagrams only on a socket opened with `.coalesce = true` in its
+`DatagramOptions`. A coalesced datagram can hold up to 64 KiB, so size the group's buffers for
+that. A datagram larger than its buffer reports `truncated`. One segmented send carries at most
+65,507 bytes over IPv4, in at most `segments_max` (64) segments.
+
+A multishot receive can end with a success. On io_uring the kernel can end it after 32 datagrams,
+and the last datagram is then the final event. Submit the receive again when an event without
+`more` carries bytes.
+
 ## Files
 
 io_uring performs `read`, `write`, `fdatasync` and `fsync` without a thread. kqueue and epoll report

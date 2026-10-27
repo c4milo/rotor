@@ -403,3 +403,27 @@ The implementation follows the proposed answer to each until Camilo rules.
    touches are the paths that table measures? **Proposed: yes, which is the order Camilo
    already gave: finish the implementation, then benchmark.**
    **Closed on 2026-09-27.** It was done in the proposed order.
+
+## Amendment, 2026-10-26: GRO is turned on by an option
+
+Until this date the Linux backends read a UDP_GRO control message. No code set the UDP_GRO socket
+option, so no socket received a coalesced datagram. `segment_bytes` on a receive was always 0.
+colibri's h3 server found the gap. Camilo approved the fix on 2026-10-26.
+
+1. `DatagramOptions.coalesce` sets UDP_GRO at open on both Linux backends. It is false by default,
+   so a socket that names no option stays as it was. A coalesced datagram needs a buffer of up to
+   64 KiB.
+2. On macOS the option does nothing. macOS has no GRO (section "macOS").
+3. A coalesced datagram larger than its buffer reports `truncated`, and the buffer holds its first
+   bytes. The kernel discards the remaining bytes. That last point is recalled from the kernel's
+   UDP receive, and no scenario measures it.
+4. One segmented send carries at most 65,507 bytes over IPv4, in at most `segments_max` segments.
+   One byte more ends with `message_too_long`.
+5. On io_uring a multishot receive can end with a success. The kernel ended one after 32
+   datagrams, and the 32nd datagram was the final event. The remaining datagrams stayed in the
+   socket. epoll took all 64 segments in one receive. A caller submits the receive again after a
+   final event that carries bytes.
+6. `conformance_udp_coalesce.zig` holds the scenarios. On Linux a small segmented send on loopback
+   reaches a coalescing socket as one datagram, so the scenarios require coalescence there. On
+   loopback the largest send reached a coalescing socket as separate datagrams. So its scenario
+   uses a socket that does not coalesce, and counts the bytes and the datagrams.

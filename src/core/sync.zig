@@ -64,6 +64,11 @@ pub const DatagramOptions = struct {
     /// Do not fragment: path MTU discovery needs it, and without it an oversized datagram is cut
     /// up instead of reported.
     dont_fragment: bool = true,
+    /// Let the kernel coalesce datagrams from one peer into one datagram: UDP_GRO on Linux. A
+    /// coalesced datagram gives its segment size in `segment_bytes` and can hold up to 64 KiB.
+    /// Size the buffer group for that. A datagram larger than its buffer reports `truncated`. On
+    /// macOS the option does nothing, because macOS has no GRO (decision 15).
+    coalesce: bool = false,
 };
 
 /// `open(2)` refused. `DirectIoUnsupported` on Linux: the filesystem does not carry O_DIRECT. On
