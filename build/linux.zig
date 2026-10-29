@@ -68,6 +68,10 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .{ .name = "core", .module = graph.core },
         // What both Linux backends share. It needs no io_uring, so it runs confined.
         .{ .name = "linux-shared", .module = graph.linux_shared },
+        // The same tests in a program that links libc, as colibri's server does. Zig's start
+        // code does not run there, and the clock must still read the vDSO (issue 8). musl links
+        // statically, so the executable still takes nothing from the image.
+        .{ .name = "linux-shared-libc", .module = linux_shared_libc(b, graph, target, optimize) },
         .{ .name = "uring", .module = graph.uring },
         .{ .name = "conformance-uring", .module = graph.conformance_uring },
         // The second Linux backend (decision 20), and the one suite against it. Both enter the
@@ -123,6 +127,24 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
             "tools/linux_test.sh",
     );
     step.dependOn(&stamp.step);
+}
+
+/// A second `linux_shared` module that links libc, from the same source and imports as the
+/// graph's.
+fn linux_shared_libc(
+    b: *std.Build,
+    graph: modules.Modules,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) *std.Build.Module {
+    const module = b.createModule(.{
+        .root_source_file = b.path("src/linux_shared/linux_shared.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    module.addImport("core", graph.core);
+    return module;
 }
 
 /// Installs every example with the program that checks it, when it has one, and the manifest that
