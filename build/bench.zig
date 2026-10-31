@@ -170,6 +170,11 @@ const tested = [_]Tested{
         .needs_loop = false,
     },
     .{
+        .name = "bench-task-calls-tests",
+        .root = "bench/calls/task_calls.zig",
+        .needs_loop = false,
+    },
+    .{
         .name = "bench-echo-runner-tests",
         .root = "bench/echo/echo_runner_setup.zig",
         .needs_loop = true,
@@ -265,6 +270,8 @@ const Program = struct {
     crosscore: bool = false,
     /// Built against the epoll backend in place of the host's, and only on a Linux host.
     epoll: bool = false,
+    /// Built only on a macOS host.
+    macos: bool = false,
 };
 
 /// Every program `bench-echo` installs. Each is its own executable, as bench/alternatives' are, so
@@ -369,6 +376,14 @@ const programs = [_]Program{
         .needs_loop = false,
         .needs_harness = false,
     },
+    // What `bench/calls/count_calls_macos.sh` reads a server's counts with.
+    .{
+        .name = "task_calls",
+        .root = "bench/calls/task_calls.zig",
+        .needs_loop = false,
+        .needs_harness = false,
+        .macos = true,
+    },
 };
 
 /// The programs the echo smoke runs: the runner, which holds the client, and rotor's server.
@@ -409,7 +424,7 @@ fn add_echo(
 }
 
 /// The module of one program of `programs`, or null for one this host does not build: an epoll
-/// program off Linux.
+/// program off Linux, or a macOS program off macOS.
 fn program_module(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
@@ -419,6 +434,7 @@ fn program_module(
 ) ?*std.Build.Module {
     const linux = target.result.os.tag == .linux;
     if (program.epoll and !linux) return null;
+    if (program.macos and target.result.os.tag != .macos) return null;
     const module = b.createModule(.{
         .root_source_file = b.path(program.root),
         .target = target,

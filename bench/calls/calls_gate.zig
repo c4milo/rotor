@@ -3,16 +3,17 @@
 //!
 //! Run:  calls_gate BASELINE ROUND [ROUND...]
 //!
-//! Each ROUND is what one run of `bench/calls/count_calls.sh` printed. The gate reads the rows of
-//! its table, and for every cell keeps the smallest value any round gave it. A change that adds a
-//! call raises every round, and a burst of other work on the runner raises only some, so the
-//! smallest value is the one to judge. A row whose trace lost events (`overruns` above 0), or whose
-//! client completed no echo, is not used from that round.
+//! Each ROUND is what one run of `bench/calls/count_calls.sh` printed on Linux, or of
+//! `bench/calls/count_calls_macos.sh` on macOS. `calls_gate_table.zig` reads the rows of its table.
+//! For every cell the gate keeps the smallest value any round gave it. A change that adds a call
+//! raises every round, and a burst of other work on the runner raises only some, so the smallest
+//! value is the one to judge. A row whose trace lost events (`overruns` above 0), or whose client
+//! completed no echo, is not used from that round.
 //!
 //! BASELINE holds one ceiling per line, as `bench/baseline/calls.txt` says. The gate fails when a
-//! cell is over its ceiling, or when a row the baseline names has no usable round. A row the
-//! baseline does not name is printed in the baseline's format and not judged, so a new candidate
-//! can be added by copying its lines.
+//! cell is over its ceiling, when a ceiling names a column the row's table does not have, or when a
+//! row the baseline names has no usable round. A row the baseline does not name is printed in the
+//! baseline's format and not judged, so a new candidate can be added by copying its lines.
 //!
 //! One column is derived, and `count_calls.sh` does not print it: `untried`, the `epoll_ctl` calls
 //! per echo beyond the reads that found nothing, `ctl - max(reads - 1, 0)`. It is taken within
@@ -30,49 +31,21 @@
 //! Exit status: 0 when every ceiling holds, 1 when one does not or a row is missing, 2 when an
 //! argument, a file or a line cannot be read.
 const std = @import("std");
+const table = @import("calls_gate_table.zig");
 
-/// The columns a baseline line may name: the nine of `count_calls.sh`'s table that count calls, in
-/// the order the table prints them after `payload`, `candidate`, `echoes` and `overruns`, then
-/// `untried`, which the gate derives from them.
-pub const columns = [_][]const u8{
-    "enter",
-    "requests",
-    "arms",
-    "workers",
-    "reads",
-    "writes",
-    "ctl",
-    "waits",
-    "other",
-    "untried",
-};
+pub const columns = table.columns;
+pub const Row = table.Row;
+pub const ParseError = table.ParseError;
+pub const rows_max = table.rows_max;
+const column_index = table.column_index;
+const find = table.find;
 
-/// The columns read from the table. The rest are derived.
-const table_columns = columns.len - 1;
-
-/// Cells before the first counted column: payload, candidate, echoes, overruns.
-const leading_cells = 4;
-
-/// The most table rows the gate keeps: every candidate at every payload, with room to spare.
-pub const rows_max = 64;
 /// The most rounds one gate reads.
 pub const rounds_max = 8;
 /// The most baseline lines one gate reads.
 pub const ceilings_max = 512;
 /// The most bytes of one round's output or of the baseline.
 const file_bytes_max = 1 << 20;
-
-pub const ParseError = error{ Malformed, TooMany, UnknownColumn };
-
-/// One row of one round: its payload and candidate, and its counts per echo.
-pub const Row = struct {
-    payload: u32,
-    candidate: []const u8,
-    /// Per echo, in `columns` order. Unset until a usable round gave them.
-    counts: [columns.len]f64,
-    /// Rounds that gave this row usable counts.
-    rounds: u32,
-};
 
 /// One ceiling of the baseline.
 pub const Ceiling = struct {
@@ -81,72 +54,6 @@ pub const Ceiling = struct {
     most: f64,
     candidate: []const u8,
 };
-
-/// Reads the table rows of one round's output into `rows`, keeping the smaller of each cell a row
-/// already holds. Lines that are not a table row of a candidate are skipped.
-pub fn read_round(text: []const u8, rows: []Row, used: *usize) ParseError!void {
-    var lines = std.mem.splitScalar(u8, text, '\n');
-    while (lines.next()) |line| {
-        var cells: [leading_cells + table_columns + 1][]const u8 = undefined;
-        const count = split_row(line, &cells) orelse continue;
-        if (count < leading_cells + table_columns) continue;
-        const payload = std.fmt.parseInt(u32, cells[0], 10) catch continue;
-        const echoes = std.fmt.parseInt(u64, cells[2], 10) catch return error.Malformed;
-        const overruns = std.fmt.parseInt(u64, cells[3], 10) catch return error.Malformed;
-        if (echoes == 0 or overruns != 0) continue;
-        const row = try find_or_add(rows, used, payload, cells[1]);
-        merge(row, try counts_of(cells[leading_cells..][0..table_columns]));
-    }
-}
-
-/// Splits `| a | b | ... |` into its trimmed cells. Null for a line that is not a table row.
-fn split_row(line: []const u8, cells: [][]const u8) ?usize {
-    const trimmed = std.mem.trim(u8, line, " \r");
-    if (trimmed.len < 2 or trimmed[0] != '|' or trimmed[trimmed.len - 1] != '|') return null;
-    var parts = std.mem.splitScalar(u8, trimmed[1 .. trimmed.len - 1], '|');
-    var count: usize = 0;
-    while (parts.next()) |part| {
-        if (count == cells.len) break;
-        cells[count] = std.mem.trim(u8, part, " ");
-        count += 1;
-    }
-    return count;
-}
-
-fn find_or_add(rows: []Row, used: *usize, payload: u32, candidate: []const u8) ParseError!*Row {
-    for (rows[0..used.*]) |*row| {
-        if (row.payload == payload and std.mem.eql(u8, row.candidate, candidate)) return row;
-    }
-    if (used.* == rows.len) return error.TooMany;
-    rows[used.*] = .{
-        .payload = payload,
-        .candidate = candidate,
-        .counts = undefined,
-        .rounds = 0,
-    };
-    used.* += 1;
-    return &rows[used.* - 1];
-}
-
-/// One round's counts of one row: the table's, then the derived `untried`.
-fn counts_of(cells: []const []const u8) ParseError![columns.len]f64 {
-    var counts: [columns.len]f64 = undefined;
-    for (cells, 0..) |cell, index| {
-        counts[index] = std.fmt.parseFloat(f64, cell) catch return error.Malformed;
-    }
-    const reads = counts[column_index("reads").?];
-    const ctl = counts[column_index("ctl").?];
-    counts[column_index("untried").?] = ctl - @max(reads - 1, 0);
-    return counts;
-}
-
-/// Keeps the smaller of each count this round gives `row`.
-fn merge(row: *Row, counts: [columns.len]f64) void {
-    for (counts, 0..) |value, index| {
-        row.counts[index] = if (row.rounds == 0) value else @min(row.counts[index], value);
-    }
-    row.rounds += 1;
-}
 
 /// Reads the baseline's lines, `PAYLOAD COLUMN CEILING CANDIDATE`, into `into`. The candidate is
 /// the rest of the line, because a candidate's name holds spaces. `#` starts a comment line.
@@ -178,36 +85,17 @@ fn parse_ceiling(line: []const u8) ParseError!Ceiling {
     };
 }
 
-fn column_index(name: []const u8) ?usize {
-    for (columns, 0..) |column, index| {
-        if (std.mem.eql(u8, column, name)) return index;
-    }
-    return null;
-}
-
 /// Writes one line per ceiling that failed, or per row a ceiling names that no round gave, and one
 /// baseline line per count of a row no ceiling names. Returns how many failed.
 pub fn judge(rows: []const Row, ceilings: []const Ceiling, out: *std.Io.Writer) !u32 {
     var failed: u32 = 0;
     for (ceilings) |ceiling| {
-        const row = find(rows, ceiling.payload, ceiling.candidate) orelse {
-            try out.print(
-                "FAILED {d} {s}: no round gave this row\n",
-                .{ ceiling.payload, ceiling.candidate },
-            );
-            failed += 1;
-            continue;
-        };
-        const value = row.counts[ceiling.column];
-        if (value <= ceiling.most) continue;
-        try out.print("FAILED {d} {s}: {s} {d:.3} per echo, over its ceiling {d:.3}\n", .{
-            ceiling.payload, ceiling.candidate, columns[ceiling.column], value, ceiling.most,
-        });
-        failed += 1;
+        if (!try holds(rows, ceiling, out)) failed += 1;
     }
     for (rows) |row| {
         if (is_named(ceilings, row)) continue;
-        for (columns, 0..) |column, index| {
+        const first = row.layout.first();
+        for (columns[first..][0..row.layout.width()], first..) |column, index| {
             try out.print(
                 "not gated: {d} {s} {d:.3} {s}\n",
                 .{ row.payload, column, row.counts[index], row.candidate },
@@ -217,11 +105,27 @@ pub fn judge(rows: []const Row, ceilings: []const Ceiling, out: *std.Io.Writer) 
     return failed;
 }
 
-fn find(rows: []const Row, payload: u32, candidate: []const u8) ?*const Row {
-    for (rows) |*row| {
-        if (row.payload == payload and std.mem.eql(u8, row.candidate, candidate)) return row;
+/// True when the row `ceiling` names holds it. Otherwise writes the line that says why not.
+fn holds(rows: []const Row, ceiling: Ceiling, out: *std.Io.Writer) !bool {
+    const row = find(rows, ceiling.payload, ceiling.candidate) orelse {
+        try out.print(
+            "FAILED {d} {s}: no round gave this row\n",
+            .{ ceiling.payload, ceiling.candidate },
+        );
+        return false;
+    };
+    const column = columns[ceiling.column];
+    if (!row.layout.holds(ceiling.column)) {
+        const absent = "FAILED {d} {s}: its {s} table has no column {s}\n";
+        try out.print(absent, .{ row.payload, row.candidate, @tagName(row.layout), column });
+        return false;
     }
-    return null;
+    const value = row.counts[ceiling.column];
+    if (value <= ceiling.most) return true;
+    try out.print("FAILED {d} {s}: {s} {d:.3} per echo, over its ceiling {d:.3}\n", .{
+        ceiling.payload, ceiling.candidate, column, value, ceiling.most,
+    });
+    return false;
 }
 
 fn is_named(ceilings: []const Ceiling, row: Row) bool {
@@ -241,7 +145,7 @@ pub fn main(init: std.process.Init) !u8 {
     const arena = init.arena.allocator();
     const arguments = try init.minimal.args.toSlice(arena);
     var buffer: [output_buffer_bytes]u8 = undefined;
-    var stdout = std.Io.File.stdout().writer(init.io, &buffer);
+    var stdout = std.Io.File.stdout().writerStreaming(init.io, &buffer);
     const out = &stdout.interface;
     defer out.flush() catch {};
     // The program's name, the baseline, then the rounds.
@@ -270,7 +174,7 @@ pub fn main(init: std.process.Init) !u8 {
             try out.print("calls_gate: cannot read {s}: {s}\n", .{ path, @errorName(err) });
             return exit_usage;
         };
-        read_round(text, &rows, &used) catch |err| {
+        table.read_round(text, &rows, &used) catch |err| {
             const unread = "calls_gate: {s} holds a row that cannot be read: {s}\n";
             try out.print(unread, .{ path, @errorName(err) });
             return exit_usage;
@@ -286,83 +190,11 @@ pub fn main(init: std.process.Init) !u8 {
 // Tests.
 
 const testing = std.testing;
+const examples = table.examples;
+const rows_of = examples.rows_of;
 
-const header =
-    \\| payload | candidate | echoes | overruns | io_uring_enter | io_uring requests | poll arms | io-wq jobs | reads | writes | epoll_ctl | epoll waits | other calls | requests by opcode |
-    \\|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|
-    \\
-;
-
-const round_one = header ++
-    \\| 4096 | rotor on epoll (group single) | 692161 | 0 | 0.000 | 0.000 | 0.000 | 0.000 | 1.206 | 1.000 | 0.364 | 0.139 | 0.000 |  |
-    \\| 4096 | rotor | 197914 | 0 | 0.510 | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | SEND 1.000 |
-    \\
-;
-
-const round_two = header ++
-    \\| 4096 | rotor on epoll (group single) | 623080 | 0 | 0.000 | 0.000 | 0.000 | 0.000 | 1.214 | 1.000 | 0.368 | 0.140 | 0.000 |  |
-    \\| 4096 | rotor | 200000 | 0 | 0.490 | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | SEND 1.000 |
-    \\
-;
-
-fn rows_of(rounds: []const []const u8, into: []Row) ![]Row {
-    var used: usize = 0;
-    for (rounds) |round| try read_round(round, into, &used);
-    return into[0..used];
-}
-
-test "each cell keeps the smallest value any round gave it" {
-    var storage: [rows_max]Row = undefined;
-    const rows = try rows_of(&.{ round_one, round_two }, &storage);
-    try testing.expectEqual(@as(usize, 2), rows.len);
-    try testing.expectEqualStrings("rotor on epoll (group single)", rows[0].candidate);
-    try testing.expectEqual(@as(u32, 2), rows[0].rounds);
-    try testing.expectEqual(@as(f64, 1.206), rows[0].counts[column_index("reads").?]);
-    try testing.expectEqual(@as(f64, 0.364), rows[0].counts[column_index("ctl").?]);
-    try testing.expectEqual(@as(f64, 0.490), rows[1].counts[column_index("enter").?]);
-}
-
-test "untried is epoll_ctl beyond the reads that found nothing, taken within each round" {
-    // Round one tried and registered 0.9 of its receives, round two 0.2. Taken across the rounds
-    // cell by cell, the smallest ctl and the smallest reads would come from different rounds.
-    const tried = header ++
-        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.900 | 1 | 0.900 | 0.5 | 0 |  |
-        \\| 4096 | rotor | 1000 | 0 | 0.5 | 1 | 0 | 0 | 0.000 | 0 | 0.000 | 0 | 0 |  |
-        \\
-    ;
-    const partly = header ++
-        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.200 | 1 | 0.300 | 0.5 | 0 |  |
-        \\
-    ;
-    const untried = column_index("untried").?;
-    var storage: [rows_max]Row = undefined;
-    const rows = try rows_of(&.{ tried, partly }, &storage);
-    try testing.expectApproxEqAbs(@as(f64, 0.0), rows[0].counts[untried], 1e-9);
-    // io_uring reads nothing, so none of its registrations is counted.
-    try testing.expectEqual(@as(f64, 0.0), rows[1].counts[untried]);
-
-    // Every receive registered with no read before it: one untried call per echo.
-    const waited = header ++
-        \\| 4096 | rotor on epoll (group single) | 1000 | 0 | 0 | 0 | 0 | 0 | 1.000 | 1 | 1.300 | 0.5 | 0 |  |
-        \\
-    ;
-    const alone = try rows_of(&.{waited}, &storage);
-    try testing.expectApproxEqAbs(@as(f64, 1.3), alone[0].counts[untried], 1e-9);
-}
-
-test "a round whose trace lost events, or that completed no echo, is not used" {
-    const lossy = header ++
-        \\| 4096 | rotor | 200000 | 12 | 0.100 | 1.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 |  |
-        \\| 65536 | rotor | 0 | 0 | no echoes |
-        \\
-    ;
-    var storage: [rows_max]Row = undefined;
-    const rows = try rows_of(&.{ lossy, round_one }, &storage);
-    try testing.expectEqual(@as(usize, 2), rows.len);
-    const rotor = find(rows, 4096, "rotor").?;
-    try testing.expectEqual(@as(u32, 1), rotor.rounds);
-    try testing.expectEqual(@as(f64, 0.510), rotor.counts[column_index("enter").?]);
-    try testing.expectEqual(@as(?*const Row, null), find(rows, 65536, "rotor"));
+test {
+    _ = table;
 }
 
 test "a baseline line is payload, column, ceiling, then a candidate with spaces" {
@@ -389,7 +221,7 @@ fn failures_of(rows: []const Row, baseline: []const u8, out: *std.Io.Writer) !u3
 
 test "a count over its ceiling fails and names the row, and one under it passes" {
     var storage: [rows_max]Row = undefined;
-    const rows = try rows_of(&.{ round_one, round_two }, &storage);
+    const rows = try rows_of(&.{ examples.round_one, examples.round_two }, &storage);
     var buffer: [1024]u8 = undefined;
     var out: std.Io.Writer = .fixed(&buffer);
     const baseline =
@@ -406,7 +238,7 @@ test "a count over its ceiling fails and names the row, and one under it passes"
 
 test "a row the baseline names that no round gave fails, and one it does not name is printed" {
     var storage: [rows_max]Row = undefined;
-    const rows = try rows_of(&.{round_one}, &storage);
+    const rows = try rows_of(&.{examples.round_one}, &storage);
     var buffer: [2048]u8 = undefined;
     var out: std.Io.Writer = .fixed(&buffer);
     const baseline =
@@ -420,4 +252,26 @@ test "a row the baseline names that no round gave fails, and one it does not nam
     // The row a ceiling names is judged and not printed.
     const named = "not gated: 4096 ctl 0.364 rotor on epoll (group single)";
     try testing.expect(std.mem.indexOf(u8, printed, named) == null);
+    // A Linux row prints no macOS column.
+    try testing.expect(std.mem.indexOf(u8, printed, " unix ") == null);
+}
+
+test "a macOS row is held to its own columns, and a ceiling on a column it lacks fails" {
+    var storage: [rows_max]Row = undefined;
+    const rows = try rows_of(&.{examples.macos_round}, &storage);
+    var buffer: [1024]u8 = undefined;
+    var out: std.Io.Writer = .fixed(&buffer);
+    const baseline =
+        \\4096 unix 2.20 rotor
+        \\4096 mach 0.05 rotor
+        \\4096 enter 1.00 rotor
+    ;
+    try testing.expectEqual(@as(u32, 2), try failures_of(rows, baseline, &out));
+    try testing.expectEqualStrings(
+        "FAILED 4096 rotor: unix 2.273 per echo, over its ceiling 2.200\n" ++
+            "FAILED 4096 rotor: its macos table has no column enter\n" ++
+            "not gated: 4096 unix 3.152 rotor (accumulate)\n" ++
+            "not gated: 4096 mach 0.000 rotor (accumulate)\n",
+        out.buffered(),
+    );
 }

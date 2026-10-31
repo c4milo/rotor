@@ -1,0 +1,10 @@
+# The ceilings the `calls` job of .github/workflows/ci.yml holds rotor's echo servers to on macOS:
+# system calls per echo, as `bench/calls/count_calls_macos.sh` counts them on GitHub's
+# `macos-latest` runners. `bench/calls/calls_gate.zig` says how the gate reads its three rounds.
+#
+# A line is: payload column ceiling candidate. The columns are `unix`, the Unix system calls, and
+# `mach`, the Mach traps.
+#
+# The file holds no ceiling yet, so the gate judges nothing on macOS and prints every row as a line
+# of this file. The ceilings come from those lines on the runners, by the three rules of
+# `bench/baseline/calls.txt`, and never from `mac`.

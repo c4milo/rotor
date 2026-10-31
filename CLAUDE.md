@@ -312,7 +312,8 @@ was about to push.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull
   request, on three kinds of GitHub-hosted runner: macOS on Apple silicon, Linux on x86-64 and
   Linux on arm64. Each job is the command a developer runs by hand: `zig build test` on all three;
-  the Linux gate, the race gate and the call gate on both Linux processors; `zig build proofs` and
+  the Linux gate and the race gate on both Linux processors; the call gate on all three;
+  `zig build proofs` and
   `zig build tla` on x86-64 Linux; and `zig build lint-commits` on a pull request. The comparison
   against libuv and libxev, held to `bench/baseline/echo.txt`, runs on all three every night at
   06:17 UTC and when started by hand. The file has sections for x86-64 and arm64 processors and none
@@ -330,7 +331,11 @@ was about to push.
   `./zig-out/bin/calls_gate bench/baseline/calls.txt calls-1.md calls-2.md calls-3.md`. A count
   moves far less with load than a time, so this is the speed check CI runs on every change. Its
   ceilings come from GitHub's runners, and the baseline's header says how each was set; a count that
-  moves with timing is held only against a change of about one call per echo.
+  moves with timing is held only against a change of about one call per echo. On macOS, with no
+  root: three rounds of `SECONDS_PER_RUN=1 sh bench/calls/count_calls_macos.sh > calls-N.md`, then
+  the gate with `bench/baseline/calls-macos.txt`. It counts all the Unix calls and Mach traps of the
+  server's process, which `bench/calls/task_calls.zig` reads, and not which calls they are. Added on
+  2026-10-31. That baseline holds no ceiling until the runners give their counts.
 - Cost gates: `src/conformance/conformance_cost.zig` bounds what the loop's own work costs — a
   poll, one fire of a repeating timer, one operation of a batch submit — so a path that becomes
   slow fails `zig build test` on both backends. The 12 µs polling park of 2026-09-22 is why: every
