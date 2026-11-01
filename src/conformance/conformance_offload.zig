@@ -16,6 +16,7 @@ const core = @import("core");
 const Operation = core.Operation;
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
+const timers = @import("conformance_timers.zig");
 
 const Event = core.Event;
 const Loop = backend.Loop;
@@ -357,6 +358,53 @@ test "an offloaded read that is cancelled still ends with exactly one final even
 
     // Exactly one event, and nothing left in flight. Whether it carries the read's count or
     // `canceled` depends on which won the race; that there is exactly one is decision 5, rule 1.
+    var round: u32 = 0;
+    var produced: u32 = 0;
+    while (round < conformance.collect_rounds_max and produced == 0) : (round += 1) {
+        produced = try loop_fixture.loop.tick(&events, 10 * core.constants.ns_per_ms);
+    }
+    try testing.expectEqual(@as(u32, 1), produced);
+    try testing.expectEqual(@as(u64, 11), events[0].user_data);
+    try testing.expectEqual(@as(u32, 0), loop_fixture.loop.in_flight());
+}
+
+test "a due timer behind an offloaded read's deadline fires in a tick with an event of its own" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    if (!backend.files_block) return error.SkipZigTest;
+    try worker_pool.start();
+    try loop_fixture.init(.offload, &worker_pool);
+    defer {
+        worker_pool.stop();
+        loop_fixture.deinit();
+    }
+    worker_pool.holding.store(true, .release);
+
+    // The held read's deadline comes first in the heap, so the tick's first expiry, of timers
+    // only, stops at it, and the timer behind it waits for the expiry after the reap.
+    var into: [block_bytes]u8 align(block_bytes) = undefined;
+    var read = Operation.read(11, loop_fixture.file, &into, 0);
+    read.timeout_ns = core.constants.ns_per_ms;
+    var handles: [3]core.Handle = undefined;
+    try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{read}, handles[0..1]));
+    var events: [3]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try loop_fixture.loop.tick(&events, 0));
+    const timer = Operation.timer(9, 2 * core.constants.ns_per_ms, 0);
+    try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{timer}, handles[1..2]));
+    try testing.expectEqual(@as(u32, 0), try loop_fixture.loop.tick(&events, 0));
+    timers.hold_off(10 * core.constants.ns_per_ms);
+
+    // A cancel of a timer still queued gives the tick an event before it asks the kernel
+    // anything, and no descriptor waits for readiness, so a kqueue tick makes no call. It expires
+    // all the same, and hands the timer over (issue 10).
+    const queued = Operation.timer(8, core.constants.ns_per_s, 0);
+    try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{queued}, handles[2..3]));
+    loop_fixture.loop.cancel(handles[2]);
+    try testing.expectEqual(@as(u32, 2), try loop_fixture.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 8), events[0].user_data);
+    try testing.expectEqual(@as(u64, 9), events[1].user_data);
+
+    // The read ends when the worker returns, with its bytes or with `timeout`.
+    worker_pool.holding.store(false, .release);
     var round: u32 = 0;
     var produced: u32 = 0;
     while (round < conformance.collect_rounds_max and produced == 0) : (round += 1) {

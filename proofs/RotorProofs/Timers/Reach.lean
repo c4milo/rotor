@@ -73,15 +73,19 @@ theorem handed_over_on_schedule (t : Tables) (m : Nat → Option Entry) (g : Goo
   refine ⟨g.schedule i, g.due i hs hr, by rw [hd.1]; rfl, ?_, hd.2.1⟩
   rw [hd.2.2.1, g.schedule i, Nat.add_mul, Nat.one_mul, Nat.add_assoc]
 
-/-- Every state a tick drains from satisfies the invariant: the drain above is every tick's. -/
-theorem tick_drains_good {t : Tables} (r : Reachable t) (now : Nat) (hnow : t.now ≤ now) :
-    ∃ m, Good (expire (flush { t with now := now })) m := by
+/-- Both states a tick drains from satisfy the invariant, the one after each of its expiries: the
+drain above is each of them. -/
+theorem tick_drains_good {t : Tables} (r : Reachable t) (now room : Nat) (hnow : t.now ≤ now) :
+    (∃ m, Good (expire (flush { t with now := now })) m) ∧
+      ∃ m, Good (expire (drain (expire (flush { t with now := now })) room).1) m := by
   obtain ⟨m, g⟩ := r.good
   have g0 : Good { t with now := now } m :=
     { g with due := fun s hs hr => Nat.le_trans (g.due s hs hr) hnow }
   obtain ⟨m1, g1, _⟩ := flush_good _ m g0
   obtain ⟨m2, g2, _⟩ := expire_good _ m1 g1
-  exact ⟨m2, g2⟩
+  obtain ⟨m3, g3, _⟩ := drain_good room _ m2 g2
+  obtain ⟨m4, g4, _⟩ := expire_good _ m3 g3
+  exact ⟨⟨m2, g2⟩, ⟨m4, g4⟩⟩
 
 /-- **Decision 14, rule 4.** A tick queues a fire for every timer that is due when it reads the
 clock: after expiry no armed timer is due, and each that was is on the finished list. -/
@@ -150,10 +154,16 @@ theorem tick_events (t : Tables) (now room : Nat) :
         (e.more = false →
           e.handle.generation < ((tick t now room).1.slots e.handle.index).generation) := by
   intro e he
-  have := drain_events room (expire (flush { t with now := now })) e he
-  have hg := ((flush_genLe { t with now := now }).trans
-    (expireSteps_genLe (flush { t with now := now }).timers.count _)) e.handle.index
-  exact ⟨Nat.le_trans hg this.1, this.2⟩
+  simp only [tick, List.mem_append] at he ⊢
+  rcases he with he | he
+  · -- Handed over by the first drain: what follows it only raises generations.
+    have := drain_events room (expire (flush { t with now := now })) e he
+    have hg := tick_before_first_genLe t now e.handle.index
+    refine ⟨Nat.le_trans hg this.1, fun hmore => Nat.lt_of_lt_of_le (this.2 hmore) ?_⟩
+    exact ((expireSteps_genLe _ _).trans (drain_genLe _ _)) e.handle.index
+  · have := drain_events _ (expire (drain (expire (flush { t with now := now })) room).1) e he
+    have hg := tick_before_second_genLe t now room e.handle.index
+    exact ⟨Nat.le_trans hg this.1, this.2⟩
 
 /-- **Decision 5, rule 1.** After an operation's final event, no event of any later tick carries
 its handle: the slot's generation has moved past it and never comes back. -/

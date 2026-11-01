@@ -471,6 +471,10 @@ pub const Tables = struct {
     pub const arm = deadline.arm;
     /// How long a tick may block: `tables_deadline.zig`.
     pub const wait_bound = deadline.wait_bound;
+    /// A tick's first expiry, of timers only: `tables_deadline.zig`.
+    pub const finish_due_timers = deadline.finish_due_timers;
+    /// A tick's last step, after its reap: `tables_deadline.zig`.
+    pub const expire_after_reap = deadline.expire_after_reap;
 };
 
 /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its

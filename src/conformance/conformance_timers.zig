@@ -22,7 +22,7 @@ const ms = core.constants.ns_per_ms;
 const period_ns = 20 * ms;
 
 /// Busy-waits without ticking, which is what a caller that is slow looks like to the loop.
-fn hold_off(nanoseconds: u64) void {
+pub fn hold_off(nanoseconds: u64) void {
     const until = now_ns() + nanoseconds;
     while (now_ns() < until) {}
 }
@@ -323,4 +323,28 @@ test "a timer submitted before any tick runs its delay from the first tick's rea
     var count: u32 = 0;
     while (count == 0) count = try harness.loop.tick(&events, core.constants.ns_per_s);
     try testing.expect(harness.loop.now_ns() >= first_ns + period_ns);
+}
+
+test "a tick with an event of its own to hand over still fires the timer that is due" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+
+    var handles: [2]core.Handle = undefined;
+    try harness.submit(&.{Operation.timer(9, period_ns, 0)}, handles[0..1]);
+    var events: [2]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    hold_off(2 * period_ns);
+
+    // A cancel of a timer still queued ends it in the next flush, so that tick has an event to
+    // hand over before it asks the kernel anything, and nothing waits for readiness. It hands the
+    // due timer over all the same (issue 10).
+    try harness.submit(&.{Operation.timer(8, period_ns, 0)}, handles[1..2]);
+    harness.loop.cancel(handles[1]);
+    try testing.expectEqual(@as(u32, 2), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 8), events[0].user_data);
+    try testing.expectError(error.Canceled, events[0].outcome());
+    try testing.expectEqual(@as(u64, 9), events[1].user_data);
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }

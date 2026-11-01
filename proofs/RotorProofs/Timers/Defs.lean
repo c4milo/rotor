@@ -13,9 +13,11 @@ What it leaves out, and why the omission changes nothing proved here:
   the operation to the backend's cancel, which is not a timer's path.
 - The slot table's free list is left out: `submit` takes the index a claim would return, which
   must be a free slot.
-- A tick is `flush`, then `expire`, then `drain_finished` into room for `room` events. The Zig tick
-  also drains mailboxes and the offload, waits, and may expire and drain once more after a wait
-  that produced nothing; a timer's slot sees that second pass as one more tick.
+- A tick is `flush`, `expire`, `drain_finished`, `expire` again, then `drain_finished` into the
+  room that is left. The Zig tick's first expiry is `finish_due_timers`, which stops at the first
+  deadline that is not a timer's; here every slot holds a timer, so it is `expire`. The Zig tick
+  also drains mailboxes and the offload, and waits and reaps before its second expiry; none of that
+  reaches a timer's slot.
 
 Two fields are the proof's and not the Zig slot's: `first`, the first deadline a timer was armed
 for, and `fired`, how many of its fires have been handed over. Nothing the model computes reads
@@ -193,8 +195,12 @@ def cancellable (t : Tables) (h : Handle) : Bool :=
 def cancel (t : Tables) (h : Handle) : Tables :=
   if cancellable t h then requestCancel t h.index else t
 
-/-- A tick at clock `now`, with room for `room` events. -/
+/-- A tick at clock `now`, with room for `room` events: it expires and hands over what is
+finished, then expires again, after the place where the Zig tick reaps, and hands over what that
+finished into the room that is left (issue 10). -/
 def tick (t : Tables) (now room : Nat) : Tables × List Event :=
-  drain (expire (flush { t with now := now })) room
+  let first := drain (expire (flush { t with now := now })) room
+  let second := drain (expire first.1) (room - first.2.length)
+  (second.1, first.2 ++ second.2)
 
 end Rotor.Timers

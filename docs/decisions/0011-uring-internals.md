@@ -24,6 +24,62 @@ Test: the conformance suite's receive-with-deadline scenario, on both backends. 
 timer-churn workload measures arm and disarm; if a linked timeout measures faster, this point
 reopens with that number.
 
+### Amendment of 2026-11-01: an operation's deadline expires after the reap
+
+Until this date each tick expired first, and then waited and reaped. After a long turn of the
+caller's own, a receive whose bytes were already in the socket ended with `timeout`. On kqueue and
+epoll the tick had not read the readiness yet. On io_uring, `DEFER_TASKRUN` posts the receive's
+completion only inside an enter, and the cancel entry went into that same enter. Issue 10 reports
+it, from a consumer that runs two loops on one thread.
+
+Now every backend's tick ends an operation's deadline last, after its reap, through
+`Tables.expire_after_reap`. An operation whose result is ready when the tick begins ends with that
+result, so the loop's own cancel loses the race, as decision 5, rule 2 says a cancel can. A due
+deadline still makes the tick poll, because `Tables.wait_bound` gives no wait when the nearest
+deadline has passed.
+
+A timer has no result on its way from the kernel, so it need not wait for the reap. At its start a
+tick runs `Tables.finish_due_timers`, which finishes the due timers at the head of the heap and
+stops at the first deadline of an operation. The rest expire after the reap, in the same tick and
+still in deadline order. Without this step a tick whose only work was a due timer did more work on
+kqueue, measured on `mac` with `zig build work-gate`:
+
+| workload | baseline | expiry after the reap only | with `finish_due_timers` |
+| --- | ---: | ---: | ---: |
+| timer | 1,076 | 1,141 | 1,086 |
+| batch | 23,928 | 24,446 | 24,300 |
+
+The tolerance is 2 percent. The other three workloads stayed within it both ways.
+
+What it costs:
+
+- On io_uring a deadline's cancel entry goes to the kernel in the next tick, not in this one. That
+  tick does not block while a cancel waits, so a busy loop is late by at most two ticks' work, not
+  one. A loop that blocks is not later: its wait ends at the deadline, and its cancel entry went
+  into the next tick before this date too.
+- On kqueue and epoll a cancel ends a waiter at once, so the operation's final event is handed over
+  in the same tick.
+- A kqueue tick that asks the kernel nothing also expires, so a stream of messages cannot hold a
+  due deadline off.
+
+Tests: three conformance scenarios. In the first, a receive's bytes came before its deadline, and
+the loop ticks late. In the second, a tick has an event of its own and a due timer. In the third,
+a due timer sits behind an offloaded read's deadline in such a tick. The Lean model's `tick`
+expires, drains, expires and drains again.
+
+| mutation | target | result |
+| --- | --- | --- |
+| kqueue expires at the tick's start again | `test-conformance-kqueue` | CAUGHT |
+| io_uring expires at the tick's start again | `conformance-uring`, Linux gate | CAUGHT |
+| epoll expires at the tick's start again | `conformance-epoll`, Linux gate | CAUGHT |
+| kqueue skips the expiry after the reap | `test-conformance-kqueue` | CAUGHT |
+| io_uring skips the expiry after the reap | `conformance-uring`, Linux gate | CAUGHT |
+| epoll skips the expiry after the reap | `conformance-epoll`, Linux gate | CAUGHT |
+| kqueue's tick that makes no call skips the expiry | `test-conformance-kqueue` | CAUGHT |
+| `finish_due_timers` does not stop at an operation's deadline | `test-conformance-kqueue` | CAUGHT |
+| `expire_after_reap` returns at once when a deadline is due | `test-conformance-kqueue` | CAUGHT |
+| kqueue's tick skips `finish_due_timers` | `work-gate` | CAUGHT |
+
 ## 2. A posted message travels in the completion's result, with the top bit set
 
 *Replaced on 2026-09-25.* Camilo ruled that loops talk through shared memory on io_uring too

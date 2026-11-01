@@ -1,7 +1,8 @@
 //! `tick`: one turn of the loop. In order: read the clock once, try the queued operations and
-//! register the ones that must wait, finish the timers that are due and end the operations whose
-//! deadline passed, hand over the events the loop produced itself and the messages other loops
-//! posted, make the one `kevent` call, and perform what became ready.
+//! register the ones that must wait, finish the due timers at the head of the heap, hand over the
+//! events the loop produced itself and the messages other loops posted, make the one `kevent` call,
+//! perform what became ready, and last end the operations whose deadline passed, with any due timer
+//! behind them.
 //!
 //! "One system call per tick" is not claimed here (decision 12, point 1): every transfer is its
 //! own call. The one `kevent` call carries the tick's registrations in and its readiness out. A
@@ -32,7 +33,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     tables.begin_tick(events.len, wait_ns);
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
-    loop.tables.expire(loop, cancel_module.request);
+    tables.finish_due_timers();
     // Before the finished list is drained, so a result a worker pushed becomes its operation's
     // final event in this tick and not the next (decision 18).
     _ = offload_module.drain(loop);
@@ -60,9 +61,12 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const ready = if (idle) nothing else call_kernel(loop, readiness, wait);
     loop.changes_used = 0;
     loop.wake_up();
-    // A tick that had events to hand over and made no call is done. What arrived since the drains
-    // above waits for the next tick, which does not block while a ring holds it.
-    if (idle and produced != 0) return produced;
+    // A tick that made no call has nothing to reap. What arrived since the drains above waits for
+    // the next tick, which does not block while a ring holds it. It still expires, so a stream of
+    // messages cannot hold a due timer off.
+    if (idle) {
+        return produced + tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
+    }
     const ready_count = try ready;
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
@@ -75,11 +79,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         produced += tables.drain_finished(events[produced..]);
     }
     produced += loop.drain_mailboxes(events[produced..]);
-    if (produced == 0 and wait != null) {
-        // The wait may have ended because a deadline came due, which the reading after it shows.
-        loop.tables.expire(loop, cancel_module.request);
-        produced += tables.drain_finished(events[produced..]);
-    }
+    // After the reap, so a descriptor the kernel reported ready ends its operation with the
+    // transfer's result and not with `timeout` (issue 10).
+    produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     assert(produced <= events.len);
     return produced;
 }

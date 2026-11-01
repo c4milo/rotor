@@ -1,10 +1,11 @@
 //! `tick`: one turn of the loop, and the one system call it makes (decision 3, source 4). In
 //! order: read the clock once, hand queued operations to the kernel and posts to the mailbox rings,
-//! finish the timers that are due and cancel the operations whose deadline passed, give waiting
-//! cancels their entries, hand the caller the events the loop produced itself and the messages
-//! other loops posted, enter the kernel, reap, and read the mailboxes again. An enter that blocks
-//! carries no timeout, because the loop's wait timer, armed in the same batch, bounds it; when that
-//! timer fires before this tick's deadline, the tick waits again (decision 6, amended 2026-09-27).
+//! finish the due timers at the head of the heap, give waiting cancels their entries, hand the
+//! caller the events the loop produced itself and the messages other loops posted, enter the
+//! kernel, reap, read the mailboxes again, and last cancel the operations whose deadline passed,
+//! with any due timer behind them. An enter that blocks carries no timeout, because the loop's wait
+//! timer, armed in the same batch, bounds it; when that timer fires before this tick's deadline,
+//! the tick waits again (decision 6, amended 2026-09-27).
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
@@ -30,7 +31,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     tables.begin_tick(events.len, wait_ns);
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
-    loop.tables.expire(loop, cancel_module.request);
+    tables.finish_due_timers();
     cancel_module.flush(loop);
     var produced = tables.drain_finished(events);
     produced += loop.drain_mailboxes(events[produced..]);
@@ -55,11 +56,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     }
     produced += reap_module.reap(loop, events[produced..]);
     produced += loop.drain_mailboxes(events[produced..]);
-    if (produced == 0 and wait != null) {
-        // The wait may have ended because a deadline came due, which the reading after it shows.
-        loop.tables.expire(loop, cancel_module.request);
-        produced += tables.drain_finished(events[produced..]);
-    }
+    // After the reap, so a completion the kernel had ready wins over the deadline (issue 10). With
+    // `DEFER_TASKRUN` a completion is posted only inside an enter, so the deadline's cancel entry
+    // goes to the kernel in the next tick, and that tick does not block while it waits.
+    produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     assert(produced <= events.len);
     return produced;
 }

@@ -1,13 +1,16 @@
 //! When the tables' deadlines run: arming an operation's deadline or a timer's delay, where each
-//! starts, and how long a tick may block before the nearest one. Split from `tables.zig` for the
+//! starts, how long a tick may block before the nearest one, and where in a tick each kind of
+//! deadline expires. Split from `tables.zig` for the
 //! 500-line limit; `Tables` declares each of these, so a caller writes `tables.arm(...)`.
 const std = @import("std");
 const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
+const event_module = @import("event.zig");
 const slot_module = @import("slot.zig");
 const tables_module = @import("tables.zig");
 
+const Event = event_module.Event;
 const Slot = slot_module.Slot;
 const Tables = tables_module.Tables;
 
@@ -45,4 +48,41 @@ pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     const earliest = tables.timers.earliest_ns() orelse return wait_ns;
     if (earliest <= tables.now_ns) return null;
     return @min(wait_ns, earliest - tables.now_ns);
+}
+
+/// A tick's first expiry, before it asks the kernel anything: finishes the due timers at the head
+/// of the heap, in deadline order, and stops at the first operation's deadline. An operation's
+/// result can be on its way from the kernel, so its deadline waits for `expire_after_reap`
+/// (issue 10). A timer's cannot, so a tick whose only work is a due timer hands it over at once.
+pub fn finish_due_timers(tables: *Tables) void {
+    const armed = tables.timers.count;
+    var finished: u32 = 0;
+    while (finished < armed) : (finished += 1) {
+        const earliest_ns = tables.timers.earliest_ns() orelse return;
+        if (earliest_ns > tables.now_ns) return;
+        const head = tables.timers.entries[0].slot;
+        if (tables.table.at(head).code != .timer) return;
+        const index = tables.timers.pop_due(tables.now_ns).?;
+        assert(index == head);
+        tables.finish_local(index, 0);
+    }
+    assert(tables.timers.count <= armed);
+}
+
+/// A tick's last step, after its reap: `Tables.expire`, then hand over what is finished into
+/// `events`. The reap comes first, so an operation whose result was ready when the tick began ends
+/// with that result and not with `timeout`: the loop's own cancel loses that race, as decision 5,
+/// rule 2 says a cancel can (decision 11, point 1, amended 2026-11-01). Returns how many events it
+/// wrote. A tick with nothing due returns at once, and leaves what its reap finished for the next
+/// tick's drain, as it did before.
+pub fn expire_after_reap(
+    tables: *Tables,
+    backend: anytype,
+    comptime request: fn (@TypeOf(backend), u32, *Slot) void,
+    events: []Event,
+) u32 {
+    const earliest_ns = tables.timers.earliest_ns() orelse return 0;
+    if (earliest_ns > tables.now_ns) return 0;
+    tables.expire(backend, request);
+    return tables.drain_finished(events);
 }

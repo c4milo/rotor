@@ -7,6 +7,7 @@ const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const tcp = @import("conformance_tcp.zig");
+const timers = @import("conformance_timers.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
@@ -304,4 +305,32 @@ test "a loop that polls and never waits still sees bytes that arrive later" {
     try sender.collect(&sent);
     const received = try poll_one(&harness);
     try testing.expectEqual(@as(u32, 2), try received.outcome());
+}
+
+test "a receive whose bytes came before its deadline ends with them when the loop ticks late" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    var sender: Harness = undefined;
+    try sender.init(1, null);
+    defer sender.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try tcp.connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+
+    var buffer: [8]u8 = undefined;
+    try harness.submit(&.{receive(1, pair[1], &buffer, 5 * ms)}, &.{});
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    try sender.submit(&.{Operation.send(9, pair[0], "hi")}, &.{});
+    try sender.collect(&events);
+    // A turn of the caller's own runs past the deadline, with the bytes already in the socket. The
+    // next tick reaps before it expires, so the receive ends with the bytes (issue 10).
+    timers.hold_off(20 * ms);
+    try testing.expectEqual(@as(u32, 1), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectEqual(@as(u32, 2), try events[0].outcome());
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }

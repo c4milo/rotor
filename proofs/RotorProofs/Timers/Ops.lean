@@ -123,7 +123,9 @@ theorem tick_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (now ro
   obtain ⟨m1, g1, hn1⟩ := flush_good _ m g0
   obtain ⟨m2, g2, hn2, _, _⟩ := expire_good _ m1 g1
   obtain ⟨m3, g3, hn3⟩ := drain_good room _ m2 g2
-  exact ⟨m3, g3, by unfold tick; rw [hn3, hn2, hn1]⟩
+  obtain ⟨m4, g4, hn4, _, _⟩ := expire_good _ m3 g3
+  obtain ⟨m5, g5, hn5⟩ := drain_good _ _ m4 g4
+  exact ⟨m5, g5, by unfold tick; simp only; rw [hn5, hn4, hn3, hn2, hn1]⟩
 
 /-! ## Generations only grow -/
 
@@ -215,9 +217,18 @@ theorem cancel_genLe (t : Tables) (h : Handle) : GenLe t (cancel t h) := by
             (Nat.le_refl _)).trans (finishLocal_genLe _ _ _)
   · exact GenLe.refl t
 
+/-- What a tick does before its first drain: flush, expire. -/
+theorem tick_before_first_genLe (t : Tables) (now : Nat) :
+    GenLe t (expire (flush { t with now := now })) :=
+  (flush_genLe { t with now := now }).trans (expireSteps_genLe _ _)
+
+/-- What a tick does before its second drain: flush, expire, drain, expire. -/
+theorem tick_before_second_genLe (t : Tables) (now room : Nat) :
+    GenLe t (expire (drain (expire (flush { t with now := now })) room).1) :=
+  ((tick_before_first_genLe t now).trans (drain_genLe room _)).trans (expireSteps_genLe _ _)
+
 theorem tick_genLe (t : Tables) (now room : Nat) : GenLe t (tick t now room).1 :=
-  ((flush_genLe { t with now := now }).trans
-    (expireSteps_genLe (flush { t with now := now }).timers.count _)).trans (drain_genLe room _)
+  (tick_before_second_genLe t now room).trans (drain_genLe _ _)
 
 /-- Every event `drain` hands over carries its slot's generation, at or above the generation the
 slot had when the drain began; a final one leaves its slot at a higher generation than it

@@ -1,9 +1,10 @@
 //! `tick`: one turn of the loop. In order: read the clock once, try the queued operations and
-//! register the ones that must wait, finish the timers that are due and end the operations whose
-//! deadline passed, hand over the events the loop produced itself and the messages other loops
-//! posted, make the one `epoll_pwait2` call, and perform what became ready. A call that blocks
-//! carries no timeout, because the loop's wait timer bounds it; when that timer fires before this
-//! tick's deadline, the tick waits again (decision 20, "The wait timer").
+//! register the ones that must wait, finish the due timers at the head of the heap, hand over the
+//! events the loop produced itself and the messages other loops posted, make the one `epoll_pwait2`
+//! call, perform what became ready, and last end the operations whose deadline passed, with any due
+//! timer behind them. A call that blocks carries no timeout, because the loop's wait timer bounds
+//! it; when that timer fires before this tick's deadline, the tick waits again (decision 20, "The
+//! wait timer").
 //!
 //! This is `kqueue_tick.zig` less two things. There is no changelist to carry into the wait,
 //! because the flush registered each descriptor as it went. And there is no poll trigger: macOS
@@ -37,7 +38,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     tables.begin_tick(events.len, wait_ns);
     tables.now_ns = clock_ns();
     submit_module.flush(loop);
-    loop.tables.expire(loop, cancel_module.request);
+    tables.finish_due_timers();
     // Before the finished list is drained, so a result a worker pushed becomes its operation's
     // final event in this tick and not the next (decision 18).
     _ = offload_module.drain(loop);
@@ -69,11 +70,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         produced += tables.drain_finished(events[produced..]);
     }
     produced += loop.drain_mailboxes(events[produced..]);
-    if (produced == 0 and wait != null) {
-        // The wait may have ended because a deadline came due, which the reading after it shows.
-        loop.tables.expire(loop, cancel_module.request);
-        produced += tables.drain_finished(events[produced..]);
-    }
+    // After the reap, so a descriptor the kernel reported ready ends its operation with the
+    // transfer's result and not with `timeout` (issue 10).
+    produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     assert(produced <= events.len);
     return produced;
 }
