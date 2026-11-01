@@ -335,7 +335,7 @@ was about to push.
   root: three rounds of `SECONDS_PER_RUN=1 sh bench/calls/count_calls_macos.sh > calls-N.md`, then
   the gate with `bench/baseline/calls-macos.txt`. It counts all the Unix calls and Mach traps of the
   server's process, which `bench/calls/task_calls.zig` reads, and not which calls they are. Added on
-  2026-10-31. That baseline holds no ceiling until the runners give their counts.
+  2026-10-31, with ceilings from six runs on GitHub's macOS runners the same day.
 - Cost gates: `src/conformance/conformance_cost.zig` bounds what the loop's own work costs — a
   poll, one fire of a repeating timer, one operation of a batch submit — so a path that becomes
   slow fails `zig build test` on both backends. The 12 µs polling park of 2026-09-22 is why: every

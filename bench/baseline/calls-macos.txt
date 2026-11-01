@@ -5,6 +5,38 @@
 # A line is: payload column ceiling candidate. The columns are `unix`, the Unix system calls, and
 # `mach`, the Mach traps.
 #
-# The file holds no ceiling yet, so the gate judges nothing on macOS and prints every row as a line
-# of this file. The ceilings come from those lines on the runners, by the three rules of
-# `bench/baseline/calls.txt`, and never from `mac`.
+# The ceilings were taken on 2026-10-31 from six runs of the job on `1dc6c8d`, five on Apple M1
+# (Virtual) runners and one on an Apple M2 Pro (Virtual). Each run gives the smallest of its three
+# rounds. They follow the three rules of `bench/baseline/calls.txt`, and never come from `mac`:
+#
+# - Every Mach count was 0 in every run, so each has the ceiling 0.05.
+# - Every Unix count moved with the runner's timing, so each has the highest run times 1.25 plus
+#   0.10, rounded up to 0.05. The runs of `rotor` at 65536 bytes differed by only 0.071, but its
+#   rounds in one run differed by up to 0.28, so it follows this rule too.
+#
+# The Unix ceilings catch a change that adds about a call per echo, and nothing smaller. To retake
+# them, run the job, read the gate's "not gated" lines from each run, and apply the same rules.
+
+# rotor at 4096 bytes
+4096 unix 3.05 rotor
+4096 mach 0.05 rotor
+
+# rotor at 65536 bytes
+65536 unix 3.10 rotor
+65536 mach 0.05 rotor
+
+# rotor (accumulate) at 4096 bytes
+4096 unix 4.10 rotor (accumulate)
+4096 mach 0.05 rotor (accumulate)
+
+# rotor (accumulate) at 65536 bytes
+65536 unix 4.15 rotor (accumulate)
+65536 mach 0.05 rotor (accumulate)
+
+# rotor (group single) at 4096 bytes
+4096 unix 3.00 rotor (group single)
+4096 mach 0.05 rotor (group single)
+
+# rotor (group single) at 65536 bytes
+65536 unix 3.30 rotor (group single)
+65536 mach 0.05 rotor (group single)

@@ -62,7 +62,7 @@ What rotor applies today:
 | gate | what it holds | the limit | where it runs |
 |---|---|---|---|
 | cost gates | a poll, one fire of a repeating timer, one operation of a batch submit | the best of 20 attempts under a bound an order of magnitude above what was measured | `zig build test`, every push |
-| call gate | kernel calls per echo, per row | ceilings set by the rules in `bench/baseline/calls.txt`; none yet in `bench/baseline/calls-macos.txt` | Linux x86-64 and arm64, and macOS arm64, every push |
+| call gate | kernel calls per echo, per row | ceilings set by the rules in `bench/baseline/calls.txt`, for macOS in `bench/baseline/calls-macos.txt` | Linux x86-64 and arm64, and macOS arm64, every push |
 | echo baseline | each candidate's echoes per second as thousandths of rotor's, per processor | the highest ratio of several runners, plus 50 thousandths | the nightly comparison on Linux x86-64 and arm64 |
 
 Not yet set, and asked of Camilo in the last section:
