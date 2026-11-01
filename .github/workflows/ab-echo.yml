@@ -60,11 +60,12 @@ jobs:
           cp zig-out/bin/rotor_echo "$RUNNER_TEMP/change-bin/"
           sha256sum "$RUNNER_TEMP"/*-bin/*
       # Each pair runs the base and then the change, and the next pair the other way round, so a
-      # drift of the runner over the job falls on both sides equally.
+      # drift of the runner over the job falls on both sides equally. The ports stay under 32768,
+      # where Linux's ephemeral ports begin: at 40000 a client's socket took a server's port.
       - name: Four pairs, alternating
         run: |
           set -euo pipefail
-          port=40000
+          port=20000
           for pair in 1 2 3 4; do
             if [ $((pair % 2)) -eq 1 ]; then order="base change"; else order="change base"; fi
             for side in $order; do
