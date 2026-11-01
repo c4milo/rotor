@@ -36,6 +36,8 @@
 # (`bench/results/echo-github-macos-2026-09-27.md`). `bench/results/` holds every run.
 # On 2026-11-01 the arm64 section was retaken from 13 jobs, and every other section but the
 # Xeon 8370C's was raised to the runs of that day, after two runs failed with no change.
+# Paired runs of rotor_echo at 92a97d4 and at main showed no slowdown of rotor itself on the
+# EPYC 9V45 and 7763: `bench/results/echo-pairs-github-2026-11-01.md`.
 
 # Run 36032383576, commit 5b441cc, on 2026-09-24: the first comparison on this processor with the
 # fix of db9e39e and the client check of 34763cc. No row is left out: the runs agreed on every one,
