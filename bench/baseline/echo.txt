@@ -34,6 +34,8 @@
 # the arm64 section was added from four runs on GitHub-hosted ubuntu-24.04-arm runners. GitHub's
 # macOS runners gave no section: their runs disagreed in 134 of 160 rows
 # (`bench/results/echo-github-macos-2026-09-27.md`). `bench/results/` holds every run.
+# On 2026-11-01 the arm64 section was retaken from 13 jobs, and every other section but the
+# Xeon 8370C's was raised to the runs of that day, after two runs failed with no change.
 
 # Run 36032383576, commit 5b441cc, on 2026-09-24: the first comparison on this processor with the
 # fix of db9e39e and the client check of 34763cc. No row is left out: the runs agreed on every one,
@@ -43,48 +45,51 @@
 # On 2026-09-25, by Camilo's ruling of that day, each row became the higher of the row above and
 # the ratios of runs 36103210871 and 36169146913, from commits 1ccbd4e and 92a97d4: too few runs of
 # this processor to retake it whole. `bench/results/echo-retake-github-2026-09-25.md` holds them.
+# On 2026-11-01, by Camilo's ruling of that day, each row became the higher of the row above and
+# the highest ratio of 3 jobs on 1dc6c8d and 3c3764d, after two runs failed with no change.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor AMD EPYC 9V74 80-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 948
-echo 16 4096 libuv 798
-echo 16 4096 libxev 900
-echo 16 4096 std.Io.Threaded 577
+echo 16 4096 rotor (accumulate) 972
+echo 16 4096 libuv 845
+echo 16 4096 libxev 915
+echo 16 4096 std.Io.Threaded 590
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 958
-echo 16 8192 libuv 803
-echo 16 8192 libxev 908
-echo 16 8192 std.Io.Threaded 577
+echo 16 8192 rotor (accumulate) 967
+echo 16 8192 libuv 821
+echo 16 8192 libxev 926
+echo 16 8192 std.Io.Threaded 590
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 976
-echo 16 16384 libuv 823
-echo 16 16384 libxev 931
-echo 16 16384 std.Io.Threaded 589
+echo 16 16384 rotor (accumulate) 991
+echo 16 16384 libuv 842
+echo 16 16384 libxev 957
+echo 16 16384 std.Io.Threaded 604
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 1027
-echo 16 65536 libuv 955
-echo 16 65536 libxev 1014
-echo 16 65536 std.Io.Threaded 714
+echo 16 65536 rotor (accumulate) 1088
+echo 16 65536 libuv 1024
+echo 16 65536 libxev 1063
+echo 16 65536 std.Io.Threaded 770
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 954
-echo 64 4096 libuv 808
-echo 64 4096 libxev 944
-echo 64 4096 std.Io.Threaded 580
+echo 64 4096 rotor (accumulate) 961
+echo 64 4096 libuv 816
+echo 64 4096 libxev 956
+echo 64 4096 std.Io.Threaded 593
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 971
-echo 64 8192 libuv 834
-echo 64 8192 libxev 960
-echo 64 8192 std.Io.Threaded 599
+echo 64 8192 rotor (accumulate) 976
+echo 64 8192 libuv 845
+echo 64 8192 libxev 976
+echo 64 8192 std.Io.Threaded 607
 echo 64 16384 rotor 1000
 echo 64 16384 rotor (accumulate) 959
-echo 64 16384 libuv 832
-echo 64 16384 libxev 951
-echo 64 16384 std.Io.Threaded 597
+echo 64 16384 libuv 839
+echo 64 16384 libxev 952
+echo 64 16384 std.Io.Threaded 612
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1053
-echo 64 65536 libuv 925
-echo 64 65536 libxev 1043
-echo 64 65536 std.Io.Threaded 687
+echo 64 65536 rotor (accumulate) 1101
+echo 64 65536 libuv 968
+echo 64 65536 libxev 1091
+echo 64 65536 std.Io.Threaded 747
 
 # Run 35813656107, commit ba273fd, but the 64 KiB rows, which run 36034661578 on commit b50e91a
 # retook on 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its check. No
@@ -95,17 +100,20 @@ echo 64 65536 std.Io.Threaded 687
 # On 2026-09-25, by Camilo's ruling of that day, each row became the higher of the row above and
 # the ratios of run 36169162449, from commits 92a97d4: too few runs of this processor to retake it
 # whole. `bench/results/echo-retake-github-2026-09-25.md` holds them.
+# On 2026-11-01, by Camilo's ruling of that day, each row became the higher of the row above and
+# the highest ratio of 1 job on 1dc6c8d and 3c3764d, after two runs failed with no change.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor Intel(R) Xeon(R) 6973P-C
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 961
+echo 16 4096 rotor (accumulate) 974
 echo 16 4096 libuv 834
 echo 16 4096 libxev 751
 echo 16 4096 std.Io.Threaded 563
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 962
-echo 16 8192 libuv 806
-echo 16 8192 libxev 755
+echo 16 8192 rotor (accumulate) 1000
+echo 16 8192 libuv 814
+echo 16 8192 libxev 765
 echo 16 8192 std.Io.Threaded 541
 echo 16 16384 rotor 1000
 echo 16 16384 rotor (accumulate) 995
@@ -119,16 +127,16 @@ echo 16 65536 libxev 949
 echo 16 65536 std.Io.Threaded 644
 echo 64 4096 rotor 1000
 echo 64 4096 rotor (accumulate) 1008
-echo 64 4096 libuv 830
+echo 64 4096 libuv 846
 echo 64 4096 libxev 789
 echo 64 4096 std.Io.Threaded 517
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 977
-echo 64 8192 libuv 819
+echo 64 8192 rotor (accumulate) 978
+echo 64 8192 libuv 823
 echo 64 8192 libxev 828
 echo 64 8192 std.Io.Threaded 492
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 978
+echo 64 16384 rotor (accumulate) 988
 echo 64 16384 libuv 873
 echo 64 16384 libxev 958
 echo 64 16384 std.Io.Threaded 474
@@ -146,16 +154,19 @@ echo 64 65536 std.Io.Threaded 763
 # percent slower than on another runner of this processor. The row for libxev at 16 connections and
 # 4 KiB is back: all seven runs agreed on it. `bench/results/echo-retake-github-2026-09-25.md` holds
 # every run.
+# On 2026-11-01, by Camilo's ruling of that day, each row became the higher of the row above and
+# the highest ratio of 6 jobs on 1dc6c8d and 3c3764d, after two runs failed with no change.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor AMD EPYC 7763 64-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 954
-echo 16 4096 libuv 879
-echo 16 4096 libxev 902
-echo 16 4096 std.Io.Threaded 517
+echo 16 4096 rotor (accumulate) 966
+echo 16 4096 libuv 886
+echo 16 4096 libxev 911
+echo 16 4096 std.Io.Threaded 522
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 952
-echo 16 8192 libuv 893
+echo 16 8192 rotor (accumulate) 967
+echo 16 8192 libuv 897
 echo 16 8192 libxev 913
 echo 16 8192 std.Io.Threaded 527
 echo 16 16384 rotor 1000
@@ -166,28 +177,28 @@ echo 16 16384 std.Io.Threaded 562
 echo 16 65536 rotor 1000
 echo 16 65536 rotor (accumulate) 1008
 echo 16 65536 libuv 979
-echo 16 65536 libxev 975
-echo 16 65536 std.Io.Threaded 656
+echo 16 65536 libxev 983
+echo 16 65536 std.Io.Threaded 680
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 952
-echo 64 4096 libuv 876
-echo 64 4096 libxev 936
+echo 64 4096 rotor (accumulate) 973
+echo 64 4096 libuv 885
+echo 64 4096 libxev 956
 echo 64 4096 std.Io.Threaded 549
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 952
+echo 64 8192 rotor (accumulate) 980
 echo 64 8192 libuv 907
-echo 64 8192 libxev 942
+echo 64 8192 libxev 954
 echo 64 8192 std.Io.Threaded 564
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 982
+echo 64 16384 rotor (accumulate) 994
 echo 64 16384 libuv 934
-echo 64 16384 libxev 961
+echo 64 16384 libxev 989
 echo 64 16384 std.Io.Threaded 584
 echo 64 65536 rotor 1000
 echo 64 65536 rotor (accumulate) 1039
-echo 64 65536 libuv 1000
+echo 64 65536 libuv 1004
 echo 64 65536 libxev 1008
-echo 64 65536 std.Io.Threaded 657
+echo 64 65536 std.Io.Threaded 691
 
 # Run 35989885034, commit 8cde9a6, but the 64 KiB rows, which run 36032363409 on commit 5b441cc
 # retook the same day, 2026-09-24, after db9e39e fixed rotor_echo and 34763cc gave the client its
@@ -195,48 +206,51 @@ echo 64 65536 std.Io.Threaded 657
 # contradicted one. `bench/results/echo-github-epyc-9v45-2026-09-24.md` and
 # `bench/results/echo-checked-github-epyc-9v45-2026-09-24.md` hold the two runs.
 # No run of this processor came up on 2026-09-25, so the retake of that day left it as it was.
+# On 2026-11-01, by Camilo's ruling of that day, each row became the higher of the row above and
+# the highest ratio of 2 jobs on 1dc6c8d and 3c3764d, after two runs failed with no change.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor AMD EPYC 9V45 96-Core Processor
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 943
-echo 16 4096 libuv 870
-echo 16 4096 libxev 925
-echo 16 4096 std.Io.Threaded 653
+echo 16 4096 rotor (accumulate) 968
+echo 16 4096 libuv 881
+echo 16 4096 libxev 939
+echo 16 4096 std.Io.Threaded 667
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 949
+echo 16 8192 rotor (accumulate) 965
 echo 16 8192 libuv 885
-echo 16 8192 libxev 928
-echo 16 8192 std.Io.Threaded 654
+echo 16 8192 libxev 941
+echo 16 8192 std.Io.Threaded 662
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 931
-echo 16 16384 libuv 878
-echo 16 16384 libxev 921
-echo 16 16384 std.Io.Threaded 642
+echo 16 16384 rotor (accumulate) 961
+echo 16 16384 libuv 888
+echo 16 16384 libxev 949
+echo 16 16384 std.Io.Threaded 656
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 1000
-echo 16 65536 libuv 975
-echo 16 65536 libxev 981
-echo 16 65536 std.Io.Threaded 801
+echo 16 65536 rotor (accumulate) 1006
+echo 16 65536 libuv 1009
+echo 16 65536 libxev 996
+echo 16 65536 std.Io.Threaded 838
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 947
-echo 64 4096 libuv 874
-echo 64 4096 libxev 946
-echo 64 4096 std.Io.Threaded 657
+echo 64 4096 rotor (accumulate) 971
+echo 64 4096 libuv 887
+echo 64 4096 libxev 973
+echo 64 4096 std.Io.Threaded 677
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 948
-echo 64 8192 libuv 867
-echo 64 8192 libxev 941
-echo 64 8192 std.Io.Threaded 649
+echo 64 8192 rotor (accumulate) 951
+echo 64 8192 libuv 891
+echo 64 8192 libxev 960
+echo 64 8192 std.Io.Threaded 669
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 943
-echo 64 16384 libuv 869
-echo 64 16384 libxev 923
-echo 64 16384 std.Io.Threaded 649
+echo 64 16384 rotor (accumulate) 957
+echo 64 16384 libuv 900
+echo 64 16384 libxev 958
+echo 64 16384 std.Io.Threaded 661
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 994
-echo 64 65536 libuv 986
-echo 64 65536 libxev 986
-echo 64 65536 std.Io.Threaded 794
+echo 64 65536 rotor (accumulate) 997
+echo 64 65536 libuv 991
+echo 64 65536 libxev 990
+echo 64 65536 std.Io.Threaded 809
 
 # Run 36028154840, commit a31f1a4, on 2026-09-24: the first comparison after db9e39e. No row is
 # left out: the runs agreed on every one, and the job's CPU step agreed with the 64 KiB rows.
@@ -292,10 +306,13 @@ echo 64 65536 std.Io.Threaded 709
 # echo server is the same: runs 36106675599, 36169109632, 36169139849, 36169169246.
 # A run whose rows disagreed gives no ratio for that row.
 # `bench/results/echo-retake-github-2026-09-25.md` holds every run.
+# On 2026-11-01, by Camilo's ruling of that day, each row became the higher of the row above and
+# the highest ratio of 1 job on 1dc6c8d and 3c3764d, after two runs failed with no change.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor INTEL(R) XEON(R) PLATINUM 8573C
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 949
+echo 16 4096 rotor (accumulate) 951
 echo 16 4096 libuv 836
 echo 16 4096 libxev 899
 echo 16 4096 std.Io.Threaded 600
@@ -305,13 +322,13 @@ echo 16 8192 libuv 855
 echo 16 8192 libxev 915
 echo 16 8192 std.Io.Threaded 589
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 1000
+echo 16 16384 rotor (accumulate) 1005
 echo 16 16384 libuv 851
 echo 16 16384 libxev 916
 echo 16 16384 std.Io.Threaded 579
 echo 16 65536 rotor 1000
 echo 16 65536 rotor (accumulate) 1048
-echo 16 65536 libuv 1024
+echo 16 65536 libuv 1025
 echo 16 65536 libxev 1026
 echo 16 65536 std.Io.Threaded 729
 echo 64 4096 rotor 1000
@@ -330,9 +347,9 @@ echo 64 16384 libuv 905
 echo 64 16384 libxev 961
 echo 64 16384 std.Io.Threaded 542
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1003
-echo 64 65536 libuv 1063
-echo 64 65536 libxev 1012
+echo 64 65536 rotor (accumulate) 1012
+echo 64 65536 libuv 1064
+echo 64 65536 libxev 1015
 echo 64 65536 std.Io.Threaded 762
 
 # Runs 36373291870 and 36376749918, on 2026-09-27 and 2026-09-28, on commits whose echo servers
@@ -343,45 +360,49 @@ echo 64 65536 std.Io.Threaded 762
 # four runs after it then failed on libxev at 16 connections and 16 KiB, at 1029 and 1030 against
 # 970, so it was retaken from all eight. `bench/results/echo-github-arm64-2026-09-27.md` holds the
 # runs.
+# On 2026-11-01 one of six runs on 1dc6c8d failed it on rotor (accumulate) and libxev at 64
+# connections and 64 KiB, at 1055 and 1062 against 1001 and 1006. So it was retaken from all 13
+# jobs of this processor on 1dc6c8d and 3c3764d, whose echo servers and client are the same.
+# `bench/results/echo-retake-github-2026-11-01.md` holds them.
 processor CPU implementer 0x41 part 0xd49
 # workload connections payload candidate ratio
 echo 16 4096 rotor 1000
-echo 16 4096 rotor (accumulate) 996
-echo 16 4096 libuv 863
-echo 16 4096 libxev 918
-echo 16 4096 std.Io.Threaded 641
+echo 16 4096 rotor (accumulate) 993
+echo 16 4096 libuv 833
+echo 16 4096 libxev 911
+echo 16 4096 std.Io.Threaded 647
 echo 16 8192 rotor 1000
-echo 16 8192 rotor (accumulate) 977
-echo 16 8192 libuv 846
-echo 16 8192 libxev 913
-echo 16 8192 std.Io.Threaded 653
+echo 16 8192 rotor (accumulate) 980
+echo 16 8192 libuv 816
+echo 16 8192 libxev 925
+echo 16 8192 std.Io.Threaded 666
 echo 16 16384 rotor 1000
-echo 16 16384 rotor (accumulate) 1045
-echo 16 16384 libuv 957
-echo 16 16384 libxev 1030
-echo 16 16384 std.Io.Threaded 755
+echo 16 16384 rotor (accumulate) 1036
+echo 16 16384 libuv 916
+echo 16 16384 libxev 1016
+echo 16 16384 std.Io.Threaded 752
 echo 16 65536 rotor 1000
-echo 16 65536 rotor (accumulate) 1034
-echo 16 65536 libuv 1082
-echo 16 65536 libxev 1074
-echo 16 65536 std.Io.Threaded 1036
+echo 16 65536 rotor (accumulate) 1045
+echo 16 65536 libuv 1061
+echo 16 65536 libxev 1063
+echo 16 65536 std.Io.Threaded 990
 echo 64 4096 rotor 1000
-echo 64 4096 rotor (accumulate) 965
-echo 64 4096 libuv 848
-echo 64 4096 libxev 960
-echo 64 4096 std.Io.Threaded 618
+echo 64 4096 rotor (accumulate) 969
+echo 64 4096 libuv 854
+echo 64 4096 libxev 931
+echo 64 4096 std.Io.Threaded 641
 echo 64 8192 rotor 1000
-echo 64 8192 rotor (accumulate) 993
-echo 64 8192 libuv 910
-echo 64 8192 libxev 986
-echo 64 8192 std.Io.Threaded 681
+echo 64 8192 rotor (accumulate) 981
+echo 64 8192 libuv 948
+echo 64 8192 libxev 956
+echo 64 8192 std.Io.Threaded 728
 echo 64 16384 rotor 1000
-echo 64 16384 rotor (accumulate) 995
-echo 64 16384 libuv 930
-echo 64 16384 libxev 977
-echo 64 16384 std.Io.Threaded 756
+echo 64 16384 rotor (accumulate) 976
+echo 64 16384 libuv 918
+echo 64 16384 libxev 951
+echo 64 16384 std.Io.Threaded 769
 echo 64 65536 rotor 1000
-echo 64 65536 rotor (accumulate) 1001
-echo 64 65536 libuv 1057
-echo 64 65536 libxev 1006
-echo 64 65536 std.Io.Threaded 1000
+echo 64 65536 rotor (accumulate) 1055
+echo 64 65536 libuv 1084
+echo 64 65536 libxev 1062
+echo 64 65536 std.Io.Threaded 1006
