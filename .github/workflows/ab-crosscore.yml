@@ -1,0 +1,63 @@
+# Paired cross-core runs, base against change, on one macOS runner. This file lives on the branch
+# `ab-crosscore`, which is never merged.
+#
+# On 2026-09-29 `6e4c0b7` cut a kqueue tick's own work per message, and paired rounds on three of
+# these runners showed rotor's rate rise a median 4.8 percent
+# (`bench/results/crosscore-own-work-github-macos-2026-09-29.md`). This workflow runs the same pairs
+# again with main as the change, to show whether main keeps that gain. The base is `7bce4d2`, the
+# parent of `6e4c0b7`. Each side runs its own `crosscore_runner` against its own directory, so
+# libuv and libxev are built from the same sources on both sides and show how far the runner moved.
+name: ab-crosscore
+
+on:
+  push:
+    branches: [ab-crosscore]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pairs:
+    name: Cross-core pairs, macOS arm64, job ${{ matrix.job }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [1, 2, 3]
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      BASE: 7bce4d2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/zig
+      - name: Build the change and the base
+        run: |
+          set -euo pipefail
+          zig build bench-crosscore bench-alternatives
+          git worktree add -q "$RUNNER_TEMP/base" "$BASE"
+          (cd "$RUNNER_TEMP/base" && zig build bench-crosscore bench-alternatives)
+      - name: What this runner is
+        run: |
+          sysctl machdep.cpu.brand_string hw.ncpu hw.memsize
+          sw_vers
+          sudo mdutil -a -i off > /dev/null || true
+          uptime
+          # head closes the pipe early, which pipefail would report as a failure.
+          ps -Ao pcpu,comm -r | head -8 || true
+      - name: Ten rounds, alternating
+        run: |
+          set -euo pipefail
+          change="$GITHUB_WORKSPACE/zig-out/bin"
+          base="$RUNNER_TEMP/base/zig-out/bin"
+          for round in 1 2 3 4 5 6 7 8 9 10; do
+            if [ $((round % 2)) -eq 1 ]; then order="base change"; else order="change base"; fi
+            for side in $order; do
+              if [ "$side" = base ]; then dir="$base"; else dir="$change"; fi
+              echo "== round $round $side"
+              "$dir/crosscore_runner" --directory "$dir" --rounds 5 | sed "s/^/round $round $side /"
+            done
+          done
+          uptime
