@@ -1052,6 +1052,21 @@ point 7). Per 100,000 round trips on `mac`, counted with a library that wraps `k
 that armed the timer went from 4,764 to 3 and the timer events from 3,577 to 1. Instructions per
 round trip did not move beyond the noise, so no speed is claimed for it.
 
+On 2026-11-01 the same three-runner experiment ran from `7bce4d2`, the parent of the tick change, to
+main at `b2825d7` (`bench/results/crosscore-main-github-macos-2026-11-01.md`). Most rows disagreed,
+at load averages of 20 to 29. Each cell is the median of a runner's 10 rounds:
+
+| measure | runner 1 | runner 2 | runner 3 |
+|---|---:|---:|---:|
+| rotor, main over `7bce4d2`, percent | +11.4 | +8.9 | +6.7 |
+| libuv, main over `7bce4d2`, percent | -5.4 | -0.0 | -2.4 |
+| libxev, main over `7bce4d2`, percent | -3.9 | +0.2 | -4.3 |
+| rotor over libuv, `7bce4d2` | 0.861 | 0.920 | 0.929 |
+| rotor over libuv, main | 0.996 | 1.002 | 1.003 |
+
+So main keeps both changes of 2026-09-29, and on these runners rotor and libuv are level here. The
+rate on `mac` is still to be taken.
+
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
 The rows above drive all three libraries the same way: the caller arms a fired timer again. That is
