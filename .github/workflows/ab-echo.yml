@@ -1,0 +1,78 @@
+# Paired echo runs, base against change, on one runner. This file lives on the branch `ab-echo`,
+# which is never merged.
+#
+# On 2026-11-01 the echo baseline showed rotor's default shape slower against the other candidates
+# on the AMD EPYC 9V74 and 9V45 than when their sections were taken
+# (`bench/results/echo-retake-github-2026-11-01.md`). Those ratios do not show whether rotor got
+# slower. This workflow builds `rotor_echo` at `92a97d4`, the tree of the 9V74 section, and at this
+# branch's tree, which is main. Each job runs the two in alternating pairs. `libxev_echo` is the same
+# program in both directories, so its rate shows how far the runner itself moved between the runs.
+name: ab-echo
+
+on:
+  push:
+    branches: [ab-echo]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pairs:
+    name: Echo pairs, job ${{ matrix.job }}
+    strategy:
+      fail-fast: false
+      matrix:
+        job: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      BASE: 92a97d4
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/zig
+      - name: What this runner is
+        run: |
+          grep -m1 "model name" /proc/cpuinfo
+          nproc
+          uname -r
+      - name: Build the change, its harness and libxev
+        run: |
+          set -euo pipefail
+          zig build bench-echo
+          zig build bench-alternatives
+          git rev-parse --short HEAD
+      - name: Build the base's echo server
+        run: |
+          set -euo pipefail
+          git worktree add "$RUNNER_TEMP/base" "$BASE"
+          (cd "$RUNNER_TEMP/base" && zig build bench-echo)
+      - name: Lay out the two directories
+        run: |
+          set -euo pipefail
+          for side in base change; do
+            mkdir -p "$RUNNER_TEMP/$side-bin"
+            cp zig-out/bin/libxev_echo "$RUNNER_TEMP/$side-bin/"
+          done
+          cp "$RUNNER_TEMP/base/zig-out/bin/rotor_echo" "$RUNNER_TEMP/base-bin/"
+          cp zig-out/bin/rotor_echo "$RUNNER_TEMP/change-bin/"
+          sha256sum "$RUNNER_TEMP"/*-bin/*
+      # Each pair runs the base and then the change, and the next pair the other way round, so a
+      # drift of the runner over the job falls on both sides equally.
+      - name: Four pairs, alternating
+        run: |
+          set -euo pipefail
+          port=40000
+          for pair in 1 2 3 4; do
+            if [ $((pair % 2)) -eq 1 ]; then order="base change"; else order="change base"; fi
+            for side in $order; do
+              echo "== pair $pair $side"
+              ./zig-out/bin/echo_runner --directory "$RUNNER_TEMP/$side-bin" \
+                --candidates "rotor,rotor (accumulate),libxev" \
+                --connections 16,64 --payloads 4096,65536 --port-base "$port" \
+                | sed "s/^/pair $pair $side /"
+              port=$((port + 1000))
+            done
+          done
