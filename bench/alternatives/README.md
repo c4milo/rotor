@@ -1025,8 +1025,7 @@ cell is the median of a runner's 10 round medians, in messages per second:
 
 Paired by round, rotor after the change over rotor before it had a median of 1.048 and was higher in
 22 of 30 rounds. rotor over libuv in the same call went from 0.903 to 0.920 before to 0.933 to 0.956
-after. The rate on `mac` is still to be taken, so how far rotor is behind libuv there now is not
-measured.
+after. The rate on `mac` was taken on 2026-11-03, at the end of this section.
 
 Later the same night `rotor_post` began to send each message with `Loop.post`, a call that takes no
 operation and makes no event, as `uv_async_send` and libxev's `notify` make none (decision 4, its
@@ -1064,8 +1063,22 @@ at load averages of 20 to 29. Each cell is the median of a runner's 10 rounds:
 | rotor over libuv, `7bce4d2` | 0.861 | 0.920 | 0.929 |
 | rotor over libuv, main | 0.996 | 1.002 | 1.003 |
 
-So main keeps both changes of 2026-09-29, and on these runners rotor and libuv are level here. The
-rate on `mac` is still to be taken.
+So main keeps both changes of 2026-09-29, and on these runners rotor and libuv are level here.
+
+On 2026-11-03 the same six alternating rounds ran on `mac`, from `7bce4d2` to main at `b2825d7`
+(`bench/results/crosscore-main-mac-2026-11-03.md`). `mac` was not quiet: the load was 3.1 to 3.5,
+two processes each held a core, and every row carries OTHER WORK. Each cell is the median of the
+six rounds:
+
+| candidate | messages per second, `7bce4d2` | messages per second, main | main over `7bce4d2`, percent |
+|---|---:|---:|---:|
+| rotor | 496,650 | 590,434 | +17.9 |
+| libuv | 579,010 | 595,268 | +1.8 |
+| libxev | 515,686 | 517,724 | +0.5 |
+
+rotor gained at least 16.8 percent in every round. rotor over libuv in the same call went from 0.836
+to 0.986, so on `mac` rotor is 1.4 percent behind libuv here and 14 percent ahead of libxev. The
+parity bar of decision 2 is not met yet.
 
 ### Timer churn: each library's own best mode, and rotor's repeating timer wins
 
