@@ -229,6 +229,7 @@ and the commands to take every number again.
 | [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
 | [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | accepted, deferred |
 | [23](docs/decisions/0023-a-host-that-owns-the-wait.md) | a host that owns the wait | accepted |
+| [24](docs/decisions/0024-a-simulated-surface.md) | a simulated surface, and a search over its orders | proposed |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why.
