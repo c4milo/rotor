@@ -1,6 +1,11 @@
 # What runs on every push to main and every pull request, on three kinds of GitHub-hosted runner:
-# macOS on Apple silicon (`macos-latest`), Linux on x86-64 (`ubuntu-24.04`) and Linux on arm64
-# (`ubuntu-24.04-arm`).
+# macOS on Apple silicon (`macos-latest`), Linux on x86-64 and Linux on arm64.
+#
+# The Linux jobs that hold no baseline (`linux`, `race`, `proofs`, `tla` and `commits`) run on
+# `ubuntu-26.04` and `ubuntu-26.04-arm` since 2026-11-02. The jobs whose numbers are held to a
+# baseline taken on `ubuntu-24.04` (`test`, with its instruction gate, `calls`, `comparison` and
+# `costs`) stay on `ubuntu-24.04` and `ubuntu-24.04-arm` until Camilo rules, because a new image
+# brings a newer kernel and new tools, which can move those numbers.
 #
 # The gates, each the command a developer runs by hand:
 #
@@ -90,8 +95,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: x86-64, runner: ubuntu-24.04 }
-          - { name: arm64, runner: ubuntu-24.04-arm }
+          - { name: x86-64, runner: ubuntu-26.04 }
+          - { name: arm64, runner: ubuntu-26.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -129,8 +134,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: x86-64, runner: ubuntu-24.04 }
-          - { name: arm64, runner: ubuntu-24.04-arm }
+          - { name: x86-64, runner: ubuntu-26.04 }
+          - { name: arm64, runner: ubuntu-26.04-arm }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     steps:
@@ -145,7 +150,7 @@ jobs:
   # SHA-256 GitHub publishes for the asset, as Zig is checked against the release index's.
   proofs:
     name: Lean proofs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     env:
       LEAN_VERSION: "4.34.0"
@@ -170,7 +175,7 @@ jobs:
   # jar it pins and checks its SHA-256 (`tools/tla.zig`).
   tla:
     name: TLA+ models
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -451,7 +456,7 @@ jobs:
 
   commits:
     name: Commit messages
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:

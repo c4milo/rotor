@@ -56,8 +56,11 @@ runs:
         cd "$RUNNER_TEMP"
         tar -xf "$tarball"
         echo "$RUNNER_TEMP/$directory" >> "$GITHUB_PATH"
-        # One place for Zig's global cache on every runner, which the step below keeps.
+        # One place for Zig's global cache on every runner, which the step below keeps. Zig 0.16.0
+        # does not make its `tmp/` there, and on a fresh ubuntu-26.04 runner the fetch of a zip
+        # package then fails with FileNotFound (found by colibri on 2026-11-02).
         echo "ZIG_GLOBAL_CACHE_DIR=$HOME/.cache/zig" >> "$GITHUB_ENV"
+        mkdir -p "$HOME/.cache/zig/tmp"
         "$RUNNER_TEMP/$directory/zig" version
     # The packages only: the compiled artifacts beside them are large, and a run that kept them would
     # no longer show what a build from nothing does.
