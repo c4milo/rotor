@@ -290,8 +290,10 @@ On Linux a socket coalesces by default (`DatagramOptions.coalesce`): the kernel 
 datagrams from one peer in one receive. The loop splits them again, and each datagram comes as an
 event of its own, so nothing in your code changes. Give back every event's buffer, as for any
 datagram: several events of one coalesced datagram name the same buffer, and it goes back to the
-group at the last. Coalescing needs buffers that hold 65,535 bytes of payload. A receive on a group
-with smaller buffers turns it off for its socket, so no datagram is cut short. Set
+group at the last. Coalescing needs buffers that hold 65,535 bytes of payload: a `buffer_bytes` of
+at least `datagram.prefix_bytes(.{}) + constants.coalesced_bytes_max`, rounded up to a multiple of 8,
+as every datagram group's buffer size must be. A receive on a group with smaller buffers turns
+coalescing off for its socket, so no datagram is cut short. Set
 `.coalesce = false` to turn it off yourself. One segmented send carries at most 65,507 bytes over
 IPv4, in at most `segments_max` (64) segments.
 

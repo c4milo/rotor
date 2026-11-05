@@ -256,6 +256,19 @@ fn receive_a_datagram_from_a_group_above_the_limit() void {
     operation.assert_valid();
 }
 
+/// With the check deleted, a buffer with no room past its prefix passes and the call returns.
+fn size_datagram_buffers_no_larger_than_the_prefix() void {
+    scenario.reached_violation();
+    core.datagram.check_buffer_bytes(core.datagram.prefix_bytes(.{}), .{});
+}
+
+/// The prefix and the largest coalesced datagram is an odd size. With the check deleted, the call
+/// returns; the halt would come at the first datagram read from every second buffer.
+fn size_datagram_buffers_off_the_alignment() void {
+    scenario.reached_violation();
+    core.datagram.check_buffer_bytes(core.datagram.prefix_bytes(.{}) + core.constants.coalesced_bytes_max, .{});
+}
+
 /// A datagram send says where it goes: a peer, an address to send from, or both.
 fn send_a_datagram_to_nowhere() void {
     var bytes: [16]u8 = undefined;
@@ -389,6 +402,14 @@ const scenarios = [_]scenario.Scenario{
     },
     .{ .name = "operation: submit a transfer of no bytes", .run = submit_a_transfer_of_no_bytes },
     .{ .name = "operation: send a datagram of no bytes", .run = send_a_datagram_of_no_bytes },
+    .{
+        .name = "datagram: size buffers no larger than the prefix",
+        .run = size_datagram_buffers_no_larger_than_the_prefix,
+    },
+    .{
+        .name = "datagram: size buffers off the alignment",
+        .run = size_datagram_buffers_off_the_alignment,
+    },
     .{ .name = "operation: sync a negative descriptor", .run = sync_a_negative_descriptor },
     .{
         .name = "operation: submit a timer with a deadline of its own",

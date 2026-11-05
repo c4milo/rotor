@@ -169,6 +169,20 @@ pub const Shape = struct {
     }
 };
 
+/// The alignment every datagram buffer starts at. The loop reads the head, the address and the
+/// control messages in front of a datagram through typed pointers, and a control message header
+/// is 8-aligned on a 64-bit kernel, as the reserves already are.
+pub const buffer_alignment = @alignOf(u64);
+
+/// Holds a datagram group's buffer size to what the loop can read: room for the prefix and at
+/// least one byte, and a whole number of `buffer_alignment` bytes, so every buffer of the group
+/// starts aligned. A size such as `prefix_bytes + 65,535` is odd and halts here, where it would
+/// otherwise halt at the first datagram read from every second buffer.
+pub fn check_buffer_bytes(buffer_bytes: u32, options: GroupOptions) void {
+    assert(buffer_bytes > prefix_bytes(options));
+    assert(buffer_bytes % buffer_alignment == 0);
+}
+
 /// The bytes of one datagram a buffer of `buffer_bytes` in such a group can hold.
 pub fn payload_capacity(buffer_bytes: u32, options: GroupOptions) u32 {
     const prefix = prefix_bytes(options);

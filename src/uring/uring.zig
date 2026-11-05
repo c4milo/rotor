@@ -362,7 +362,7 @@ pub const Loop = struct {
         buffer_bytes: u32,
         group: core.datagram.GroupOptions,
     ) buffers.ProvideError!void {
-        assert(buffer_bytes > core.datagram.prefix_bytes(group));
+        core.datagram.check_buffer_bytes(buffer_bytes, group);
         try buffers.provide(loop, group_id, memory, count, buffer_bytes);
         loop.datagram_shape.fix(group);
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
