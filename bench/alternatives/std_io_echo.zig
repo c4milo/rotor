@@ -25,6 +25,7 @@
 //! buffer is per connection too, as libuv's and libxev's are.
 const std = @import("std");
 const builtin = @import("builtin");
+const rotor = @import("rotor");
 
 const Io = std.Io;
 const Stream = std.Io.net.Stream;
@@ -38,7 +39,7 @@ const listen_backlog = 1024;
 /// Connections served at once. A task is spawned per connection and awaited at the end.
 const connections_max = 512;
 
-const Backend = enum { uring, threaded };
+const Backend = enum { uring, threaded, rotor };
 
 /// False while `std.Io.Uring` does not compile, which on Zig 0.16.0 is always. A program that
 /// does nothing but call `std.Io.Uring.init` fails to build for Linux:
@@ -75,6 +76,7 @@ pub fn main(init: std.process.Init) !void {
             defer threaded.deinit();
             try serve(init, threaded.io(), options);
         },
+        .rotor => try serve_on_rotor(init, threaded_for_rest(gpa), options),
         .uring => {
             if (!uring_compiles) return error.UringDoesNotCompile;
             if (builtin.os.tag != .linux) return error.UringNeedsLinux;
@@ -84,6 +86,46 @@ pub fn main(init: std.process.Init) !void {
             try serve(init, evented.io(), options);
         },
     }
+}
+
+/// The `std.Io` the adapter hands the calls it does not run on the loop. The server makes none on
+/// its path: listen, accept, read, write and close all run on the loop.
+fn threaded_for_rest(gpa: std.mem.Allocator) std.Io.Threaded {
+    return .init(gpa, .{});
+}
+
+/// A fiber's stack: `echo` holds two buffers of `connection_buffer_bytes` on it.
+const rotor_stack_bytes = 4 * connection_buffer_bytes;
+
+/// Runs `serve`, unchanged, on rotor's std.Io adapter (decision 22): one loop, and a fiber per
+/// connection on this thread.
+fn serve_on_rotor(init: std.process.Init, threaded_value: std.Io.Threaded, options: Options) !void {
+    var threaded = threaded_value;
+    defer threaded.deinit();
+    const loop_options: rotor.Loop.Options = .{ .operations = connections_max + 2 };
+    const loop_memory = try std.heap.page_allocator.alignedAlloc(
+        u8,
+        .fromByteUnits(rotor.memory_alignment),
+        rotor.Loop.memory_bytes(loop_options),
+    );
+    defer std.heap.page_allocator.free(loop_memory);
+    var loop: rotor.Loop = undefined;
+    try loop.init(loop_memory, loop_options);
+    defer loop.deinit();
+    const adapter_options: rotor.adapter.Options = .{
+        .fibers = connections_max,
+        .stack_bytes = rotor_stack_bytes,
+        .rest = threaded.io(),
+    };
+    const adapter_memory = try std.heap.page_allocator.alignedAlloc(
+        u8,
+        .fromByteUnits(rotor.adapter.memory_alignment),
+        rotor.adapter.memory_bytes(adapter_options),
+    );
+    defer std.heap.page_allocator.free(adapter_memory);
+    var adapter: rotor.adapter.Adapter = undefined;
+    adapter.init(&loop, adapter_memory, adapter_options);
+    try serve(init, adapter.io(), options);
 }
 
 fn serve(init: std.process.Init, io: Io, options: Options) !void {
@@ -178,6 +220,8 @@ fn parse(init: std.process.Init) !Options {
             options.backend = .uring;
         } else if (std.mem.eql(u8, value, "threaded")) {
             options.backend = .threaded;
+        } else if (std.mem.eql(u8, value, "rotor")) {
+            options.backend = .rotor;
         } else {
             return error.UnknownArgument;
         }

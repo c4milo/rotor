@@ -280,6 +280,9 @@ const Program = struct {
     epoll: bool = false,
     /// Built only on a macOS host.
     macos: bool = false,
+    /// The public module `rotor`, for a program that runs on what a dependent package sees: the
+    /// std.Io adapter of decision 22 is reached only through it.
+    needs_public: bool = false,
 };
 
 /// Every program `bench-echo` installs. Each is its own executable, as bench/alternatives' are, so
@@ -292,6 +295,7 @@ const programs = [_]Program{
         .root = "bench/alternatives/std_io_echo.zig",
         .needs_loop = false,
         .needs_harness = false,
+        .needs_public = true,
     },
     .{
         .name = "std_io_timers",
@@ -454,6 +458,7 @@ fn program_module(
         module.addImport("backend", if (program.epoll) graph.epoll else host_backend);
     }
     if (program.needs_harness) module.addImport("harness", harness_module);
+    if (program.needs_public) module.addImport("rotor", graph.rotor);
     return module;
 }
 
