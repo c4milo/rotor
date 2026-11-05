@@ -281,15 +281,19 @@ datagram group fixes it, and a later group with different options halts, because
 every datagram at the offset that shape gives. `receive_from` receives into it, one event per datagram, and `loop.datagram(group_id, event)` is the only reader
 of such a buffer: it returns a `Delivery` with the peer, the local address when the socket was asked
 for it, the ECN
-codepoint, the segment size when the kernel coalesced several datagrams into one, and the bytes.
+codepoint, and the bytes.
 `send_to` takes an `Outbound`: the destination, the source address, the codepoint, and whether to
 cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmented send with
 `unsupported` (decision 15).
 
-The kernel coalesces received datagrams only on a socket opened with `.coalesce = true` in its
-`DatagramOptions`. A coalesced datagram can hold up to 64 KiB, so size the group's buffers for
-that. A datagram larger than its buffer reports `truncated`. One segmented send carries at most
-65,507 bytes over IPv4, in at most `segments_max` (64) segments.
+On Linux a socket coalesces by default (`DatagramOptions.coalesce`): the kernel takes several
+datagrams from one peer in one receive. The loop splits them again, and each datagram comes as an
+event of its own, so nothing in your code changes. Give back every event's buffer, as for any
+datagram: several events of one coalesced datagram name the same buffer, and it goes back to the
+group at the last. Coalescing needs buffers that hold 65,535 bytes of payload. A receive on a group
+with smaller buffers turns it off for its socket, so no datagram is cut short. Set
+`.coalesce = false` to turn it off yourself. One segmented send carries at most 65,507 bytes over
+IPv4, in at most `segments_max` (64) segments.
 
 A multishot receive can end with a success. On io_uring the kernel can end it after 32 datagrams,
 and the last datagram is then the final event. Submit the receive again when an event without

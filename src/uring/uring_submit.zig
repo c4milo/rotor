@@ -16,6 +16,7 @@ const uring = @import("uring.zig");
 const group_wake = @import("uring_group.zig");
 const group = @import("linux_shared").group;
 const datagram = @import("uring_datagram.zig");
+const shared_datagram = @import("linux_shared").datagram;
 
 const Loop = uring.Loop;
 const Handle = core.Handle;
@@ -66,7 +67,11 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
     var extra: Extra = .{};
     switch (slot.code) {
         .connect => extra = connect_extra(loop, slot),
-        .receive_from, .send_to => extra = datagram_extra(loop),
+        .receive_from => {
+            extra = datagram_extra(loop);
+            limit_coalescing(loop, slot);
+        },
+        .send_to => extra = datagram_extra(loop),
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
     }
@@ -82,6 +87,16 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
 const entries_per_close: u32 = 2;
 
 /// One message scratch per entry, reused each tick as `connect_extra`'s storage is.
+/// A receive from a group whose buffers cannot hold a coalesced datagram turns coalescing off on
+/// its socket (decision 15, amendment of 2026-11-05). A registered descriptor is an index and no
+/// socket, so its socket keeps the option it was opened with.
+fn limit_coalescing(loop: *Loop, slot: *const Slot) void {
+    if (slot.flags.descriptor_registered) return;
+    const buffer_bytes = loop.groups[slot.buffer_index].buffer_bytes;
+    const capacity = core.datagram.payload_capacity(buffer_bytes, loop.datagram_shape.options);
+    shared_datagram.limit_coalescing(slot.descriptor, capacity);
+}
+
 fn datagram_extra(loop: *Loop) Extra {
     assert(loop.messages_used < loop.messages.len);
     const message = &loop.messages[loop.messages_used];

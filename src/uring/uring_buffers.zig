@@ -37,11 +37,14 @@ comptime {
 pub const Group = struct {
     ring: ?*align(group_alignment) linux.io_uring_buf_ring,
     buffers: []u8,
+    /// One count per buffer of the events of a split datagram that still name it
+    /// (`core.buffer_group.hold`).
+    holders: []u8,
     buffer_bytes: u32,
     /// Buffers in the group, a power of two, so the ring's wrap is a mask.
     count: u16,
 
-    pub const none: Group = .{ .ring = null, .buffers = &.{}, .buffer_bytes = 0, .count = 0 };
+    pub const none: Group = .{ .ring = null, .buffers = &.{}, .holders = &.{}, .buffer_bytes = 0, .count = 0 };
 
     /// The bytes of buffer `buffer_id`.
     pub fn bytes_of(group: *const Group, buffer_id: u16) []u8 {
@@ -97,7 +100,8 @@ pub fn provide(
     assert(count <= core.constants.buffers_per_group_max);
     assert(memory.len >= group_bytes(count, buffer_bytes));
     const ring_memory = memory[0..ring_bytes(count)];
-    const buffers = memory[ring_bytes(count)..][0 .. @as(usize, count) * buffer_bytes];
+    const holders = memory[ring_bytes(count)..][0..count];
+    const buffers = memory[core.buffer_group.buffers_offset(count)..][0 .. @as(usize, count) * buffer_bytes];
 
     var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{
         .ring_addr = @intFromPtr(ring_memory.ptr),
@@ -119,9 +123,11 @@ pub fn provide(
     group.* = .{
         .ring = @ptrCast(ring_memory.ptr),
         .buffers = buffers,
+        .holders = holders,
         .buffer_bytes = buffer_bytes,
         .count = count,
     };
+    @memset(holders, 0);
     IoUring.buf_ring_init(group.ring.?);
     const mask = IoUring.buf_ring_mask(count);
     for (0..count) |index| {
@@ -132,11 +138,13 @@ pub fn provide(
 }
 
 /// Hands buffer `buffer_id` of group `group_id` back to the kernel, after the caller has read the
-/// bytes the receive event named. One ring entry written, and no system call.
+/// bytes the receive event named. One ring entry written, and no system call. A buffer the events of
+/// a split datagram name goes back at the last of their give-backs.
 pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
     loop.assert_owner();
     assert_class_a(group_id < core.constants.buffer_groups_max);
     const group = &loop.groups[group_id];
+    if (!core.buffer_group.release(group.holders, buffer_id)) return;
     const ring = group.ring.?;
     const mask = IoUring.buf_ring_mask(group.count);
     IoUring.buf_ring_add(ring, group.bytes_of(buffer_id), buffer_id, mask, 0);
@@ -148,9 +156,32 @@ const testing = std.testing;
 test "a group cuts its memory into equal buffers and a ring entry is 16 bytes" {
     var memory: [64]u8 = undefined;
     var ring: linux.io_uring_buf_ring align(group_alignment) = undefined;
-    const group: Group = .{ .ring = &ring, .buffers = &memory, .buffer_bytes = 16, .count = 4 };
+    var holders: [4]u8 = @splat(0);
+    const group: Group = .{ .ring = &ring, .buffers = &memory, .holders = &holders, .buffer_bytes = 16, .count = 4 };
     try testing.expectEqual(@intFromPtr(&memory) + 32, @intFromPtr(group.bytes_of(2).ptr));
     try testing.expectEqual(@as(usize, 16), group.bytes_of(3).len);
     try testing.expectEqual(@as(usize, 64), ring_bytes(4));
     try testing.expectEqual(@as(usize, 16), ring_bytes(1));
+}
+
+test "a buffer a split datagram holds goes back to the kernel at its last event's give-back" {
+    // A loop with tables and no ring, and a group whose buffer ring is plain memory: a give-back
+    // writes a ring entry and moves the tail, and enters no kernel.
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    loop.init_tables(&memory, options);
+    const count = 4;
+    var ring_memory: [ring_bytes(count)]u8 align(group_alignment) = undefined;
+    var holders: [count]u8 = @splat(0);
+    var buffers: [count * 64]u8 = undefined;
+    const ring: *align(group_alignment) linux.io_uring_buf_ring = @ptrCast(&ring_memory);
+    IoUring.buf_ring_init(ring);
+    loop.groups[0] = .{ .ring = ring, .buffers = &buffers, .holders = &holders, .buffer_bytes = 64, .count = count };
+    core.buffer_group.hold(&holders, 1, 3);
+    give_back(&loop, 0, 1);
+    give_back(&loop, 0, 1);
+    try testing.expectEqual(@as(u16, 0), ring.tail);
+    give_back(&loop, 0, 1);
+    try testing.expectEqual(@as(u16, 1), ring.tail);
 }

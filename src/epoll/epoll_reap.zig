@@ -33,6 +33,7 @@ const perform = @import("epoll_perform.zig");
 const queue_module = @import("epoll_queue.zig");
 const submit_module = @import("epoll_submit.zig");
 const epoll = @import("epoll.zig");
+const shared_datagram = @import("linux_shared").datagram;
 
 const Loop = epoll.Loop;
 const Event = core.Event;
@@ -46,9 +47,12 @@ const read_bits: u32 = linux.EPOLL.IN | linux.EPOLL.RDHUP | linux.EPOLL.HUP | li
 /// The bits that make a waiting send or connect worth trying.
 const write_bits: u32 = linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR;
 
-/// Turns readiness into events, at most `events.len` of them.
+/// Turns readiness into events, at most `events.len` of them. The events of a split datagram that
+/// did not fit the last reap go first (decision 15, amendment of 2026-11-05). A readiness this reap
+/// leaves unserved is level triggered, so the kernel reports it again.
 pub fn reap(loop: *Loop, readiness: []const Readiness, events: []Event) u32 {
-    var produced: u32 = 0;
+    var produced = loop.split.take(events);
+    if (loop.split.pending()) return produced;
     for (readiness) |*ready| {
         if (ready.data.u64 == constants.wake_user_data) {
             // The wake names no operation. Its counter is emptied, or a level-triggered eventfd
@@ -77,16 +81,10 @@ fn serve_ready(loop: *Loop, descriptor: core.Descriptor, bits: u32, events: []Ev
     const writers = loop.waiters.count(descriptor, .write);
     var produced: u32 = 0;
     if (bits & read_bits != 0 and readers != 0 and produced < events.len) {
-        if (serve(loop, descriptor, .read)) |event| {
-            events[produced] = event;
-            produced += 1;
-        }
+        if (serve(loop, descriptor, .read)) |event| produced += place(loop, event, events[produced..]);
     }
     if (bits & write_bits != 0 and writers != 0 and produced < events.len) {
-        if (serve(loop, descriptor, .write)) |event| {
-            events[produced] = event;
-            produced += 1;
-        }
+        if (serve(loop, descriptor, .write)) |event| produced += place(loop, event, events[produced..]);
     }
     if (is_unwatched(bits, readers, writers)) settle(loop, descriptor);
     return produced;
@@ -110,6 +108,26 @@ fn settle(loop: *Loop, descriptor: core.Descriptor) void {
     submit_module.register(loop, descriptor) catch {};
 }
 
+/// Writes `event` into `events`, or the first events of its split when it began one. Returns how
+/// many it wrote.
+fn place(loop: *Loop, event: Event, events: []Event) u32 {
+    assert(events.len >= 1);
+    if (loop.split.pending()) return loop.split.take(events);
+    events[0] = event;
+    return 1;
+}
+
+/// Starts splitting `event` when it is a datagram receive's and its buffer holds a coalesced
+/// datagram: the kernel wrote the datagrams' size into the control block in front of them.
+fn begin_split(loop: *Loop, group_id: ?u16, event: Event) void {
+    const id = group_id orelse return;
+    if (!event.flags.buffer) return;
+    const group = &loop.groups[id];
+    const buffer = group.bytes_of(event.flags.buffer_id);
+    const segment_bytes = shared_datagram.segment_bytes_of(buffer, loop.datagram_shape.options);
+    _ = loop.split.begin(event, segment_bytes, group.holders);
+}
+
 /// Tries the oldest waiter of `descriptor` in `filter`'s direction again. Null when the call would
 /// still block, which a readiness that another reader answered first can leave behind.
 fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
@@ -127,10 +145,13 @@ fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
         event.flags.buffer = true;
         event.flags.buffer_id = buffer_id;
     }
+    // Read before the slot can be released below.
+    const datagram_group: ?u16 = if (slot.code == .receive_from) slot.buffer_index else null;
     // A multishot operation goes on after a success, and ends at its first failure or at the end
     // of its stream.
     if (slot.flags.multishot and core.attempt.goes_on(slot.code, attempt.result)) {
         event.flags.more = true;
+        begin_split(loop, datagram_group, event);
         return event;
     }
     const popped = loop.waiters.pop(tables.table.slots, descriptor, filter);
@@ -138,6 +159,7 @@ fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
     const emptied = loop.waiters.count(descriptor, filter) == 0;
     if (emptied and keeps_nothing(filter, slot.flags.multishot)) settle(loop, descriptor);
     tables.finish(index, slot);
+    begin_split(loop, datagram_group, event);
     return event;
 }
 

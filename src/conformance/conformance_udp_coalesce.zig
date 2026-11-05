@@ -1,8 +1,9 @@
 //! Datagrams the kernel coalesces (decision 15): a socket opened with `DatagramOptions.coalesce`,
-//! which turns UDP_GRO on under Linux, and the largest segmented send. Split from
+//! the default, which turns UDP_GRO on under Linux, and the largest segmented send. Split from
 //! `conformance_udp.zig` for the 500-line limit. A small segmented send on loopback reaches a
 //! coalescing socket as the one datagram it was sent as, so on Linux these scenarios require
-//! coalescence instead of only tolerating it. macOS has neither GSO nor GRO, and each scenario asserts what it
+//! coalescence instead of only tolerating it. The loop splits a coalesced datagram into one event
+//! per datagram (the amendment of 2026-11-05), and the scenarios hold it to that. macOS has neither GSO nor GRO, and each scenario asserts what it
 //! does there in an arm of its own (decision 10).
 const std = @import("std");
 const builtin = @import("builtin");
@@ -42,15 +43,28 @@ const Pair = struct {
     receiver: core.Descriptor,
     sender: core.Descriptor,
     address: Address,
+    sender_port: u16,
 
     fn open(coalesce: bool) !Pair {
-        const receiver = try sync.open_datagram(.ipv4, &loopback, .{ .coalesce = coalesce });
+        return open_with(.{ .coalesce = coalesce });
+    }
+
+    /// A receiver with every option at its default, which coalesces.
+    fn open_default() !Pair {
+        return open_with(.{});
+    }
+
+    fn open_with(options: sync.DatagramOptions) !Pair {
+        const receiver = try sync.open_datagram(.ipv4, &loopback, options);
         errdefer sync.close_now(receiver);
-        const sender = try sync.open_datagram(.ipv4, null, .{});
+        // Bound, so the receiver can name the sender's port.
+        const sender = try sync.open_datagram(.ipv4, &loopback, .{});
+        errdefer sync.close_now(sender);
         return .{
             .receiver = receiver,
             .sender = sender,
             .address = try sync.local_address(receiver),
+            .sender_port = (try sync.local_address(sender)).port,
         };
     }
 
@@ -93,7 +107,7 @@ fn exchange(
     return handles[0];
 }
 
-test "a socket that coalesces takes a segmented send as one datagram and names its segment size" {
+test "a socket that coalesces hands each datagram of a segmented send over as an event of its own" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
     try harness.init(0, null);
@@ -105,7 +119,8 @@ test "a socket that coalesces takes a segmented send as one datagram and names i
         large_buffer_bytes,
         group,
     );
-    const pair = try Pair.open(true);
+    // Coalescing is the default.
+    const pair = try Pair.open_default();
     defer pair.close();
 
     var payload: [24]u8 = undefined;
@@ -122,16 +137,57 @@ test "a socket that coalesces takes a segmented send as one datagram and names i
         harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
         return end(&harness, handle);
     }
-    var events: [2]Event = undefined;
+    // The send's event and one event for each of the three datagrams.
+    var events: [4]Event = undefined;
     const handle = try exchange(&harness, pair, &payload, 8, &events);
     try testing.expectEqual(@as(u32, payload.len), try (try Harness.find(&events, 2)).outcome());
-    const got = try Harness.find(&events, 1);
-    const delivery = harness.loop.datagram(group_id, got);
-    try testing.expectEqualSlices(u8, &payload, delivery.bytes);
-    try testing.expectEqual(@as(u16, 8), delivery.from.segment_bytes);
-    try testing.expect(!delivery.from.flags.truncated);
-    harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+    var received: u32 = 0;
+    var buffer_id: ?u16 = null;
+    for (events) |event| {
+        if (event.user_data != 1) continue;
+        try testing.expect(event.flags.more);
+        const delivery = harness.loop.datagram(group_id, event);
+        try testing.expectEqualSlices(u8, payload[received * 8 ..][0..8], delivery.bytes);
+        try testing.expectEqual(@as(u16, 0), delivery.from.segment_bytes);
+        try testing.expectEqual(pair.sender_port, delivery.from.peer.port);
+        // The kernel coalesced the three, so all three name the buffer it filled.
+        if (buffer_id) |id| try testing.expectEqual(id, event.flags.buffer_id);
+        buffer_id = event.flags.buffer_id;
+        received += 1;
+    }
+    try testing.expectEqual(@as(u32, 3), received);
+    for (0..received) |_| harness.loop.give_back_buffer(group_id, buffer_id.?);
     try end(&harness, handle);
+}
+
+test "the datagrams of a coalesced one that do not fit a tick's events come in the next ticks" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    if (!linux) return;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    try harness.loop.provide_datagram_buffers(group_id, &large_memory, group_buffers, large_buffer_bytes, group);
+    const pair = try Pair.open_default();
+    defer pair.close();
+    var handles: [1]core.Handle = undefined;
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    const payload: [40]u8 = @splat('s');
+    var out = outbound(pair, 10);
+    try harness.submit(&.{Operation.send_to(2, pair.sender, &payload, &out)}, &.{});
+    // One event a tick: the send's, and four datagrams of ten bytes, in order.
+    var segments: u32 = 0;
+    var round: u32 = 0;
+    while (segments < 4 and round < 100) : (round += 1) {
+        var one: [1]Event = undefined;
+        if (try harness.loop.tick(&one, 10 * core.constants.ns_per_ms) == 0) continue;
+        if (one[0].user_data != 1) continue;
+        try testing.expectEqual(@as(u6, @intCast(segments)), one[0].flags.segment);
+        try testing.expectEqual(@as(usize, 10), harness.loop.datagram(group_id, one[0]).bytes.len);
+        harness.loop.give_back_buffer(group_id, one[0].flags.buffer_id);
+        segments += 1;
+    }
+    try testing.expectEqual(@as(u32, 4), segments);
+    try end(&harness, handles[0]);
 }
 
 test "a socket that does not coalesce takes a segmented send as one datagram per segment" {
@@ -249,7 +305,7 @@ test "the largest segmented send is the largest IPv4 datagram in 64 segments, an
     try testing.expectError(error.MessageTooLong, refused[0].outcome());
 }
 
-test "a coalesced datagram larger than its buffer reports truncated and keeps the front" {
+test "a socket whose group cannot hold a coalesced datagram does not coalesce, so none is cut" {
     if (conformance.unsupported()) return error.SkipZigTest;
     if (!linux) return;
     var harness: Harness = undefined;
@@ -262,21 +318,27 @@ test "a coalesced datagram larger than its buffer reports truncated and keeps th
         small_buffer_bytes,
         group,
     );
-    const pair = try Pair.open(true);
+    const pair = try Pair.open_default();
     defer pair.close();
 
-    const capacity = core.datagram.payload_capacity(small_buffer_bytes, group);
+    // Three datagrams of 300 bytes: one fits a buffer, and the three coalesced would not.
     const segment_bytes = 300;
+    try testing.expect(core.datagram.payload_capacity(small_buffer_bytes, group) >= segment_bytes);
     var payload: [3 * segment_bytes]u8 = undefined;
     for (&payload, 0..) |*byte, index| byte.* = @truncate(index);
-    var events: [2]Event = undefined;
+    var events: [4]Event = undefined;
     const handle = try exchange(&harness, pair, &payload, segment_bytes, &events);
-    const got = try Harness.find(&events, 1);
-    const delivery = harness.loop.datagram(group_id, got);
-    try testing.expect(delivery.from.flags.truncated);
-    try testing.expectEqual(@as(usize, capacity), delivery.bytes.len);
-    try testing.expectEqualSlices(u8, payload[0..capacity], delivery.bytes);
-    try testing.expectEqual(@as(u16, segment_bytes), delivery.from.segment_bytes);
-    harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+    var received: u32 = 0;
+    for (events) |event| {
+        if (event.user_data != 1) continue;
+        const delivery = harness.loop.datagram(group_id, event);
+        try testing.expect(!delivery.from.flags.truncated);
+        try testing.expectEqualSlices(u8, payload[received * segment_bytes ..][0..segment_bytes], delivery.bytes);
+        // Each datagram has a buffer of its own: the receive turned coalescing off.
+        try testing.expectEqual(@as(u6, 0), event.flags.segment);
+        harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+        received += 1;
+    }
+    try testing.expectEqual(@as(u32, 3), received);
     try end(&harness, handle);
 }

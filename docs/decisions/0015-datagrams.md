@@ -427,3 +427,51 @@ colibri's h3 server found the gap. Camilo approved the fix on 2026-10-26.
    reaches a coalescing socket as one datagram, so the scenarios require coalescence there. On
    loopback the largest send reached a coalescing socket as separate datagrams. So its scenario
    uses a socket that does not coalesce, and counts the bytes and the datagrams.
+
+## Amendment, 2026-11-05: the loop splits a coalesced datagram
+
+Until this date a coalesced datagram reached the caller as one event, with its datagrams' size in
+`Received.segment_bytes`, and the caller cut it up. Camilo ruled on 2026-11-05 that rotor does that
+itself, so a caller never sees the coalescing and can still turn it off.
+
+1. **One event per datagram.** The reap reads the segment size from the control block in front of
+   a received datagram, and hands each datagram over as an event of its own. Every such event names
+   the same buffer, with its datagram's index in `Event.flags.segment`, six bits taken from the
+   reserved ones, and its datagram's length as its result. `Loop.datagram` returns that datagram's
+   bytes and a `segment_bytes` of 0. The last datagram's event is the operation's final one when the
+   coalesced datagram's was. `core/datagram_split.zig` holds the splitting.
+2. **The group counts the events that name a buffer.** A group gains one byte per buffer between
+   its bookkeeping and its buffers (`buffer_group.holder_bytes`), so `group_bytes` grows by about a
+   byte per buffer. Each event's `give_back_buffer` counts one, and the buffer goes back to its group
+   at the last.
+3. **Events that do not fit a tick wait for the next.** The loop holds what is left of one split,
+   32 bytes, and the next tick hands it over before any new completion. On io_uring the reap stops
+   consuming completions while a split waits. On epoll the readiness it leaves unserved is level
+   triggered, so the kernel reports it again.
+4. **Coalescing is on by default.** `DatagramOptions.coalesce` is true. The alternative was to keep
+   it off and split only when a caller turned it on.
+5. **A small group turns coalescing off.** A coalesced datagram can hold 65,535 bytes
+   (`constants.coalesced_bytes_max`, recalled from the kernel's source). A receive from a group
+   whose buffers hold less makes one `setsockopt` call that turns UDP_GRO off for its socket, so the
+   kernel never cuts a datagram short. The alternatives were to halt such a receive as a caller's
+   mistake, and to keep coalescing off by default. A registered descriptor is an index and not a
+   socket, so on io_uring its socket keeps the option it was opened with. Datagrams that arrived
+   between the socket's open and its first receive may already be coalesced; the window is
+   recalled and no scenario measures it.
+6. **macOS has no GRO**, so nothing is ever split there. Its groups carry the counts too, so a
+   caller sizes one block for every backend.
+
+What each piece costs, from reading the code and not from a measurement: on Linux every datagram a
+`receive_from` hands over now has its control block walked once more in the reap, for the segment
+size. The datagram harness has not measured it.
+
+The scenarios are in `conformance_udp_coalesce.zig`: a coalesced send of three datagrams arrives
+as three events from one buffer, four datagrams arrive one a tick through an events array of one,
+and a group of 512-byte buffers receives three datagrams whole where the kernel had cut the
+coalesced one to 320 bytes.
+
+Mutations, 13, each CAUGHT. Against the unit tests on macOS: a held buffer that goes back at its
+first give-back, a give-back that ignores the counts on each of the three backends, every event of a
+split that keeps the whole one's `more`, and a segment read at offset 0. Against the Linux gate: no
+split in either Linux reap, a reap that drops the events a split carries to the next tick on either
+backend, a small group that keeps coalescing on either backend, and coalescing off by default.

@@ -43,16 +43,19 @@ pub fn provide(
 }
 
 /// Hands buffer `buffer_id` of group `group_id` back, after the caller has read the bytes the
-/// receive event named.
+/// receive event named. A buffer the events of a split datagram name goes back at the last of their
+/// give-backs (decision 15, amendment of 2026-11-05).
 pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
     loop.tables.assert_owner();
     assert(group_id < core.constants.buffer_groups_max);
-    loop.groups[group_id].give_back(buffer_id);
+    const group = &loop.groups[group_id];
+    if (!core.buffer_group.release(group.holders, buffer_id)) return;
+    group.give_back(buffer_id);
 }
 
 const testing = std.testing;
 
-test "a group's buffers start after its bookkeeping, and the size helper counts both" {
+test "a group's buffers start after its bookkeeping and its holders, and the size helper counts all" {
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
     var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
@@ -61,11 +64,31 @@ test "a group's buffers start after its bookkeeping, and the size helper counts 
     const buffer_bytes = 16;
     var group_memory: [group_bytes(count, buffer_bytes)]u8 align(group_alignment) = undefined;
     try provide(&loop, 0, &group_memory, count, buffer_bytes);
-    try testing.expectEqual(ring_bytes(count) + count * buffer_bytes, group_bytes(count, buffer_bytes));
-    // Buffer 0 starts where the bookkeeping ends, so a receive into it cannot overwrite the free
-    // stack, and the last buffer ends where the memory does.
-    const first = @intFromPtr(&group_memory[ring_bytes(count)]);
+    const offset = core.buffer_group.buffers_offset(count);
+    try testing.expectEqual(offset + count * buffer_bytes, group_bytes(count, buffer_bytes));
+    // Buffer 0 starts where the bookkeeping and the holders end, so a receive into it cannot
+    // overwrite the free stack, and the last buffer ends where the memory does.
+    const first = @intFromPtr(&group_memory[offset]);
     try testing.expectEqual(first, @intFromPtr(loop.provided_buffer(0, 0).ptr));
-    const last = @intFromPtr(&group_memory[ring_bytes(count) + (count - 1) * buffer_bytes]);
+    const last = @intFromPtr(&group_memory[offset + (count - 1) * buffer_bytes]);
     try testing.expectEqual(last, @intFromPtr(loop.provided_buffer(0, count - 1).ptr));
+}
+
+test "a buffer a split datagram holds goes back to the group at its last event's give-back" {
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    loop.init_tables(&memory, options);
+    const count = 4;
+    var group_memory: [group_bytes(count, 64)]u8 align(group_alignment) = undefined;
+    try provide(&loop, 0, &group_memory, count, 64);
+    const group = &loop.groups[0];
+    const taken = group.take().?;
+    // Three datagrams of one coalesced datagram name the buffer.
+    core.buffer_group.hold(group.holders, taken, 3);
+    give_back(&loop, 0, taken);
+    give_back(&loop, 0, taken);
+    try testing.expectEqual(@as(u16, count - 1), group.free_count);
+    give_back(&loop, 0, taken);
+    try testing.expectEqual(@as(u16, count), group.free_count);
 }

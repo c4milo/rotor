@@ -108,6 +108,9 @@ pub const Loop = struct {
     /// `provide_datagram_buffers` (decision 15). One loop serves one shape, so a receive knows
     /// where a datagram starts without a lookup per completion.
     datagram_shape: core.datagram.Shape,
+    /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
+    /// 2026-11-05): the next reap hands it over before any new readiness.
+    split: core.datagram_split.Split,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
@@ -218,6 +221,7 @@ pub const Loop = struct {
         });
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_shape = .{};
+        loop.split = .idle;
     }
 
     /// Every operation must have had its final event (decision 5, rule 7).
@@ -346,7 +350,9 @@ pub const Loop = struct {
         assert(event.flags.buffer);
         const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
-        return datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const capacity = buffer.len - core.datagram.prefix_bytes(loop.datagram_shape.options);
+        return core.datagram_split.view(whole, capacity, event);
     }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.

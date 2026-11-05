@@ -96,7 +96,12 @@ pub const Event = extern struct {
         reserved_kernel: u2 = 0,
         /// Another loop posted this event. It belongs to no operation of this loop.
         message: bool = false,
-        reserved: u11 = 0,
+        /// Which datagram of a coalesced one this event hands over, from 0 (decision 15, amendment
+        /// of 2026-11-05). The loop splits a coalesced datagram into one event per datagram, each
+        /// naming the same buffer, and `Loop.datagram` reads this to find the event's bytes. 0 for
+        /// every other event.
+        segment: u6 = 0,
+        reserved: u5 = 0,
         buffer_id: u16 = 0,
     };
 
@@ -184,6 +189,8 @@ comptime {
     assert(@bitOffsetOf(Event.Flags, "buffer") == 0);
     assert(@bitOffsetOf(Event.Flags, "more") == 1);
     assert(@bitOffsetOf(Event.Flags, "buffer_id") == 16);
+    // A segment index counts every datagram a coalesced one can hold.
+    assert(std.math.maxInt(@FieldType(Event.Flags, "segment")) + 1 >= constants.coalesced_segments_max);
     assert(@typeInfo(Code).@"enum".fields.len == @typeInfo(Error).error_set.?.len);
     assert(@intFromEnum(Code.canceled) == 1);
 }

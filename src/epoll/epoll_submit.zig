@@ -18,6 +18,7 @@ const perform = @import("epoll_perform.zig");
 const queue_module = @import("epoll_queue.zig");
 const sync = @import("epoll_sync.zig");
 const epoll = @import("epoll.zig");
+const shared_datagram = @import("linux_shared").datagram;
 
 const Loop = epoll.Loop;
 const Slot = core.Slot;
@@ -61,6 +62,7 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
 /// because the finished list could not name a buffer, and each paid an `epoll_ctl` (decision 20).
 fn start(loop: *Loop, index: u32, slot: *Slot) void {
     if (slot.flags.descriptor_registered) descriptors_module.resolve(loop, slot);
+    if (slot.code == .receive_from) limit_coalescing(loop, slot);
     if (slot.flags.multishot or group_is_empty(loop, slot)) {
         return wait(loop, index, slot, perform.filter_of(slot.code));
     }
@@ -74,6 +76,14 @@ fn start(loop: *Loop, index: u32, slot: *Slot) void {
         return tables.finish_local_buffer(index, attempt.result, buffer_id);
     }
     tables.finish_local(index, attempt.result);
+}
+
+/// A receive from a group whose buffers cannot hold a coalesced datagram turns coalescing off on
+/// its socket (decision 15, amendment of 2026-11-05).
+fn limit_coalescing(loop: *const Loop, slot: *const Slot) void {
+    const buffer_bytes = loop.groups[slot.buffer_index].buffer_bytes;
+    const capacity = core.datagram.payload_capacity(buffer_bytes, loop.datagram_shape.options);
+    shared_datagram.limit_coalescing(slot.descriptor, capacity);
 }
 
 /// True for a receive from a group none of whose buffers is free.

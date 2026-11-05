@@ -176,3 +176,14 @@ test "the hot structure sizes are one cache line and one completion entry" {
 /// not a stream, and a kernel that refuses a larger count answers EINVAL after the loop has
 /// already claimed a slot, so the limit is rotor's and is checked before the kernel sees it.
 pub const segments_max: u32 = 64;
+
+/// The most datagrams Linux joins into one coalesced datagram, UDP_GRO's `UDP_GRO_CNT_MAX`. The
+/// figure is recalled from the kernel's source, and no probe reads it. The loop splits a coalesced
+/// datagram into one event per datagram, and the event's segment index holds at most this many
+/// (decision 15, amendment of 2026-11-05).
+pub const coalesced_segments_max: u32 = 64;
+
+/// The bytes a buffer must hold for a coalesced datagram: the largest one UDP_GRO makes, which
+/// is recalled from the kernel's source as one IP datagram's limit, 65,535 bytes. A socket whose
+/// group buffers hold less does not coalesce (decision 15, amendment of 2026-11-05).
+pub const coalesced_bytes_max: u32 = 65_535;

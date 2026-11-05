@@ -343,7 +343,9 @@ pub const Loop = struct {
         assert(event.flags.buffer);
         const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
-        return datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const capacity = buffer.len - core.datagram.prefix_bytes(loop.datagram_shape.options);
+        return core.datagram_split.view(whole, capacity, event);
     }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.

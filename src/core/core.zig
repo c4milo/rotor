@@ -9,6 +9,7 @@ pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
+pub const datagram_split = @import("datagram_split.zig");
 pub const errno = @import("errno.zig");
 pub const event = @import("event.zig");
 pub const file_call = @import("file_call.zig");
@@ -51,6 +52,7 @@ test {
     _ = buffer_group;
     _ = constants;
     _ = datagram;
+    _ = datagram_split;
     _ = errno;
     _ = event;
     _ = file_call;

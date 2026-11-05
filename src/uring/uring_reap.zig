@@ -18,6 +18,7 @@ const constants = @import("constants.zig");
 const errno_module = @import("uring_errno.zig");
 const uring = @import("uring.zig");
 const group_wake = @import("uring_group.zig");
+const shared_datagram = @import("linux_shared").datagram;
 
 const Loop = uring.Loop;
 const Event = core.Event;
@@ -41,18 +42,25 @@ comptime {
 /// Turns the completions the kernel has posted into events, oldest first, until `events` is full
 /// or none is left. A completion that yields no event, a cancel's answer or an operation being
 /// resubmitted, is consumed all the same. Returns the events written.
+///
+/// A coalesced datagram goes over as one event per datagram (decision 15, amendment of 2026-11-05).
+/// The events that do not fit wait in `loop.split`, and the next reap hands them over first.
 pub fn reap(loop: *Loop, events: []Event) u32 {
+    var produced = loop.split.take(events);
+    if (loop.split.pending()) return produced;
     const ready = loop.ring.cq_ready();
     var consumed: u32 = 0;
-    var produced: u32 = 0;
     while (consumed < ready and produced < events.len) : (consumed += 1) {
-        if (complete(loop, loop.ring.cqe_at(consumed))) |event| {
+        const event = complete(loop, loop.ring.cqe_at(consumed)) orelse continue;
+        if (loop.split.pending()) {
+            produced += loop.split.take(events[produced..]);
+        } else {
             events[produced] = event;
             produced += 1;
         }
     }
     loop.ring.cq_advance(consumed);
-    assert(produced <= consumed);
+    assert(produced <= events.len);
     return produced;
 }
 
@@ -72,7 +80,17 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         .flags = @bitCast(cqe.flags & flags_passed),
     };
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
+    if (slot.code == .receive_from and event.flags.buffer) begin_split(loop, slot.buffer_index, event);
     return event;
+}
+
+/// Starts splitting `event` when its buffer holds a coalesced datagram: the kernel wrote the
+/// datagrams' size into the control block in front of them.
+fn begin_split(loop: *Loop, group_id: u16, event: Event) void {
+    const group = &loop.groups[group_id];
+    const buffer = group.bytes_of(event.flags.buffer_id);
+    const segment_bytes = shared_datagram.segment_bytes_of(buffer, loop.datagram_shape.options);
+    _ = loop.split.begin(event, segment_bytes, group.holders);
 }
 
 /// A completion of an entry the backend submitted for itself, which yields no event. The read of a

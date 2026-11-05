@@ -128,6 +128,31 @@ pub fn delivery(buffer: []u8, payload_bytes: u32, options: GroupOptions) core.De
     return .{ .from = from, .bytes = buffer[prefix..][0..payload_bytes] };
 }
 
+/// The size of the datagrams the kernel coalesced into the one in `buffer`, or 0 when it did not
+/// coalesce. The reap reads it to split a coalesced datagram (decision 15, amendment of 2026-11-05).
+pub fn segment_bytes_of(buffer: []const u8, options: GroupOptions) u16 {
+    const head: *const core.datagram.Head = @ptrCast(@alignCast(buffer.ptr));
+    var from: Received = .{
+        .peer = .{ .family = .ipv4, .port = 0, .bytes = @splat(0) },
+        .local = .{ .family = .ipv4, .port = 0, .bytes = @splat(0) },
+        .segment_bytes = 0,
+        .ecn = .not_ect,
+        .flags = .{},
+    };
+    const control_start = @sizeOf(core.datagram.Head) + options.name_reserve;
+    read_control(buffer[control_start..][0..head.control_bytes], &from);
+    return from.segment_bytes;
+}
+
+/// Turns UDP_GRO off on `socket` when a buffer of its group, `capacity` bytes of payload, cannot
+/// hold the largest coalesced datagram: the kernel would cut one short and drop the rest. A receive
+/// calls it as it starts, so a caller that sized its buffers for one datagram need not know that
+/// coalescing exists (decision 15, amendment of 2026-11-05).
+pub fn limit_coalescing(socket: core.Descriptor, capacity: u32) void {
+    if (capacity >= core.constants.coalesced_bytes_max) return;
+    sync_socket.set_option(socket, linux.IPPROTO.UDP, linux.UDP.GRO, false) catch {};
+}
+
 /// Walks the control messages the kernel wrote and fills what rotor names. An unknown one is
 /// stepped over: a kernel may attach more than was asked for.
 fn read_control(control: []const u8, from: *Received) void {

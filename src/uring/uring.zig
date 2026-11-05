@@ -104,6 +104,9 @@ pub const Loop = struct {
     /// `core.datagram.prefix_bytes(datagram_shape.options)`, held here because the reap subtracts
     /// it from every datagram completion and must not recompute it per event.
     datagram_prefix: i32,
+    /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
+    /// 2026-11-05): the next reap hands it over before any new completion.
+    split: core.datagram_split.Split,
     /// When the wait timer fires, on the tick's clock, or 0 when it is not armed. A tick that
     /// blocks leaves an armed timer in place when it fires no later than the tick's own deadline,
     /// so the timer is armed about once per wait bound and not once per tick (decision 6, amended
@@ -230,6 +233,7 @@ pub const Loop = struct {
         loop.messages_used = 0;
         loop.datagram_shape = .{};
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
+        loop.split = .idle;
         loop.wait_timer_deadline_ns = 0;
         loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
@@ -372,7 +376,9 @@ pub const Loop = struct {
         assert(event.flags.buffer);
         const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
         const bytes: u32 = @intCast(event.result);
-        return datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+        const capacity = buffer.len - @as(usize, @intCast(loop.datagram_prefix));
+        return core.datagram_split.view(whole, capacity, event);
     }
 
     /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.

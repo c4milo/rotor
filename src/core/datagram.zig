@@ -47,8 +47,9 @@ pub const Received = extern struct {
     /// The address of this host it was sent to, when `flags.local`. Its `port` is 0: the kernel
     /// reports the address, and the port is the socket's.
     local: Address,
-    /// The bytes of each segment when the kernel coalesced several datagrams into this one, or 0
-    /// when it did not. Every segment but the last holds exactly this many bytes.
+    /// 0 in every `Delivery` a loop hands over. A backend's reap reads here the size of the
+    /// datagrams the kernel coalesced, and the loop splits them, so a caller sees each datagram on
+    /// its own (decision 15, amendment of 2026-11-05).
     segment_bytes: u16,
     ecn: Ecn,
     flags: Flags,
