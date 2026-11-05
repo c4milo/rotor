@@ -461,9 +461,12 @@ itself, so a caller never sees the coalescing and can still turn it off.
 6. **macOS has no GRO**, so nothing is ever split there. Its groups carry the counts too, so a
    caller sizes one block for every backend.
 
-What each piece costs, from reading the code and not from a measurement: on Linux every datagram a
-`receive_from` hands over now has its control block walked once more in the reap, for the segment
-size. The datagram harness has not measured it.
+What it costs and gains, measured on GitHub's Linux runners on io_uring on 2026-11-05
+(`bench/results/datagram-coalesce-github-2026-11-05.md`). Where GRO cannot help, one datagram at a
+time into small buffers, the reap's second walk of each control block cost 0.5 to 1.6 percent with
+64 round trips in flight, at the edge of what those runners show. Where bursts arrive, coalescing
+received bursts of 4 datagrams 1.8 times as fast and bursts of 16 3.3 to 3.9 times. epoll was not
+measured.
 
 The scenarios are in `conformance_udp_coalesce.zig`: a coalesced send of three datagrams arrives
 as three events from one buffer, four datagrams arrive one a tick through an events array of one,
