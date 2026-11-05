@@ -22,9 +22,6 @@ pub const Program = struct { name: []const u8, root: []const u8, checker: ?[]con
 pub const programs = [_]Program{
     .{ .name = "echo", .root = "examples/echo.zig", .checker = "tools/echo_check.zig" },
     .{ .name = "guide", .root = "examples/guide.zig", .checker = null },
-    // The same checker, against a server written against `std.Io` and run on the adapter
-    // (decision 22, check 4).
-    .{ .name = "std_io_echo", .root = "examples/std_io_echo.zig", .checker = "tools/echo_check.zig" },
 };
 
 /// The Zig sources under `examples/`, which the lint and the format check read. They are named file by
@@ -33,7 +30,6 @@ pub const programs = [_]Program{
 pub const sources = [_][]const u8{
     "examples/echo.zig",
     "examples/guide.zig",
-    "examples/std_io_echo.zig",
     "examples/consumer/build.zig",
 };
 

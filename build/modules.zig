@@ -14,9 +14,9 @@
 //! approved that edge on 2026-09-24. `linux_shared` imports `core`. `uring` and `epoll` import
 //! `core` and `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
 //! backend, which this file hands it as its `backend` import, so one suite tests every backend
-//! (decision 10). docs/decisions/0001-interface.md names the module that follows: `adapter`, after
-//! version one. `bench/` is outside `src/` and outside this graph;
-//! build/bench.zig wires it.
+//! (decision 10). docs/decisions/0001-interface.md named an `adapter` module to follow version one;
+//! decision 22 built a std.Io adapter and removed it on 2026-11-05. `bench/` is outside `src/` and
+//! outside this graph; build/bench.zig wires it.
 const std = @import("std");
 
 /// Each module's root is the file named after its directory (`src/core/core.zig`), which lists

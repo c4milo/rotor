@@ -194,8 +194,8 @@ was about to push.
   edge Camilo approved on 2026-09-24; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
   edge Camilo approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
   imports `core` and every backend, because on Linux it falls back from `uring` to `epoll`
-  (decision 20); nothing imports `bench`. The std.Io adapter of decision 22 is no module: its files
-  are in the public module, in `src/rotor/adapter/`, by Camilo's ruling of 2026-11-05. `conformance`
+  (decision 20); nothing imports `bench`. There is no `adapter`: decision 22 built one and removed
+  it on 2026-11-05. `conformance`
   imports `core` and the backend under test, which the build hands it as its `backend` import, so
   one suite tests every backend (decision 10). `core`, `linux_shared`, `uring`, `kqueue` and
   `epoll` exist today. `bench/` sits outside `src/` and outside the graph; `build/bench.zig` wires
@@ -429,10 +429,10 @@ Every row of decision 2's scope table is built. Camilo added posts between proce
 memory, and it was built the same day; crossing a process measured as costing a message nothing on
 `mac`, `orbstack` and `github`. Every other decision record
 has code,
-except two: decision 16, which Camilo declined on 2026-09-24, and decision 17, which is proposed
-and names a component this repository does not hold. Decision 22, the std.Io adapter, Camilo
-accepted on 2026-09-27 on two conditions and deferred the same day, and on 2026-11-05 he asked for
-it to be built. Its record lists the steps, and says which are built. Decision 13 Camilo accepted on 2026-09-24,
+except three: decision 16, which Camilo declined on 2026-09-24; decision 22, the std.Io adapter,
+which was built to its step 3 on 2026-11-05 and removed the same day by Camilo's choice, keeping
+only its check 1, row C26; and decision 17, which is proposed and names a component this
+repository does not hold. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.

@@ -454,7 +454,6 @@ fn program_module(
         module.addImport("backend", if (program.epoll) graph.epoll else host_backend);
     }
     if (program.needs_harness) module.addImport("harness", harness_module);
-    module.addImport("rotor", graph.rotor); // std_io_echo's std.Io adapter (decision 22).
     return module;
 }
 

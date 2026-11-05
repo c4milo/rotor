@@ -80,13 +80,6 @@ const kernel_backend_directories = [_][]const u8{
     "src/linux_shared",
 };
 
-/// The std.Io adapter (decision 22). It fills `std.Io`'s `now`, whose parameter is a
-/// `std.Io.Clock`: the awake and boot clocks read the loop's time, and the others go to the
-/// `std.Io` the caller supplies. Its tests read the time through the adapter's `now`.
-const adapter_directory = "src/rotor/adapter";
-
-const excluded_directories = kernel_backend_directories ++ [_][]const u8{adapter_directory};
-
 const reason = "core reads no clock and draws from core.random alone";
 
 pub const config: forbidden_references.Config = .{
@@ -94,7 +87,7 @@ pub const config: forbidden_references.Config = .{
     .scope = .{
         .extensions = &.{lint.paths.zig_extension},
         .include_directories = &.{"src"},
-        .exclude_directories = &excluded_directories,
+        .exclude_directories = &kernel_backend_directories,
     },
     .prefixes = &forbidden_prefixes,
     .raw_prefixes = &forbidden_raw_prefixes,

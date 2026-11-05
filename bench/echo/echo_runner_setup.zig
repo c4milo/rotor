@@ -162,14 +162,6 @@ pub const candidates = [_]Candidate{
         .version = "0.16.0",
         .arguments = &.{ "--backend", "threaded" },
     },
-    // The same program on rotor's std.Io adapter (decision 22): the gap to `rotor` is what the
-    // adapter costs, and the gap to `std.Io.Threaded` is what it is for.
-    .{
-        .name = "std.Io on rotor",
-        .program = "std_io_echo",
-        .version = "this tree",
-        .arguments = &.{ "--backend", "rotor" },
-    },
     .{
         .name = "std.Io.Uring",
         .blocked = "it does not compile on the pinned Zig",

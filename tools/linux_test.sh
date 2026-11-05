@@ -72,7 +72,7 @@ readonly confined_executables=' epoll conformance-epoll epoll_linux_scenarios li
 # The executables that run twice, once each way. The public module chooses its backend when the
 # process starts: io_uring where the kernel gives a ring, epoll where it refuses one (decision 20,
 # open question 5). Each run takes the other branch, so each is tested where it is chosen.
-readonly both_ways_tests=' rotor rotor-release '
+readonly both_ways_tests=' rotor '
 # The executables that run a second time with every harness loop given a spin budget, as
 # `zig build test` runs the host's (decision 13). Each run keeps its seccomp profile.
 readonly spinning_tests=' conformance-uring conformance-epoll '

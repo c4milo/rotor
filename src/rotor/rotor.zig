@@ -208,9 +208,6 @@ pub const Remote = loop_module.Remote;
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
 pub const Loop = loop_module.Loop;
 
-/// A `std.Io` over one loop and a pool of fibers (decision 22).
-pub const adapter = @import("adapter/adapter.zig");
-
 comptime {
     // The wrapped types carry the surface every backend must (decision 1). The backends check
     // this for themselves; checking it here as well is what makes this file's promise its own.
@@ -452,5 +449,4 @@ test {
     _ = loop_module;
     _ = @import("rotor_loop_backend.zig");
     _ = @import("rotor_loop_registry.zig");
-    _ = adapter;
 }
