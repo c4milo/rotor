@@ -1,6 +1,11 @@
 //! rotor_datagram: the datagram round-trip workload, which is the shape a QUIC transport has.
 //!
 //! Run:  rotor_datagram [--in-flight N] [--bytes B] [--seconds S]
+//!       rotor_datagram --burst SEGMENTS [--coalesce on|off] [--in-flight N] [--bytes B] [--seconds S]
+//!
+//! With `--burst` it measures receive instead (`rotor_datagram_burst.zig`): segmented sends of
+//! SEGMENTS datagrams each into a socket with 64 KiB buffers, which UDP_GRO coalesces on Linux and
+//! the loop splits again (decision 15, amendment of 2026-11-05).
 //!
 //! One loop, one thread, two sockets (decision 4). A client socket sends a datagram to a server
 //! socket bound on the loopback; the server answers it from the address it was written to, with
@@ -46,6 +51,7 @@ const Operation = core.Operation;
 const Address = core.Address;
 const Outbound = core.datagram.Outbound;
 const sync = backend.sync;
+const burst = @import("rotor_datagram_burst.zig");
 
 /// Round trips outstanding at once, at most. Each holds one sample slot and one send. It is a
 /// group's buffers: a socket holds at most one datagram per round trip, so a tick that takes every
@@ -125,6 +131,7 @@ const Run = struct {
 };
 
 pub fn main(init: std.process.Init) !void {
+    if (try burst.wanted(init)) return burst.main(init);
     const options = try parse(init);
     payload = @splat('q');
 
