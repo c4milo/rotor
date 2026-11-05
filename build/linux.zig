@@ -82,6 +82,9 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
         // The public module picks `uring` on this target, and its tests drive a loop through it.
         .{ .name = "rotor", .module = graph.rotor },
+        // The same tests in ReleaseSafe. The adapter's context switch faulted only in an optimized
+        // build, and one of its three faults, `x18`, only on aarch64 Linux (decision 22, check 1).
+        .{ .name = "rotor-release", .module = modules.add(b, target, .ReleaseSafe).rotor },
         // The harness is outside the module graph, and nothing built it for Linux until
         // 2026-09-22: two of its files did not compile there and no gate said so, because every
         // caller of them was a program this gate does not build. Its tests run here now.

@@ -3,7 +3,8 @@
 Status: **accepted** on 2026-09-27 by Camilo, to be built on two conditions: it keeps rotor's
 performance, and its API follows rotor's own primitives (open question 1). **Deferred** the same
 day: nothing is started, the fiber switch's measurement included, until Camilo asks for it.
-Proposed on 2026-09-26. Decision 1 chose a completion-based core with a
+**Started** on 2026-11-04 with check 1, and **built** from 2026-11-05 by Camilo's choice of that
+day, in the steps of "How it is built". Proposed on 2026-09-26. Decision 1 chose a completion-based core with a
 `std.Io` adapter over it, and decision 2 left the adapter out of version one: "deferred, not
 refused". Version one is built, and on 2026-09-26 Camilo asked whether rotor can be offered through
 the `std.Io` interface. This record says what the adapter would be, what it would cost, and what
@@ -75,8 +76,9 @@ machine bear on it, read on 2026-09-26:
 
 ## Decision, proposed
 
-A module `adapter`, in `src/adapter/`, returns a `std.Io` whose state is one rotor loop and a pool
-of fibers. The core never imports it. The shape a caller would see:
+An adapter returns a `std.Io` whose state is one rotor loop and a pool of fibers. Its files are in
+`src/rotor/adapter/`, inside the public module, by Camilo's ruling of 2026-11-05 (open question 2).
+The core never imports it. The shape a caller would see:
 
 ```zig
 var adapter: rotor.adapter.Adapter = undefined;
@@ -195,6 +197,71 @@ Nothing below is measured. Each cost is an estimate from recorded rows where one
 5. **Halt scenarios:** a call from another thread, a stack that overflows into its guard page, and
    an adapter given memory smaller than its options need.
 
+## How it is built
+
+Each step is one commit, and each commit passes `zig build test`.
+
+1. **Fibers, the scheduler, tasks and waits.** The pool on the caller's memory, the corrected
+   switch of check 1, the task, group and cancel calls, the futexes, `now` and `sleep`, and the
+   halt scenarios for what a caller can do wrong with them. Cancellation, groups and futexes are in
+   this step, because `sleep` and a futex wait are cancel points. Every other call goes to `rest`.
+   **Built on 2026-11-05.**
+2. **The network.** The network calls of the table above, and `std_io_echo` run on the adapter.
+3. **Batches and files.** `operate`, the three `batch` calls, and the four file calls.
+4. **The checks.** Guard pages, a futex woken from another thread, and the scenarios on io_uring and
+   epoll in the Linux gate.
+5. **The numbers.** Check 2 of "How it is checked", in the harness.
+
+What step 1 decided:
+
+- **There is no scheduler context.** A context that blocks switches straight to the first ready
+  context, and ticks the loop on its own stack when none is ready. A blocking call so costs one
+  switch out and one back, where "How a blocking call runs" counted two switches to and from a
+  scheduler.
+- **A task's arguments and result live at the top of its fiber's stack**: at most 1,024 bytes of
+  arguments and 512 of result, as std's `Dispatch` allows. A larger task runs inline under `async`
+  and is refused under `concurrent`.
+- **Stacks are a whole number of 64 KiB granules**, a multiple of every page size rotor's hosts use, so a
+  guard page fits below each in step 4. The caller's memory needs only 16-byte alignment: `init`
+  moves the stacks up to a granule boundary, because a Mach-O build placed a static declared with
+  an alignment of 64 KiB off that boundary.
+- **A timer waits for the loop's first clock reading.** On io_uring `Loop.now_ns` is 0 until the
+  first tick, and a timer's delay runs from it (decision 14, rule 6), so a sleep before the first
+  tick was due at once. The Linux gate found it. The adapter polls the loop once before it submits
+  an operation to a loop that has read no clock.
+- **An event of the caller's own operations goes to a handler** the caller names in the options.
+  Each operation of the adapter carries `0xADA7` in the top 16 bits of its `user_data`.
+- **A context that waits while nothing is in flight halts**, because nothing could wake it. A futex
+  woken from another thread, in step 4, changes this.
+- **The public module's tests also run in ReleaseSafe**, in `zig build test` and in the Linux gate,
+  because the switch's faults showed only in an optimized build.
+
+Step 1's mutations. Each breaks one check, and each is measured against the narrowest step that
+can catch it. Every one is CAUGHT.
+
+| mutation | step |
+|---|---|
+| `x1` back in the switch's clobber list; `lr` left out of it | `test-rotor-release` |
+| a canceled wait not acknowledged; a cancel point that ignores the acknowledgement | `test-rotor` |
+| a cancel that does not end the operation a task waits for | `test-rotor` |
+| a futex wake that takes one waiter too many; waiters woken in the reverse order | `test-rotor` |
+| a futex wake that leaves the wait's timer running | `test-rotor` |
+| a futex wait that ignores the expected value | `test-rotor` |
+| a wait that ignores the task's protection; `recancel` that keeps the flag | `test-rotor` |
+| a group member or a future that does not wake its awaiter | `test-rotor` |
+| a group cancel that cancels no member; `groupAwait` that does not pass a cancel on | `test-rotor` |
+| an event of the caller's operation taken as the adapter's | `test-rotor` |
+| a result too large for the stack's top taken onto a fiber | `test-rotor` |
+| the awake clock read from `rest`; a fiber not freed by `await` | `test-rotor` |
+| a forwarder that drops `rest`'s `userdata` | `test-rotor` |
+| no poll before an operation on a loop that has read no clock | the Linux gate |
+| each of the 13 assertions the halt scenarios name, deleted | `halt-check` |
+
+The first `x1` mutation was NOT CAUGHT. The broken switch never loads its argument, and the tests
+passed because `x1` held a usable pointer by chance. `adapter_switch_test.zig` now clears `x1`, or
+`rsi` on x86-64, before it switches. The first forwarder mutation was NOT CAUGHT too, until the
+test's `rest` checked the `userdata` it receives.
+
 ## Open questions
 
 1. **Build it, and when?** Proposed: after the macOS cross-core work and a number on the Linux
@@ -204,6 +271,11 @@ Nothing below is measured. Each cost is an estimate from recorded rows where one
 2. **The edge from `adapter` to the public module.** Proposed: allow it. The adapter needs the
    backend the process chose, and only the public module knows it.
    **Answered on 2026-09-27: allowed, as proposed**, with the ruling to build the adapter.
+   **Changed on 2026-11-05.** The public module is the only module a dependent package can name,
+   so it must export the adapter, and the edge from the adapter to it would then be a cycle. Camilo
+   chose to put the adapter's files in the public module, in `src/rotor/adapter/`, and the graph
+   gains no module and no edge. The alternatives were an adapter generic over a `Loop` type, which
+   the public module imports, and a second public module.
 3. **Guard pages.** One page below each stack, protected with `mprotect` at init, turns an overflow
    into a fault. It costs a page per fiber and one system call per fiber at init. Proposed: yes.
    **Answered on 2026-09-27: yes, as proposed.**

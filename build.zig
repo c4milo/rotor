@@ -142,6 +142,16 @@ pub fn build(b: *std.Build) void {
         }
     }
 
+    // The adapter's context switch faulted only in an optimized build (decision 22, check 1), so
+    // the public module's tests also run in ReleaseSafe. `-Drelease` runs them so twice.
+    const release_tests = b.addTest(.{
+        .name = "rotor-release",
+        .root_module = modules.add(b, target, .ReleaseSafe).rotor,
+    });
+    const release_run = &b.addRunArtifact(release_tests).step;
+    test_step.dependOn(release_run);
+    add_narrow_test_step(b, "rotor-release").dependOn(release_run);
+
     // The tools verify the tree, so they run on the host in Debug: a tool never ships.
     const tool_test_step = add_narrow_test_step(b, "tools");
     for (tool_test_roots) |root| {

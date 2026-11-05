@@ -51,6 +51,9 @@ pub fn add(
         .{ .name = "uring_scenarios", .backend = "uring" },
         .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true },
         .{ .name = "epoll_scenarios", .backend = "epoll" },
+        // The std.Io adapter, which lives in the public module (decision 22) and runs this host's
+        // loop.
+        .{ .name = "adapter_scenarios", .backend = "rotor" },
     };
     const darwin = target.result.os.tag.isDarwin();
     inline for (files) |file| {
@@ -89,6 +92,7 @@ fn run_check(
 fn module_named(graph: modules.Modules, name: []const u8) *std.Build.Module {
     if (std.mem.eql(u8, name, "uring")) return graph.uring;
     if (std.mem.eql(u8, name, "kqueue")) return graph.kqueue;
+    if (std.mem.eql(u8, name, "rotor")) return graph.rotor;
     std.debug.assert(std.mem.eql(u8, name, "epoll"));
     return graph.epoll;
 }
