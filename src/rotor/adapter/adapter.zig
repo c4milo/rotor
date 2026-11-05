@@ -10,7 +10,8 @@
 //!
 //! The files: `adapter_switch.zig` switches between contexts, `adapter_scheduler.zig` decides which
 //! context runs and ticks the loop, `adapter_tasks.zig` holds tasks, groups and cancellation,
-//! `adapter_wait.zig` holds futexes and time, and `adapter_rest.zig` forwards the other calls.
+//! `adapter_wait.zig` holds futexes and time, `adapter_net.zig` the network calls, and
+//! `adapter_rest.zig` forwards the other calls.
 const std = @import("std");
 const assert = std.debug.assert;
 const Io = std.Io;
@@ -20,6 +21,7 @@ const switching = @import("adapter_switch.zig");
 const scheduler = @import("adapter_scheduler.zig");
 const tasks = @import("adapter_tasks.zig");
 const wait = @import("adapter_wait.zig");
+const network = @import("adapter_net.zig");
 const rest = @import("adapter_rest.zig");
 
 pub const adapter_constants = constants;
@@ -284,6 +286,15 @@ const own = struct {
     pub const futexWake = wait.futex_wake;
     pub const now = wait.now;
     pub const sleep = wait.sleep;
+    pub const netListenIp = network.net_listen_ip;
+    pub const netBindIp = network.net_bind_ip;
+    pub const netConnectIp = network.net_connect_ip;
+    pub const netAccept = network.net_accept;
+    pub const netRead = network.net_read;
+    pub const netWrite = network.net_write;
+    pub const netSend = network.net_send;
+    pub const netClose = network.net_close;
+    pub const netShutdown = network.net_shutdown;
 };
 
 /// Every call of `Io.VTable`: the adapter's own where `own` names it, and `rest`'s otherwise.
@@ -305,4 +316,6 @@ test {
     _ = @import("adapter_test.zig");
     _ = @import("adapter_test_cancel.zig");
     _ = @import("adapter_switch_test.zig");
+    _ = @import("adapter_test_net.zig");
+    _ = @import("adapter_net_errors.zig");
 }

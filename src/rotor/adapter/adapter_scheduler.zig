@@ -136,8 +136,15 @@ fn switch_to(adapter: *Adapter, next: Index) void {
 ///
 /// A timer's delay runs from `Loop.now_ns`, the time of the last tick (decision 14, rule 6), and
 /// on io_uring that is 0 before the first tick: a timer submitted then is due at once. So the
-/// adapter polls the loop once first, which reads its clock.
+/// adapter polls the loop once first, which reads its clock. An operation's deadline runs from it
+/// too.
 pub fn submit(adapter: *Adapter, kind: rotor.Operation.Kind) void {
+    submit_with_deadline(adapter, kind, 0);
+}
+
+/// `submit`, with the operation's deadline: `timeout_ns` after the loop's clock, or 0 for none
+/// (decision 5, rule 4).
+pub fn submit_with_deadline(adapter: *Adapter, kind: rotor.Operation.Kind, timeout_ns: u64) void {
     const me = adapter.current;
     const fiber = &adapter.fibers[me];
     assert(fiber.handle.is_none());
@@ -145,6 +152,7 @@ pub fn submit(adapter: *Adapter, kind: rotor.Operation.Kind) void {
     assert(adapter.loop.now_ns() != 0);
     const operation: rotor.Operation = .{
         .user_data = constants.user_data_tag | me,
+        .timeout_ns = timeout_ns,
         .kind = kind,
     };
     var handles = [_]rotor.Handle{.none};

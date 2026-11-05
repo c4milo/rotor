@@ -97,7 +97,7 @@ pub fn sleep(userdata: ?*anyopaque, timeout: Io.Timeout) Io.Cancelable!void {
 }
 
 /// The nanoseconds from now until `timeout` passes, 0 when it has passed, or null for none.
-fn timeout_ns(adapter: *Adapter, timeout: Io.Timeout) ?u64 {
+pub fn timeout_ns(adapter: *Adapter, timeout: Io.Timeout) ?u64 {
     const nanoseconds: i96 = switch (timeout) {
         .none => return null,
         .duration => |duration| duration.raw.nanoseconds,

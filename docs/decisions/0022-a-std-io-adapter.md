@@ -206,11 +206,14 @@ Each step is one commit, and each commit passes `zig build test`.
    halt scenarios for what a caller can do wrong with them. Cancellation, groups and futexes are in
    this step, because `sleep` and a futex wait are cancel points. Every other call goes to `rest`.
    **Built on 2026-11-05.**
-2. **The network.** The network calls of the table above, and `std_io_echo` run on the adapter.
+2. **The network.** The nine network calls of the table above, and an echo server written against
+   `std.Io` alone, `examples/std_io_echo.zig`, which `tools/echo_check.zig` checks (check 4).
+   **Built on 2026-11-05.**
 3. **Batches and files.** `operate`, the three `batch` calls, and the four file calls.
 4. **The checks.** Guard pages, a futex woken from another thread, and the scenarios on io_uring and
    epoll in the Linux gate.
-5. **The numbers.** Check 2 of "How it is checked", in the harness.
+5. **The numbers.** Check 2 of "How it is checked": `std_io_echo` and `std_io_timers` of the
+   harness on the adapter.
 
 What step 1 decided:
 
@@ -261,6 +264,30 @@ The first `x1` mutation was NOT CAUGHT. The broken switch never loads its argume
 passed because `x1` held a usable pointer by chance. `adapter_switch_test.zig` now clears `x1`, or
 `rsi` on x86-64, before it switches. The first forwarder mutation was NOT CAUGHT too, until the
 test's `rest` checked the `userdata` it receives.
+
+What step 2 decided:
+
+- **A read or a write moves one buffer.** `netRead` receives into the first buffer with room, and
+  `netWrite` sends the header, else the first buffer with bytes, else the repeated last buffer
+  once. `std.Io.Reader` and `std.Io.Writer` take a short count and call again. Open question 4
+  stays deferred until the harness shows what that costs.
+- **An accepted socket's address costs a `getpeername` call**, because the loop's accept reports
+  the descriptor alone. A peer that left before that call ends the accept with
+  `ConnectionAborted`.
+- **A listen and a bind refuse what `sync` cannot open**: a listen takes a TCP stream, and a bind
+  a UDP datagram socket. A bind refuses `ip6_only` and `allow_broadcast` with `OptionUnsupported`.
+- **A connect's timeout is the operation's deadline** (decision 5, rule 4), at most
+  `timeout_ns_max`.
+- **std 0.16.0's `Socket.closeMany` does not compile**: it hands the table sockets where the table
+  takes handles. A caller closes through the table, or one socket at a time.
+
+Step 2's mutations, all against `test-rotor` and all CAUGHT: a read into an empty buffer; a write
+that skips the header, or sends the repeated buffer when `splat` is 0; an accept that reports an
+address the kernel did not give; no cancel point before an operation; a refused connect answered
+as a reset; a shutdown of the sending side that shuts the receiving side; a close that does not
+wait for its event; a bind that takes a stream socket and a listen that takes a datagram one; a
+read left to `rest`; an address that loses its port. The first two NOT CAUGHT, the read into an
+empty buffer and the shutdown, each gained a test.
 
 ## Open questions
 
