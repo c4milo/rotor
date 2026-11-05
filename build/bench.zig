@@ -88,6 +88,8 @@ const Tested = struct {
     needs_loop: bool,
     /// True when its tests read the committed echo baseline, which they get as `echo_baseline`.
     reads_baseline: bool = false,
+    /// ReleaseSafe for a test whose fault shows only in an optimized build: C26's fiber switch.
+    optimize: std.builtin.OptimizeMode = .Debug,
 };
 
 /// Every bench program that holds tests. A program missing from this list keeps its tests and
@@ -98,6 +100,12 @@ const tested = [_]Tested{
         .name = "bench-costs-tests",
         .root = "bench/costs/main.zig",
         .needs_loop = false,
+    },
+    .{
+        .name = "bench-costs-safe-tests",
+        .root = "bench/costs/main.zig",
+        .needs_loop = false,
+        .optimize = .ReleaseSafe,
     },
     .{
         .name = "bench-post-tests",
@@ -238,12 +246,12 @@ fn add_program_tests(
         const module = b.createModule(.{
             .root_source_file = b.path(program.root),
             .target = target,
-            .optimize = .Debug,
+            .optimize = program.optimize,
         });
         module.addImport("harness", b.createModule(.{
             .root_source_file = b.path("bench/harness/harness.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = program.optimize,
         }));
         if (program.needs_loop) {
             module.addImport("core", graph.core);

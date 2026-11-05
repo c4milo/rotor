@@ -174,6 +174,13 @@ Nothing below is measured. Each cost is an estimate from recorded rows where one
 
 1. **The switch, first, before anything is built.** `docs/costs.md` gains a row: one fiber switch
    out and back with `std.Io.fiber`, on `mac`, `orbstack` and `github`.
+   **Started on 2026-11-04**, by Camilo's choice of that day, after colibri's decision 150 made
+   its `serve` module run on this adapter by default. The row is C26, and its probe is
+   `bench/costs/probes/probes_fiber.zig`. No quiet run has filled a cell yet. The probe found that
+   std's `contextSwitch` faults in an optimized build on aarch64, from three errors in its clobber
+   lists, which the probe's comment names: two on macOS and Linux, and one on Linux only. Zig
+   0.17.1 has the same lists. So the adapter cannot call std's switch as it is: it needs its own
+   copy with the lists corrected, as the probe has, or a fixed std.
 2. **The harness.** `std_io_echo` and `std_io_timers`, unchanged, run on the adapter beside
    `std.Io.Threaded`, beside `std.Io.Evented` where it compiles (`Dispatch` on macOS today), and
    beside `rotor_echo` and `rotor_timers` on rotor's own API. The gap to rotor's own programs is the

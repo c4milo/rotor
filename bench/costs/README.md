@@ -44,6 +44,7 @@ Each row has one command, `zig build bench-costs -- --row <id>`:
 | C23 | `probes/probes_memory.zig` | `@memcpy` of 64 KiB between two warm buffers |
 | C24 | `probes/probes_cross_process.zig` | C19 with the far side in a process made by `fork` |
 | C25 | `probes/probes_cross_process.zig` | a ring message plus decision 21's wake to a process blocked in its wait |
+| C26 | `probes/probes_fiber.zig` | a switch to a fiber and back; aarch64 and x86_64 only |
 
 Rows C7, C8, C9, C12, C13 and C17 need Linux and io_uring: C7 to C9 are in
 `probes/probes_linux.zig`, C12 and C13 in `probes/probes_linux_file.zig`, and C17 in
