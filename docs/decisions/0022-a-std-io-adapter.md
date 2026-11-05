@@ -213,7 +213,13 @@ Each step is one commit, and each commit passes `zig build test`.
 4. **The checks.** Guard pages, a futex woken from another thread, and the scenarios on io_uring and
    epoll in the Linux gate.
 5. **The numbers.** Check 2 of "How it is checked": `std_io_echo` and `std_io_timers` of the
-   harness on the adapter.
+   harness on the adapter. **The echo half ran early, on 2026-11-05**, after steps 1 and 2, because
+   Camilo asked whether the adapter harms rotor before step 3. The echo runner's candidate
+   `std.Io on rotor` is `std_io_echo` on the adapter. On GitHub's Linux runners it ran at 86 to 96
+   percent of rotor's own server on x86-64 and 71 to 91 percent on arm64, and ahead of
+   `std.Io.Threaded` on 13 of 16 rows; macOS gave no usable row
+   (`bench/results/adapter-echo-github-2026-11-05.md`). Camilo chose that day to go on with step 3.
+   kqueue's numbers wait for a quiet `mac`.
 
 What step 1 decided:
 
