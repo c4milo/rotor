@@ -19,8 +19,7 @@ const portable = @import("probes_memory.zig").probes ++
     @import("probes_syscall.zig").probes ++
     @import("probes_socket.zig").probes ++
     @import("probes_cross_core.zig").probes ++
-    @import("probes_cross_process.zig").probes ++
-    @import("probes_fiber.zig").probes;
+    @import("probes_cross_process.zig").probes;
 
 const one_kernel_only = switch (builtin.os.tag) {
     .macos => @import("probes_kqueue.zig").probes,

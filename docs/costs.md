@@ -134,13 +134,6 @@ file may be filled from a machine of another architecture, however convenient it
 | C23 | copy 64 KiB from one buffer to another | no prior | none | | | 1,587 (2,032) | |
 | C24 | one message between processes by a shared ring when the receiver is already awake | as C19 | decision 21 | 93.1 (94.1) | 91.8 (118) | | |
 | C25 | one message between processes by a shared ring plus decision 21's wake, post to reap: a pipe watched with `EVFILT_READ` on macOS, an eventfd polled from io_uring on Linux | near C17 and C18 | decision 21 | 25,709 (34,667) | 31,500 (49,375) | | |
-| C26 | one fiber switch out and back, with the instructions of `std.Io.fiber.contextSwitch` | tens of ns | recalled, decision 22 | | | | |
-
-C26 is decision 22's first check: a blocking call through a `std.Io` adapter costs two such switches
-beside the operation it wraps. Its probe was added on 2026-11-04, and no quiet run has filled a cell
-yet. On a busy `mac`, at a load average of 45, it took 4.96 ns, against 1.52 ns for a call of an
-empty function. That run is not a cell, by rule 1. The probe runs its own copy of std's switch,
-because std's own faults in an optimized build (`bench/costs/probes/probes_fiber.zig`).
 
 C22 and C23 have a `github` cell and no other. Both were added after the `mac` and `orbstack` runs
 of that day, and this machine has not been idle since: rule 1 stands, so their two cells stay empty

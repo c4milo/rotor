@@ -5,7 +5,8 @@ performance, and its API follows rotor's own primitives (open question 1). **Def
 day: nothing is started, the fiber switch's measurement included, until Camilo asks for it.
 **Started** on 2026-11-04 with check 1, and **built** from 2026-11-05 by Camilo's choice of that
 day, in the steps of "How it is built". **Removed** the same day, after step 3, by Camilo's
-choice: "Why it was removed" says why. Check 1, row C26 of `docs/costs.md`, stays. Proposed on
+choice: "Why it was removed" says why. Check 1, row C26 of `docs/costs.md` and its probe
+(`b2bcf60`), went with it, because only the adapter needed a fiber switch. Proposed on
 2026-09-26. Decision 1 chose a completion-based core with a
 `std.Io` adapter over it, and decision 2 left the adapter out of version one: "deferred, not
 refused". Version one is built, and on 2026-09-26 Camilo asked whether rotor can be offered through
