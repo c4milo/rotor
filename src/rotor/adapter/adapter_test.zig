@@ -14,29 +14,62 @@ pub const fiber_count = 4;
 
 pub const millisecond_ns = 1_000_000;
 
+/// The datagram group every fixture provides: group 0, of `group_buffers` buffers.
+pub const datagram_group = 0;
+pub const group_buffers = 8;
+pub const group_buffer_bytes = 512;
+
+/// The longest datagram queue a fixture's adapter is sized for.
+pub const queue_max = group_buffers;
+
+/// The datagram sockets a fixture's adapter receives on at once.
+pub const datagram_sockets = 4;
+
 var loop_memory: [rotor.Loop.memory_bytes(loop_options)]u8 align(rotor.memory_alignment) = undefined;
+var group_memory: [rotor.buffers.group_bytes(group_buffers, group_buffer_bytes)]u8 align(rotor.buffers.group_alignment) = undefined;
 var adapter_memory: [
     adapter_module.memory_bytes(.{
         .fibers = fiber_count,
         .stack_bytes = adapter_module.adapter_constants.stack_bytes_min,
         .rest = undefined,
+        .datagram_group = datagram_group,
+        .datagram_sockets = datagram_sockets,
+        .datagram_queue = queue_max,
     })
 ]u8 align(adapter_module.memory_alignment) = undefined;
 
-/// A loop, a `std.Io.Threaded` for `rest`, and the adapter over both.
+/// What a fixture differs by.
+pub const Setup = struct {
+    handler: ?adapter_module.Handler = null,
+    /// Each socket's datagram queue, at most `queue_max`.
+    queue: u16 = queue_max,
+    file_policy: rotor.offload.FilePolicy = .refuse,
+};
+
+/// A loop with a datagram group, a `std.Io.Threaded` for `rest`, and the adapter over both.
 pub const Fixture = struct {
     loop: rotor.Loop,
     threaded: Io.Threaded,
     adapter: Adapter,
 
     pub fn init(fixture: *Fixture, handler: ?adapter_module.Handler) !void {
-        try fixture.loop.init(&loop_memory, loop_options);
+        return fixture.init_with(.{ .handler = handler });
+    }
+
+    pub fn init_with(fixture: *Fixture, setup: Setup) !void {
+        var options = loop_options;
+        options.file_policy = setup.file_policy;
+        try fixture.loop.init(&loop_memory, options);
+        try fixture.loop.provide_datagram_buffers(datagram_group, &group_memory, group_buffers, group_buffer_bytes, .{});
         fixture.threaded = .init_single_threaded;
         fixture.adapter.init(&fixture.loop, &adapter_memory, .{
             .fibers = fiber_count,
             .stack_bytes = adapter_module.adapter_constants.stack_bytes_min,
             .rest = fixture.threaded.io(),
-            .handler = handler,
+            .handler = setup.handler,
+            .datagram_group = datagram_group,
+            .datagram_sockets = datagram_sockets,
+            .datagram_queue = setup.queue,
         });
     }
 

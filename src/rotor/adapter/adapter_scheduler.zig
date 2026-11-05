@@ -15,6 +15,8 @@ const rotor = @import("../rotor.zig");
 const constants = @import("constants.zig");
 const adapter_module = @import("adapter.zig");
 const switching = @import("adapter_switch.zig");
+const datagram = @import("adapter_datagram.zig");
+const tasks = @import("adapter_tasks.zig");
 const Adapter = adapter_module.Adapter;
 const Fiber = adapter_module.Fiber;
 const Index = adapter_module.Index;
@@ -23,6 +25,10 @@ const index_none = adapter_module.index_none;
 
 const index_mask: u64 = (@as(u64, 1) << constants.user_data_tag_shift) - 1;
 const tag_mask: u64 = ~index_mask;
+
+/// The bit of `user_data`, below the tag, that marks an event of a socket's standing datagram
+/// receive. The bits below it hold the socket's index in the datagram table.
+pub const datagram_bit: u64 = @as(u64, 1) << (constants.user_data_tag_shift - 1);
 
 /// The result a wait ends with when a cancel ended it.
 pub const canceled_result: i32 = -@as(i32, @intFromEnum(rotor.Code.canceled));
@@ -161,6 +167,24 @@ pub fn submit_with_deadline(adapter: *Adapter, kind: rotor.Operation.Kind, timeo
     fiber.handle = handles[0];
 }
 
+/// Runs one operation for the running context, a cancel point, and returns its result.
+pub fn perform(adapter: *Adapter, kind: rotor.Operation.Kind, timeout_ns: u64) error{Canceled}!i32 {
+    const fiber = current(adapter);
+    try tasks.cancel_point(fiber);
+    submit_with_deadline(adapter, kind, timeout_ns);
+    block(adapter, .operation, true);
+    return end_wait(fiber);
+}
+
+/// Submits an operation that belongs to no context, and returns its handle. When the loop has no
+/// free slot, ticks until an operation ends.
+pub fn submit_detached(adapter: *Adapter, operation: rotor.Operation) rotor.Handle {
+    var handles = [_]rotor.Handle{.none};
+    while (adapter.loop.submit(&.{operation}, &handles) == 0) tick(adapter);
+    assert(!handles[0].is_none());
+    return handles[0];
+}
+
 /// Asks the loop to end the operation context `index` waits for (decision 5, rule 2).
 pub fn cancel_operation(adapter: *Adapter, index: Index) void {
     const fiber = &adapter.fibers[index];
@@ -192,7 +216,12 @@ fn hand_over(adapter: *Adapter, event: rotor.Event) void {
         handler.handle(handler.context, event);
         return;
     }
-    // The adapter submits no multishot operation, so each of its events is a final one.
+    if (event.user_data & datagram_bit != 0) {
+        datagram.deliver(adapter, @intCast(event.user_data & (datagram_bit - 1)), event);
+        return;
+    }
+    // A standing datagram receive is the adapter's one multishot operation, so each event of a
+    // context's operation is a final one.
     assert(event.is_final());
     const index: Index = @intCast(event.user_data & index_mask);
     const fiber = &adapter.fibers[index];

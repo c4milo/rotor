@@ -45,6 +45,14 @@ pub const user_data_tag: u64 = 0xADA7 << user_data_tag_shift;
 /// Where the tag starts in `user_data`. The bits below it hold the fiber's index.
 pub const user_data_tag_shift: u6 = 48;
 
+/// The most sockets one adapter receives datagrams on at once: one standing receive each.
+pub const datagram_sockets_max: u16 = 1024;
+
+/// The most datagrams one socket's queue holds before a call takes them. A datagram that finds the
+/// queue full goes back to its group unread, as a kernel drops a datagram a full socket buffer
+/// cannot hold. A queue as long as the group's buffers drops none.
+pub const datagram_queue_max: u16 = 4096;
+
 comptime {
     assert(fibers_max < std.math.maxInt(u16));
     assert(stack_granule_bytes % (16 * 1024) == 0);

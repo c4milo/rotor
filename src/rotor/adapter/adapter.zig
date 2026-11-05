@@ -22,6 +22,9 @@ const scheduler = @import("adapter_scheduler.zig");
 const tasks = @import("adapter_tasks.zig");
 const wait = @import("adapter_wait.zig");
 const network = @import("adapter_net.zig");
+const datagram = @import("adapter_datagram.zig");
+const batch = @import("adapter_batch.zig");
+const file = @import("adapter_file.zig");
 const rest = @import("adapter_rest.zig");
 
 pub const adapter_constants = constants;
@@ -137,6 +140,14 @@ pub const Options = struct {
     rest: Io,
     /// Null when every event of the loop belongs to the adapter.
     handler: ?Handler = null,
+    /// The group the caller provided on the loop with `provide_datagram_buffers`, which each
+    /// socket's standing receive reads into, or null for an adapter that receives no datagram.
+    datagram_group: ?u16 = null,
+    /// The sockets that may receive datagrams at once, at most `constants.datagram_sockets_max`.
+    datagram_sockets: u16 = 0,
+    /// The datagrams each socket's queue holds, at most `constants.datagram_queue_max`. A queue as
+    /// long as the group's buffers drops none.
+    datagram_queue: u16 = 0,
 };
 
 /// The alignment of the memory `init` takes. The stacks inside it are aligned to
@@ -145,15 +156,18 @@ pub const Options = struct {
 /// Mach-O build placed such a static at 16 KiB.
 pub const memory_alignment = constants.closure_alignment;
 
-/// The bytes of memory `init` needs for `options`: the records, then the stacks.
+/// The bytes of memory `init` needs for `options`: the records, the datagram table, then the
+/// stacks.
 pub fn memory_bytes(options: Options) usize {
     check_options(options);
-    return records_bytes(options.fibers) + constants.stack_granule_bytes +
+    return records_bytes(options) + constants.stack_granule_bytes +
         @as(usize, options.fibers) * options.stack_bytes;
 }
 
-fn records_bytes(fibers: u16) usize {
-    return (@as(usize, fibers) + 1) * @sizeOf(Fiber);
+/// The fibers' records, then the datagram table and its queues: every part aligned to 8 bytes.
+fn records_bytes(options: Options) usize {
+    return (@as(usize, options.fibers) + 1) * @sizeOf(Fiber) +
+        datagram.table_bytes(options.datagram_sockets, options.datagram_queue);
 }
 
 fn check_options(options: Options) void {
@@ -162,6 +176,11 @@ fn check_options(options: Options) void {
     assert(options.stack_bytes >= constants.stack_bytes_min);
     assert(options.stack_bytes <= constants.stack_bytes_max);
     assert(options.stack_bytes % constants.stack_granule_bytes == 0);
+    assert(options.datagram_sockets <= constants.datagram_sockets_max);
+    assert(options.datagram_queue <= constants.datagram_queue_max);
+    // A table needs a group and a queue, and a group needs a table.
+    assert((options.datagram_sockets == 0) == (options.datagram_group == null));
+    assert((options.datagram_sockets == 0) == (options.datagram_queue == 0));
 }
 
 /// Any address of this variable names the thread that reads it, because each thread has its own.
@@ -186,6 +205,11 @@ pub const Adapter = struct {
     ready_tail: Index,
     free_head: Index,
     futex_head: Index,
+    datagram_group: ?u16,
+    /// One entry for each socket that may receive datagrams at once.
+    datagrams: []datagram.Socket,
+    /// Moves at every datagram event, so a batch that waits sees that one came.
+    datagram_epoch: u32,
     events: [constants.events_per_tick]rotor.Event,
 
     /// Runs on the thread that owns `loop`. `memory` holds at least `memory_bytes(options)`.
@@ -198,8 +222,9 @@ pub const Adapter = struct {
         check_options(options);
         assert(memory.len >= memory_bytes(options));
         const fiber_count = @as(usize, options.fibers) + 1;
-        const records: []Fiber = @ptrCast(@alignCast(memory[0 .. fiber_count * @sizeOf(Fiber)]));
-        const records_end = @intFromPtr(memory.ptr) + records_bytes(options.fibers);
+        const fibers_end = fiber_count * @sizeOf(Fiber);
+        const records: []Fiber = @ptrCast(@alignCast(memory[0..fibers_end]));
+        const records_end = @intFromPtr(memory.ptr) + records_bytes(options);
         const stacks_start = std.mem.alignForward(usize, records_end, constants.stack_granule_bytes) -
             @intFromPtr(memory.ptr);
         adapter.* = .{
@@ -215,6 +240,9 @@ pub const Adapter = struct {
             .ready_tail = index_none,
             .free_head = index_none,
             .futex_head = index_none,
+            .datagram_group = options.datagram_group,
+            .datagrams = datagram.carve(memory[fibers_end..records_bytes(options)], options),
+            .datagram_epoch = 0,
             .events = undefined,
         };
         for (records) |*record| record.* = .empty;
@@ -229,6 +257,8 @@ pub const Adapter = struct {
     pub fn deinit(adapter: *Adapter) void {
         assert(adapter.thread == thread_id());
         for (adapter.fibers[1..]) |record| assert(record.state == .free);
+        // Every socket that received datagrams is closed, so no standing receive is in flight.
+        for (adapter.datagrams) |entry| assert(entry.state == .free);
         adapter.* = undefined;
     }
 
@@ -295,6 +325,14 @@ const own = struct {
     pub const netSend = network.net_send;
     pub const netClose = network.net_close;
     pub const netShutdown = network.net_shutdown;
+    pub const operate = batch.operate;
+    pub const batchAwaitAsync = batch.batch_await_async;
+    pub const batchAwaitConcurrent = batch.batch_await_concurrent;
+    pub const batchCancel = batch.batch_cancel;
+    pub const fileReadPositional = file.file_read_positional;
+    pub const fileWritePositional = file.file_write_positional;
+    pub const fileSync = file.file_sync;
+    pub const fileClose = file.file_close;
 };
 
 /// Every call of `Io.VTable`: the adapter's own where `own` names it, and `rest`'s otherwise.
@@ -318,4 +356,6 @@ test {
     _ = @import("adapter_switch_test.zig");
     _ = @import("adapter_test_net.zig");
     _ = @import("adapter_net_errors.zig");
+    _ = @import("adapter_test_datagram.zig");
+    _ = @import("adapter_test_file.zig");
 }

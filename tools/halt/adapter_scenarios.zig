@@ -28,6 +28,32 @@ var adapter: Adapter align(@alignOf(Adapter)) = undefined;
 var second_adapter: Adapter align(@alignOf(Adapter)) = undefined;
 var threaded: Io.Threaded align(@alignOf(Io.Threaded)) = .init_single_threaded;
 
+/// A descriptor no process has open.
+const closed_descriptor = 4096;
+
+const group_buffers = 4;
+const group_buffer_bytes = 512;
+var group_memory: [rotor.buffers.group_bytes(group_buffers, group_buffer_bytes)]u8 align(rotor.buffers.group_alignment) = undefined;
+
+/// An adapter that receives datagrams: group 0, one socket, a queue as long as the group.
+fn datagram_options() adapter_module.Options {
+    var result = options();
+    result.datagram_group = 0;
+    result.datagram_sockets = 1;
+    result.datagram_queue = group_buffers;
+    return result;
+}
+
+const datagram_sizing: adapter_module.Options = .{
+    .fibers = fiber_count,
+    .stack_bytes = adapter_constants.stack_bytes_min,
+    .rest = undefined,
+    .datagram_group = 0,
+    .datagram_sockets = 1,
+    .datagram_queue = group_buffers,
+};
+var datagram_memory: [adapter_module.memory_bytes(datagram_sizing)]u8 align(adapter_module.memory_alignment) = undefined;
+
 fn options() adapter_module.Options {
     var result = good_options;
     result.rest = threaded.io();
@@ -183,6 +209,68 @@ fn end_on_this_thread() void {
     adapter.deinit();
 }
 
+/// Each of the four datagram option checks, with the other three kept, returns a size when it is
+/// deleted.
+fn size_too_many_datagram_sockets() void {
+    var bad = datagram_options();
+    bad.datagram_sockets = adapter_constants.datagram_sockets_max + 1;
+    scenario.reached_violation();
+    _ = adapter_module.memory_bytes(bad);
+}
+
+fn size_a_datagram_queue_too_long() void {
+    var bad = datagram_options();
+    bad.datagram_queue = adapter_constants.datagram_queue_max + 1;
+    scenario.reached_violation();
+    _ = adapter_module.memory_bytes(bad);
+}
+
+fn size_datagram_sockets_with_no_group() void {
+    var bad = datagram_options();
+    bad.datagram_group = null;
+    scenario.reached_violation();
+    _ = adapter_module.memory_bytes(bad);
+}
+
+fn size_datagram_sockets_with_no_queue() void {
+    var bad = datagram_options();
+    bad.datagram_queue = 0;
+    scenario.reached_violation();
+    _ = adapter_module.memory_bytes(bad);
+}
+
+/// With the check deleted, the receive finds no entry free in an empty table, and returns
+/// `SystemResources`.
+fn receive_with_no_datagram_group() void {
+    start(false);
+    const io = adapter.io();
+    var message: [1]Io.net.IncomingMessage = @splat(.init);
+    var bytes: [8]u8 = undefined;
+    scenario.reached_violation();
+    _ = io.operate(.{ .net_receive = .{
+        .socket_handle = closed_descriptor,
+        .message_buffer = &message,
+        .data_buffer = &bytes,
+        .flags = .{},
+    } }) catch {};
+}
+
+/// The socket received a datagram, so its standing receive is in flight. With the check deleted,
+/// deinit returns.
+fn end_with_a_datagram_socket_open() void {
+    loop.init(&loop_memory, loop_options) catch return;
+    loop.provide_datagram_buffers(0, &group_memory, group_buffers, group_buffer_bytes, .{}) catch return;
+    adapter.init(&loop, &datagram_memory, datagram_options());
+    const io = adapter.io();
+    const address: Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+    const socket = address.bind(io, .{ .mode = .dgram }) catch return;
+    socket.send(io, &socket.address, "x") catch return;
+    var bytes: [8]u8 = undefined;
+    _ = socket.receive(io, &bytes) catch return;
+    scenario.reached_violation();
+    adapter.deinit();
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "adapter: a call from another thread", .run = call_from_another_thread },
     .{ .name = "adapter: memory one byte short", .run = give_memory_one_byte_short },
@@ -197,6 +285,12 @@ const scenarios = [_]scenario.Scenario{
     .{ .name = "adapter: await a group on another adapter", .run = await_a_group_on_another_adapter },
     .{ .name = "adapter: cancel a group on another adapter", .run = cancel_a_group_on_another_adapter },
     .{ .name = "adapter: deinit from another thread", .run = end_from_another_thread },
+    .{ .name = "adapter: too many datagram sockets", .run = size_too_many_datagram_sockets },
+    .{ .name = "adapter: a datagram queue too long", .run = size_a_datagram_queue_too_long },
+    .{ .name = "adapter: datagram sockets with no group", .run = size_datagram_sockets_with_no_group },
+    .{ .name = "adapter: datagram sockets with no queue", .run = size_datagram_sockets_with_no_queue },
+    .{ .name = "adapter: a datagram receive with no group", .run = receive_with_no_datagram_group },
+    .{ .name = "adapter: deinit with a datagram socket open", .run = end_with_a_datagram_socket_open },
 };
 
 pub fn main(init: std.process.Init) !void {

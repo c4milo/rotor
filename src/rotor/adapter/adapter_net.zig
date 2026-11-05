@@ -19,16 +19,10 @@ const scheduler = @import("adapter_scheduler.zig");
 const tasks = @import("adapter_tasks.zig");
 const wait = @import("adapter_wait.zig");
 const errors = @import("adapter_net_errors.zig");
+const datagram = @import("adapter_datagram.zig");
 const Adapter = adapter_module.Adapter;
 
-/// Runs one operation for the running context, a cancel point, and returns its result.
-fn perform(adapter: *Adapter, kind: rotor.Operation.Kind, timeout_ns: u64) Io.Cancelable!i32 {
-    const fiber = scheduler.current(adapter);
-    try tasks.cancel_point(fiber);
-    scheduler.submit_with_deadline(adapter, kind, timeout_ns);
-    scheduler.block(adapter, .operation, true);
-    return scheduler.end_wait(fiber);
-}
+const perform = scheduler.perform;
 
 pub fn to_rotor(address: *const net.IpAddress) rotor.Address {
     return switch (address.*) {
@@ -202,11 +196,14 @@ pub fn net_send(
 }
 
 /// Closes each socket on the loop. A close is no cancel point: its error set has no `Canceled`.
+/// A socket's standing datagram receive ends first, and its entry is freed after the close.
 pub fn net_close(userdata: ?*anyopaque, handles: []const net.Socket.Handle) void {
     const adapter = adapter_module.from(userdata);
     for (handles) |handle| {
+        datagram.stop(adapter, handle);
         scheduler.submit(adapter, .{ .close = .{ .descriptor = handle } });
         scheduler.block(adapter, .operation, false);
+        datagram.release(adapter, handle);
     }
 }
 

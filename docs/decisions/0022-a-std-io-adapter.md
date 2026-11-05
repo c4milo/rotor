@@ -210,6 +210,7 @@ Each step is one commit, and each commit passes `zig build test`.
    `std.Io` alone, `examples/std_io_echo.zig`, which `tools/echo_check.zig` checks (check 4).
    **Built on 2026-11-05.**
 3. **Batches and files.** `operate`, the three `batch` calls, and the four file calls.
+   **Built on 2026-11-05.**
 4. **The checks.** Guard pages, a futex woken from another thread, and the scenarios on io_uring and
    epoll in the Linux gate.
 5. **The numbers.** Check 2 of "How it is checked": `std_io_echo` and `std_io_timers` of the
@@ -294,6 +295,44 @@ as a reset; a shutdown of the sending side that shuts the receiving side; a clos
 wait for its event; a bind that takes a stream socket and a listen that takes a datagram one; a
 read left to `rest`; an address that loses its port. The first two NOT CAUGHT, the read into an
 empty buffer and the shutdown, each gained a test.
+
+What step 3 decided, with Camilo's two choices of 2026-11-05:
+
+- **A standing receive for each socket.** rotor's `receive_from` is always multishot and reads into
+  a provided buffer group (decision 15), and std's `net_receive` takes the datagrams there are. So
+  the first receive on a socket starts one `receive_from` that stays in flight, and its datagrams
+  wait on the socket's queue, in their group buffers, until a call copies them out. The caller
+  names the group in the options, with how many sockets receive at once and how long each queue
+  is: the new limits `datagram_sockets_max` and `datagram_queue_max`. A datagram that finds the
+  queue full goes back to its group, as a kernel drops one a full socket buffer cannot hold. A
+  queue as long as the group drops none. The alternatives were a receive started and canceled for
+  each call, which drops what comes between, and receive left to `rest`, which answers
+  `WouldBlock` on a socket that does not block.
+- **A group with no free buffer ends the standing receive** on io_uring, kqueue and epoll alike, as
+  `buffers_exhausted`. The next call reports `SystemResources` once, and the call after it starts
+  a new receive, which takes the datagram the kernel kept.
+- **`netClose` stops a socket's standing receive itself.** It cancels the receive, waits for its
+  final event, then closes the socket. On kqueue the close's own event came first, so the close
+  could not be relied on to end the receive. A call that waits on a socket another task closes
+  returns `SocketUnconnected`.
+- **A batch completes on its `submitted` list.** Nothing of a batch is ever in flight on the loop,
+  so the adapter uses no `pending` list, and `batchCancel` has nothing to do. A batch waits on a
+  futex word that every datagram event moves.
+- **`operate` and a batch hand every other operation to `rest`**: the streaming file reads and
+  writes, and `device_io_control`. They run on the calling thread, and one that blocks holds the
+  loop's thread.
+- **A file call the loop refuses goes to `rest`.** On kqueue and epoll a loop refuses a file
+  operation with `unsupported` unless its caller named a policy (decision 18). io_uring runs it on
+  the loop whatever the policy says.
+
+Step 3's mutations, 23 of them, each CAUGHT: 17 against `test-rotor` and the 6 new assertions
+against `halt-check`. They break the queue (no drop when it is full, the head left in place, a
+buffer kept by a call or by a close), the message (no `trunc` mark, a made-up sender), the close
+(no cancel of the standing receive, a closing socket not refused), a failure not kept, the batch
+(its tail left behind, its deadline ignored, its receive left to `rest`), and the file calls (no
+fallback to `rest`, a read into an empty buffer, a sync not made, a close that does not wait). One
+more, which removed the check for an entry freed while a call waited, was NOT CAUGHT. No order of
+events reaches that check, so the check is gone and a comment says why.
 
 ## Open questions
 
