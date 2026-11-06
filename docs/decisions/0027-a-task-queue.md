@@ -639,6 +639,35 @@ workload.
   times: twice to replay, and once with every task at another address.
 - `dispatch.zig`: a task that a record queues, a task that a poller queues, a task that schedules
   itself, and `discard_tasks`.
+- `dispatch_test.zig`: the seeded property test of `Dispatch` against the reference model of
+  `dispatch_test_model.zig`, added on 2026-11-06. It runs 64 seeds of 300 steps, each seed three
+  times, as `tasks_test.zig` does. The steps are these:
+  - the program adds and removes pollers, and an add can find the table full;
+  - the program notes operations with a record, and queues tasks between ticks;
+  - a tick calls `begin`, then `end` with a batch of events, or `abandon`;
+  - the program calls `discard_tasks` between ticks.
+
+  A batch holds `more` and final events with a record and plain events, in an order that the seed
+  shuffles. Records, pollers and tasks queue tasks inside the tick, and a record notes one more
+  operation. After every step the test checks P3, P7 and P9, the wait that `begin` returns,
+  `idle`, the order of the pollers and the order of the queue. P9 adds no oracle of its own: the
+  equal traces of P3 imply it. It also checks that the plain events come back in order, unchanged,
+  with `dispatched` clear. The test makes no call that halts by contract.
+
+  On 2026-11-06 I ran nineteen mutations of `dispatch.zig` against `zig build test-core`. Each one
+  was CAUGHT, and the property test failed on each one. Seven of them failed no other test:
+  - `note_submitted` that counts one for a batch;
+  - `idle` that ignores the pollers;
+  - `begin` that stops at the first poller that worked, or calls the pollers in reverse order;
+  - `call_records` that lowers the count on a `more` event, drops a plain `more` event, or sets
+    `dispatched` on a kept event.
+
+  The other twelve mutations also failed a unit test of `dispatch.zig`. They are listed here:
+  - `schedule` that does not count, and `discard_tasks` that does not lower the count;
+  - `idle` that ignores the count, and `begin` that ignores a queued task or a poller that worked;
+  - `end` that runs the tasks first, runs none, or subtracts with a compound operator;
+  - `call_records` that does not move a plain event, or skips the record of a `more` event;
+  - `remove_poller` that swaps the last poller in, and `add_poller` that refuses one poller early.
 - `shutdown.zig`: `drain` runs the queued tasks, and fails with `TasksStillQueued` at its bound.
 - `conformance_tasks.zig`, on every backend: a task that never stops beside a timer, where each task
   runs, and `drain`.

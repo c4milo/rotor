@@ -61,6 +61,7 @@ test {
     _ = datagram;
     _ = datagram_split;
     _ = dispatch;
+    _ = @import("dispatch_test.zig");
     _ = errno;
     _ = event;
     _ = file_call;
