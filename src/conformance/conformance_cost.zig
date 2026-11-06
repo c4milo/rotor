@@ -179,3 +179,32 @@ test "one operation of a batch submit stays under its bound" {
     }
     try expect_under(best_ns, submit_bound_ns, "one operation of a batch submit");
 }
+
+/// Tasks of the task cost: one full run of the queue (decision 27).
+const task_count = core.constants.tasks_per_tick_max;
+
+fn task_ran(_: *core.Task) void {}
+
+var cost_tasks: [task_count]core.Task align(@alignOf(core.Task)) = @splat(.{ .run = task_ran });
+
+/// One task, scheduled and then run in the `end` of a tick, spread over a full run: `schedule`'s
+/// owner check and push, the pop and the call. Measured on `mac` on 2026-11-06: 31 ns in Debug.
+/// The bound is ten times that.
+const task_bound_ns = 300;
+
+test "one task of a full run stays under its bound" {
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var events: [events_max]Event = undefined;
+
+    var best_ns: u64 = std.math.maxInt(u64);
+    for (0..attempts) |_| {
+        const started_ns = now_ns();
+        for (&cost_tasks) |*task| try loop.schedule(task);
+        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+        best_ns = @min(best_ns, (now_ns() - started_ns) / task_count);
+        try testing.expectEqual(@as(u32, 0), loop.tasks_queued());
+    }
+    try expect_under(best_ns, task_bound_ns, "one task of a full run");
+}

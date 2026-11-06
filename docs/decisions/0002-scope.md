@@ -23,6 +23,7 @@ Accept the proposal, with four additions, two exclusions it did not name, and on
 | cancellation | cancel one operation by handle; cancel every operation of one descriptor (`0005-cancellation.md`) |
 | cross-core | post one message into another loop (`0004-threading.md`), in the same process or, since 2026-09-25, in another process of the same group (`0021-loops-in-several-processes.md`) |
 | registration | buffers and descriptors, once, before use (`0003-speed-sources.md`) |
+| tasks | since 2026-11-06, a library's task, which the loop runs once in the `end` of a tick, a FIFO with a budget in tasks (`0027-a-task-queue.md`) |
 
 The four additions:
 

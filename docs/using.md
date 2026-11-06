@@ -401,8 +401,9 @@ byte of it.
 ## A library that shares a loop
 
 A library such as a resolver takes a `*Loop` from the application and owns no socket, thread or
-loop of its own. Several libraries may share one loop, and any of them may call `tick`
-(decision 26). What that needs:
+loop of its own. Several libraries may share one loop (decision 26). Only the program calls
+`tick`: a library submits, returns, and finishes its work in records, pollers and tasks
+(decision 27). What that needs:
 
 - Each operation of the library names a `Completion`, a record inside the library's own struct:
   `Operation.receive_from(0, socket, group).completion(&endpoint.receive)`. The tick calls the
@@ -413,9 +414,20 @@ loop of its own. Several libraries may share one loop, and any of them may call 
   with `Poller.init`. `loop.add_poller` adds it, and the loop calls it once in each tick before the
   tick waits. It returns true when the tick must not block, for example because work is left. At
   most `pollers_max` (8) pollers; one more returns `error.PollersFull`.
-- A callback or a poller may submit, cancel and give buffers back. A callback may add or remove a
-  poller; a poller may not. A callback or a poller that calls `tick` halts. Remove every poller
-  before `deinit`, which halts on one that is left.
+- Work that continues later, such as the caller's callback after an exchange ends, goes in a
+  `Task`, declared with `Task.init(Client, "done", Client.on_done)`. `loop.schedule(&client.done)`
+  queues it, and the loop calls it once. A task queued by the program, a poller or a record runs in
+  the same tick, after the records; a task queued by a task runs in the next tick. One tick runs at
+  most `tasks_per_tick_max` (64) tasks, in the order of the `schedule` calls, and does not block
+  while a task is queued. A long task splits its work: it reads `loop.task_budget_left()`, does at
+  most that many slices plus one, and schedules itself again. A task is queued on one loop at a
+  time, and `loop.is_scheduled` says whether it is. At most `tasks_queued_max` (65,536) are queued;
+  one more returns `error.TasksFull`.
+- A callback, a poller or a task may submit, cancel, give buffers back and schedule a task. A
+  callback or a task may add or remove a poller; a poller may not. Any of them that calls `tick`
+  halts. Remove every poller, and let every task run, before `deinit`, which halts on either.
+  `drain` runs the queued tasks; when a task never stops, it fails with `TasksStillQueued`, and
+  `loop.discard_tasks()` unlinks the tasks without a call.
 - An event of an operation that names no record, and a message another loop posted, go to the
   caller of `tick`, as before.
 - The library submits on the loop's thread only. A caller on another thread reaches it through a

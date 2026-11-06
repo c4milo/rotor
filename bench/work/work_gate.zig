@@ -43,6 +43,8 @@ const workloads = [_]Workload{
     .{ .name = "timer", .time_span = 1_000_000, .cachegrind_span = 10_000 },
     .{ .name = "batch", .time_span = 50_000, .cachegrind_span = 500 },
     .{ .name = "wait", .time_span = 200_000, .cachegrind_span = 5_000 },
+    .{ .name = "task", .time_span = 1_000_000, .cachegrind_span = 10_000 },
+    .{ .name = "tasks-64", .time_span = 50_000, .cachegrind_span = 500 },
 };
 
 /// The iterations of the short run, which the long run repeats before its own: they warm what the

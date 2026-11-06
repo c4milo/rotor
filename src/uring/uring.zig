@@ -51,7 +51,7 @@ pub const supported = @import("builtin").os.tag == .linux;
 
 pub const InitError = ring_module.InitError;
 pub const TickError = tick_module.TickError;
-pub const DrainError = TickError || error{StillInFlight};
+pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
 
 /// True when this kernel refuses the ring this backend needs, which is when a process should run
 /// the epoll backend instead (decision 20, open question 5). It asks the way `Loop.init` asks, with
@@ -338,17 +338,15 @@ pub const Loop = struct {
         return produced;
     }
 
-    /// Adds `poller`, which the loop calls once in each tick (decision 26).
-    pub fn add_poller(loop: *Loop, poller: *core.Poller) core.dispatch.AddPollerError!void {
-        loop.tables.assert_owner();
-        return loop.tables.dispatch.add_poller(poller);
-    }
-
-    /// Removes `poller`, which must have been added.
-    pub fn remove_poller(loop: *Loop, poller: *core.Poller) void {
-        loop.tables.assert_owner();
-        loop.tables.dispatch.remove_poller(poller);
-    }
+    // The pollers of decision 26 and the tasks of decision 27: `core.dispatch.Calls`.
+    const dispatch_calls = core.dispatch.Calls(Loop);
+    pub const add_poller = dispatch_calls.add_poller;
+    pub const remove_poller = dispatch_calls.remove_poller;
+    pub const schedule = dispatch_calls.schedule;
+    pub const is_scheduled = dispatch_calls.is_scheduled;
+    pub const tasks_queued = dispatch_calls.tasks_queued;
+    pub const task_budget_left = dispatch_calls.task_budget_left;
+    pub const discard_tasks = dispatch_calls.discard_tasks;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.

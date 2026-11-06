@@ -31,6 +31,7 @@ pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
 pub const sync = @import("sync.zig");
 pub const tables = @import("tables.zig");
+pub const tasks = @import("tasks.zig");
 pub const timer_heap = @import("timer_heap.zig");
 pub const waiters = @import("waiters.zig");
 
@@ -38,6 +39,8 @@ pub const Address = operation.Address;
 pub const Code = event.Code;
 pub const Completion = dispatch.Completion;
 pub const Poller = dispatch.Poller;
+pub const Task = tasks.Task;
+pub const ScheduleError = tasks.ScheduleError;
 pub const Descriptor = operation.Descriptor;
 pub const Delivery = datagram.Delivery;
 pub const Error = event.Error;
@@ -56,6 +59,7 @@ test {
     _ = constants;
     _ = datagram;
     _ = datagram_split;
+    _ = dispatch;
     _ = errno;
     _ = event;
     _ = file_call;
@@ -81,6 +85,8 @@ test {
     _ = sync;
     _ = tables;
     _ = @import("tables_test.zig");
+    _ = tasks;
+    _ = @import("tasks_test.zig");
     _ = timer_heap;
     _ = waiters;
     _ = @import("waiters_test.zig");

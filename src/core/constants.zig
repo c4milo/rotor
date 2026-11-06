@@ -122,6 +122,21 @@ comptime {
     std.debug.assert(pollers_max >= 1);
 }
 
+/// The most tasks one run of the task queue starts, in the `end` of one tick (decision 27). A prior
+/// and not a measurement: of the order of Tokio's `event_interval` of 61 and its budget of 128. At
+/// the prior of about 4.3 ns for a hot task, 64 tasks take about 275 ns, less than one `kevent`.
+pub const tasks_per_tick_max: u32 = 64;
+
+/// The most tasks queued on one loop at one time (decision 27). The queue is intrusive and holds no
+/// storage of its own, so this bounds a producer that does not stop: `schedule` returns
+/// `error.TasksFull` at it.
+pub const tasks_queued_max: u32 = 65536;
+
+comptime {
+    std.debug.assert(tasks_per_tick_max >= 1);
+    std.debug.assert(tasks_per_tick_max <= tasks_queued_max);
+}
+
 /// The most provided-buffer groups one loop may hold, and the most buffers in one group. 32768 is
 /// the most entries an io_uring buffer ring takes (recalled).
 pub const buffer_groups_max: u16 = 16;

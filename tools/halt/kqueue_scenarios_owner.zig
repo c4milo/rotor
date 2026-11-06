@@ -227,7 +227,24 @@ fn end_the_remote_on_this_thread() void {
     remote.deinit();
 }
 
+fn ran_nothing(_: *core.Task) void {}
+
+var task: core.Task align(@alignOf(core.Task)) = .{ .run = ran_nothing };
+
+/// `schedule` from a second thread (decision 27). With the check deleted, the task is queued and
+/// the call returns.
+fn schedule_a_task_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(schedule_a_task_on_this_thread);
+}
+
+fn schedule_a_task_on_this_thread() void {
+    scenario.reached_violation();
+    loop.schedule(&task) catch {};
+}
+
 pub const scenarios = [_]scenario.Scenario{
+    .{ .name = "owner: schedule a task from another thread", .run = schedule_a_task_from_another_thread },
     .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "owner: tick from another thread", .run = tick_from_another_thread },
     .{ .name = "owner: cancel from another thread", .run = cancel_from_another_thread },

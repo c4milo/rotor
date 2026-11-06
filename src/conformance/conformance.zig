@@ -155,5 +155,6 @@ test {
     _ = @import("conformance_udp_burst.zig");
     _ = @import("conformance_buffer_release.zig");
     _ = @import("conformance_dispatch.zig");
+    _ = @import("conformance_tasks.zig");
     _ = @import("conformance_wait_descriptor.zig");
 }

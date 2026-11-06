@@ -99,6 +99,12 @@ event has been queued. The caller sees the cancelled operations' final events, t
 operation, and `drain` ticks until the loop is empty or a named bound of rounds passes, and
 returns an error when the bound passes first.
 
+Amended on 2026-11-06 by decision 27. An empty loop also has no task queued and no poller added,
+and `deinit` asserts both. `drain` ticks while a task is queued too, so each queued task runs. When
+the bound passes with operations in flight, it fails with `StillInFlight`, as before. When only
+tasks are left, it fails with `TasksStillQueued`: the kernel holds nothing, and `discard_tasks`
+unlinks the tasks without a call so that `deinit` may run.
+
 ### What kqueue does to look the same
 
 An operation waiting for readiness is cancelled by deleting its filter in the next changelist.

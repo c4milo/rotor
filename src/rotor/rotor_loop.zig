@@ -73,7 +73,7 @@ pub const Loop = struct {
 
     pub const InitError = if (linux) uring.InitError || epoll.InitError else kqueue.InitError;
     pub const TickError = if (linux) uring.TickError || epoll.TickError else kqueue.TickError;
-    pub const DrainError = TickError || error{StillInFlight};
+    pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
     pub const RegisterError = if (linux)
         uring.buffers.RegisterError || uring.descriptors.RegisterError ||
             epoll.buffers.RegisterError || epoll.descriptors_module.RegisterError
@@ -222,6 +222,41 @@ pub const Loop = struct {
         switch (loop.inner) {
             inline else => |*inner| inner.remove_poller(poller),
         }
+    }
+
+    /// Asks the loop to call `task.run` once, later (decision 27).
+    pub fn schedule(loop: *Loop, task: *core.Task) core.ScheduleError!void {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.schedule(task),
+        };
+    }
+
+    /// True while `task` is queued on this loop.
+    pub fn is_scheduled(loop: *const Loop, task: *const core.Task) bool {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.is_scheduled(task),
+        };
+    }
+
+    /// The tasks queued now.
+    pub fn tasks_queued(loop: *const Loop) u32 {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.tasks_queued(),
+        };
+    }
+
+    /// `tasks_per_tick_max` less the tasks the current run started, and 0 outside a run.
+    pub fn task_budget_left(loop: *const Loop) u32 {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.task_budget_left(),
+        };
+    }
+
+    /// Unlinks every queued task without a call, after `drain` returned `TasksStillQueued`.
+    pub fn discard_tasks(loop: *Loop) u32 {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.discard_tasks(),
+        };
     }
 
     /// Operations that have not had their final event.

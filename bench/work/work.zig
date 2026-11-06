@@ -20,6 +20,10 @@
 //! - `wait`: the loop wakes itself and ticks with a wait, which the wake ends at once: the whole
 //!   path of a tick that blocks. kqueue and epoll only; on io_uring a loop has no call that wakes
 //!   itself, and the program exits with `unsupported_status`.
+//! - `task`: one task scheduled and run by one tick (decision 27): the whole of a tick that exists
+//!   only to run a task.
+//! - `tasks-64`: `core.constants.tasks_per_tick_max` tasks scheduled and run by one tick: the run
+//!   loop.
 //!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
@@ -31,7 +35,7 @@ const Loop = backend.Loop;
 const Event = core.Event;
 const Operation = core.Operation;
 
-pub const Workload = enum { post, post_operation, timer, batch, wait };
+pub const Workload = enum { post, post_operation, timer, batch, wait, task, tasks_64 };
 
 /// The exit status of a workload this backend cannot run.
 pub const unsupported_status: u8 = 2;
@@ -76,6 +80,12 @@ var first: Side align(@alignOf(Side)) = .{};
 var second: Side align(@alignOf(Side)) = .{};
 var batch: [batch_operations]Operation align(@alignOf(Operation)) = undefined;
 
+fn ran_nothing(_: *core.Task) void {}
+
+/// The tasks of `task` and `tasks-64`, each run once in each iteration.
+var tasks: [core.constants.tasks_per_tick_max]core.Task align(@alignOf(core.Task)) =
+    @splat(.{ .run = ran_nothing });
+
 /// True when this backend's loop can wake itself, which `wait` needs: kqueue and epoll, whose loop
 /// holds the descriptor a post's wake would reach.
 const can_wake_itself = @hasField(Loop, "queue");
@@ -97,10 +107,15 @@ pub fn main(init: std.process.Init) !void {
     defer second.loop.deinit();
     for (&batch, 0..) |*operation, index| operation.* = Operation.timer(index, 0, 0);
 
-    for (0..iterations) |_| try run(workload);
+    // One loop for each workload, chosen at compile time, so the code that one workload counts does
+    // not move when another workload is added. With one switch inside one loop, the two task
+    // workloads of 2026-11-06 made `post` count 15 more instructions without a change to rotor.
+    switch (workload) {
+        inline else => |chosen| for (0..iterations) |_| try run(chosen),
+    }
 }
 
-fn run(workload: Workload) !void {
+fn run(comptime workload: Workload) !void {
     switch (workload) {
         .post => {
             try first.loop.post(second_id, ping);
@@ -125,6 +140,14 @@ fn run(workload: Workload) !void {
             try first.expect(batch_operations);
         },
         .wait => try wait_once(),
+        .task => {
+            try first.loop.schedule(&tasks[0]);
+            try first.expect(0);
+        },
+        .tasks_64 => {
+            for (&tasks) |*task| try first.loop.schedule(task);
+            try first.expect(0);
+        },
     }
 }
 
@@ -150,5 +173,7 @@ pub fn workload_of(name: []const u8) ?Workload {
     if (std.mem.eql(u8, name, "timer")) return .timer;
     if (std.mem.eql(u8, name, "batch")) return .batch;
     if (std.mem.eql(u8, name, "wait")) return .wait;
+    if (std.mem.eql(u8, name, "task")) return .task;
+    if (std.mem.eql(u8, name, "tasks-64")) return .tasks_64;
     return null;
 }

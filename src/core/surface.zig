@@ -21,6 +21,11 @@ pub const loop_declarations = [_][]const u8{
     "tick",
     "add_poller",
     "remove_poller",
+    "schedule",
+    "is_scheduled",
+    "tasks_queued",
+    "task_budget_left",
+    "discard_tasks",
     "in_flight",
     "now_ns",
     "wait_descriptor",
@@ -78,6 +83,11 @@ const Complete = struct {
     pub fn tick() void {}
     pub fn add_poller() void {}
     pub fn remove_poller() void {}
+    pub fn schedule() void {}
+    pub fn is_scheduled() void {}
+    pub fn tasks_queued() void {}
+    pub fn task_budget_left() void {}
+    pub fn discard_tasks() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}
     pub fn wait_descriptor() void {}

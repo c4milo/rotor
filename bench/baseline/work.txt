@@ -35,6 +35,13 @@
 # 42262757947) the change cost +0.5 to +2.8 percent; several rows failed because the parent already
 # sat 1.5 to 1.8 percent over them. The two epoll `wait` rows were lowered to that run's counts, as
 # the gate asked.
+#
+# `task` and `tasks-64` were added on 2026-11-06 for decision 27: one tick that runs one task, and
+# one that runs `tasks_per_tick_max` tasks. The macOS rows are from `mac`, and the linux-aarch64
+# rows from cachegrind in an arm64 container on `mac`. The linux-x86_64 sections have no rows for
+# them yet, so the gate holds them to nothing there until an x86-64 count is taken. The same day
+# `work.zig` began to compile one loop for each workload, because with one switch inside one loop
+# the two new workloads made `post` count 15 more instructions with no change to rotor.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
@@ -42,6 +49,8 @@ post-operation 3051
 timer 1111
 batch 24624
 wait 5408
+task 610
+tasks-64 4407
 section linux-x86_64-uring
 post 1176
 post-operation 3030
@@ -58,9 +67,13 @@ post 1029
 post-operation 2794
 timer 1025
 batch 23757
+task 531
+tasks-64 3692
 section linux-aarch64-epoll
 post 1212
 post-operation 3019
 timer 1092
 batch 23845
-wait 669
+wait 655
+task 607
+tasks-64 3768

@@ -1,6 +1,6 @@
 # 27. A task queue on the loop
 
-Status: proposed on 2026-11-06, and **accepted** by Camilo the same day, with the proposed answer to each open question. "Ruling" below says what he decided. It amends decision 2, because it adds a row to the "In version one" table. It builds on decision 26, which Camilo accepted and built on 2026-11-06. It also amends these records:
+Status: proposed on 2026-11-06, **accepted** by Camilo the same day, with the proposed answer to each open question, and **built** the same day. "Ruling" below says what he decided, and "What was built" at the end says where the code differs from the proposal. It amends decision 2, because it adds a row to the "In version one" table. It builds on decision 26, which Camilo accepted and built on 2026-11-06. It also amends these records:
 
 - decision 26, at its counter, its `begin`, its `end` and its `deinit` check, and at who may tick;
 - decision 5, rule 7, at `drain`;
@@ -588,3 +588,71 @@ These are in the order that Camilo should rule on them.
 - libxev: https://github.com/mitchellh/libxev
 - Go runtime `proc.go`: https://github.com/golang/go/blob/master/src/runtime/proc.go
 - Zig 0.16 release notes, `std.Io`: https://ziglang.org/download/0.16.0/release-notes.html
+
+## What was built
+
+Built on 2026-11-06. The code is `src/core/tasks.zig`, the queue in `src/core/dispatch.zig`, the
+calls each backend's `Loop` exports through `core.dispatch.Calls`, and `shutdown.drain`. It
+differs from the proposal in four places.
+
+1. **One counter (open question 3).** The queued tasks fold into `callbacks_owed`. With the queue
+   in place, a third compare in `idle()` counted 4 more instructions on the work gate's `post` and
+   7 on `post-operation` on `mac`. The gate's counts are the same on every run, so that cost is
+   measurable, and the ruling chose the fold. No class B check of `tasks.count <= callbacks_owed`
+   was built. A scenario cannot prove it: with the check deleted, the run's own subtraction
+   underflows and halts. The overflow checks of the subtractions stay.
+2. **The class D walk is a function the tests call**, `Tasks.assert_queue`, as the slot table's
+   and the timer heap's are. `push` and `run` do not call it.
+3. **The owner checks are in one place.** `core.dispatch.Calls(Loop)` holds the pollers' and the
+   tasks' calls once, for all three backends. So one halt scenario in each of the kqueue and the
+   epoll owner files proves the check.
+4. **`end` calls `run` before it subtracts.** A compound `callbacks_owed -= tasks.run()` reads the
+   count before the call, and loses the 1 that a task adds when it schedules a task. The kqueue
+   conformance suite found it as an integer overflow.
+
+### What it measured
+
+The instruction gate, on `mac` with `/usr/bin/time -l`, and on arm64 Linux with cachegrind in a
+container on `mac`. A program that schedules no task pays nothing that the gate shows: `post`
+counted 1236 against 1241 before this record, on `mac`.
+
+| workload | kqueue | io_uring | epoll |
+|---|---:|---:|---:|
+| `task`: one tick that runs one task | 610 | 531 | 607 |
+| `tasks-64`: one tick that runs 64 tasks | 4407 | 3692 | 3768 |
+
+The cost gate of `conformance_cost.zig` read 31 ns in Debug on `mac` for one task of a full run,
+`schedule` and the run together. Its bound is 300 ns.
+
+The work gate first counted 15 more instructions on `post` with the two task workloads added. The
+cause was the bench, not rotor: `work.zig` ran every workload through one switch inside one loop,
+and the new cases changed how the compiler laid out that loop. It now compiles one loop for each
+workload.
+
+### How it is checked
+
+- `tasks.zig`: eight unit tests for order, the budget, the snapshot, a full queue, a task that
+  frees its record, `left`, a head that schedules itself, and `discard`.
+- `tasks_test.zig`: the seeded property test against a reference model, 64 seeds, each run three
+  times: twice to replay, and once with every task at another address.
+- `dispatch.zig`: a task that a record queues, a task that a poller queues, a task that schedules
+  itself, and `discard_tasks`.
+- `shutdown.zig`: `drain` runs the queued tasks, and fails with `TasksStillQueued` at its bound.
+- `conformance_tasks.zig`, on every backend: a task that never stops beside a timer, where each task
+  runs, and `drain`.
+- `tools/halt/core_scenarios_tasks.zig`: six halt scenarios, and one owner scenario in each of the
+  kqueue and the epoll owner files.
+
+Mutations, 23, each CAUGHT. Against `zig build test-core`:
+
+- the budget ignored, the snapshot removed, and `push` at the head;
+- `begin` that ignores a queued task, `schedule` that does not count, and the tasks run before the
+  records;
+- the pop that keeps the link or the tail, `push` with no `TasksFull`, and `drain` that ignores the
+  queue;
+- `discard` that does not lower the count, `left` not reset, and `idle` that ignores the count;
+- the compound subtraction, and `end` that runs no task.
+
+Against `zig build halt-check`: the checks of a task queued twice, of a head before the pop, of a
+tail beside the head, of the walk, of `discard_tasks` in a tick, of the owner, and of a task left at
+`deinit`. Against the kqueue conformance suite: a `Loop.schedule` that skips the count.
