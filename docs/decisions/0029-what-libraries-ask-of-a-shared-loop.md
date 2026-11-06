@@ -1,8 +1,19 @@
 # 29. What libraries on a shared loop ask of it
 
-Status: proposed on 2026-11-06. Nothing is built. Every cost here is a prior: a row of
+Status: accepted on 2026-11-06 (see "Ruling"). Every cost here is a prior: a row of
 `docs/costs.md` at the `mac` median, or an instruction count from arithmetic. Nothing was measured
-for this record.
+for this record before the ruling.
+
+## Ruling, 2026-11-06
+
+Camilo accepted this record with the proposed answer to each open question, and the "Ask before"
+items it lists:
+
+1. **`reserve_group` returns a `BufferGroup`**, which the library keeps, and each call that names a
+   group takes one (open question 1).
+2. **A reservation ends at the loop's `deinit`**, and no call gives it back (open question 2).
+3. **It is built with decision 28, before the `v0.10.0` tag** (open question 3). Decision 28 is
+   built first, because this record builds on its `SharedLoop`.
 
 It builds on decision 28: a library holds a `*rotor.SharedLoop`, and the handlers keep their
 parameters. `SharedLoop` gains `reserve_group`, as decision 28 says. It amends these records:

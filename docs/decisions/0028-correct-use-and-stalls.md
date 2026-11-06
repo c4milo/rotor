@@ -1,8 +1,18 @@
 # 28. A shared loop that refuses wrong use, and stalls a program can see
 
-Status: proposed on 2026-11-06. Nothing is built. Every cost here is a prior: a row of
+Status: accepted on 2026-11-06 (see "Ruling"). Every cost here is a prior: a row of
 `docs/costs.md` at the `mac` median, or an instruction count from arithmetic. Nothing was measured
-for this record.
+for this record before the ruling.
+
+## Ruling, 2026-11-06
+
+Camilo accepted this record with the proposed answer to each open question, and the "Ask before"
+items it lists:
+
+1. **The stall count is exact** (open question 1): one compare in each tick. Decision 9 gains rule 7.
+2. **The `task` and `tasks-64` baselines rise to the measured counts** (open question 2), so the
+   store of `running` for each callback stays, and a watch can name the stuck callback.
+3. **It lands with decision 29, before the next tag**, so each consumer moves once.
 
 It amends these records:
 
