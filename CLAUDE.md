@@ -255,7 +255,9 @@ was about to push.
   does not read, begin at `const testing = std.testing;`.
 - Test: `zig build test` — the lint, every module's unit tests, the conformance suite (which
   skips on a host its backend cannot run on, and runs a second time with every harness loop given a
-  50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the halt check, the tools' own tests, the bench
+  50 µs spin budget through `ROTOR_CONFORMANCE_SPIN_NS`, decision 13), the conformance suite once
+  more with each reaped batch shuffled from a seed (`-Dshuffle-seed=N`, 1 by default; decision 10,
+  amendment of 2026-11-06), the halt check, the tools' own tests, the bench
   executables' compile, every example built and checked, the hook check and the format check. Every change passes it before it
   is committed. It passes on a Linux host too, where the kqueue suite and its halt scenarios are
   not built, because that backend names libc's kevent types.
@@ -270,7 +272,9 @@ was about to push.
   by what the kernel allows, and each run takes the other branch. The run with io_uring is also the
   only one that shows a process that requires epoll running epoll where the kernel gives a ring
   (decision 23). `conformance-uring` and
-  `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's.
+  `conformance-epoll` run a second time with a spin budget, as `zig build test` runs the host's,
+  and a third time shuffled, as `conformance-uring-shuffle-seed-N` and
+  `conformance-epoll-shuffle-seed-N`.
   Each example then runs both ways too, against its checker when it has one. It prints the kernel release the container sees, because decision 2 sets the floor at
   Linux 6.17, and the probe exits non-zero naming the first feature of that record's table that
   the kernel lacks. Last, the script runs the halt check, built for Linux, on the scenarios a Mac

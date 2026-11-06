@@ -22,6 +22,7 @@ const timer_heap_module = @import("timer_heap.zig");
 const waiters_module = @import("waiters.zig");
 const deadline = @import("tables_deadline.zig");
 const Dispatch = @import("dispatch.zig").Dispatch;
+const Shuffle = @import("shuffle.zig").Shuffle;
 
 const Code = event_module.Code;
 const Descriptor = operation_module.Descriptor;
@@ -80,6 +81,9 @@ pub const Tables = struct {
     spin: spin_module.Window,
     /// The pollers, and the count of operations that named a record (decision 26).
     dispatch: Dispatch,
+    /// The generator of the seeded shuffle of each reaped batch, which only a test build carries
+    /// (decision 10, amendment of 2026-11-06). Off, it has no bytes.
+    shuffle: Shuffle,
 
     pub const Options = struct {
         id: LoopId = 0,
@@ -113,6 +117,7 @@ pub const Tables = struct {
         tables.id = options.id;
         tables.spin = .{ .budget_ns = options.spin_budget_ns, .active_ns = 0 };
         tables.dispatch = .empty;
+        tables.shuffle = .init(options.id);
     }
 
     /// Records that the backend registered `count` descriptors: once per loop, before an

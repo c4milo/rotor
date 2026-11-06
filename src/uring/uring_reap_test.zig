@@ -332,3 +332,22 @@ test "the wait timer's completions yield no event, and one that fired leaves it 
     try testing.expectEqual(none, fixture.cancel_answer(constants.user_data_wait_timer, .TIME));
     try testing.expectEqual(@as(u64, 0), fixture.loop.wait_timer_deadline_ns);
 }
+
+test "a shuffled build notes a close's final event as a barrier, when the close fails too" {
+    if (!core.shuffle.enabled) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const shuffle = &fixture.loop.tables.shuffle;
+    const receive = fixture.receive(1);
+    const close = fixture.start(Operation.close(2, 5));
+    // The receive the close cancelled is no barrier, and the close is.
+    _ = fixture.fail(receive, .CANCELED).?;
+    try testing.expect(!shuffle.barrier);
+    _ = fixture.complete(close.to_bits(), 0, 0).?;
+    try testing.expect(shuffle.barrier);
+    shuffle.barrier = false;
+    // A close the kernel refused is a barrier too: it still ends after what it cancelled.
+    const refused = fixture.start(Operation.close(3, 6));
+    try testing.expectError(error.Unexpected, fixture.fail(refused, .BADF).?.outcome());
+    try testing.expect(shuffle.barrier);
+}

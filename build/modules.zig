@@ -11,8 +11,10 @@
 //!
 //! `core` imports nothing but `assertion_options`, the switch of decision 8's class A assertions,
 //! which this file generates and which is true in every graph but one benchmark's. Camilo
-//! approved that edge on 2026-09-24. `linux_shared` imports `core`. `uring` and `epoll` import
-//! `core` and `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
+//! approved that edge on 2026-09-24. The same import carries the seed of the shuffle of each
+//! reaped batch, which only the shuffled conformance suites set (decision 10, amendment of
+//! 2026-11-06). `linux_shared` imports `core`. `uring` and `epoll` import `core` and
+//! `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
 //! backend, which this file hands it as its `backend` import, so one suite tests every backend
 //! (decision 10). docs/decisions/0001-interface.md named an `adapter` module to follow version one;
 //! decision 22 built a std.Io adapter and removed it on 2026-11-05. `bench/` is outside `src/` and
@@ -45,13 +47,19 @@ pub const Modules = struct {
     conformance_epoll: *std.Build.Module,
 };
 
-/// Which of decision 8's assertion classes a graph compiles. Every graph compiles all of them
-/// except the graphs of `uring_nop_no_class_a` and of the class-A-off `rotor_echo` servers that
-/// `build/bench_class_a.zig` builds, which measure what class A costs (decision 8, The experiment,
-/// step 2). build.zig offers no option for this, so a consumer cannot turn an assertion off.
+/// Which of decision 8's assertion classes a graph compiles, and whether it shuffles each reaped
+/// batch. Every graph compiles all of the classes except the graphs of `uring_nop_no_class_a` and
+/// of the class-A-off `rotor_echo` servers that `build/bench_class_a.zig` builds, which measure
+/// what class A costs (decision 8, The experiment, step 2). build.zig offers no option for the
+/// classes, so a consumer cannot turn an assertion off. `-Dshuffle-seed` sets only the seed of the
+/// shuffled conformance suites, and no graph that a consumer reaches.
 pub const Assertions = struct {
     /// The assertions `src/core/assertion_class.zig` names class A.
     class_a: bool = true,
+    /// The seed of the shuffle of each reaped batch, or null for none (decision 10, amendment of
+    /// 2026-11-06). Only the shuffled conformance suites set it. It rides in `assertion_options`,
+    /// so it adds no edge to the graph.
+    shuffle_seed: ?u64 = null,
 };
 
 /// The graph every build but those benchmarks uses.
@@ -73,6 +81,7 @@ pub fn add_with(
     const core = create(b, "src/core/core.zig", target, optimize);
     const assertion_options = b.addOptions();
     assertion_options.addOption(bool, "class_a", assertions.class_a);
+    assertion_options.addOption(?u64, "shuffle_seed", assertions.shuffle_seed);
     core.addOptions("assertion_options", assertion_options);
     const linux_shared = create(b, "src/linux_shared/linux_shared.zig", target, optimize);
     linux_shared.addImport("core", core);

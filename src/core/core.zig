@@ -23,6 +23,7 @@ pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
 pub const remote = @import("remote.zig");
 pub const shutdown = @import("shutdown.zig");
+pub const shuffle = @import("shuffle.zig");
 pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
@@ -77,6 +78,7 @@ test {
     _ = random;
     _ = remote;
     _ = shutdown;
+    _ = shuffle;
     _ = slot;
     _ = slot_list;
     _ = slot_table;

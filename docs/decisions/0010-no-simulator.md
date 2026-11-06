@@ -4,6 +4,9 @@ Status: accepted on 2026-09-19. Camilo asked whether rotor needs a simulator and
 overkill. This record gives the reasoning and what replaces it. It amends decisions 1, 4, 5, 6, 8
 and 9, each of which now says so under its status line.
 
+Amended on 2026-11-06 by Camilo's ruling: build the seeded shuffle of each reaped batch now.
+"Amendment of 2026-11-06" at the end says what was built.
+
 ## Context
 
 The brief asked for a deterministic simulator before any backend, as stompy's non-negotiable 4
@@ -91,3 +94,86 @@ consumer needs it, and the one consumer in sight already owns its twin.
 - Decision 8: class D assertions run in Debug test builds.
 - Decision 9: rules 1, 2, 5 and 6 stand. The rules about the simulator's streams and the
   three-trace replay gate have nothing to apply to.
+
+## Amendment of 2026-11-06: the seeded shuffle of each reaped batch
+
+"What this costs" named a seeded shuffle of completions as the next step. Camilo ruled on
+2026-11-06 to build it now. It is a switch of a test build. The kernel answers every operation, and
+only the order of the events of one reap changes.
+
+### What it does
+
+The kernel promises no order between the completions of two operations in one reaped batch. A
+build with the switch permutes the events of each reap before the caller or `Dispatch.end` sees
+them. A scenario that assumes an order that rotor does not promise then fails.
+
+- **Where.** Each backend's `tick` calls `tables.shuffle.reaped` on the events that its reap wrote.
+  `tick` runs under the fast path of decision 26 and under `tick_dispatched`, so the shuffle covers
+  the events that go back to the caller and the events that a record takes, on all three backends.
+- **What stays.** The due timers, the finished list, the messages and the expired deadlines are
+  not permuted. rotor decides their order, and promises part of it: timers fire in deadline order
+  and in arm order (`timer_heap.zig`), and a ring hands its messages over in order (`mailbox.zig`).
+- **Determinism.** The seed comes from the build. Each loop draws from `core.random` with the seed
+  plus its id. The name of each shuffled test executable holds the seed, so a failure names it.
+
+### The orders it keeps
+
+| order | where rotor promises it | how the shuffle keeps it |
+|---|---|---|
+| The `more` events of an operation come before its final event | decision 5, rule 1 | The events of one `user_data` keep their order. |
+| The datagrams and the bytes of a multishot receive stay in order, each with its provided buffer | decision 15, and decision 5's amendment of 2026-09-24 | The same rule. |
+| A close ends after the operations it cancelled | decision 5, rule 6, and decision 11, point 5 | On io_uring the reap marks a close's event as a barrier. No event crosses it. |
+| A ready completion wins over its deadline (issue 10) | decision 11, point 1 | The shuffle changes no result, and the deadlines expire after the reap. |
+
+Two operations with the same `user_data` also keep their order. The shuffle then has fewer
+orders, and it needs no read of the slot. Two operations on one socket have no order (decision 11,
+point 8), so the shuffle may swap them.
+
+### The switch
+
+- `build/modules.zig` writes `shuffle_seed` into `assertion_options`, beside `class_a`. `core`
+  already imports that module, so the switch adds no edge to the module graph.
+- Off, which is the default, `Shuffle` has no bytes and each call site reads `enabled`, which is
+  known at compile time. The text section of the kqueue program of `bench/work/work.zig` was the
+  same, byte for byte, with and without this change, and the work gate passed.
+- `zig build test` runs the kqueue suite on macOS, or the io_uring and epoll suites on Linux, once
+  more with the switch on. It also runs the `uring` module's own tests with the switch on, on every
+  host. `-Dshuffle-seed=N` names the seed, and the default is 1.
+- `zig build test-linux` builds the io_uring and epoll suites with the switch on, and
+  `tools/linux_test.sh` runs them, the epoll one under Docker's default seccomp profile.
+- The narrow steps are `zig build test-conformance-kqueue-shuffled` and
+  `zig build test-uring-shuffled`.
+
+### What it found
+
+The first version did not keep the order of a close. On io_uring the cancelled receive's event and
+the close's event come in one reap. The scenario "a close ends the receive in flight for its
+descriptor with canceled, then closes" failed with 5 of 8 seeds. The kernel makes that order: the
+close is hard-linked behind the cancel. So the reap now marks a close's event as a barrier. With
+the barrier, no scenario failed:
+
+| backend | where | seeds | failed |
+|---|---|---|---|
+| kqueue | `mac`, natively | 1 to 21 | none |
+| io_uring | Docker on `mac`, `seccomp=unconfined` | 1 to 12 | none |
+| epoll | Docker on `mac`, default seccomp profile | 1 to 12 | none |
+
+No scenario assumed an order that rotor does not promise.
+
+### How it is checked
+
+- `src/core/shuffle.zig`: the permutation holds each event once; the events of one `user_data`
+  keep their order, and the final event stays last; one seed gives one order; a barrier keeps its
+  place; each loop draws from the seed and its id.
+- `src/uring/uring_reap_test.zig`: the reap marks a close's final event as a barrier, when the close
+  succeeds and when it fails.
+- `src/conformance/conformance_shuffle.zig`, on every backend: the receives of one reap reach the
+  caller, and reach their records, in more than one order over eight rounds. A close's event stays
+  after the receive it cancelled in each of eight rounds.
+
+Mutations, 13, each CAUGHT. Against `zig build test-core`: a draw that always takes the first
+event, a permutation that ignores the `user_data`, a barrier never noted, a start never reset, and a
+seed that ignores the loop's id. Against `zig build test-conformance-kqueue-shuffled`: no shuffle in
+the kqueue tick. Against `zig build test-uring-shuffled`: no barrier for a close, for one that
+succeeds, and for one that fails. Against the Linux gate: no shuffle in the io_uring tick and in the
+epoll tick, a barrier that the reap never applies, and no barrier for a close.

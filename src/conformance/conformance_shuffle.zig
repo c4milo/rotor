@@ -1,0 +1,180 @@
+//! The seeded shuffle of each reaped batch (decision 10, amendment of 2026-11-06). These scenarios
+//! run only in a build that shuffles, and skip in every other build. Each round has four receives
+//! on four sockets wait, then makes all four sockets readable at once, so one reap serves all
+//! four. Over eight rounds the receives must end in more than one order. That shows the
+//! permutation reaches the events of a reap on each backend: the events that go back to the caller
+//! of `tick`, and the events that a record takes. The last scenario shows that the shuffle keeps
+//! the order of decision 5, rule 6: a close ends after the operations it cancelled.
+const std = @import("std");
+const testing = std.testing;
+const core = @import("core");
+const backend = @import("backend");
+const conformance = @import("conformance.zig");
+const tcp = @import("conformance_tcp.zig");
+
+const Harness = conformance.Harness;
+const Event = core.Event;
+const Operation = core.Operation;
+const sync = backend.sync;
+
+/// The receives that wait in each round, each on a socket of its own.
+const receivers = 4;
+/// The rounds of a scenario. Four events have 24 orders, so eight rounds that each give the same
+/// order would mean that nothing shuffled them.
+const rounds = 8;
+/// The `user_data` of the first send. The receives use 0 to `receivers - 1`.
+const send_user_data = 100;
+const wait_ns = 10 * core.constants.ns_per_ms;
+
+/// The order in which the receives of one round ended.
+const Log = struct {
+    order: [receivers]u8 = @splat(0),
+    len: u32 = 0,
+    /// True when one tick handed over more than one receive, so the shuffle had a batch to move.
+    batched: bool = false,
+
+    fn note(log: *Log, receiver: u64) void {
+        std.debug.assert(receiver < receivers);
+        log.order[log.len] = @intCast(receiver);
+        log.len += 1;
+    }
+};
+
+/// A library's record for one receive. It notes its receive in the log.
+const Receiver = struct {
+    completion: core.Completion = .init(Receiver, "completion", called),
+    index: u8,
+    log: *Log,
+
+    fn called(receiver: *Receiver, event: Event) void {
+        std.debug.assert(event.flags.dispatched);
+        receiver.log.note(receiver.index);
+    }
+};
+
+/// Four connected pairs over loopback. The loop receives on `server` and sends on `client`.
+const Pairs = struct {
+    client: [receivers]core.Descriptor,
+    server: [receivers]core.Descriptor,
+
+    fn open(harness: *Harness, listener: *const tcp.Listener) !Pairs {
+        var pairs: Pairs = undefined;
+        for (0..receivers) |index| {
+            const pair = try tcp.connected_pair(harness, listener);
+            pairs.client[index] = pair[0];
+            pairs.server[index] = pair[1];
+        }
+        return pairs;
+    }
+
+    fn close(pairs: *const Pairs) void {
+        for (pairs.client) |descriptor| sync.close_now(descriptor);
+        for (pairs.server) |descriptor| sync.close_now(descriptor);
+    }
+};
+
+/// One round: the receives wait, then four sends make every socket readable in one flush. `log`
+/// gets the order in which the receives ended. With `records`, each receive names its record.
+fn round(harness: *Harness, pairs: *const Pairs, records: ?*[receivers]Receiver, log: *Log) !void {
+    var buffers: [receivers][1]u8 = undefined;
+    for (0..receivers) |index| {
+        var operation = Operation.receive(index, pairs.server[index], &buffers[index]);
+        if (records) |named| operation = operation.completion(&named[index].completion);
+        try harness.submit(&.{operation}, &.{});
+    }
+    var events: [2 * receivers]Event = undefined;
+    // The receives wait: no socket is readable yet.
+    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    for (0..receivers) |index| {
+        const send = Operation.send(send_user_data + index, pairs.client[index], "x");
+        try harness.submit(&.{send}, &.{});
+    }
+    var tick_count: u32 = 0;
+    while (harness.loop.in_flight() != 0 and tick_count < conformance.collect_rounds_max) {
+        tick_count += 1;
+        const before = log.len;
+        const count = try harness.loop.tick(&events, wait_ns);
+        for (events[0..count]) |event| {
+            if (event.user_data < receivers) log.note(event.user_data);
+        }
+        if (log.len - before >= 2) log.batched = true;
+    }
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+    try testing.expectEqual(@as(u32, receivers), log.len);
+}
+
+/// What the rounds of a scenario showed.
+const Orders = struct {
+    /// The rounds that ended in another order than the first.
+    others: u32 = 0,
+    /// The rounds in which one tick handed over more than one receive.
+    batched: u32 = 0,
+};
+
+/// Runs the rounds. A loaded machine can end every receive in a tick of its own. Then nothing was
+/// there to shuffle, and the scenario cannot judge the shuffle, so it skips.
+fn rounds_in_other_orders(records: bool) !u32 {
+    const orders = try run_rounds(records);
+    if (orders.batched == 0) return error.SkipZigTest;
+    return orders.others;
+}
+
+fn run_rounds(records: bool) !Orders {
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pairs = try Pairs.open(&harness, &listener);
+    defer pairs.close();
+
+    var first: Log = .{};
+    var orders: Orders = .{};
+    for (0..rounds) |index| {
+        var log: Log = .{};
+        var named: [receivers]Receiver = undefined;
+        for (&named, 0..) |*receiver, receiver_index| {
+            receiver.* = .{ .index = @intCast(receiver_index), .log = &log };
+        }
+        try round(&harness, &pairs, if (records) &named else null, &log);
+        if (index == 0) first = log;
+        if (!std.mem.eql(u8, &log.order, &first.order)) orders.others += 1;
+        if (log.batched) orders.batched += 1;
+    }
+    return orders;
+}
+
+test "a shuffled build hands the caller the receives of one reap in more than one order" {
+    if (conformance.unsupported() or !core.shuffle.enabled) return error.SkipZigTest;
+    try testing.expect(try rounds_in_other_orders(false) >= 1);
+}
+
+test "a shuffled build calls the records of the receives of one reap in more than one order" {
+    if (conformance.unsupported() or !core.shuffle.enabled) return error.SkipZigTest;
+    try testing.expect(try rounds_in_other_orders(true) >= 1);
+}
+
+test "a shuffled build keeps a close's event after the receive it cancelled, in every round" {
+    if (conformance.unsupported() or !core.shuffle.enabled) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    // On io_uring the receive's event and the close's come in one reap, which the shuffle permutes.
+    // Of eight rounds, a shuffle that moved the close would put it first in about four.
+    for (0..rounds) |_| {
+        const pair = try tcp.connected_pair(&harness, &listener);
+        defer sync.close_now(pair[0]);
+        var buffer: [1]u8 = undefined;
+        try harness.submit(&.{Operation.receive(1, pair[1], &buffer)}, &.{});
+        var events: [2]Event = undefined;
+        try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+        try harness.submit(&.{Operation.close(2, pair[1])}, &.{});
+        try harness.collect(&events);
+        try testing.expectEqual(@as(u64, 1), events[0].user_data);
+        try testing.expectError(error.Canceled, events[0].outcome());
+        try testing.expectEqual(@as(u64, 2), events[1].user_data);
+        try testing.expectEqual(@as(u32, 0), try events[1].outcome());
+    }
+}

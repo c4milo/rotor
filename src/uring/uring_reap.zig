@@ -62,6 +62,7 @@ pub fn reap(loop: *Loop, events: []Event) u32 {
         } else {
             events[produced] = event;
             produced += 1;
+            if (core.shuffle.enabled) loop.tables.shuffle.wrote(events[0..produced]);
         }
     }
     loop.ring.cq_advance(consumed);
@@ -85,6 +86,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         .flags = @bitCast(cqe.flags & flags_passed),
     };
     event.flags.dispatched = slot.flags.dispatched;
+    if (core.shuffle.enabled) note_close(loop, slot);
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
     if (event.flags.buffer and slot.code == .receive_from) begin_split(loop, slot.buffer_index, event);
     return event;
@@ -142,8 +144,16 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     var event = Event.failure(slot.user_data, code);
     event.flags.dispatched = slot.flags.dispatched;
     event.flags.more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
+    if (core.shuffle.enabled) note_close(loop, slot);
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
     return event;
+}
+
+/// A build that shuffles each reaped batch keeps a close's event after every event the reap wrote
+/// before it, because the kernel ends the operations the close cancelled first (decision 10,
+/// amendment of 2026-11-06). The other builds never call it.
+fn note_close(loop: *Loop, slot: *const Slot) void {
+    if (slot.code == .close) loop.tables.shuffle.note_barrier();
 }
 
 /// EAGAIN and EINTR transferred nothing, so the operation goes back on the pending list, unless

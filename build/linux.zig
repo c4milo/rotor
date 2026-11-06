@@ -28,6 +28,7 @@ const std = @import("std");
 const halt = @import("halt.zig");
 const modules = @import("modules.zig");
 const examples = @import("examples.zig");
+const shuffle = @import("shuffle.zig");
 
 /// The directory the step fills and tools/linux_test.sh reads, under the install prefix.
 const install_directory = "linux";
@@ -57,10 +58,12 @@ const probe_name = "uring_probe";
 const probe_source = "tools/uring_probe.zig";
 
 /// Adds the `test-linux` step. `optimize` is the mode the unit tests compile in, as it is for
-/// `zig build test`, so `-Drelease` checks the ReleaseSafe build under Linux too.
-pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
+/// `zig build test`, so `-Drelease` checks the ReleaseSafe build under Linux too. `shuffle_seed`
+/// is the seed of the two shuffled conformance suites (build/shuffle.zig).
+pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode, shuffle_seed: u64) void {
     const target = container_target(b);
     const graph = modules.add(b, target, optimize);
+    const shuffled = modules.add_with(b, target, optimize, .{ .shuffle_seed = shuffle_seed });
 
     // One line per module whose tests run under Linux: `uring` joins here when it exists. `kqueue`
     // never does, because its tests need the kernel of a Mac.
@@ -80,6 +83,17 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode) void {
         // pointless.
         .{ .name = "epoll", .module = graph.epoll },
         .{ .name = "conformance-epoll", .module = graph.conformance_epoll },
+        // The two suites once more, with each reaped batch shuffled (decision 10, amendment of
+        // 2026-11-06). The name holds the seed, and `tools/linux_test.sh` runs the epoll one
+        // confined, as it runs `conformance-epoll`.
+        .{
+            .name = shuffle.name(b, "uring", shuffle_seed),
+            .module = shuffled.conformance_uring,
+        },
+        .{
+            .name = shuffle.name(b, "epoll", shuffle_seed),
+            .module = shuffled.conformance_epoll,
+        },
         // The public module picks `uring` on this target, and its tests drive a loop through it.
         .{ .name = "rotor", .module = graph.rotor },
         // The harness is outside the module graph, and nothing built it for Linux until

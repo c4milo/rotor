@@ -7,6 +7,9 @@
 //! points this clone's core.hooksPath at .githooks; neither is part of `zig build test`, because
 //! commit shape is a property of the history, not of the code.
 //!
+//! `zig build test` also runs each conformance suite this host runs with each reaped batch shuffled
+//! from the seed `-Dshuffle-seed=N` names (build/shuffle.zig).
+//!
 //! `zig build test-linux` builds the test executables, the io_uring probe and the halt check with
 //! the scenarios only Linux can prove, for Linux under zig-out/linux/, and runs none of them;
 //! tools/linux_test.sh runs them in Docker (build/linux.zig).
@@ -33,6 +36,7 @@ const proofs = @import("build/proofs.zig");
 const tla = @import("build/tla.zig");
 const guide = @import("build/guide.zig");
 const examples = @import("build/examples.zig");
+const shuffle = @import("build/shuffle.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
 const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
@@ -142,6 +146,11 @@ pub fn build(b: *std.Build) void {
         }
     }
 
+    // Each suite this host runs, once more with each reaped batch shuffled from a seed (decision 10,
+    // amendment of 2026-11-06). The Linux gate runs the two Linux suites the same way.
+    const shuffle_seed = shuffle.seed(b);
+    shuffle.add(b, target, optimize, shuffle_seed, test_step);
+
     // The tools verify the tree, so they run on the host in Debug: a tool never ships.
     const tool_test_step = add_narrow_test_step(b, "tools");
     for (tool_test_roots) |root| {
@@ -169,7 +178,7 @@ pub fn build(b: *std.Build) void {
     // longer builds.
     test_step.dependOn(examples.add(b, graph, target, optimize));
 
-    linux.add(b, optimize);
+    linux.add(b, optimize, shuffle_seed);
     // The race gate's compile, and not its install: it is the only step that builds the kqueue
     // module for Linux, and a Darwin-only symbol reached CI once because nothing else did.
     // Compiling it needs no Docker and costs about three seconds.

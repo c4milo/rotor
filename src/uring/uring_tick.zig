@@ -57,7 +57,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         loop.addresses_used = 0;
         loop.messages_used = 0;
     }
-    produced += reap_module.reap(loop, events[produced..]);
+    const reaped = reap_module.reap(loop, events[produced..]);
+    // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
+    if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
+    produced += reaped;
     produced += loop.drain_mailboxes(events[produced..]);
     // After the reap, so a completion the kernel had ready wins over the deadline (issue 10). With
     // `DEFER_TASKRUN` a completion is posted only inside an enter, so the deadline's cancel entry

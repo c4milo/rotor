@@ -67,7 +67,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // ended it (decision 9, rule 4, amended 2026-09-27).
     if (wait != null) tables.now_ns = clock_ns();
 
-    produced += reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
+    const reaped = reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
+    // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
+    if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
+    produced += reaped;
     // A worker may have answered while this tick waited, and the wake is what ended the wait.
     if (offload_module.drain(loop) != 0) {
         produced += tables.drain_finished(events[produced..]);
