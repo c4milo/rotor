@@ -31,9 +31,17 @@ pub const wait_timer_user_data: u64 = std.math.maxInt(u64) - 1;
 /// by a little. A tick that uses them all hands over no event.
 pub const wait_timer_rearms_max: u32 = 4;
 
+/// The most datagrams one readiness of a datagram socket takes, with one `recvmmsg`. A count below
+/// the request shows the socket is empty, so the batch costs no call that answers EAGAIN, which is
+/// what kept decision 20's reap at one operation per direction. Each datagram takes a buffer of its
+/// group and one or more events, so a batch is also bounded by what the group and the caller's
+/// events can hold. Eight keeps the call's headers at 512 bytes on the stack.
+pub const receive_batch_max: u32 = 8;
+
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
+    assert(receive_batch_max >= 2);
     assert(wake_user_data > std.math.maxInt(i32));
     assert(wait_timer_user_data > std.math.maxInt(i32));
     assert(wait_timer_user_data != wake_user_data);

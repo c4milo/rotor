@@ -9,8 +9,8 @@
 //!   `segment_bytes` carries `UDP_SEGMENT` and the kernel cuts the datagram up, where the kqueue
 //!   backend answers `unsupported`.
 //!
-//! Every function here but `receive_into`, `send_from` and `apply_options` enters no kernel, so
-//! their tests run on every host.
+//! Every function here but `receive_into`, `receive_many`, `send_from` and `apply_options` enters
+//! no kernel, so their tests run on every host.
 const std = @import("std");
 const assert = std.debug.assert;
 const linux = std.os.linux;
@@ -41,39 +41,87 @@ const answer_of = core.datagram.answer_of;
 /// front of it exactly as io_uring's multishot `recvmsg` would. Returns the datagram's own bytes,
 /// so the caller never subtracts a prefix.
 pub fn receive_into(descriptor: core.Descriptor, buffer: []u8, options: GroupOptions) Answer {
-    const prefix = core.datagram.prefix_bytes(options);
-    assert(buffer.len > prefix);
-    const name_start = @sizeOf(Head);
-    const control_start = name_start + options.name_reserve;
-
-    var vector: std.posix.iovec = .{ .base = buffer.ptr + prefix, .len = buffer.len - prefix };
-    var header = std.mem.zeroes(linux.msghdr);
-    header.name = @ptrCast(@alignCast(buffer.ptr + name_start));
-    header.namelen = options.name_reserve;
-    header.iov = @ptrCast(&vector);
-    header.iovlen = 1;
-    header.control = buffer.ptr + control_start;
-    header.controllen = @intCast(options.control_reserve);
-
+    var vector: std.posix.iovec = undefined;
+    var header = header_of(buffer, options, &vector);
     var retry: u32 = 0;
     while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
         const rc = linux.recvmsg(descriptor, &header, 0);
         const errno = linux.errno(rc);
         if (errno == .SUCCESS) {
-            // The head the uring backend gets from the kernel, written here from what `recvmsg`
-            // reported: the bytes of each part it used, and its flags, `MSG_TRUNC` among them.
-            const head: *Head = @ptrCast(@alignCast(buffer.ptr));
-            head.* = .{
-                .name_bytes = header.namelen,
-                .control_bytes = @intCast(header.controllen),
-                .payload_bytes = @intCast(rc),
-                .flags = @bitCast(header.flags),
-            };
+            write_head(buffer, &header, @intCast(rc));
             return Answer.done(@intCast(rc));
         }
         if (answer_of(errno)) |answer| return answer;
     }
     return Answer.refused(.would_block);
+}
+
+/// What one `recvmmsg` needs beside the buffers: the loop holds it, so a reap fills no array on
+/// its stack, which ReleaseSafe would fill on every call. `ids` and `buffers` are the reap's: the
+/// group's buffers it took for the batch.
+pub const Batch = struct {
+    headers: [constants.receive_batch_max]linux.mmsghdr,
+    vectors: [constants.receive_batch_max]std.posix.iovec,
+    buffers: [constants.receive_batch_max][]u8,
+    lengths: [constants.receive_batch_max]u32,
+    ids: [constants.receive_batch_max]u16,
+};
+
+/// Receives up to `count` datagrams with one `recvmmsg`, one into each of `batch.buffers` in order,
+/// each laid out as `receive_into` lays one out. Returns how many arrived, and writes each one's
+/// bytes into `batch.lengths`. A count below `count` means the socket had no more, so no call is
+/// made only to learn that it is empty (decision 20, "A readiness serves one operation per
+/// direction").
+pub fn receive_many(descriptor: core.Descriptor, batch: *Batch, count: u32, options: GroupOptions) Answer {
+    assert(count >= 1 and count <= constants.receive_batch_max);
+    for (batch.buffers[0..count], batch.headers[0..count], batch.vectors[0..count]) |buffer, *message, *vector| {
+        message.* = .{ .hdr = header_of(buffer, options, vector), .len = 0 };
+    }
+    var retry: u32 = 0;
+    while (retry <= core.constants.interrupt_retries_max) : (retry += 1) {
+        const rc = linux.recvmmsg(descriptor, &batch.headers, count, 0, null);
+        const errno = linux.errno(rc);
+        if (errno == .SUCCESS) {
+            assert(rc >= 1 and rc <= count);
+            for (batch.headers[0..rc], batch.buffers[0..rc], batch.lengths[0..rc]) |*message, buffer, *length| {
+                write_head(buffer, &message.hdr, message.len);
+                length.* = message.len;
+            }
+            return Answer.done(@intCast(rc));
+        }
+        if (answer_of(errno)) |answer| return answer;
+    }
+    return Answer.refused(.would_block);
+}
+
+/// The `msghdr` that receives one datagram into `buffer`: the address and the control block go in
+/// the prefix, behind the head, and the datagram after the prefix, through `vector`.
+fn header_of(buffer: []u8, options: GroupOptions, vector: *std.posix.iovec) linux.msghdr {
+    const prefix = core.datagram.prefix_bytes(options);
+    assert(buffer.len > prefix);
+    const name_start = @sizeOf(Head);
+    const control_start = name_start + options.name_reserve;
+    vector.* = .{ .base = buffer.ptr + prefix, .len = buffer.len - prefix };
+    var header = std.mem.zeroes(linux.msghdr);
+    header.name = @ptrCast(@alignCast(buffer.ptr + name_start));
+    header.namelen = options.name_reserve;
+    header.iov = @ptrCast(vector);
+    header.iovlen = 1;
+    header.control = buffer.ptr + control_start;
+    header.controllen = @intCast(options.control_reserve);
+    return header;
+}
+
+/// The head the uring backend gets from the kernel, written here from what the receive reported:
+/// the bytes of each part it used, and its flags, `MSG_TRUNC` among them.
+fn write_head(buffer: []u8, header: *const linux.msghdr, payload_bytes: u32) void {
+    const head: *Head = @ptrCast(@alignCast(buffer.ptr));
+    head.* = .{
+        .name_bytes = header.namelen,
+        .control_bytes = @intCast(header.controllen),
+        .payload_bytes = payload_bytes,
+        .flags = @bitCast(header.flags),
+    };
 }
 
 /// Sends one datagram, with the control messages `out` asks for. `MSG_NOSIGNAL` keeps a send on a

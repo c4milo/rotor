@@ -22,7 +22,9 @@
 //! - **A readiness serves one operation per direction.** kqueue's readiness carries the amount that
 //!   is ready, and its reap serves until that is used. epoll's carries no amount, so serving more
 //!   ends with a call that answers EAGAIN, and at one message in flight that cost more than the
-//!   ticks it saved (decision 20, "A readiness serves one operation per direction").
+//!   ticks it saved (decision 20, "A readiness serves one operation per direction"). A multishot
+//!   datagram receive is the exception: one `recvmmsg` takes up to `receive_batch_max` datagrams,
+//!   and a count below the request shows the socket is empty without that call.
 const std = @import("std");
 const assert = std.debug.assert;
 const assert_class_a = core.assertion_class.assert_class_a;
@@ -34,11 +36,14 @@ const queue_module = @import("epoll_queue.zig");
 const submit_module = @import("epoll_submit.zig");
 const epoll = @import("epoll.zig");
 const shared_datagram = @import("linux_shared").datagram;
+const datagram = @import("epoll_datagram.zig");
 
 const Loop = epoll.Loop;
 const Event = core.Event;
 const Filter = core.waiters.Filter;
 const Readiness = queue_module.Event;
+const Attempt = perform.Attempt;
+const Slot = core.Slot;
 
 /// The bits that make a waiting receive or accept worth trying: data, a half close, a full close or
 /// an error. Every one of them either transfers something or ends the operation.
@@ -52,6 +57,7 @@ const write_bits: u32 = linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR;
 /// leaves unserved is level triggered, so the kernel reports it again.
 pub fn reap(loop: *Loop, readiness: []const Readiness, events: []Event) u32 {
     var produced: u32 = 0;
+    loop.reaps +%= 1;
     // Read only while a split waits, so a reap with none touches nothing of it.
     if (loop.split.pending()) {
         produced = loop.split.take(events);
@@ -85,7 +91,7 @@ fn serve_ready(loop: *Loop, descriptor: core.Descriptor, bits: u32, events: []Ev
     const writers = loop.waiters.count(descriptor, .write);
     var produced: u32 = 0;
     if (bits & read_bits != 0 and readers != 0 and produced < events.len) {
-        if (serve(loop, descriptor, .read)) |event| produced += place(loop, event, events[produced..]);
+        produced += serve_read(loop, descriptor, events[produced..]);
     }
     if (bits & write_bits != 0 and writers != 0 and produced < events.len) {
         if (serve(loop, descriptor, .write)) |event| produced += place(loop, event, events[produced..]);
@@ -133,18 +139,113 @@ fn begin_split(loop: *Loop, group_id: ?u16, event: Event) void {
     _ = loop.split.begin(event, segment_bytes, group.holders);
 }
 
+/// Serves the oldest reader of `descriptor`: a batch of datagrams when it is a multishot datagram
+/// receive that `batch_size` lets batch, one operation otherwise. The reader is found once, so a
+/// receive that does not batch costs what it cost before batches existed. Returns how many events
+/// it wrote.
+fn serve_read(loop: *Loop, descriptor: core.Descriptor, events: []Event) u32 {
+    const index = loop.waiters.first(descriptor, .read) orelse return 0;
+    const slot = loop.tables.table.at(index);
+    if (slot.code == .receive_from and slot.flags.multishot) {
+        const size = batch_size(loop.reaps, slot);
+        if (size > 1) {
+            if (serve_batch(loop, descriptor, index, size, events)) |produced| return produced;
+        }
+    }
+    const event = serve_slot(loop, descriptor, .read, index) orelse return 0;
+    return place(loop, event, events);
+}
+
+/// Receives up to `size` datagrams for the multishot datagram receive in slot `index` with one
+/// `recvmmsg`. Null when the group or the caller's events hold room for fewer than two, which
+/// `serve_slot` handles. Returns how many events it wrote.
+fn serve_batch(loop: *Loop, descriptor: core.Descriptor, index: u32, size: u32, events: []Event) ?u32 {
+    const slot = loop.tables.table.at(index);
+    assert_class_a(slot.code == .receive_from and slot.flags.multishot);
+    const group = &loop.groups[slot.buffer_index];
+    const count = @min(size, batch_count(events.len, group.free_count));
+    // One datagram is `serve`'s, whose single `recvmsg` costs less than a batch of one.
+    if (count <= 1) return null;
+    assert_class_a(slot.state == .submitted);
+    const batch = &loop.batch;
+    for (batch.ids[0..count], batch.buffers[0..count]) |*id, *buffer| {
+        id.* = group.take().?;
+        buffer.* = group.bytes_of(id.*);
+    }
+    const answer = datagram.receive_many(descriptor, batch, count, loop.datagram_shape.options);
+    const received: u32 = if (answer.would_block or answer.result < 0) 0 else @intCast(answer.result);
+    // Given back from the top, so the group's free stack is as the takes found it.
+    var unused = count;
+    while (unused > received) : (unused -= 1) group.give_back(batch.ids[unused - 1]);
+    // Not ready after all. The registration is level triggered and stays, so it reports again.
+    if (answer.would_block) return 0;
+    if (answer.result < 0) {
+        // `recvmmsg` took the socket's error, so a second call would not see it: the error ends
+        // the receive here, as `serve` would end it.
+        events[0] = conclude(loop, descriptor, .read, index, Attempt.done(answer.result));
+        return 1;
+    }
+    var produced: u32 = 0;
+    for (batch.ids[0..received], batch.lengths[0..received]) |id, length| {
+        assert_class_a(core.attempt.goes_on(.receive_from, @intCast(length)));
+        const event: Event = .{
+            .user_data = slot.user_data,
+            .result = @intCast(length),
+            .flags = .{ .buffer = true, .buffer_id = id, .more = true },
+        };
+        begin_split(loop, slot.buffer_index, event);
+        produced += place(loop, event, events[produced..]);
+    }
+    assert(produced <= events.len);
+    return produced;
+}
+
+/// The batch a multishot datagram receive asks for. A receive the reap before also served has a
+/// socket that stays ready, so its batch doubles, from 2 up to `receive_batch_max`. Any other asks
+/// for 1, which `serve` makes as one `recvmsg`: one datagram at a time then makes the calls it made
+/// before batches existed. The reap that last served it and its size are kept in `Slot.offset`,
+/// which a receive does not use.
+fn batch_size(reaps: u32, slot: *Slot) u32 {
+    const last: u32 = @truncate(slot.offset >> @bitSizeOf(u32));
+    const previous: u32 = @truncate(slot.offset);
+    var size: u32 = 1;
+    if (reaps -% last == 1) size = @min(constants.receive_batch_max, @max(previous, 1) << 1);
+    slot.offset = (@as(u64, reaps) << @bitSizeOf(u32)) | size;
+    return size;
+}
+
+/// How many datagrams one batch can hold: at most `receive_batch_max`, at most the group's free
+/// buffers, and few enough that every one could be a coalesced datagram whose events all fit.
+fn batch_count(room: usize, free: u16) u32 {
+    const by_room: u32 = @intCast(@min(room / core.constants.coalesced_segments_max, constants.receive_batch_max));
+    return @min(by_room, free);
+}
+
 /// Tries the oldest waiter of `descriptor` in `filter`'s direction again. Null when the call would
 /// still block, which a readiness that another reader answered first can leave behind.
 fn serve(loop: *Loop, descriptor: core.Descriptor, filter: Filter) ?Event {
-    const tables = &loop.tables;
     const index = loop.waiters.first(descriptor, filter) orelse return null;
-    const slot = tables.table.at(index);
+    return serve_slot(loop, descriptor, filter, index);
+}
+
+/// Tries the operation in slot `index`, the oldest waiter of `descriptor` in `filter`'s direction.
+fn serve_slot(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u32) ?Event {
+    const slot = loop.tables.table.at(index);
     assert_class_a(slot.state == .submitted);
     const attempt = perform.attempt(loop, slot);
     // A file never waits, so nothing that reaches the reap is handed to an offload.
     assert_class_a(attempt.outcome != .offloaded);
     // Not ready after all. The registration is level triggered and stays, so it reports again.
     if (attempt.outcome != .done) return null;
+    return conclude(loop, descriptor, filter, index, attempt);
+}
+
+/// The event of an attempt that is done. A multishot operation stays after a success; any other
+/// leaves its descriptor's list and frees its slot.
+fn conclude(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u32, attempt: Attempt) Event {
+    const tables = &loop.tables;
+    const slot = tables.table.at(index);
+    assert_class_a(attempt.outcome == .done);
     var event: Event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{} };
     if (attempt.buffer_id) |buffer_id| {
         event.flags.buffer = true;
@@ -194,6 +295,23 @@ test "a direction reported with nobody waiting is taken out, and one being serve
     try testing.expect(!is_unwatched(linux.EPOLL.ERR, 1, 0));
     try testing.expect(is_unwatched(linux.EPOLL.HUP, 0, 0));
     try testing.expect(is_unwatched(linux.EPOLL.ERR, 0, 0));
+}
+
+test "a receive served reap after reap doubles its batch, and one that skips a reap asks for one" {
+    var slot = std.mem.zeroes(Slot);
+    // One datagram at a time: served every other reap, so it never batches.
+    try testing.expectEqual(@as(u32, 1), batch_size(10, &slot));
+    try testing.expectEqual(@as(u32, 1), batch_size(12, &slot));
+    // A socket that stays ready: 2, 4, 8, and no more than `receive_batch_max`.
+    try testing.expectEqual(@as(u32, 2), batch_size(13, &slot));
+    try testing.expectEqual(@as(u32, 4), batch_size(14, &slot));
+    try testing.expectEqual(@as(u32, 8), batch_size(15, &slot));
+    try testing.expectEqual(constants.receive_batch_max, batch_size(16, &slot));
+    // One reap missed starts it again from one.
+    try testing.expectEqual(@as(u32, 1), batch_size(18, &slot));
+    // The reap count wraps, and the reap after the last one still counts as the next.
+    slot.offset = (@as(u64, std.math.maxInt(u32)) << @bitSizeOf(u32)) | 1;
+    try testing.expectEqual(@as(u32, 2), batch_size(0, &slot));
 }
 
 test "only a one-shot reader leaves its direction registered for the next operation" {

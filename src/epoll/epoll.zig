@@ -111,11 +111,17 @@ pub const Loop = struct {
     /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
     /// 2026-11-05): the next reap hands it over before any new readiness.
     split: core.datagram_split.Split,
+    /// How many reaps this loop has made, wrapping. A datagram receive the reap before this one also
+    /// served asks for a larger batch (`epoll_reap.zig`, `batch_size`).
+    reaps: u32,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
     /// says how many hold one.
     descriptors: [core.constants.registered_descriptors_max]core.Descriptor,
+    /// What one `recvmmsg` of a datagram receive needs beside its buffers. Last, because only a
+    /// readiness of a datagram socket reads it.
+    batch: datagram_module.Batch,
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -222,6 +228,7 @@ pub const Loop = struct {
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_shape = .{};
         loop.split = .idle;
+        loop.reaps = 0;
     }
 
     /// Every operation must have had its final event (decision 5, rule 7).

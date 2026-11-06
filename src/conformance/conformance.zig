@@ -152,5 +152,6 @@ test {
     _ = @import("conformance_timers.zig");
     _ = @import("conformance_udp.zig");
     _ = @import("conformance_udp_coalesce.zig");
+    _ = @import("conformance_udp_burst.zig");
     _ = @import("conformance_wait_descriptor.zig");
 }
