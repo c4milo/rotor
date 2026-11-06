@@ -288,7 +288,10 @@ was about to push.
   `conformance-uring` and `conformance-epoll` test executables with ThreadSanitizer for Linux with
   glibc into `zig-out/race/`, and the script runs them in Docker. Those are the suites that start a
   thread: the mailbox rings and the sleep flag (decision 12, point 6), two loops posting through
-  the registry, and an offload's worker beside a loop. A clean run is evidence and not a proof, because a sanitizer reports the
+  the registry, an offload's worker beside a loop, and the post storm of `conformance_storm.zig`:
+  a peer loop and three remotes post while the target runs pollers, records and tasks. ThreadSanitizer
+  reports each race once per run, so a race that an earlier suite also reaches is reported there
+  and not again by the storm. A clean run is evidence and not a proof, because a sanitizer reports the
   interleavings that ran. It has its own target and image because the sanitizer's runtime needs a
   dynamic glibc, and it cannot be built on macOS at all. `zig build test` does not run it: it
   needs Docker. It does require the compile, through `zig build test-race-compile`, because this

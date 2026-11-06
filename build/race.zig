@@ -41,7 +41,8 @@ pub fn add(b: *std.Build) Steps {
 
     // One line per module whose tests start a thread. `core` starts none. `kqueue` holds the
     // threaded tests of the mailbox rings; each conformance suite runs two loops on two threads over
-    // the registry, and the offload's workers beside a loop. `conformance-epoll` is the only one of
+    // the registry, the offload's workers beside a loop, and a post storm from several threads into
+    // a loop that runs pollers, records and tasks. `conformance-epoll` is the only one of
     // those whose loops use the rings: io_uring carries a post in the kernel.
     const suites = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "kqueue", .module = graph.kqueue },

@@ -180,5 +180,6 @@ test {
     _ = @import("conformance_shutdown_cancel.zig");
     _ = @import("conformance_limits.zig");
     _ = @import("conformance_program.zig");
+    _ = @import("conformance_storm.zig");
     _ = @import("conformance_wait_descriptor.zig");
 }

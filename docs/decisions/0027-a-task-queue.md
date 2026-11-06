@@ -545,7 +545,7 @@ The run loop has no check of the count it ran. Its range is `constants.tasks_per
 | the `deinit` check deleted | `halt-check`, each of the three owner files |
 | the check `tasks.count <= callbacks_outstanding` deleted | `halt-check`, `core_scenarios_dispatch.zig` |
 
-**No model yet.** The queue is a FIFO with a count bound. The reference-model property test covers it more cheaply than a TLA+ model or a Lean proof, which a later change to `tasks.zig` would have to update in the same commit. A model comes with groups, if groups come. The race gate needs no new suite, because a task never crosses threads.
+**No model yet.** The queue is a FIFO with a count bound. The reference-model property test covers it more cheaply than a TLA+ model or a Lean proof, which a later change to `tasks.zig` would have to update in the same commit. A model comes with groups, if groups come. A task never crosses threads, so the queue needs no race suite of its own. Amended on 2026-11-06: the race gate runs `conformance_storm.zig`, in which other threads post to a loop while its pollers, records and tasks run.
 
 ## Open questions
 
@@ -671,6 +671,11 @@ workload.
 - `shutdown.zig`: `drain` runs the queued tasks, and fails with `TasksStillQueued` at its bound.
 - `conformance_tasks.zig`, on every backend: a task that never stops beside a timer, where each task
   runs, and `drain`.
+- `conformance_storm.zig`, on every backend and in the race gate, added on 2026-11-06: a peer loop
+  and three remotes post to a loop that runs pollers, timers with a record, and tasks that schedule
+  themselves again. Each sender's messages arrive once and in order, and the count received is the
+  posts less the `mailbox_full` refusals. Once the pollers are removed and no task is queued, a tick
+  with a wait of 2 s ends soon after a post. The seed of every choice is printed on a failure.
 - `tools/halt/core_scenarios_tasks.zig`: six halt scenarios, and one owner scenario in each of the
   kqueue and the epoll owner files.
 
