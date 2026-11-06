@@ -48,8 +48,8 @@
 # record, and one tick with one poller that reports no work. Both take `tick_dispatched`, the cold
 # path of decision 7, row H1, which no row held before. The macOS rows are from `mac`, where four
 # runs agreed within 3 instructions at a load average of 14 to 22. The linux-aarch64 rows are from
-# cachegrind in an arm64 container on `mac`. The linux-x86_64 sections have no row for them: the
-# gate prints the row to add, and CI's x86-64 runner supplies it. The same day each workload's loop
+# cachegrind in an arm64 container on `mac`. The linux-x86_64 rows are the counts that CI's x86-64
+# runner printed at `c045266`, run 42306194680. The same day each workload's loop
 # became a function of its own, because the two new loops inside `main` made epoll's `tasks-64`
 # count 63 more instructions. With that change every older row counted within 3 instructions of the
 # tree before it.
@@ -71,6 +71,8 @@ timer 1105
 batch 26376
 task 591
 tasks-64 4001
+record 1221
+poller 559
 section linux-x86_64-epoll
 post 1363
 post-operation 3305
@@ -79,6 +81,8 @@ batch 26194
 wait 744
 task 678
 tasks-64 4088
+record 1281
+poller 641
 section linux-aarch64-uring
 post 1029
 post-operation 2794
