@@ -377,6 +377,122 @@ slot. So the table of waiters, the cancel and the close all see a descriptor, as
 finds with `fcntl(F_GETFD)`, because io_uring refuses one. Nothing is gained on this backend and
 nothing is claimed: the table exists so that one program runs on both.
 
+## 10. A call that fails keeps its registrations
+
+**Amended on 2026-11-06, by Camilo's ruling of that day.** He asked for an investigation and a
+proposal, and then accepted the proposal below, with the behaviour it changes for a tick that meets
+a refused change. The code is built.
+
+### The defect
+
+Until this amendment, `tick` set `changes_used` to 0 after its `kevent` call, whether the call
+succeeded or failed. When the call failed, the registrations on the list were lost. An operation
+whose registration was on the list then waited until its deadline or a cancel. With no deadline it
+waited for ever.
+
+A resend of the list is not always safe, because a call can apply part of its list before it fails.
+
+### What a failed call applies
+
+A probe in C ran these cases on macOS 26.6.2 on 2026-11-06. "Room" is the length of the eventlist.
+
+| case | answer | changes applied |
+|---|---|---|
+| the kqueue descriptor is a socket | -1, EBADF | none |
+| a refused EV_DELETE second of three, room 0 | -1, ENOENT | the first only |
+| a refused EV_DELETE second of three, room 1 | 1, the refusal with EV_ERROR | all three |
+| two refused changes of four, room 1 | -1, EBADF of the second | those before the second |
+| EV_ADD twice, then EV_DELETE twice, with EV_RECEIPT | 4 answers: 0, 0, 0, ENOENT | all |
+| EV_DELETE of a one-shot filter that fired | ENOENT | none |
+| EV_ADD of a closed fd, a missing EV_DELETE, an EV_ADD, all with EV_RECEIPT, room 3 | 3 answers: EBADF, ENOENT, 0; no readiness | the last |
+
+So:
+
+- A refused change fails the call only when the eventlist has no room for its answer. The call
+  then stops at that change. The changes before it are applied, and the changes after it are not.
+- A call that returns a refusal or a receipt does not read readiness. With EV_RECEIPT, a readiness
+  that the call did not read stays for the next call.
+- An EV_ADD of a filter that is there answers 0, so it is safe to send again. An EV_DELETE of a
+  filter that is not there answers ENOENT.
+- kevent(2) ties EINTR to the timeout, so a call ends in EINTR only while it waits. It also says
+  that the kernel applies every change before it reads events. The probe did not make a call end in
+  EINTR.
+
+A tick's call has room 0 when the drains filled the caller's events before the call. Then one
+refused change, such as an EV_ADD for a descriptor the caller closed, fails the tick. The tick
+returns `Unexpected`, and the changes after the refused one are lost.
+
+### What was decided
+
+`kqueue_tick_recover.zig` holds the change. A call that succeeds empties the list, as before. A call
+that fails goes to `recover`:
+
+1. The tick's own trigger and wait timer leave the list, and `wait_timer_deadline_ns` goes back to
+   0. A deadline left set for a timer that is not armed would let a later wait block for ever.
+2. After `SystemResources`, every attempt applied the list before a signal ended its wait. The list
+   is emptied and the error is returned.
+3. With no registration on the list, the kqueue itself failed, and the error is returned.
+4. Otherwise `apply_with_receipts` sends the registrations again in one call, with EV_RECEIPT on
+   each and room for every answer. The refused ones stay on the list for the next tick.
+5. When that call fails too, the kqueue failed. The list stays as it was, and the error is returned.
+6. When it succeeds, the failed call stopped at a refused change. Nothing is lost, and the tick goes
+   on with no readiness and no error.
+
+A registration the failed call applied is applied again. An EV_ADD changes nothing. An EV_DELETE
+comes back refused, and the next tick's reap tries the first waiter of that filter once. A try that
+would block changes nothing.
+
+The success path pays one branch. The failure path pays one more `kevent` call.
+
+### Alternatives
+
+- **Drop the list, as before.** It loses registrations, and an operation can wait for ever.
+- **Keep the whole list and send it unchanged in the next tick.** It is one line. A refused change
+  with no room fails every tick again while the room stays 0. The tick cannot tell a failed kqueue
+  from a refused change.
+- **EV_RECEIPT on every change of the tick's call.** No refused change fails a call then. But a call
+  that returns a receipt does not read readiness, so each tick would need two calls.
+- **Room in the eventlist for every change.** The reap needs one event for each readiness, so the
+  room is the caller's free events. Each tick with more changes than that room would need a call of
+  its own first.
+
+### What it does not cover
+
+- `apply_early` sends a full list early. When that call fails as a whole, it still drops the list,
+  because a full list has no room for the new change.
+- `Queue.call` sends the list again after EINTR. An EV_DELETE that the first attempt applied then
+  comes back refused, and the reap tries the first waiter of that filter once.
+- A refused change with no room for its answer, such as an EV_ADD for a closed descriptor, stays on
+  the list. While the room stays at 0, each tick makes a failed call and a resend, one more `kevent`
+  call per tick. The refusal reaches the reap only at a tick with room, so its waiter ends then.
+- On a tick that waits and has room, two or more refused changes can still fail the call. The
+  resend then succeeds, and the tick returns 0 events at once, without its wait.
+
+### Checks
+
+`kqueue_tick_test.zig` replaces the kqueue with a socket through `dup2`, so the call fails on
+demand. A receive whose registration was on the list ends once the kqueue is back. A second test
+puts a refused EV_DELETE before a registration, with room 0. The tick returns its event and no error,
+and the receive ends two ticks later. `kqueue_tick_recover.zig` tests `recover` alone.
+`tools/halt/kqueue_scenarios.zig` holds two scenarios for its assertions.
+
+Mutations, measured against `zig build test-kqueue`, and against `zig build halt-check` for the
+two assertions:
+
+| mutation | result |
+|---|---|
+| a failed call empties the list, as before | CAUGHT |
+| the tick's own trigger and timer kept | CAUGHT |
+| the wait timer's deadline left set | CAUGHT |
+| `SystemResources` handled as any other failure | CAUGHT |
+| no early return with no registration | CAUGHT |
+| receipts left on a list whose call failed | CAUGHT |
+| a resend that failed reported as success | CAUGHT |
+| a resend that worked still fails the tick | CAUGHT |
+| registrations counted after the trigger | CAUGHT |
+| `recover`'s assertion on the count deleted | CAUGHT |
+| `apply_with_receipts`'s assertion on an empty list deleted | CAUGHT |
+
 ## Not in this backend
 
 - One loop per core by SO_REUSEPORT: decision 4 recalled that macOS does not spread connections

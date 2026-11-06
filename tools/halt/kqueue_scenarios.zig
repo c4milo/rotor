@@ -372,6 +372,22 @@ fn release_a_group_never_provided() void {
     buffer_release.release_a_group_never_provided(&loop);
 }
 
+/// A tick keeps the registrations of a failed call (decision 12, point 10, proposed on
+/// 2026-11-06). Only the tick calls `recover`, and a scenario reaches its bound through the count
+/// of registrations it passes: no more than the list holds.
+fn recover_more_registrations_than_the_list_holds() void {
+    init_with_a_closed_queue();
+    scenario.reached_violation();
+    _ = kqueue.tick_module.recover_module.recover(&loop, 1, error.Unexpected) catch {};
+}
+
+/// Only a list with a change in it is sent again with receipts.
+fn apply_an_empty_list_with_receipts() void {
+    init_with_a_closed_queue();
+    scenario.reached_violation();
+    kqueue.submit_module.apply_with_receipts(&loop) catch {};
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
@@ -424,6 +440,11 @@ const scenarios = [_]scenario.Scenario{
         .name = "tick: arm a wait timer above the wait limit",
         .run = arm_a_wait_timer_above_the_wait_limit,
     },
+    .{
+        .name = "tick: recover more registrations than the list holds",
+        .run = recover_more_registrations_than_the_list_holds,
+    },
+    .{ .name = "tick: apply an empty list with receipts", .run = apply_an_empty_list_with_receipts },
     .{ .name = "buffers: provide one group id twice", .run = provide_one_group_id_twice },
     .{
         .name = "datagrams: provide groups of two shapes",

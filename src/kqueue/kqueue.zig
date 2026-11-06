@@ -437,4 +437,5 @@ test {
     _ = @import("kqueue_perform_test.zig");
     _ = @import("kqueue_sync_socket_test.zig");
     _ = @import("kqueue_tick_test.zig");
+    _ = @import("kqueue_tick_recover.zig");
 }

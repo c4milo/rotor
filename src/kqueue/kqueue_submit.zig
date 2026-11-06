@@ -128,12 +128,27 @@ fn push_change(loop: *Loop, change: Kevent) void {
 /// macOS 26.6.2 on 2026-09-23. A change the kernel refused goes back on the list, so the tick's
 /// own call reports the refusal as it reports every other. A call that fails as a whole drops the
 /// changes, as `Queue.wake` drops a wake: `exchange` has already made the call again after EINTR.
+/// The list is full, so it has no room to keep them and take the new change too.
 fn apply_early(loop: *Loop) void {
+    apply_with_receipts(loop) catch {
+        loop.changes_used = 0;
+    };
+}
+
+/// Applies the changelist in a call of its own, with EV_RECEIPT on every change, and leaves on the
+/// list only the changes the kernel refused. With a receipt and room for every answer, the kernel
+/// answers each change and does not fail the call on one it refused (decision 12, point 10). A call
+/// that fails as a whole leaves the list as it was, without the receipts, and returns the error.
+pub fn apply_with_receipts(loop: *Loop) queue_module.ExchangeError!void {
     comptime assert(constants.changes_max <= constants.readiness_max);
     const changes = loop.changes[0..loop.changes_used];
+    assert(changes.len >= 1);
     for (changes) |*change| change.flags |= std.c.EV.RECEIPT;
     var receipts: [constants.changes_max]Kevent = undefined;
-    const answered = loop.queue.exchange(changes, receipts[0..changes.len], null) catch 0;
+    const answered = loop.queue.exchange(changes, receipts[0..changes.len], null) catch |failure| {
+        for (changes) |*change| change.flags &= ~@as(u16, std.c.EV.RECEIPT);
+        return failure;
+    };
     assert(answered <= changes.len);
     loop.changes_used = 0;
     for (receipts[0..answered], changes[0..answered]) |receipt, change| {

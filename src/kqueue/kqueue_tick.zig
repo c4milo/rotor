@@ -14,6 +14,7 @@ const core = @import("core");
 const constants = @import("constants.zig");
 const cancel_module = @import("kqueue_cancel.zig");
 const queue_module = @import("kqueue_queue.zig");
+pub const recover_module = @import("kqueue_tick_recover.zig");
 const reap_module = @import("kqueue_reap.zig");
 const offload_module = @import("kqueue_offload.zig");
 const submit_module = @import("kqueue_submit.zig");
@@ -55,11 +56,14 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // seen come back is not left: that call is made, and hands it back.
     const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
     const idle = wait == null and quiet;
+    // The changes the flush and the reaps queued, before the tick adds its trigger or its timer.
+    const registrations = loop.changes_used;
     if (wait == null and room != 0 and !idle) arm_poll(loop);
     const nothing: queue_module.ExchangeError!u32 = 0;
     const readiness = loop.readiness[0..room];
-    const ready = if (idle) nothing else call_kernel(loop, readiness, wait);
-    loop.changes_used = 0;
+    const called = if (idle) nothing else call_kernel(loop, readiness, wait);
+    // A failed call keeps the registrations it may not have applied (decision 12, point 10).
+    const ready = recover_module.settle_changes(loop, registrations, called);
     loop.wake_up();
     // A tick that made no call has nothing to reap. What arrived since the drains above waits for
     // the next tick, which does not block while a ring holds it. It still expires, so a stream of
@@ -116,7 +120,8 @@ pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 
 
 /// The tick's one `kevent` call, carrying the changelist. A poll returns at once. A call that blocks
 /// carries no timeout, because the loop's wait timer bounds it (decision 12, point 7). It carries
-/// the timeout itself only when the changelist has no room left to arm the timer.
+/// the timeout itself only when the changelist has no room left to arm the timer. When the first
+/// wait succeeds and a later one fails, the first applied the list, and `recover` sends it again.
 fn call_kernel(loop: *Loop, readiness: []Kevent, wait: ?u64) queue_module.ExchangeError!u32 {
     const bound_ns = wait orelse
         return loop.queue.exchange(loop.changes[0..loop.changes_used], readiness, null);
