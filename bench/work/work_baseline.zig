@@ -12,8 +12,9 @@ const std = @import("std");
 /// Sections one file may hold: every operating system, processor and backend the gate runs on.
 pub const sections_max = 16;
 
-/// Workloads one section may hold.
-pub const entries_max = 8;
+/// Workloads one section may hold: every workload of `work.zig`, with room for more.
+/// `work_gate.zig` asserts at compile time that its list fits.
+pub const entries_max = 16;
 
 /// The most a tolerance may be, in percent. A larger one would let a real regression through.
 pub const tolerance_percent_max = 20;

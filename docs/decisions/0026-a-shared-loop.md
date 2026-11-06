@@ -219,6 +219,16 @@ each event, and about 6 in each tick. Two shapes of the code cost more, and were
 Camilo raised the macOS rows of `bench/baseline/work.txt` for `post-operation`, `timer` and
 `batch` on 2026-11-06. The tree without this record already sat about 1 percent over them.
 
+The rows above hold only the path that skips the dispatch. Two workloads, added the same day, hold
+`tick_dispatched` itself: `record`, one timer whose event goes to its record, and `poller`, one
+tick with one poller that reports no work. `timer` is the same tick as `record` without the record.
+
+| workload | kqueue | io_uring | epoll |
+|---|---:|---:|---:|
+| `timer` | 1103 | 1026 | 1083 |
+| `record` | 1222 | 1128 | 1191 |
+| `poller` | 570 | 497 | 574 |
+
 The scenarios are in `conformance_dispatch.zig`: two libraries on one loop, an operation without a
 record beside one with a record, a callback that submits, the pollers, and a multishot receive
 whose datagrams and final event reach its record. The halt scenarios are in

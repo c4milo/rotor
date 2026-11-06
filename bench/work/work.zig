@@ -24,6 +24,11 @@
 //!   only to run a task.
 //! - `tasks-64`: `core.constants.tasks_per_tick_max` tasks scheduled and run by one tick: the run
 //!   loop.
+//! - `record`: one timer of no delay that names a completion record, submitted and handed to its
+//!   record by one tick (decision 26). The tick takes `tick_dispatched`, the cold path of decision
+//!   7, row H1, and hands nothing to its caller.
+//! - `poller`: one tick with one poller added that reports no work (decision 26): the cold path of
+//!   a tick that has nothing to dispatch but its poller.
 //!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
@@ -35,7 +40,17 @@ const Loop = backend.Loop;
 const Event = core.Event;
 const Operation = core.Operation;
 
-pub const Workload = enum { post, post_operation, timer, batch, wait, task, tasks_64 };
+pub const Workload = enum {
+    post,
+    post_operation,
+    timer,
+    batch,
+    wait,
+    task,
+    tasks_64,
+    record,
+    poller,
+};
 
 /// The exit status of a workload this backend cannot run.
 pub const unsupported_status: u8 = 2;
@@ -86,6 +101,32 @@ fn ran_nothing(_: *core.Task) void {}
 var tasks: [core.constants.tasks_per_tick_max]core.Task align(@alignOf(core.Task)) =
     @splat(.{ .run = ran_nothing });
 
+/// What `record` and `poller` count: each call of the record or the poller adds one, and an
+/// iteration fails unless its tick made exactly one call.
+const Calls = struct {
+    count: u64 = 0,
+    completion: core.Completion = .init(Calls, "completion", completed),
+    poller: core.Poller = .init(Calls, "poller", polled),
+
+    fn completed(calls: *Calls, _: Event) void {
+        calls.count += 1;
+    }
+
+    /// Reports no work, so the tick waits as it would without the poller.
+    fn polled(calls: *Calls) bool {
+        calls.count += 1;
+        return false;
+    }
+
+    /// Fails unless one call came since the last check.
+    fn expect_one(calls: *Calls) !void {
+        if (calls.count != 1) return error.CallMissing;
+        calls.count = 0;
+    }
+};
+
+var counted: Calls align(@alignOf(Calls)) = .{};
+
 /// True when this backend's loop can wake itself, which `wait` needs: kqueue and epoll, whose loop
 /// holds the descriptor a post's wake would reach.
 const can_wake_itself = @hasField(Loop, "queue");
@@ -110,9 +151,19 @@ pub fn main(init: std.process.Init) !void {
     // One loop for each workload, chosen at compile time, so the code that one workload counts does
     // not move when another workload is added. With one switch inside one loop, the two task
     // workloads of 2026-11-06 made `post` count 15 more instructions without a change to rotor.
+    // Each loop is a function of its own too, never inlined into `main`: when `record` and `poller`
+    // were added inline, epoll's `tasks-64` counted 63 more instructions in `main` alone.
     switch (workload) {
-        inline else => |chosen| for (0..iterations) |_| try run(chosen),
+        inline else => |chosen| try run_all(chosen, iterations),
     }
+}
+
+/// Runs `iterations` of `workload`. The poller of `poller` is added only for its own workload, and
+/// removed before `deinit`, which halts while a poller is still added.
+noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
+    if (workload == .poller) try first.loop.add_poller(&counted.poller);
+    defer if (workload == .poller) first.loop.remove_poller(&counted.poller);
+    for (0..iterations) |_| try run(workload);
 }
 
 fn run(comptime workload: Workload) !void {
@@ -148,6 +199,15 @@ fn run(comptime workload: Workload) !void {
             for (&tasks) |*task| try first.loop.schedule(task);
             try first.expect(0);
         },
+        .record => {
+            try submit(&first, &.{Operation.timer(0, 0, 0).completion(&counted.completion)});
+            try first.expect(0);
+            try counted.expect_one();
+        },
+        .poller => {
+            try first.expect(0);
+            try counted.expect_one();
+        },
     }
 }
 
@@ -175,5 +235,7 @@ pub fn workload_of(name: []const u8) ?Workload {
     if (std.mem.eql(u8, name, "wait")) return .wait;
     if (std.mem.eql(u8, name, "task")) return .task;
     if (std.mem.eql(u8, name, "tasks-64")) return .tasks_64;
+    if (std.mem.eql(u8, name, "record")) return .record;
+    if (std.mem.eql(u8, name, "poller")) return .poller;
     return null;
 }

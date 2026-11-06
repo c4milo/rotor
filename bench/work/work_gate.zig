@@ -45,7 +45,14 @@ const workloads = [_]Workload{
     .{ .name = "wait", .time_span = 200_000, .cachegrind_span = 5_000 },
     .{ .name = "task", .time_span = 1_000_000, .cachegrind_span = 10_000 },
     .{ .name = "tasks-64", .time_span = 50_000, .cachegrind_span = 500 },
+    .{ .name = "record", .time_span = 1_000_000, .cachegrind_span = 10_000 },
+    .{ .name = "poller", .time_span = 1_000_000, .cachegrind_span = 10_000 },
 };
+
+comptime {
+    // A section must hold a row for each workload, or the baseline that names them all is refused.
+    std.debug.assert(workloads.len <= work_baseline.entries_max);
+}
 
 /// The iterations of the short run, which the long run repeats before its own: they warm what the
 /// long run then counts.

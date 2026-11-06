@@ -16,3 +16,6 @@ names no record and adds no poller, with the hint and without it. The tree is d1
 Without the hint the compiler inlines `tick_dispatched` into `tick`, and every tick saves more
 registers, also when it skips the dispatch. The counts are the same on every run, so the gain is
 above the noise, which is 0.
+
+Since 2026-11-06 the gate also holds the cold path. Its `record` and `poller` workloads take
+`tick_dispatched` in each iteration, so a change that makes that path slower fails the gate too.

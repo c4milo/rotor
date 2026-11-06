@@ -40,8 +40,19 @@
 # one that runs `tasks_per_tick_max` tasks. The macOS rows are from `mac`, and the linux-aarch64
 # rows from cachegrind in an arm64 container on `mac`. The linux-x86_64 rows are the counts that
 # CI's x86-64 runner printed at `000e981`, because an x86-64 container on `mac` cannot start a
-# loop. The same day `work.zig` began to compile one loop for each workload, because with one switch inside one loop
-# the two new workloads made `post` count 15 more instructions with no change to rotor.
+# loop. The same day `work.zig` began to compile one loop for each workload, because with one
+# switch inside one loop the two new workloads made `post` count 15 more instructions with no
+# change to rotor.
+#
+# `record` and `poller` were added on 2026-11-06 for decision 26: one timer whose event goes to its
+# record, and one tick with one poller that reports no work. Both take `tick_dispatched`, the cold
+# path of decision 7, row H1, which no row held before. The macOS rows are from `mac`, where four
+# runs agreed within 3 instructions at a load average of 14 to 22. The linux-aarch64 rows are from
+# cachegrind in an arm64 container on `mac`. The linux-x86_64 sections have no row for them: the
+# gate prints the row to add, and CI's x86-64 runner supplies it. The same day each workload's loop
+# became a function of its own, because the two new loops inside `main` made epoll's `tasks-64`
+# count 63 more instructions. With that change every older row counted within 3 instructions of the
+# tree before it.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
@@ -51,6 +62,8 @@ batch 24624
 wait 5408
 task 610
 tasks-64 4407
+record 1222
+poller 570
 section linux-x86_64-uring
 post 1176
 post-operation 3030
@@ -73,6 +86,8 @@ timer 1025
 batch 23757
 task 531
 tasks-64 3692
+record 1128
+poller 497
 section linux-aarch64-epoll
 post 1212
 post-operation 3019
@@ -81,3 +96,5 @@ batch 23845
 wait 655
 task 607
 tasks-64 3768
+record 1191
+poller 574
