@@ -9,6 +9,7 @@
 const std = @import("std");
 const core = @import("core");
 const backend = @import("backend");
+const stall = @import("conformance_stall.zig");
 
 pub const Loop = backend.Loop;
 pub const Event = core.Event;
@@ -102,12 +103,28 @@ pub const Harness = struct {
         if (taken != batch.len) return error.TableFull;
     }
 
+    /// One `tick` of the loop. It fails with `error.CallbackStalled` when a callback that
+    /// `conformance_stall.zig` made ran past its limit.
+    pub fn tick(harness: *Harness, events: []Event, wait_ns: u64) !u32 {
+        const count = try harness.loop.tick(events, wait_ns);
+        try stall.check();
+        return count;
+    }
+
+    /// `drain` of the loop, with the stall check of `tick`. A stall comes before the error of the
+    /// drain, because a task that stalled can be why tasks are still queued.
+    pub fn drain(harness: *Harness, events: []Event) !void {
+        const drained = harness.loop.drain(events);
+        try stall.check();
+        return drained;
+    }
+
     /// Ticks until `events` is full, and fails when it is not full within the bound.
     pub fn collect(harness: *Harness, events: []Event) !void {
         var filled: usize = 0;
         var round: u32 = 0;
         while (filled < events.len and round < collect_rounds_max) : (round += 1) {
-            filled += try harness.loop.tick(events[filled..], collect_wait_ns);
+            filled += try harness.tick(events[filled..], collect_wait_ns);
         }
         if (filled < events.len) return error.EventsMissing;
     }
@@ -157,5 +174,6 @@ test {
     _ = @import("conformance_dispatch.zig");
     _ = @import("conformance_shuffle.zig");
     _ = @import("conformance_tasks.zig");
+    _ = @import("conformance_stall.zig");
     _ = @import("conformance_wait_descriptor.zig");
 }

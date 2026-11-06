@@ -1,9 +1,13 @@
 //! The task queue of decision 27 on every backend. Only the program ticks the loop; libraries
 //! continue their work in records, pollers and tasks, and every task runs exactly once.
+//!
+//! `conformance_stall.zig` makes every record, poller and task here, and the harness ticks the
+//! loop, so a callback that holds the loop past its limit fails the scenario.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
 const conformance = @import("conformance.zig");
+const stall = @import("conformance_stall.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
@@ -21,7 +25,7 @@ const long_wait_ns = 2 * core.constants.ns_per_s;
 
 /// A task that schedules itself again on every run, as a library with endless work would.
 const Forever = struct {
-    task: core.Task = .init(Forever, "task", ran),
+    task: core.Task = stall.task(Forever, "task", ran),
     loop: *Harness,
     runs: u32 = 0,
 
@@ -33,7 +37,7 @@ const Forever = struct {
 
 /// A library with a timer that names a record.
 const Timed = struct {
-    completion: core.Completion = .init(Timed, "completion", fired),
+    completion: core.Completion = stall.completion(Timed, "completion", fired),
     fires: u32 = 0,
 
     fn fired(timed: *Timed, event: Event) void {
@@ -54,7 +58,7 @@ test "a task that never stops runs once a tick, and another library's timer stil
     var events: [8]Event = undefined;
     var ticks: u32 = 0;
     while (timed.fires == 0 and ticks < ticks_max) : (ticks += 1) {
-        try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, long_wait_ns));
+        try testing.expectEqual(@as(u32, 0), try harness.tick(&events, long_wait_ns));
         // The task ran exactly once in each tick, and is queued for the next.
         try testing.expectEqual(ticks + 1, forever.runs);
         try testing.expect(harness.loop.is_scheduled(&forever.task));
@@ -62,7 +66,7 @@ test "a task that never stops runs once a tick, and another library's timer stil
     try testing.expectEqual(@as(u32, 1), timed.fires);
     // The task never stops, so the drain gives up on it, and the program discards it.
     var scratch: [8]Event = undefined;
-    try testing.expectError(error.TasksStillQueued, harness.loop.drain(&scratch));
+    try testing.expectError(error.TasksStillQueued, harness.drain(&scratch));
     try testing.expectEqual(@as(u32, 1), harness.loop.discard_tasks());
     try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
     try testing.expect(!harness.loop.is_scheduled(&forever.task));
@@ -70,7 +74,7 @@ test "a task that never stops runs once a tick, and another library's timer stil
 
 /// Where each task ran: the tick count of the harness when its run came.
 const Placed = struct {
-    task: core.Task = .init(Placed, "task", ran),
+    task: core.Task = stall.task(Placed, "task", ran),
     tick: *const u32,
     ran_at: ?u32 = null,
     /// A task this one queues from its own run.
@@ -86,7 +90,7 @@ const Placed = struct {
 
 /// A record that queues `queued` when its event arrives.
 const Queueing = struct {
-    completion: core.Completion = .init(Queueing, "completion", called),
+    completion: core.Completion = stall.completion(Queueing, "completion", called),
     loop: *Harness,
     queued: *Placed,
 
@@ -98,7 +102,7 @@ const Queueing = struct {
 
 /// A poller that queues `queued` once, in the tick numbered `at`.
 const Polling = struct {
-    poller: core.Poller = .init(Polling, "poller", polled),
+    poller: core.Poller = stall.poller(Polling, "poller", polled),
     loop: *Harness,
     queued: *Placed,
     tick: *const u32,
@@ -126,11 +130,11 @@ test "a task runs in the tick that queued it from a record or a poller, and a ta
     try harness.submit(&.{Operation.timer(0, ms, 0).completion(&queueing.completion)}, &.{});
     var events: [8]Event = undefined;
     // Tick 0: the poller queues its task, which runs in the same tick.
-    _ = try harness.loop.tick(&events, 0);
+    _ = try harness.tick(&events, 0);
     try testing.expectEqual(@as(?u32, 0), from_poller.ran_at);
     tick = 1;
     while (from_record.ran_at == null and tick < ticks_max) : (tick += 1) {
-        _ = try harness.loop.tick(&events, 10 * ms);
+        _ = try harness.tick(&events, 10 * ms);
     }
     // The timer's record queued a task that ran in the same tick; that task's own task waits.
     const fired_at = from_record.ran_at.?;
@@ -139,7 +143,7 @@ test "a task runs in the tick that queued it from a record or a poller, and a ta
     try testing.expectEqual(@as(u32, 1), harness.loop.tasks_queued());
     // The next tick runs it, and does not block although it may wait two seconds.
     const before = harness.loop.now_ns();
-    _ = try harness.loop.tick(&events, long_wait_ns);
+    _ = try harness.tick(&events, long_wait_ns);
     try testing.expect(harness.loop.now_ns() - before < long_wait_ns / 2);
     try testing.expectEqual(@as(?u32, tick), next.ran_at);
     try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
@@ -147,7 +151,7 @@ test "a task runs in the tick that queued it from a record or a poller, and a ta
 
 /// A task that counts its runs.
 const Counted = struct {
-    task: core.Task = .init(Counted, "task", ran),
+    task: core.Task = stall.task(Counted, "task", ran),
     runs: u32 = 0,
 
     fn ran(counted: *Counted) void {
@@ -165,7 +169,7 @@ test "drain runs the queued tasks of a loop with nothing in flight" {
     try testing.expectEqual(@as(u32, 3), harness.loop.tasks_queued());
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
     var scratch: [8]Event = undefined;
-    try harness.loop.drain(&scratch);
+    try harness.drain(&scratch);
     for (&counted) |*one| try testing.expectEqual(@as(u32, 1), one.runs);
     try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
 }

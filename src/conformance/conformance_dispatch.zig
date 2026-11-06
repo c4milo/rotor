@@ -1,10 +1,14 @@
 //! A loop that several libraries share (decision 26). Each library names a `Completion` in its
 //! operations, and any of them may tick. Every event reaches the record of its own operation, and
 //! an event of an operation without a record reaches the caller of `tick`.
+//!
+//! `conformance_stall.zig` makes every record and poller here, and the harness ticks the loop, so a
+//! callback that holds the loop past its limit fails the scenario.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
 const conformance = @import("conformance.zig");
+const stall = @import("conformance_stall.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
@@ -20,7 +24,7 @@ const wait_ns = 10 * ms;
 const Library = struct {
     /// The events the record received, `more` ones included.
     events: u32 = 0,
-    completion: core.Completion = .init(Library, "completion", called),
+    completion: core.Completion = stall.completion(Library, "completion", called),
     /// The final events the record received.
     finals: u32 = 0,
     /// Set by `called` when it should submit a timer without a record from inside its callback.
@@ -46,7 +50,7 @@ fn tick_until(harness: *Harness, context: anytype, comptime done: fn (@TypeOf(co
     var events: [events_len]Event = undefined;
     var round: u32 = 0;
     while (!done(context) and round < rounds_max) : (round += 1) {
-        try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, wait_ns));
+        try testing.expectEqual(@as(u32, 0), try harness.tick(&events, wait_ns));
     }
     try testing.expect(done(context));
 }
@@ -73,7 +77,7 @@ test "two libraries on one loop each get their own events, whichever of them tic
     var events: [8]Event = undefined;
     var round: u32 = 0;
     while (first.events < 3 and round < rounds_max) : (round += 1) {
-        try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, wait_ns));
+        try testing.expectEqual(@as(u32, 0), try harness.tick(&events, wait_ns));
     }
     harness.loop.cancel(handles[0]);
     try tick_until(&harness, Pair{ .first = &first, .second = &second }, both_finished);
@@ -95,7 +99,7 @@ test "an event of an operation without a record reaches the caller, and the othe
     var plain: u32 = 0;
     var round: u32 = 0;
     while ((plain == 0 or library.finals == 0) and round < rounds_max) : (round += 1) {
-        const count = try harness.loop.tick(&events, wait_ns);
+        const count = try harness.tick(&events, wait_ns);
         for (events[0..count]) |event| {
             try testing.expectEqual(@as(u64, 7), event.user_data);
             try testing.expect(!event.flags.dispatched);
@@ -117,7 +121,7 @@ test "a callback may submit, and the next tick serves what it submitted" {
     var seen: ?Event = null;
     var round: u32 = 0;
     while (seen == null and round < rounds_max) : (round += 1) {
-        const count = try harness.loop.tick(&events, wait_ns);
+        const count = try harness.tick(&events, wait_ns);
         if (count != 0) seen = events[0];
     }
     try testing.expectEqual(@as(u32, 1), library.finals);
@@ -126,7 +130,7 @@ test "a callback may submit, and the next tick serves what it submitted" {
 
 const Polling = struct {
     calls: u32 = 0,
-    poller: core.Poller = .init(Polling, "poller", polled),
+    poller: core.Poller = stall.poller(Polling, "poller", polled),
     worked: bool = false,
 
     fn polled(polling: *Polling) bool {
@@ -148,20 +152,20 @@ test "each poller runs once a tick, and one that did work keeps the tick from bl
     var busy: Polling = .{ .worked = true };
     var events: [8]Event = undefined;
     // `now_ns` is the clock as the last tick read it, so one tick sets it before the first reading.
-    _ = try harness.loop.tick(&events, 0);
+    _ = try harness.tick(&events, 0);
     try harness.loop.add_poller(&idle.poller);
     try harness.loop.add_poller(&busy.poller);
     const ticks = 3;
     for (0..ticks) |_| {
         const before = harness.loop.now_ns();
-        try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, long_wait_ns));
+        try testing.expectEqual(@as(u32, 0), try harness.tick(&events, long_wait_ns));
         try testing.expect(harness.loop.now_ns() - before < long_wait_ns / 2);
     }
     try testing.expectEqual(@as(u32, ticks), idle.calls);
     try testing.expectEqual(@as(u32, ticks), busy.calls);
     harness.loop.remove_poller(&busy.poller);
     harness.loop.remove_poller(&idle.poller);
-    _ = try harness.loop.tick(&events, 0);
+    _ = try harness.tick(&events, 0);
     try testing.expectEqual(@as(u32, ticks), idle.calls);
 }
 
@@ -184,7 +188,7 @@ const datagrams = 25;
 /// A library whose record receives datagrams and gives each buffer back.
 const Receiver = struct {
     harness: *Harness,
-    completion: core.Completion = .init(Receiver, "completion", received),
+    completion: core.Completion = stall.completion(Receiver, "completion", received),
     datagrams: u32 = 0,
     finals: u32 = 0,
 
