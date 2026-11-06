@@ -155,7 +155,9 @@ the rule does not say so. The amendment writes down what is built:
   event names it with `flags.buffer` and `buffer_id`. From that event it is the caller's, whether
   or not the operation that received into it has ended, until the caller passes it to
   `give_back_buffer`; then it is the loop's again and may be named by any later event. Reading it
-  after `give_back_buffer` is the error rule 3 already forbids.
+  after `give_back_buffer` is the error rule 3 already forbids. The group's memory is the caller's
+  again at `release_buffers`, which halts while an operation names the group (decision 15,
+  amendment of 2026-11-06).
 - A receive from a group ends with `buffers_exhausted` when it has bytes to receive and no buffer of
   its group is free. That event is the receive's final event. For a multishot receive, it ends the
   flow of `more` events. The caller gives buffers back and submits the receive again.

@@ -485,3 +485,32 @@ first give-back, a give-back that ignores the counts on each of the three backen
 split that keeps the whole one's `more`, and a segment read at offset 0. Against the Linux gate: no
 split in either Linux reap, a reap that drops the events a split carries to the next tick on either
 backend, a small group that keeps coalescing on either backend, and coalescing off by default.
+
+## Amendment, 2026-11-06: a group can be taken back
+
+colibri asked for this in rotor issue 13, and Camilo ruled for it on 2026-11-06. colibri's client
+and server will share a loop that the program owns with other libraries. Before this amendment, a
+second `provide_datagram_buffers` on one id halted. So a library that stopped and started again
+needed a new group id for each start, and a loop holds only `buffer_groups_max` (16) groups.
+
+`release_buffers(group_id)` takes a group back. The rules:
+
+1. **No operation in flight may name the group.** The call halts if a slot that is not free names
+   it. A slot names its group until its final event is handed over. A multishot receive from the
+   group must reach its final event first, through `cancel` and a tick.
+2. **The group's memory is the caller's again**, and the id may be provided again, from any memory.
+3. **A buffer the caller holds at the release is plain memory.** Its `give_back_buffer` halts.
+4. **The datagram shape stays fixed.** It belongs to the loop and not to a group.
+5. **The call is for groups of either kind**, from `provide_buffers` or from
+   `provide_datagram_buffers`, so its name does not say "datagram".
+
+The check of rule 1 walks the slot table, which is decision 8's class D. A caller makes the call
+once for each group, and never for each operation. On io_uring the call also makes one
+`io_uring_register` with `IORING_UNREGISTER_PBUF_RING`. The kernel answers EINVAL for a group it
+does not hold, so an assertion on its answer is the check that the group was provided. kqueue and
+epoll check that themselves.
+
+The scenario is `conformance_buffer_release.zig`. It receives a datagram into a group, releases the
+group and fills its memory, provides the same id from other memory, and receives a datagram there.
+The halt scenarios are in `tools/halt/buffer_release.zig`: a release while a receive names the group,
+and a release of a group that was never provided.

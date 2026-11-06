@@ -328,6 +328,7 @@ pub const Loop = struct {
     pub const register_descriptors = descriptors_module.register;
     pub const provide_buffers = buffers.provide;
     pub const give_back_buffer = buffers.give_back;
+    pub const release_buffers = buffers.release;
 
     /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
     /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a

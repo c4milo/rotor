@@ -32,6 +32,7 @@ pub const loop_declarations = [_][]const u8{
     "provide_datagram_buffers",
     "datagram",
     "give_back_buffer",
+    "release_buffers",
     "provided_buffer",
 };
 
@@ -86,6 +87,7 @@ const Complete = struct {
     pub fn provide_datagram_buffers() void {}
     pub fn datagram() void {}
     pub fn give_back_buffer() void {}
+    pub fn release_buffers() void {}
     pub fn provided_buffer() void {}
 };
 

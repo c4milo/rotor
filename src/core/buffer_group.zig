@@ -12,6 +12,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
+const SlotTable = @import("slot_table.zig").SlotTable;
 
 pub const RegisterError = error{ SystemResources, Unexpected };
 
@@ -76,6 +77,20 @@ pub fn release(holders: []u8, buffer_id: u16) bool {
     }
     holders[buffer_id] = held - 1;
     return false;
+}
+
+/// Halts when an operation in flight names group `group_id`: what each backend's `release` checks
+/// before the group's memory goes back to the caller (rotor issue 13). A slot names its group until
+/// its final event is handed over and the slot is free. Decision 8, class D: it walks the whole
+/// table, on a call a caller makes once per group.
+pub fn assert_unused(table: *SlotTable, group_id: u16) void {
+    assert(group_id < constants.buffer_groups_max);
+    var index: u32 = 0;
+    while (index < table.capacity()) : (index += 1) {
+        const slot = table.at(index);
+        if (slot.state == .free) continue;
+        assert(!(slot.flags.buffer_group and slot.buffer_index == group_id));
+    }
 }
 
 /// One provided-buffer group on a backend whose loop picks the buffer. `buffer_bytes` is 0 until

@@ -356,6 +356,14 @@ pub const Loop = struct {
         }
     }
 
+    /// Takes group `group_id` back, so its memory is the caller's and the id may be provided
+    /// again. Halts while an operation in flight names the group (rotor issue 13).
+    pub fn release_buffers(loop: *Loop, group_id: u16) void {
+        switch (loop.inner) {
+            inline else => |*inner| inner.release_buffers(group_id),
+        }
+    }
+
     /// The bytes of the provided buffer a receive event named.
     pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
         return switch (loop.inner) {

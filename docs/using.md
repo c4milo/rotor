@@ -240,6 +240,12 @@ Three ways to hand the loop memory for bytes:
   ends it too, with a final event of 0 that names no buffer. At most
   `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
 
+  `loop.release_buffers(group_id)` takes a group back: its memory is yours again, and you may
+  provide the id again. Call it after the final event of every receive from the group. It halts
+  while an operation still names the group. A buffer you hold at the release is plain memory, and
+  its `give_back_buffer` halts. A library that stops and starts on a loop that lives on releases its
+  group at the stop, and so uses one id and not one for each start.
+
   **Check the alignment you got, do not assume it.** io_uring requires the 64 KiB of
   `buffers.group_alignment` and rotor asserts it, so a misaligned group halts with a named assertion
   rather than arriving as an errno. Declaring `align(buffers.group_alignment)` on a static is enough

@@ -15,6 +15,7 @@ const scenario = @import("scenario.zig");
 
 const Loop = uring.Loop;
 const datagram_shapes = @import("datagram_shapes.zig").Scenario(Loop, uring.buffers);
+const buffer_release = @import("buffer_release.zig").Scenario(Loop, uring.buffers);
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
@@ -256,7 +257,21 @@ fn provide_datagram_groups_of_two_shapes() void {
     datagram_shapes.provide_two_shapes(&loop);
 }
 
+/// A group taken back while a receive from it is in flight (`buffer_release.zig`).
+fn release_a_group_in_use() void {
+    loop.init(&memory, options) catch return;
+    buffer_release.release_a_group_in_use(&loop);
+}
+
+/// A group taken back that was never provided (`buffer_release.zig`).
+fn release_a_group_never_provided() void {
+    loop.init(&memory, options) catch return;
+    buffer_release.release_a_group_never_provided(&loop);
+}
+
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
+    .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
     .{ .name = "tick: tick with no room for an event", .run = tick_with_no_room_for_an_event },
     .{
         .name = "tick: tick with more events than a batch",

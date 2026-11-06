@@ -42,6 +42,18 @@ pub fn provide(
     loop.groups[group_id] = Group.carve(memory, count, buffer_bytes);
 }
 
+/// Takes group `group_id` back (rotor issue 13): its memory is the caller's again, and the id may
+/// be provided again. Halts while an operation in flight names the group, so a multishot receive
+/// from it must reach its final event first. A buffer the caller still holds is plain memory after
+/// this, and its `give_back` halts. The datagram shape stays fixed (`core.datagram.Shape`).
+pub fn release(loop: *Loop, group_id: u16) void {
+    loop.tables.assert_owner();
+    assert(group_id < core.constants.buffer_groups_max);
+    assert(loop.groups[group_id].buffer_bytes != 0);
+    core.buffer_group.assert_unused(&loop.tables.table, group_id);
+    loop.groups[group_id] = .none;
+}
+
 /// Hands buffer `buffer_id` of group `group_id` back, after the caller has read the bytes the
 /// receive event named. A buffer the events of a split datagram name goes back at the last of their
 /// give-backs (decision 15, amendment of 2026-11-05).

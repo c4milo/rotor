@@ -19,6 +19,7 @@ const scenario = @import("scenario.zig");
 
 const Loop = epoll.Loop;
 const datagram_shapes = @import("datagram_shapes.zig").Scenario(Loop, epoll.buffers);
+const buffer_release = @import("buffer_release.zig").Scenario(Loop, epoll.buffers);
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
@@ -313,7 +314,21 @@ fn provide_datagram_groups_of_two_shapes() void {
     datagram_shapes.provide_two_shapes(&loop);
 }
 
+/// A group taken back while a receive from it is in flight (`buffer_release.zig`).
+fn release_a_group_in_use() void {
+    loop.init_tables(&memory, options);
+    buffer_release.release_a_group_in_use(&loop);
+}
+
+/// A group taken back that was never provided (`buffer_release.zig`).
+fn release_a_group_never_provided() void {
+    loop.init_tables(&memory, options);
+    buffer_release.release_a_group_never_provided(&loop);
+}
+
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
+    .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,
