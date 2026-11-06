@@ -190,6 +190,48 @@ Linux gate:
 | the timer armed with a relative time | `uring`, Linux gate: the test hangs | CAUGHT |
 | the timer moved with a relative time | `uring`, Linux gate: the test hangs | CAUGHT |
 
+**Amended on 2026-11-06: an enter that waits for one completion and returns with none enters
+again.** Two `uring_tick.zig` tests failed once each in the Linux gate at a load near 20. The
+`uring` test executable then ran 1,600 times in Docker, 16 copies at a time beside 16 busy loops,
+and 6 runs failed. In a second run of 1,600 with a print, 5 failed, and the print showed the cause
+each time: `enter_until_completion` returned with no completion ready. `wait_past_early_timer` then returned, so a quiet tick ended its wait 15 to 38 ms
+early. The likely cause, read from the kernel's source and not traced, is that a wait ends
+when any timeout fires, before the deferred work posts that timeout's completion.
+
+So `Ring.enter_until_completion` enters again while no completion is ready, at most
+`empty_wakes_max` times. That enter posts the deferred completion and returns. The wait timer, or
+its completion on its way, bounds each enter, so no enter waits past the tick's deadline. The cost
+is one read of the completion ring after each blocking enter. The kernel does not make an empty
+wake on demand, so only the stress run shows it. Each row is one run of the command below, at a
+load average of 15 to 35 in Docker's virtual machine on `mac`:
+
+| tree | runs | failed | empty wakes printed |
+|---|---:|---:|---:|
+| before | 1,600 | 6 | not printed |
+| before, with a print | 1,600 | 5 | 7 |
+| after | 4,800 | 0 | not printed |
+| after, with a print | 1,600 | 0 | 16, each ended by one more enter |
+| after, with the enter again removed | 1,600 | 6 | not printed |
+
+```sh
+zig build test-linux && bash tools/stress_test.sh 100 16 16
+```
+
+The script starts 16 busy loops and runs 16 copies of the executable at a time, for 100 rounds,
+or 300 for the "after" row. It is the stress gate, which Camilo added on 2026-11-06, opt-in as
+the race gate is.
+
+Mutations of this amendment, measured against the `uring` test executable in Docker:
+
+| mutation | caught by | result |
+|---|---|---|
+| an empty wake not entered again | the stress gate: 6 of 1,600 runs failed | CAUGHT |
+| the move aimed at no timer, so the kernel leaves it in place | `uring`: the tick ends after the first deadline | CAUGHT |
+| no room to arm again, and the enter waits `wait_ns_max` | `uring`: the upper bound | CAUGHT |
+| no room to arm again, and no enter | `uring`: the lower bound | CAUGHT |
+| the timer never moved once armed | `uring`: the first wait-timer test | CAUGHT |
+| no second wait after an enter that submitted | `uring`: the first and third wait-timer tests | CAUGHT |
+
 ## Why stompy should depend on rotor
 
 1. **stompy's layer is about to grow along the same path.** stompy is one binary with proxy,

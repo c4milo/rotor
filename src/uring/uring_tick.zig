@@ -212,14 +212,16 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 
+    // The first deadline is seconds away, so a busy machine does not reach it in this test.
+    const first_wait_ns = core.constants.wait_ns_max / 2;
     try testing.expectEqual(@as(u32, 1), loop.submit(&one_nop, &.{}));
-    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, first_wait_ns));
     const first_ns = loop.wait_timer_deadline_ns;
     try testing.expect(first_ns > loop.tables.now_ns);
 
     // A later deadline leaves the timer where it was: no entry for it.
     try testing.expectEqual(@as(u32, 1), loop.submit(&one_nop, &.{}));
-    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 2 * core.constants.ns_per_s));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.wait_ns_max));
     try testing.expectEqual(first_ns, loop.wait_timer_deadline_ns);
 
     // An earlier deadline moves it, to fire first.
@@ -227,14 +229,16 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
     try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 10 * core.constants.ns_per_ms));
     try testing.expect(loop.wait_timer_deadline_ns < first_ns);
 
-    // The moved timer fires where it was moved to: a quiet tick that keeps it ends at its own
-    // deadline, not a second later where the timer was first.
+    // The moved timer fires where it was moved to: a quiet tick that keeps it takes its whole
+    // wait and ends before the first deadline, where a timer the kernel did not move fires. A
+    // busy machine makes a wait longer and never shorter, so it cannot break the first check,
+    // and the second has seconds to spare.
     const wait_ns = 30 * core.constants.ns_per_ms;
     const before = clock_ns();
     try testing.expectEqual(@as(u32, 0), try loop.tick(&events, wait_ns));
-    const waited = clock_ns() - before;
-    try testing.expect(waited >= wait_ns - core.constants.ns_per_ms);
-    try testing.expect(waited < core.constants.ns_per_s / 2);
+    const after = clock_ns();
+    try testing.expect(after - before >= wait_ns - core.constants.ns_per_ms);
+    try testing.expect(after < first_ns);
 }
 
 test "a wait timer an earlier tick armed does not cut a later wait short" {
@@ -304,14 +308,14 @@ test "a timer that fired early with no room to arm it again leaves the rest to a
     try loop.init(&memory, .{ .operations = 2 });
     defer loop.deinit();
 
-    // A timer 5 ms out, and an enter that waits for its completion. The enter ends when the
-    // completion is posted, so its bound only has to outlast a busy machine: at 20 ms it ended
-    // first once, on a GitHub arm64 runner running every test binary at once (run 36607058823).
+    // A timer 5 ms out, and an enter that waits for its completion with no bound of its own. A
+    // bound of 20 ms ended first once, on a GitHub arm64 runner running every test binary at once
+    // (run 36607058823). A bound of 1 s ended once with no completion posted, at a load of 17.
     loop.tables.now_ns = clock_ns();
     const now_ns = loop.tables.now_ns;
     try testing.expect(arm_wait_timer(&loop, now_ns, now_ns + 5 * core.constants.ns_per_ms));
     _ = try loop.ring.enter(null);
-    _ = try loop.ring.enter(core.constants.ns_per_s);
+    try testing.expectEqual(ring_module.Entered.submitted, try loop.ring.enter_until_completion());
     try testing.expectEqual(@as(u32, 1), loop.ring.cq_ready());
 
     const far: linux.kernel_timespec = .{ .sec = far_s, .nsec = 0 };
@@ -320,8 +324,10 @@ test "a timer that fired early with no room to arm it again leaves the rest to a
     const before = clock_ns();
     try wait_past_early_timer(&loop, before + wait_ns);
     const waited = clock_ns() - before;
+    // A busy machine makes a wait longer and never shorter. So the upper bound has seconds to
+    // spare, and it still fails a wait to the longest bound a tick allows.
     try testing.expect(waited >= wait_ns - core.constants.ns_per_ms);
-    try testing.expect(waited < core.constants.ns_per_s);
+    try testing.expect(waited < core.constants.wait_ns_max / 2);
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 }
 

@@ -175,8 +175,23 @@ pub const Ring = struct {
     /// Submits what `get_sqe` handed out and blocks, with no timeout, until one completion is
     /// ready. The loop's wait timer, armed in the same batch, is what ends a wait nothing else
     /// ends (decision 6, amended 2026-09-27).
+    ///
+    /// The kernel can end such a wait with no completion posted. Under load it did, in 6 of 1,600
+    /// runs of the `uring` tests, and the tick then ended its wait early. The likely cause
+    /// is that the kernel ends a wait when any timeout fires, and posts the timeout's completion
+    /// a moment later. So an enter that returns with none ready enters again, at most
+    /// `empty_wakes_max` times (decision 6, amendment of 2026-11-06).
     pub fn enter_until_completion(ring: *Ring) EnterError!Entered {
-        return ring.enter_with(.until_completion);
+        const entered = try ring.enter_with(.until_completion);
+        if (entered != .submitted) return entered;
+        var empty_wakes: u32 = 0;
+        while (ring.cq_ready() == 0 and empty_wakes < constants.empty_wakes_max) {
+            // No entry was handed out since the first enter, so this one only waits. A wait that
+            // submits nothing has no `overcommitted` answer to give.
+            _ = try ring.enter_with(.until_completion);
+            empty_wakes += 1;
+        }
+        return .submitted;
     }
 
     fn enter_with(ring: *Ring, wait: Wait) EnterError!Entered {

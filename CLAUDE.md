@@ -297,6 +297,12 @@ was about to push.
   needs Docker. It does require the compile, through `zig build test-race-compile`, because this
   is the only step that builds the `kqueue` module for Linux, and a Darwin-only socket option
   reached CI once because nothing in `zig build test` did.
+- Stress gate: `zig build test-linux && bash tools/stress_test.sh [rounds] [copies] [busy]`. It
+  runs the `uring` test executable in Docker, 16 copies at a time beside 16 loops that only spin,
+  for 100 rounds by default, and fails when one run fails. Under load the kernel can end a wait for
+  one completion before that completion is in the ring, and only such load shows it (decision 6,
+  amendment of 2026-11-06). `zig build test` does not run it: it needs Docker and takes minutes.
+  Added on 2026-11-06 by Camilo's ruling.
 - Linux benchmarks: `zig build bench-linux` builds the io_uring benchmarks of `bench/uring/` for
   the Linux gate's target into `zig-out/linux-bench/`, each twice: `_safe` in ReleaseSafe, and
   `_fast` in ReleaseFast, which exists only there, for decision 8's experiment. It runs none. A
