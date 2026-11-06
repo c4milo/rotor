@@ -132,6 +132,17 @@ Drain ==
     /\ checked' = {}
     /\ UNCHANGED <<tail, sleeping, offloadAsleep, wake, pc, owes>>
 
+\* A tick with a wait of 0 hands over what the rings hold and returns without the handshake. A
+\* poller that returns true makes the wait 0 (decision 26), and so does a queued task (decision
+\* 27). `wait_bound` then gives null, `settle_to_sleep` sets no flag, and the tick does not block.
+\* The receiver can take this step at every tick, so the model also holds a loop that never sleeps.
+DrainNoWait ==
+    /\ rpc = "drain"
+    /\ head' = tail
+    /\ rpc' = "drain"
+    /\ checked' = {}
+    /\ UNCHANGED <<tail, sleeping, offloadAsleep, wake, pc, owes>>
+
 \* The receiver tells its workers it is about to block (`Inbox.settle_to_sleep`).
 OffloadFlag ==
     /\ rpc = "offload_flag"
@@ -198,7 +209,7 @@ Poll ==
     /\ wake' = FALSE
     /\ UNCHANGED <<tail, head, sleeping, offloadAsleep, pc, owes, rpc, checked>>
 
-Receiver == Drain \/ OffloadFlag \/ OffloadCheck \/ BeginSleep \/ Recheck \/ Wait \/ WakeUp
+Receiver == Drain \/ DrainNoWait \/ OffloadFlag \/ OffloadCheck \/ BeginSleep \/ Recheck \/ Wait \/ WakeUp
 
 Next ==
     \/ Receiver

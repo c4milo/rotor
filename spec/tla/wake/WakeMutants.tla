@@ -80,4 +80,13 @@ EndFlushNoWake(s) ==
     /\ pc' = [pc EXCEPT ![s] = IF tail[s] = Messages THEN "done" ELSE "push"]
     /\ UNCHANGED <<tail, head, sleeping, offloadAsleep, wake, rpc, checked>>
 
+\* M7: a tick with a wait of 0 skips the handshake and then blocks all the same. A backend that
+\* took its wait from the caller's `wait_ns` and not from the 0 would do this.
+DrainNoWaitThenBlock ==
+    /\ rpc = "drain"
+    /\ head' = tail
+    /\ rpc' = "wait"
+    /\ checked' = {}
+    /\ UNCHANGED <<tail, sleeping, offloadAsleep, wake, pc, owes>>
+
 =============================================================================

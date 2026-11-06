@@ -145,6 +145,11 @@ end. Each mutant breaks one step, and TLC must find a lost wake in it:
 | `no_offload_flag` | the receiver never sets the flag its workers read |
 | `flush_sends_no_wake` | a flush notes the receiver and sends no wake |
 | `never_delivered` | the same, checked against the second property alone |
+| `no_wait_blocks` | a tick with a wait of 0 skips the handshake and then blocks |
+
+On 2026-11-06 the model got a receiver step for a tick with a wait of 0, `DrainNoWait`. A poller
+that returns true forces that wait (decision 26), and so does a queued task (decision 27). The tick
+drains the rings and returns without a flag. The last mutant breaks that step.
 
 The second and third are what a store waiting in a store buffer past a later load would allow,
 which is why the four accesses of `src/core/mailbox.zig`'s argument are `.seq_cst`. The model

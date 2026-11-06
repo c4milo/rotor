@@ -222,7 +222,7 @@ The tick steps are named S0 to S5, so that no step shares a name with the once r
   - a clock read after a wait that blocked;
   - the reap, the second drains and `expire_after_reap`.
 
-  The wake handshake of `spec/tla/wake/` does not change, because its "wait 0" case already covers a poller that returns true.
+  The wake handshake of `spec/tla/wake/` does not change. Corrected on 2026-11-06: the model had no tick with a wait of 0, because its receiver always went through `begin_sleep`. It now has the step `DrainNoWait`. That step drains the rings and returns to the drain without a flag, as a tick does when a poller returns true or a task is queued. The invariants hold with it, and the mutant `no_wait_blocks` shows that TLC checks the step.
 - **S4. `Dispatch.end(events)`.**
   1. It checks `assert_class_a(ticking)`.
   2. It calls `call_records`, as decision 26 built it. A callback may call `schedule`.
