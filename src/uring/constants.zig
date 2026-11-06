@@ -52,6 +52,15 @@ pub const wait_timer_rearms_max: u32 = 4;
 /// the next wake drops before it is submitted.
 pub const remote_entries: u16 = 1;
 
+/// The most passes `Loop.deinit` makes to send the wakes its posts noted and no tick sent
+/// (decision 4, amended 2026-11-06). Each pass fills the submission ring with wakes and enters it
+/// once. A loop notes at most one wake per loop of the registry, and a pass whose enter the kernel
+/// takes sends at least one, so one pass per loop is enough. An enter that answers EBUSY takes no
+/// entry and sends none, so a run of them can end the passes with wakes still noted. The extra pass is for entries an earlier
+/// tick left in the ring. A wake still noted after the last pass is dropped, as a `Remote` drops a
+/// wake the kernel refuses.
+pub const deinit_wake_passes_max: u32 = @import("core").constants.loops_max + 1;
+
 /// The largest errno Linux returns, `core`'s, as the signed result a completion carries. A
 /// completion's result in [-errno_max, -1] is an operation that failed.
 pub const errno_max: i32 = @import("core").constants.errno_max;

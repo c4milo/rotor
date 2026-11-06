@@ -247,10 +247,13 @@ pub const Loop = struct {
         loop.groups = @splat(buffers.Group.none);
     }
 
-    /// Every operation must have had its final event (decision 5, rule 7).
+    /// Every operation must have had its final event (decision 5, rule 7). Sends the wakes that
+    /// the posts noted and no tick sent, before it frees the ring (decision 4, amended
+    /// 2026-11-06).
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
         loop.tables.assert_empty();
+        submit_module.send_noted_wakes(loop);
         if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.ring.deinit();
     }
@@ -306,7 +309,8 @@ pub const Loop = struct {
     /// 4, amended 2026-09-29). It fails as a post operation's event does: `LoopNotFound` for an id
     /// that runs no loop, `MailboxFull` when the ring to it has no room. The message is in the
     /// target's ring when this returns. A target that sleeps is woken by this loop's next tick,
-    /// whose flush sends the wakes its posts noted with the tick's own submit, one per target.
+    /// whose flush sends the wakes its posts noted with the tick's own submit, one per target. A
+    /// loop that posts and then calls `deinit` with no tick between has its wakes sent by `deinit`.
     pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) core.remote.SendError!void {
         loop.tables.assert_owner();
         const wake = try core.remote.post_now(loop.inbox.registry, loop.tables.id, target, message);

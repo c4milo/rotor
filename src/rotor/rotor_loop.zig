@@ -194,8 +194,9 @@ pub const Loop = struct {
     /// 4, amended 2026-09-29): `LoopNotFound` for an id that runs no loop, `MailboxFull` when the
     /// ring to it has no room. The message is in the target's ring when this returns. A target that
     /// sleeps is woken at once on kqueue and epoll, and by this loop's next tick on io_uring, whose
-    /// submit carries the wake. Post operations wake each target once per flush, which is cheaper
-    /// for a burst to one loop.
+    /// submit carries the wake. When `deinit` comes before that tick, `deinit` sends the wake
+    /// (decision 4, amended 2026-11-06). Post operations wake each target once per flush, which is
+    /// cheaper for a burst to one loop.
     pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) PostError!void {
         return switch (loop.inner) {
             inline else => |*inner| inner.post(target, message),

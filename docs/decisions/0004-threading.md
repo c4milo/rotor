@@ -169,8 +169,9 @@ sleeps is woken:
   trigger or one eventfd write per post;
 - on io_uring, by the posting loop's next tick. The call notes the target in `Loop.wakes`, and the
   tick's flush sends one `MSG_RING` per noted target with the tick's own submit, as it does for
-  post operations. A loop that posts and then ends without a tick leaves its wakes unsent, and the
-  target reads the message when its own wait ends.
+  post operations. Until 2026-11-06 a loop that posted and then ended without a tick left its
+  wakes unsent, and the target read the message only when its own wait ended. Since then `deinit`
+  sends them (the amendment below).
 
 Why: rotor's cross-core message was behind libuv's with the same kernel calls, and the difference
 was rotor's own work per message (decision 12, point 6, its amendment of the same day). A post
@@ -210,6 +211,25 @@ Mutations, each measured against the target named:
 | epoll's `post` never wakes a target that sleeps | `conformance-epoll`, the Linux gate | CAUGHT |
 | a loop with no registry not answered `LoopNotFound` | `test-conformance-kqueue` | CAUGHT |
 | the public module's `post` forwards nothing | `test-rotor` | CAUGHT |
+
+**Amended on 2026-11-06, by Camilo's ruling of that day: on io_uring, `deinit` sends the wakes
+still noted.** A loop that posted to a target that sleeps, and then called `deinit` with no tick
+between, sent no wake. The target read the message only when its wait ended, which can be as late
+as `wait_ns_max`, 10 seconds. Now `deinit` sends every noted wake before it frees the ring, in
+`uring_submit.send_noted_wakes`. Each pass fills the submission ring with wakes and enters once. The
+passes stop at `deinit_wake_passes_max`, one per loop of the registry and one more, or at an enter
+the kernel refuses. A wake left then is dropped, as a `Remote` drops a wake the kernel refuses.
+
+kqueue and epoll have no such delay. Their `Loop.post` wakes the target before it returns, and their
+flush wakes each target before the flush returns, so nothing is noted past a call. Their `deinit`
+does not change.
+
+Mutations, each measured against the target named:
+
+| mutation | caught by | result |
+|---|---|---|
+| io_uring's `deinit` sends no noted wake | `conformance-uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` makes one pass only | `uring`, the Linux gate | CAUGHT |
 
 ### When one core is hot
 

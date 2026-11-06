@@ -349,8 +349,9 @@ may do to it is post a message:
   the message is in the target's mailbox when it returns, there is no final event, and it returns
   `Loop.PostError`, `MailboxFull` or `LoopNotFound`. It costs the sender about half the work of a
   post operation, because no tick has to hand an event over. A target that sleeps is woken at once
-  on kqueue and epoll, and by the sender's next tick on io_uring. A burst to one loop is cheaper as
-  post operations in one submit, whose tick wakes the target once.
+  on kqueue and epoll, and by the sender's next tick on io_uring. A sender that calls `deinit`
+  before that tick sends the wake in `deinit`. A burst to one loop is cheaper as post operations in
+  one submit, whose tick wakes the target once.
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
   one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
   loop's post produces an event: `MailboxFull` or `LoopNotFound`. `SystemResources`, `Unanswered`

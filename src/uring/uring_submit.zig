@@ -225,6 +225,23 @@ fn send_wakes(loop: *Loop) void {
     }
 }
 
+/// Sends every wake still noted in `loop.wakes`, for `Loop.deinit` (decision 4, amended
+/// 2026-11-06). A `Loop.post` notes its wake and the next tick sends it, so a loop that posts and
+/// then stops has no next tick. Each pass drops the completions in the ring, fills the submission
+/// ring with wakes and enters once. `deinit` calls it after it asserts that no operation is in
+/// flight, so every completion is one the reap drops anyway. An enter the kernel refuses ends the
+/// passes, and the wakes left are dropped: each message is in its ring, and the target reads it
+/// when its wait ends.
+pub fn send_noted_wakes(loop: *Loop) void {
+    var pass: u32 = 0;
+    while (loop.wakes.targets.count() != 0 and pass < constants.deinit_wake_passes_max) {
+        loop.ring.cq_advance(loop.ring.cq_ready());
+        send_wakes(loop);
+        _ = loop.ring.enter(null) catch break;
+        pass += 1;
+    }
+}
+
 /// Makes `sqe` wake the loop that owns `target_ring`: an `IORING_OP_MSG_RING` that carries no
 /// message, only a completion whose `user_data` is `constants.user_data_wake`, which the target's
 /// reap drops. It ends the target's wait; the messages are in the mailbox rings. The sender's own

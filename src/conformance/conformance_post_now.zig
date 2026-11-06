@@ -1,7 +1,7 @@
 //! A loop's `post` with no operation (decision 4, amended 2026-09-29): the scenarios of
 //! `conformance_post.zig` with each message sent by `Loop.post`, and the errors it returns. It
 //! hands over no event, so a tick after it has nothing from it; on io_uring that tick is also the
-//! one whose submit carries the wake.
+//! one whose submit carries the wake, and `deinit` carries it when no tick comes first.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
@@ -108,6 +108,44 @@ test "a loop's post wakes a loop that sleeps in its tick, long before its wait i
     try testing.expect(sleeper.waited_ns < core.constants.ns_per_s / 2);
     try testing.expect(sleeper.after_ns >= post_scenarios.quiet_wait_ns / 2);
     try testing.expect(sleeper.now_after_wake_ns >= posted_at_ns);
+}
+
+test "a loop that posts and stops with no tick between still wakes a loop that sleeps" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const registry_alignment = core.layout.memory_alignment;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
+    registry.init(&registry_memory, 2);
+    var harness: Harness = undefined;
+    try harness.init(0, &registry);
+    var stopped = false;
+    defer if (!stopped) harness.deinit();
+    var sleeper: post_scenarios.Sleeper = .{ .registry = &registry };
+    const thread = try std.Thread.spawn(.{}, post_scenarios.Sleeper.run, .{&sleeper});
+    // A failed step below returns early. The sleeper holds `registry`, which is on this stack, so
+    // the return must wait for the thread.
+    var joined = false;
+    defer if (!joined) thread.join();
+
+    // Post once the other loop says it sleeps, then stop this loop at once. On io_uring the wake
+    // waits for this loop's next tick, and there is none: `deinit` must send it (decision 4,
+    // amended 2026-11-06).
+    var attempt: u32 = 0;
+    while (!stopped and attempt < post_scenarios.post_attempts_max) : (attempt += 1) {
+        try harness.pause(post_scenarios.pause_ns);
+        if (registry.get(1) < 0 or !registry.must_wake(1)) continue;
+        try harness.pause(post_scenarios.pause_ns);
+        try harness.loop.post(1, .{ .payload = 7, .tag = tag_ping });
+        harness.deinit();
+        stopped = true;
+    }
+    thread.join();
+    joined = true;
+    try testing.expectEqual(@as(?anyerror, null), sleeper.failure);
+    try testing.expect(stopped);
+    // The sleeper waits a second. A wake that `deinit` did not send ends that wait only at its end.
+    try testing.expect(sleeper.waited_ns > 0);
+    try testing.expect(sleeper.waited_ns < core.constants.ns_per_s / 2);
 }
 
 /// Ticks that hand over the messages of a full ring, at most: one per event slot, and some spare.

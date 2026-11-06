@@ -309,6 +309,42 @@ test "a wake that finds no room in the submission ring waits for it, and the loo
     target.cq_advance(1);
 }
 
+test "deinit sends every wake its posts noted, more than the submission ring holds at once" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    const loops = 4;
+    var registry: uring.Registry = undefined;
+    var registry_memory: [uring.Registry.memory_bytes(loops)]u8 align(memory_alignment) =
+        undefined;
+    registry.init(&registry_memory, loops);
+    // Rings stand in for loops 1 to 3, and each says it sleeps, so each post notes a wake.
+    var targets: [loops - 1]uring.ring_module.Ring = undefined;
+    for (&targets, 1..) |*target, id| {
+        target.* = try uring.ring_module.Ring.init(4);
+        registry.set(@intCast(id), target.descriptor());
+        registry.begin_sleep(@intCast(id));
+    }
+    defer for (&targets, 1..) |*target, id| {
+        registry.end_sleep(@intCast(id));
+        registry.clear(@intCast(id));
+        target.deinit();
+    };
+
+    // The sender's ring has one entry, so `deinit` needs a pass, and an enter, per wake
+    // (decision 4, amended 2026-11-06). No tick runs between the posts and `deinit`.
+    var sender: Fixture = undefined;
+    try sender.init(.{ .operations = operations, .entries = 1, .id = 0, .registry = &registry });
+    for (1..loops) |id| try sender.loop.post(@intCast(id), .{ .payload = id, .tag = 1 });
+    try testing.expectEqual(@as(usize, loops - 1), sender.loop.wakes.targets.count());
+    sender.loop.deinit();
+
+    for (&targets) |*target| {
+        _ = try target.enter(null);
+        try testing.expectEqual(@as(u32, 1), target.cq_ready());
+        try testing.expectEqual(uring.constants.user_data_wake, target.cqe_at(0).user_data);
+        target.cq_advance(1);
+    }
+}
+
 /// Buffers of the refused group below: two, each big enough for a datagram's prefix and a payload.
 const refused_group_buffers = 2;
 const refused_group_payload_bytes = 64;
