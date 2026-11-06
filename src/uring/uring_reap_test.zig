@@ -351,3 +351,73 @@ test "a shuffled build notes a close's final event as a barrier, when the close 
     try testing.expectError(error.Unexpected, fixture.fail(refused, .BADF).?.outcome());
     try testing.expect(shuffle.barrier);
 }
+
+/// A record that no tick calls here: the reap only marks the events of its operations.
+fn ignore(completion: *core.Completion, event: Event) void {
+    _ = completion;
+    _ = event;
+}
+
+/// A receive into the fixture's buffer, which a test may name a record in.
+fn receive_operation(fixture: *Fixture) Operation {
+    return .{ .user_data = 0, .kind = .{ .receive = .{
+        .socket = 5,
+        .target = .{ .buffer = .{ .bytes = &fixture.buffer } },
+    } } };
+}
+
+test "an event of an operation that names a record carries the flag, and one without does not" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    var record: core.Completion = .{ .callback = &ignore };
+    const named = fixture.start(receive_operation(&fixture).completion(&record));
+    const plain = fixture.receive(3);
+    const event = fixture.complete(named.to_bits(), 17, 0).?;
+    // The tick hands this event to the record, and not to its caller (decision 26).
+    try testing.expect(event.flags.dispatched);
+    try testing.expectEqual(@as(u64, @intFromPtr(&record)), event.user_data);
+    try testing.expect(!fixture.complete(plain.to_bits(), 4, 0).?.flags.dispatched);
+}
+
+test "a failure, and a cancel the loop issued for a deadline, reach the record as final events" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    var record: core.Completion = .{ .callback = &ignore };
+    const loop = &fixture.loop;
+    const failed = fixture.start(receive_operation(&fixture).completion(&record));
+    const reset = fixture.fail(failed, .CONNRESET).?;
+    try testing.expect(reset.flags.dispatched and reset.is_final());
+    try testing.expectError(error.ConnectionReset, reset.outcome());
+
+    // The kernel answers ECANCELED, and the reap makes it `timeout` (decision 5, rule 4).
+    var timed = receive_operation(&fixture);
+    timed.timeout_ns = core.constants.ns_per_ms;
+    const handle = fixture.start(timed.completion(&record));
+    const slot = loop.tables.table.lookup(handle).?;
+    const due = loop.tables.timers.pop_due(core.constants.ns_per_ms);
+    try testing.expectEqual(@as(?u32, handle.index), due);
+    slot.flags.timed_out = true;
+    cancel_module.request(loop, handle.index, slot);
+    const event = fixture.fail(handle, .CANCELED).?;
+    try testing.expect(event.flags.dispatched and event.is_final());
+    try testing.expectError(error.Timeout, event.outcome());
+}
+
+test "an operation on a registered descriptor and a registered buffer keeps its record" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    var record: core.Completion = .{ .callback = &ignore };
+    const tables = &fixture.loop.tables;
+    tables.note_descriptors(2);
+    tables.note_buffers(1);
+    var write: Operation = .{ .user_data = 0, .kind = .{ .write = .{
+        .file = 1,
+        .buffer = .{ .bytes = &fixture.buffer, .registered = 0 },
+        .offset = 0,
+    } } };
+    write.descriptor_registered = true;
+    const handle = fixture.start(write.completion(&record));
+    const event = fixture.complete(handle.to_bits(), fixture.buffer.len, 0).?;
+    try testing.expect(event.flags.dispatched);
+    try testing.expectEqual(@as(u32, fixture.buffer.len), try event.outcome());
+}

@@ -178,3 +178,25 @@ test "a split event's view is its own datagram, and names no segment size" {
     const not_split: datagram.Delivery = .{ .from = plain, .bytes = buffer[0..7] };
     try testing.expectEqual(not_split.bytes.ptr, view(not_split, buffer.len, coalesced(7, true)).bytes.ptr);
 }
+
+test "every event of a split carried across ticks keeps the record of the coalesced datagram" {
+    var holders: [4]u8 = @splat(0);
+    var split: Split = .idle;
+    var named = coalesced(3000, false);
+    named.flags.dispatched = true;
+    try testing.expect(split.begin(named, 1000, &holders));
+    // One event of room in each tick, so two of the three wait in the split for a later tick.
+    var one: [1]Event = undefined;
+    for (0..3) |_| {
+        try testing.expectEqual(@as(u32, 1), split.take(&one));
+        try testing.expect(one[0].flags.dispatched);
+    }
+    try testing.expect(!split.pending());
+    // The last one is the final event, which the tick hands to the record too (decision 26).
+    try testing.expect(!one[0].flags.more);
+    // The caller gave the buffer back, and a datagram of an operation with no record follows.
+    holders = @splat(0);
+    try testing.expect(split.begin(coalesced(2000, true), 1000, &holders));
+    try testing.expectEqual(@as(u32, 1), split.take(&one));
+    try testing.expect(!one[0].flags.dispatched);
+}

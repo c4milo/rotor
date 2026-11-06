@@ -173,6 +173,7 @@ test {
     _ = @import("conformance_buffer_release.zig");
     _ = @import("conformance_dispatch.zig");
     _ = @import("conformance_shuffle.zig");
+    _ = @import("conformance_dispatch_local.zig");
     _ = @import("conformance_tasks.zig");
     _ = @import("conformance_stall.zig");
     _ = @import("conformance_shutdown.zig");

@@ -86,3 +86,92 @@ pub fn expire_after_reap(
     tables.expire(backend, request);
     return tables.drain_finished(events);
 }
+
+const testing = std.testing;
+const Completion = @import("dispatch.zig").Completion;
+const Handle = @import("handle.zig").Handle;
+const Operation = @import("operation.zig").Operation;
+const TimerHeap = @import("timer_heap.zig").TimerHeap;
+
+/// Slots of the tests below: room for every operation one of them submits.
+const test_slots = 4;
+
+/// The user data of the operation that names no record.
+const plain_user_data = 9;
+
+/// Tables over memory the test owns, as a backend's loop holds them.
+const TestTables = struct {
+    slots: [test_slots]Slot,
+    entries: [test_slots]TimerHeap.Entry,
+    starts: [test_slots]u64,
+    tables: Tables,
+
+    fn init(fixture: *TestTables) void {
+        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, .{});
+    }
+};
+
+/// A record that no tick calls here: the drain only marks the events of its operations.
+fn ignore(completion: *Completion, event: Event) void {
+    _ = completion;
+    _ = event;
+}
+
+/// What a readiness backend's cancel does to an operation whose deadline passed: it ends it.
+fn end_now(tables: *Tables, index: u32, slot: *Slot) void {
+    assert(slot.flags.timed_out);
+    slot.flags.cancel_requested = true;
+    tables.finish_canceled(index);
+}
+
+test "a timer the loop fires hands its final event and its repeats to the record" {
+    var fixture: TestTables = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    var record: Completion = .{ .callback = &ignore };
+    const timers = [_]Operation{
+        Operation.timer(0, 1, 0).completion(&record),
+        Operation.timer(0, 1, 5).completion(&record),
+        Operation.timer(plain_user_data, 1, 0),
+    };
+    try testing.expectEqual(@as(u32, timers.len), tables.submit(&timers, &.{}));
+    // The flush arms every timer and hands none of them to a kernel.
+    try testing.expectEqual(@as(?u32, null), tables.next_pending());
+    tables.now_ns = 1;
+    finish_due_timers(tables);
+    var events: [test_slots]Event = undefined;
+    try testing.expectEqual(@as(u32, timers.len), tables.drain_finished(&events));
+    var repeats: u32 = 0;
+    for (events[0..timers.len]) |event| {
+        try testing.expectEqual(event.user_data != plain_user_data, event.flags.dispatched);
+        repeats += @intFromBool(event.flags.more);
+    }
+    try testing.expectEqual(@as(u32, 1), repeats);
+}
+
+test "a deadline and a cancel in the queue end the operation with an event for its record" {
+    var fixture: TestTables = undefined;
+    fixture.init();
+    const tables = &fixture.tables;
+    var record: Completion = .{ .callback = &ignore };
+    var bytes: [8]u8 = @splat(0);
+    var timed = Operation.receive(0, 3, &bytes);
+    timed.timeout_ns = 1;
+    const queued = Operation.receive(0, 4, &bytes);
+    var handles: [2]Handle = undefined;
+    _ = tables.submit(&.{ timed.completion(&record), queued.completion(&record) }, &handles);
+    // The first goes to the kernel and arms its deadline. The second is cancelled in the queue.
+    const index = tables.next_pending().?;
+    tables.take_pending(index);
+    tables.hand_over(index, tables.table.at(index));
+    _ = tables.request_cancel(handles[1].index, tables.cancellable(handles[1]).?);
+    try testing.expectEqual(@as(?u32, null), tables.next_pending());
+    tables.now_ns = 1;
+    var events: [test_slots]Event = undefined;
+    try testing.expectEqual(@as(u32, 2), expire_after_reap(tables, tables, end_now, &events));
+    for (events[0..2]) |event| {
+        try testing.expect(event.flags.dispatched and event.is_final());
+    }
+    try testing.expectError(error.Canceled, events[0].outcome());
+    try testing.expectError(error.Timeout, events[1].outcome());
+}

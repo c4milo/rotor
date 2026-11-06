@@ -352,3 +352,109 @@ test "the wait timer's readiness makes no event and leaves the timer disarmed" {
     try testing.expectEqual(@as(u32, 0), reap(&loop, &readiness, &events));
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 }
+
+/// A record that no tick calls here: the reap only marks the events of its operations.
+fn ignore(completion: *core.Completion, event: Event) void {
+    _ = completion;
+    _ = event;
+}
+
+/// Hands the queued slot at the head of the list to `descriptor`'s readers, as a flush does.
+fn wait_to_read(loop: *Loop, descriptor: core.Descriptor) u32 {
+    const index = loop.tables.next_pending().?;
+    loop.tables.take_pending(index);
+    loop.tables.hand_over(index, loop.tables.table.at(index));
+    _ = loop.waiters.add(loop.tables.table.slots, descriptor, .read, index);
+    return index;
+}
+
+test "an attempt that is done marks the events of an operation that names a record" {
+    // A loop with tables and no epoll instance: neither event below enters the kernel.
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    loop.init_tables(&memory, options);
+    var record: core.Completion = .{ .callback = &ignore };
+    var bytes: [8]u8 = @splat(0);
+    const descriptor = 5;
+    try testing.expectEqual(@as(u32, 2), loop.submit(&.{
+        core.Operation.receive(0, descriptor, &bytes).completion(&record),
+        core.Operation.receive_group(0, descriptor, 1).completion(&record),
+    }, &.{}));
+    const single = wait_to_read(&loop, descriptor);
+    const multishot = wait_to_read(&loop, descriptor);
+    // The single receive ends, and the multishot one behind it stays on the list.
+    const last = conclude(&loop, descriptor, .read, single, Attempt.done(bytes.len));
+    try testing.expect(last.flags.dispatched and last.is_final());
+    try testing.expectEqual(@as(u64, @intFromPtr(&record)), last.user_data);
+    const filled: Attempt = .{ .outcome = .done, .result = 4, .buffer_id = 0 };
+    const more = conclude(&loop, descriptor, .read, multishot, filled);
+    try testing.expect(more.flags.dispatched and more.flags.more and more.flags.buffer);
+}
+
+/// The group of the batch test, which holds every datagram that test sends.
+const batch_group_id = 1;
+const batch_buffers = 4;
+const batch_buffer_bytes = 2048;
+
+/// Datagrams the batch test sends: two, the smallest batch `serve_batch` makes.
+const batch_datagrams = 2;
+
+/// Room for a batch of two: `batch_count` keeps room for every datagram to be coalesced.
+const batch_events = batch_datagrams * core.constants.coalesced_segments_max;
+
+/// Sends `batch_datagrams` datagrams of one byte from `sender` to `socket`.
+fn send_batch(sender: core.Descriptor, socket: core.Descriptor) !void {
+    const to = try epoll.sync.local_address(socket);
+    var storage: epoll.address.Storage = undefined;
+    const len = epoll.address.to_kernel(&to, &storage);
+    for (0..batch_datagrams) |_| {
+        const rc = linux.sendto(sender, "d", 1, 0, @ptrCast(&storage), len);
+        try testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
+    }
+}
+
+test "one recvmmsg batch marks each event of a datagram receive that names a record" {
+    if (!epoll.supported) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    const group_bytes = comptime epoll.buffers.group_bytes(batch_buffers, batch_buffer_bytes);
+    var group: [group_bytes]u8 align(epoll.buffers.group_alignment) = undefined;
+    const count = batch_buffers;
+    try loop.provide_datagram_buffers(batch_group_id, &group, count, batch_buffer_bytes, .{});
+    defer loop.release_buffers(batch_group_id);
+    const loopback = core.Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const socket = try epoll.sync.open_datagram(.ipv4, &loopback, .{ .coalesce = false });
+    defer epoll.sync.close_now(socket);
+    const sender = try epoll.sync.open_datagram(.ipv4, &loopback, .{});
+    defer epoll.sync.close_now(sender);
+
+    var record: core.Completion = .{ .callback = &ignore };
+    const receive = core.Operation.receive_from(0, socket, batch_group_id).completion(&record);
+    var handles: [1]core.Handle = undefined;
+    try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &handles));
+    var events: [batch_events]Event = undefined;
+    // The flush finds no datagram, so the receive waits for its socket to be readable.
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+    try send_batch(sender, socket);
+    // The reap before this one served the receive, so this reap asks for a batch of two.
+    const slot = loop.tables.table.at(handles[0].index);
+    slot.offset = (@as(u64, loop.reaps) << @bitSizeOf(u32)) | 1;
+    const ready = [_]Readiness{.{ .events = linux.EPOLL.IN, .data = .{ .u64 = @intCast(socket) } }};
+    const produced = reap(&loop, &ready, &events);
+    var marked: u32 = 0;
+    for (events[0..produced]) |event| {
+        marked += @intFromBool(event.flags.dispatched and event.flags.more and event.flags.buffer);
+        if (event.flags.buffer) loop.give_back_buffer(batch_group_id, event.flags.buffer_id);
+    }
+    // The cancel's final event goes to the record through the tick, so the loop ends empty, and a
+    // check that fails below fails without a halt in the `defer`s.
+    loop.cancel(handles[0]);
+    try loop.drain(events[produced..]);
+    try testing.expectEqual(@as(u32, batch_datagrams), produced);
+    try testing.expectEqual(produced, marked);
+    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+}

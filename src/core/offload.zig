@@ -322,3 +322,50 @@ test "memory_bytes counts the slack a 64 aligned base can cost, and none for no 
     try testing.expectEqual(slack + @sizeOf(Mailbox), memory_bytes(1));
     try testing.expectEqual(slack + test_workers * @sizeOf(Mailbox), memory_bytes(test_workers));
 }
+
+const dispatch = @import("dispatch.zig");
+const Event = @import("event.zig").Event;
+const TimerHeap = @import("timer_heap.zig").TimerHeap;
+const Slot = @import("slot.zig").Slot;
+
+/// A record that no tick calls here: the drain only marks the events of its operations.
+fn ignore(completion: *dispatch.Completion, event: Event) void {
+    _ = completion;
+    _ = event;
+}
+
+/// Slots of the test below: one operation that names a record, and one that does not.
+const test_slots = 2;
+
+test "a result a worker hands back reaches the record of its operation, and no other" {
+    var slots: [test_slots]Slot = undefined;
+    var entries: [test_slots]TimerHeap.Entry = undefined;
+    var starts: [test_slots]u64 = undefined;
+    var tables: Tables = undefined;
+    tables.init(&slots, &entries, &starts, .{});
+    var memory: [memory_bytes(1)]u8 align(layout.memory_alignment) = undefined;
+    const rings = init_rings(&memory, 1);
+    var record: dispatch.Completion = .{ .callback = &ignore };
+    var bytes: [8]u8 = @splat(0);
+    const plain_user_data = 9;
+    const reads = [_]operation.Operation{
+        operation.Operation.read(0, 3, &bytes, 0).completion(&record),
+        operation.Operation.read(plain_user_data, 3, &bytes, 0),
+    };
+    try testing.expectEqual(@as(u32, reads.len), tables.submit(&reads, &.{}));
+    // What a backend's flush does to each: hands it out, and the slot is `submitted`.
+    for (0..reads.len) |_| {
+        const index = tables.next_pending().?;
+        tables.take_pending(index);
+        tables.hand_over(index, tables.table.at(index));
+        const result: operation.Message = .{ .tag = tag_of(@intCast(bytes.len)), .payload = index };
+        try testing.expect(rings[0].push(result));
+    }
+    try testing.expectEqual(@as(u32, reads.len), drain(rings, &tables, test_slots));
+    var events: [test_slots]Event = undefined;
+    try testing.expectEqual(@as(u32, reads.len), tables.drain_finished(&events));
+    try testing.expect(events[0].flags.dispatched);
+    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+    try testing.expect(!events[1].flags.dispatched);
+    try testing.expectEqual(@as(u32, bytes.len), try events[1].outcome());
+}

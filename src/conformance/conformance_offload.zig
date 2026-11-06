@@ -24,7 +24,7 @@ const Work = core.offload.Work;
 const sync = backend.sync;
 
 /// O_DIRECT transfers in whole blocks, so every buffer, offset and length is a multiple of this.
-const block_bytes = 4096;
+pub const block_bytes = 4096;
 const file_blocks = 2;
 
 const operations = 16;
@@ -43,7 +43,7 @@ const idle_turns_max: u32 = 1 << 22;
 ///
 /// It is the smallest thing that is still a real hand-off. A caller with a pool puts a queue here
 /// instead, and rotor sees no difference.
-const Pool = struct {
+pub const Pool = struct {
     /// The work the loop handed out and the worker has not taken. The loop thread stores it and the
     /// worker takes it, so one writer each way.
     handed: std.atomic.Value(?*Work),
@@ -61,7 +61,7 @@ const Pool = struct {
     /// the operation is out on the thread, then clears it.
     holding: std.atomic.Value(bool),
 
-    fn start(pool: *Pool) !void {
+    pub fn start(pool: *Pool) !void {
         pool.handed = .init(null);
         pool.stopping = .init(false);
         pool.served = .init(0);
@@ -70,7 +70,7 @@ const Pool = struct {
         pool.thread = try std.Thread.spawn(.{}, serve, .{pool});
     }
 
-    fn stop(pool: *Pool) void {
+    pub fn stop(pool: *Pool) void {
         if (pool.joined) return;
         pool.joined = true;
         pool.stopping.store(true, .release);
@@ -110,7 +110,7 @@ const Pool = struct {
 };
 
 /// One loop with a file policy, its memory, and the rings an offload needs.
-const Fixture = struct {
+pub const Fixture = struct {
     loop: Loop,
     memory: [
         Loop.memory_bytes(.{
@@ -132,7 +132,7 @@ const Fixture = struct {
     else
         1;
 
-    fn init(fixture: *Fixture, policy: core.offload.FilePolicy, pool: ?*Pool) !void {
+    pub fn init(fixture: *Fixture, policy: core.offload.FilePolicy, pool: ?*Pool) !void {
         fixture.path = try std.fmt.bufPrintZ(&fixture.path_buffer, "{s}/rotor_offload_{d}_{s}", .{
             backend.testing.directory, backend.testing.process_id(), @tagName(policy),
         });
@@ -153,7 +153,7 @@ const Fixture = struct {
         });
     }
 
-    fn deinit(fixture: *Fixture) void {
+    pub fn deinit(fixture: *Fixture) void {
         fixture.loop.deinit();
         sync.close_now(fixture.file);
         backend.testing.remove_file(fixture.path);

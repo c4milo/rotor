@@ -345,3 +345,31 @@ test "an operation behind a multishot receive that ran out of buffers is still s
     try testing.expectEqual(@as(u32, 1), try events[0].outcome());
     try testing.expectEqual(@as(u8, 'b'), own[0]);
 }
+
+/// A record that no tick calls here: the reap only marks the events of its operations.
+fn ignore(completion: *core.Completion, event: Event) void {
+    _ = completion;
+    _ = event;
+}
+
+test "a readiness marks the event of an operation that names a record, and no other" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init();
+    defer fixture.deinit();
+    var record: core.Completion = .{ .callback = &ignore };
+    var own: [2][Fixture.buffer_bytes]u8 = undefined;
+    try fixture.wait(&.{
+        Operation.receive(0, fixture.pair[0], &own[0]).completion(&record),
+        Operation.receive(2, fixture.pair[0], &own[1]),
+    });
+    try fixture.send(2 * Fixture.buffer_bytes);
+    var events: [2]Event = undefined;
+    const ready = [_]Kevent{fixture.readable(2 * Fixture.buffer_bytes, 0)};
+    try testing.expectEqual(@as(u32, 2), reap(&fixture.loop, &ready, &events));
+    // The tick hands the first to the record, and the second to its caller (decision 26).
+    try testing.expect(events[0].flags.dispatched);
+    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+    try testing.expect(!events[1].flags.dispatched);
+    try testing.expectEqual(@as(u64, 2), events[1].user_data);
+}
