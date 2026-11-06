@@ -135,20 +135,22 @@ pub fn main(init: std.process.Init) !u8 {
 
 const Outcome = enum { counted, no_count };
 
-/// Counts every workload of one program and judges it against `section`, or prints the section
-/// to add when there is none.
+/// Counts every workload of one program and judges it against `section`. It prints the section to
+/// add when there is none, and the row to add for a workload the section does not name.
 fn gate_one(gate: *Gate, key: []const u8, program: []const u8, section: ?*const work_baseline.Section) !Outcome {
     try gate.out.print("work_gate: {s}, counted with {s}\n", .{ key, gate.counter.name() });
     if (section == null) try gate.out.print("no section for it in the baseline; add these lines:\nsection {s}\n", .{key});
     for (workloads) |workload| {
         const expected: ?u64 = if (section) |known| known.find(workload.name) else null;
-        if (section != null and expected == null) continue;
         const measured = try per_iteration(gate, program, workload) orelse continue;
         if (measured == 0) {
             try gate.out.print("work_gate: skipped, this machine reports no instructions\n", .{});
             return .no_count;
         }
         const baseline = expected orelse {
+            // A section without the row holds the workload to nothing. The count is printed so
+            // that a run on the machine can supply the row.
+            if (section != null) try gate.out.print("no row for {s} in the section; add this line:\n", .{workload.name});
             try gate.out.print("{s} {d}\n", .{ workload.name, measured });
             continue;
         };
