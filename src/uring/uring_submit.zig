@@ -67,11 +67,10 @@ fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
     var extra: Extra = .{};
     switch (slot.code) {
         .connect => extra = connect_extra(loop, slot),
-        .receive_from => {
+        .receive_from, .send_to => {
             extra = datagram_extra(loop);
-            limit_coalescing(loop, slot);
+            if (slot.code == .receive_from) limit_coalescing(loop, slot);
         },
-        .send_to => extra = datagram_extra(loop),
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
     }

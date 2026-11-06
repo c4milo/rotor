@@ -51,8 +51,12 @@ const write_bits: u32 = linux.EPOLL.OUT | linux.EPOLL.HUP | linux.EPOLL.ERR;
 /// did not fit the last reap go first (decision 15, amendment of 2026-11-05). A readiness this reap
 /// leaves unserved is level triggered, so the kernel reports it again.
 pub fn reap(loop: *Loop, readiness: []const Readiness, events: []Event) u32 {
-    var produced = loop.split.take(events);
-    if (loop.split.pending()) return produced;
+    var produced: u32 = 0;
+    // Read only while a split waits, so a reap with none touches nothing of it.
+    if (loop.split.pending()) {
+        produced = loop.split.take(events);
+        if (loop.split.pending()) return produced;
+    }
     for (readiness) |*ready| {
         if (ready.data.u64 == constants.wake_user_data) {
             // The wake names no operation. Its counter is emptied, or a level-triggered eventfd
@@ -112,7 +116,8 @@ fn settle(loop: *Loop, descriptor: core.Descriptor) void {
 /// many it wrote.
 fn place(loop: *Loop, event: Event, events: []Event) u32 {
     assert(events.len >= 1);
-    if (loop.split.pending()) return loop.split.take(events);
+    // Only an event that names a buffer can have begun a split, and the bit is in hand.
+    if (event.flags.buffer and loop.split.pending()) return loop.split.take(events);
     events[0] = event;
     return 1;
 }

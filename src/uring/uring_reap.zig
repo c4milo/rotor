@@ -46,13 +46,18 @@ comptime {
 /// A coalesced datagram goes over as one event per datagram (decision 15, amendment of 2026-11-05).
 /// The events that do not fit wait in `loop.split`, and the next reap hands them over first.
 pub fn reap(loop: *Loop, events: []Event) u32 {
-    var produced = loop.split.take(events);
-    if (loop.split.pending()) return produced;
+    var produced: u32 = 0;
+    // Read only while a split waits, so a reap with none touches nothing of it.
+    if (loop.split.pending()) {
+        produced = loop.split.take(events);
+        if (loop.split.pending()) return produced;
+    }
     const ready = loop.ring.cq_ready();
     var consumed: u32 = 0;
     while (consumed < ready and produced < events.len) : (consumed += 1) {
         const event = complete(loop, loop.ring.cqe_at(consumed)) orelse continue;
-        if (loop.split.pending()) {
+        // Only an event that names a buffer can have begun a split, and the bit is in hand.
+        if (event.flags.buffer and loop.split.pending()) {
             produced += loop.split.take(events[produced..]);
         } else {
             events[produced] = event;
@@ -80,7 +85,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         .flags = @bitCast(cqe.flags & flags_passed),
     };
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
-    if (slot.code == .receive_from and event.flags.buffer) begin_split(loop, slot.buffer_index, event);
+    if (event.flags.buffer and slot.code == .receive_from) begin_split(loop, slot.buffer_index, event);
     return event;
 }
 

@@ -44,8 +44,10 @@ pub const Split = struct {
     }
 
     /// True while events of a split wait to be handed over.
+    /// One field read: `take` sets the split back to `idle` when its last event goes, so a split
+    /// with segments has some still to hand over. Every reap reads it.
     pub fn pending(split: *const Split) bool {
-        return split.next < split.segments;
+        return split.segments != 0;
     }
 
     /// Starts splitting `whole`, a receive's event that names a buffer of coalesced datagrams of
@@ -69,7 +71,7 @@ pub const Split = struct {
             events[written] = split.segment(split.next);
             split.next += 1;
         }
-        if (!split.pending()) split.* = idle;
+        if (split.next == split.segments) split.* = idle;
         assert(written <= events.len);
         return written;
     }

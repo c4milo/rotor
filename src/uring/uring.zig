@@ -104,9 +104,6 @@ pub const Loop = struct {
     /// `core.datagram.prefix_bytes(datagram_shape.options)`, held here because the reap subtracts
     /// it from every datagram completion and must not recompute it per event.
     datagram_prefix: i32,
-    /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
-    /// 2026-11-05): the next reap hands it over before any new completion.
-    split: core.datagram_split.Split,
     /// When the wait timer fires, on the tick's clock, or 0 when it is not armed. A tick that
     /// blocks leaves an armed timer in place when it fires no later than the tick's own deadline,
     /// so the timer is armed about once per wait bound and not once per tick (decision 6, amended
@@ -129,6 +126,9 @@ pub const Loop = struct {
     group_wake_armed: bool,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
+    /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
+    /// 2026-11-05): the next reap hands it over before any new completion.
+    split: core.datagram_split.Split,
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
