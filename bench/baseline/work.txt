@@ -38,9 +38,9 @@
 #
 # `task` and `tasks-64` were added on 2026-11-06 for decision 27: one tick that runs one task, and
 # one that runs `tasks_per_tick_max` tasks. The macOS rows are from `mac`, and the linux-aarch64
-# rows from cachegrind in an arm64 container on `mac`. The linux-x86_64 sections have no rows for
-# them yet, so the gate holds them to nothing there until an x86-64 count is taken. The same day
-# `work.zig` began to compile one loop for each workload, because with one switch inside one loop
+# rows from cachegrind in an arm64 container on `mac`. The linux-x86_64 rows are the counts that
+# CI's x86-64 runner printed at `000e981`, because an x86-64 container on `mac` cannot start a
+# loop. The same day `work.zig` began to compile one loop for each workload, because with one switch inside one loop
 # the two new workloads made `post` count 15 more instructions with no change to rotor.
 tolerance_percent 2
 section macos-aarch64-kqueue
@@ -56,12 +56,16 @@ post 1176
 post-operation 3030
 timer 1105
 batch 26376
+task 591
+tasks-64 4001
 section linux-x86_64-epoll
 post 1363
 post-operation 3305
 timer 1173
 batch 26194
 wait 744
+task 678
+tasks-64 4088
 section linux-aarch64-uring
 post 1029
 post-operation 2794
