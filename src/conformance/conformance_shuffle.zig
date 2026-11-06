@@ -19,9 +19,16 @@ const sync = backend.sync;
 
 /// The receives that wait in each round, each on a socket of its own.
 const receivers = 4;
-/// The rounds of a scenario. Four events have 24 orders, so eight rounds that each give the same
-/// order would mean that nothing shuffled them.
+/// The rounds of the close scenario.
 const rounds = 8;
+/// The full rounds an order scenario collects: rounds in which one tick handed over all four
+/// receives. Four events have 24 orders, so with a working shuffle four full rounds give one order
+/// with a chance of 1 in 24 * 24 * 24.
+const full_rounds_wanted = 4;
+/// The fewest full rounds an order scenario judges. With fewer, it skips.
+const full_rounds_min = 2;
+/// The most rounds an order scenario runs to collect its full rounds.
+const rounds_max = 64;
 /// The `user_data` of the first send. The receives use 0 to `receivers - 1`.
 const send_user_data = 100;
 const wait_ns = 10 * core.constants.ns_per_ms;
@@ -30,8 +37,8 @@ const wait_ns = 10 * core.constants.ns_per_ms;
 const Log = struct {
     order: [receivers]u8 = @splat(0),
     len: u32 = 0,
-    /// True when one tick handed over more than one receive, so the shuffle had a batch to move.
-    batched: bool = false,
+    /// True when one tick handed over all the receives, so the shuffle had all four to move.
+    full: bool = false,
 
     fn note(log: *Log, receiver: u64) void {
         std.debug.assert(receiver < receivers);
@@ -97,25 +104,26 @@ fn round(harness: *Harness, pairs: *const Pairs, records: ?*[receivers]Receiver,
         for (events[0..count]) |event| {
             if (event.user_data < receivers) log.note(event.user_data);
         }
-        if (log.len - before >= 2) log.batched = true;
+        if (log.len - before == receivers) log.full = true;
     }
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
     try testing.expectEqual(@as(u32, receivers), log.len);
 }
 
-/// What the rounds of a scenario showed.
+/// What the full rounds of a scenario showed.
 const Orders = struct {
-    /// The rounds that ended in another order than the first.
+    /// The full rounds that ended in another order than the first full round.
     others: u32 = 0,
-    /// The rounds in which one tick handed over more than one receive.
-    batched: u32 = 0,
+    /// The rounds in which one tick handed over all the receives.
+    full: u32 = 0,
 };
 
-/// Runs the rounds. A loaded machine can end every receive in a tick of its own. Then nothing was
-/// there to shuffle, and the scenario cannot judge the shuffle, so it skips.
+/// Runs rounds until `full_rounds_wanted` of them are full, and judges only those. A round whose
+/// receives a loaded machine ends over several ticks gave the shuffle less to move, so it does not
+/// count. With fewer than `full_rounds_min` full rounds the scenario cannot judge, and it skips.
 fn rounds_in_other_orders(records: bool) !u32 {
     const orders = try run_rounds(records);
-    if (orders.batched == 0) return error.SkipZigTest;
+    if (orders.full < full_rounds_min) return error.SkipZigTest;
     return orders.others;
 }
 
@@ -130,16 +138,18 @@ fn run_rounds(records: bool) !Orders {
 
     var first: Log = .{};
     var orders: Orders = .{};
-    for (0..rounds) |index| {
+    for (0..rounds_max) |_| {
+        if (orders.full == full_rounds_wanted) break;
         var log: Log = .{};
         var named: [receivers]Receiver = undefined;
         for (&named, 0..) |*receiver, receiver_index| {
             receiver.* = .{ .index = @intCast(receiver_index), .log = &log };
         }
         try round(&harness, &pairs, if (records) &named else null, &log);
-        if (index == 0) first = log;
+        if (!log.full) continue;
+        if (orders.full == 0) first = log;
         if (!std.mem.eql(u8, &log.order, &first.order)) orders.others += 1;
-        if (log.batched) orders.batched += 1;
+        orders.full += 1;
     }
     return orders;
 }
