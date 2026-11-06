@@ -96,7 +96,36 @@ fn end_a_loop_with_a_poller() void {
     dispatch.assert_empty();
 }
 
+/// What each backend's `tick` does first: a loop with no callback outstanding takes the fast path
+/// and never reaches `begin`.
+fn tick_as_a_backend_does() void {
+    if (dispatch.idle()) return;
+    _ = dispatch.begin(0);
+}
+
+fn ticking_record(_: *core.Completion, _: core.Event) void {
+    scenario.reached_violation();
+    tick_as_a_backend_does();
+}
+
+var ticking_completion: core.Completion align(@alignOf(core.Completion)) = .{ .callback = ticking_record };
+
+/// The callback of the last record outstanding calls `tick`. With the count lowered before the
+/// call, the loop looks idle inside it, the tick takes the fast path, and nothing halts.
+fn tick_inside_the_last_record() void {
+    dispatch = .empty;
+    dispatch.note_submitted(1);
+    _ = dispatch.begin(0);
+    var events = [_]core.Event{.{
+        .user_data = @intFromPtr(&ticking_completion),
+        .result = 0,
+        .flags = .{ .dispatched = true },
+    }};
+    _ = dispatch.end(&events);
+}
+
 pub const scenarios = [_]scenario.Scenario{
+    .{ .name = "dispatch: tick inside the last record", .run = tick_inside_the_last_record },
     .{ .name = "dispatch: remove a poller from a poller", .run = remove_a_poller_from_a_poller },
     .{ .name = "dispatch: add a poller from a poller", .run = add_a_poller_from_a_poller },
     .{ .name = "dispatch: end a loop with a poller", .run = end_a_loop_with_a_poller },

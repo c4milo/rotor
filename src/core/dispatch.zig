@@ -192,9 +192,11 @@ pub const Dispatch = struct {
                 kept += 1;
                 continue;
             }
-            if (!event.flags.more) dispatch.callbacks_outstanding -= 1;
             const record: *Completion = @ptrFromInt(event.user_data);
             record.callback(record, event);
+            // After the call: inside the last record's callback the count is still above 0, so a
+            // `tick` there leaves the fast path and halts in `begin`.
+            if (!event.flags.more) dispatch.callbacks_outstanding -= 1;
         }
         assert(kept <= events.len);
         return kept;

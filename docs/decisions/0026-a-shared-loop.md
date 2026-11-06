@@ -232,3 +232,11 @@ wait, an event without a record that is dropped, a record never called, a submit
 record, and the flag dropped at the slot, at `drain_finished` and at kqueue's reap. Against the
 Linux gate: the flag dropped at epoll's reap and its batch, and at io_uring's reap and its failure
 path.
+
+### Correction of 2026-11-06
+
+A judge of decision 28's design found that `call_records` lowered `callbacks_outstanding` before it
+called the record. Inside the callback of the last record outstanding, `idle()` was true, so a
+`tick` there took the fast path and did not halt. The count now drops after the call. The halt
+scenario "dispatch: tick inside the last record" proves it: with the old order it does not halt.
+The change adds no instruction to the fast path.
