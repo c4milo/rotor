@@ -29,6 +29,12 @@
 # 8 at each operation's submit and 2 at each event. The tree before it counted 2988, 1086 and
 # 24189 on `mac`. Cachegrind on arm64 Linux counted +0.6 to +1.0 percent on io_uring and +1.0 to
 # +2.1 percent on epoll for the same change.
+#
+# The linux-* rows that CI run 42270575393 counted over the tolerance at d1657ce, decision 26, were
+# raised to its counts on 2026-11-06, by Camilo's choice. Against the parent b4a8c5b (run
+# 42262757947) the change cost +0.5 to +2.8 percent; several rows failed because the parent already
+# sat 1.5 to 1.8 percent over them. The two epoll `wait` rows were lowered to that run's counts, as
+# the gate asked.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
@@ -37,24 +43,24 @@ timer 1111
 batch 24624
 wait 5408
 section linux-x86_64-uring
-post 1146
-post-operation 2922
-timer 1066
-batch 25628
+post 1176
+post-operation 3030
+timer 1105
+batch 26376
 section linux-x86_64-epoll
 post 1363
 post-operation 3305
-timer 1147
-batch 25459
-wait 822
+timer 1173
+batch 26194
+wait 744
 section linux-aarch64-uring
 post 1029
-post-operation 2734
+post-operation 2794
 timer 1025
-batch 23043
+batch 23757
 section linux-aarch64-epoll
 post 1212
 post-operation 3019
-timer 1061
-batch 23011
-wait 729
+timer 1092
+batch 23845
+wait 669
