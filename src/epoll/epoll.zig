@@ -305,7 +305,8 @@ pub const Loop = struct {
 
     /// A tick that calls the pollers first and the records of the events last. It is marked cold
     /// so that the compiler keeps it out of `tick`: inline, it cost a program with no record 12
-    /// instructions in each tick, in saved registers, on the work gate's post.
+    /// instructions in each tick, in saved registers, on the work gate's post. Decision 7 allows the
+    /// hint in this file, and `docs/hot-path-ledger.md`, row H3, holds the numbers.
     fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         @branchHint(.cold);
         const dispatch = &loop.tables.dispatch;

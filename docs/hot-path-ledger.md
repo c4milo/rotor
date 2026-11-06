@@ -4,7 +4,15 @@ One row per use of a technique that `docs/decisions/0007-hot-path-ugliness.md` c
 named hot files. A use with no row here does not land. The harness re-measures every row at each
 milestone, and a row whose gain is gone is removed together with the code it justified.
 
-**The ledger is empty.** No hot-path code exists yet, so every hot file starts plain.
+The rows below are the instruction gate's counts per iteration (`bench/work`), for a program that
+names no record and adds no poller, with the hint and without it. The tree is d1657ce.
 
 | id | file and function | technique | harness workload | before | after | machine | commit | date |
 |---|---|---|---|---|---|---|---|---|
+| H1 | `src/kqueue/kqueue.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch, wait | 1308, 3184, 1144, 24654, 5368 | 1241, 3051, 1111, 24616, 5336 | `mac`, `/usr/bin/time -l` | d1657ce | 2026-11-06 |
+| H2 | `src/uring/uring.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch | 1090, 2878, 1057, 23782 | 1046, 2794, 1031, 23757 | arm64 container on `mac`, cachegrind | d1657ce | 2026-11-06 |
+| H3 | `src/epoll/epoll.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch | 1265, 3163, 1115, 23870 | 1217, 3070, 1092, 23845 | arm64 container on `mac`, cachegrind | d1657ce | 2026-11-06 |
+
+Without the hint the compiler inlines `tick_dispatched` into `tick`, and every tick saves more
+registers, also when it skips the dispatch. The counts are the same on every run, so the gain is
+above the noise, which is 0.

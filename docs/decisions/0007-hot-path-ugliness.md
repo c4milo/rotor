@@ -3,6 +3,11 @@
 Status: accepted for implementation on 2026-09-19. This record resolves the first collision
 between the Abseil Performance Hints and the project rules.
 
+Amended on 2026-11-06 by Camilo: `src/uring/uring.zig`, `src/kqueue/kqueue.zig` and
+`src/epoll/epoll.zig` join the table, for one use each, `@branchHint(.cold)` in `tick_dispatched`
+(decision 26). Ledger rows H1 to H3 hold the numbers. The hint landed in d1657ce before this
+amendment, which is the mistake the amendment corrects. The lint does not report `@branchHint`.
+
 ## The collision
 
 The Performance Hints favour hand-unrolled loops, raw pointers in place of spans, and hot
@@ -39,6 +44,9 @@ These files may contain the techniques listed below. No other file may.
 | `src/uring/uring_reap.zig` | copying completion entries into events |
 | `src/kqueue/kqueue_submit.zig` | filling the changelist |
 | `src/kqueue/kqueue_reap.zig` | turning kevents into events, including the inline `recv` and `send` |
+| `src/uring/uring.zig` | `tick`, which skips the dispatch of decision 26 when nothing waits for it |
+| `src/kqueue/kqueue.zig` | the same |
+| `src/epoll/epoll.zig` | the same |
 
 None of these files exists yet. The list is the budget: adding a file to it changes this record.
 
