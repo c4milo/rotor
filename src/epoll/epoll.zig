@@ -96,6 +96,9 @@ pub const Loop = struct {
     /// so the timer is armed about once per wait bound and not once per tick (decision 20, "The
     /// wait timer"). The reap sets it to 0 when the timer's readiness comes back.
     wait_timer_deadline_ns: u64,
+    /// The kernel error of a tick that had already produced events, which the next tick returns
+    /// before it drains anything (decision 5, amendment of 2026-11-06).
+    kept_error: core.tick_error.Kept(TickError),
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
     inbox: core.inbox.Inbox,
     /// What this loop does with a file operation it cannot perform without blocking (decision 18).
@@ -219,6 +222,7 @@ pub const Loop = struct {
         loop.inbox = core.inbox.Inbox.init(options.registry, completions);
         loop.file_policy = options.file_policy;
         loop.wait_timer_deadline_ns = 0;
+        loop.kept_error = .none;
         loop.offload = options.offload;
         loop.tables.init(slots, entries, starts, .{
             .id = options.id,
@@ -310,6 +314,9 @@ pub const Loop = struct {
     fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         @branchHint(.cold);
         const dispatch = &loop.tables.dispatch;
+        // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
+        // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
+        try loop.kept_error.take(dispatch);
         const wait = dispatch.begin(wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);

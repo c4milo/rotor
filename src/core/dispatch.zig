@@ -69,10 +69,11 @@ pub const Dispatch = struct {
     pollers: [constants.pollers_max]*Poller,
     poller_count: u8,
     /// The callbacks still outstanding: operations in flight that named a record, and tasks queued
-    /// (decision 27, open question 3). With no poller, the tick dispatches only while this is above
-    /// 0, so a program that names no record and queues no task pays two compares in each tick. One
-    /// word and not two, because a third compare cost the work gate's post 4 instructions and
-    /// post-operation 7 on `mac` (decision 27, "What was built").
+    /// (decision 27, open question 3). A kernel error a tick kept counts as one too, so the next
+    /// tick leaves the fast path and returns it (`tick_error.zig`). With no poller, the tick
+    /// dispatches only while this is above 0, so a program that names no record and queues no task
+    /// pays two compares in each tick. One word and not two, because a third compare cost the work
+    /// gate's post 4 instructions and post-operation 7 on `mac` (decision 27, "What was built").
     callbacks_outstanding: u32,
     /// True from `begin` to `end`: a callback or a poller that calls `tick` halts.
     ticking: bool,

@@ -181,6 +181,47 @@ names the provided buffer of each event and ends when they run out" checks the h
 final `buffers_exhausted` on every backend. CLAUDE.md's non-negotiable 5 and the header of
 `src/core/operation.zig` name this exception to rule 3.
 
+## Amendment to rule 1, 2026-11-06: a tick that fails after it produced events
+
+Status: ruled by Camilo on 2026-11-06.
+
+A tick produces some events before its kernel call: the timers that are due, the operations the
+loop ended itself, and the posted messages. Each of these events released its slot. Until this
+amendment, a kernel call that failed after them made `tick` return only the error. The caller did
+not get those events, so their operations had no final event, and rule 1 broke. A record
+operation (decision 26) also left `callbacks_outstanding` high, because `end` did not run.
+
+The rule:
+
+- A tick whose kernel call fails after it produced events returns those events. The loop keeps
+  the error.
+- The next tick returns the kept error before it drains anything. It keeps the error only once.
+- A tick that produced no event returns the error at once, as before.
+
+The calls are `epoll_pwait2` on epoll, `kevent` on kqueue and `io_uring_enter` on io_uring.
+`src/core/tick_error.zig` holds the kept error, and each backend's `Loop` has one in
+`kept_error`. With events returned, `tick_dispatched` runs `end`, so each record gets its final
+event. A spin (decision 13) needs nothing more: its inner ticks return as soon as one of them
+produces an event.
+
+A kept error adds 1 to the dispatch's `callbacks_outstanding`, as a queued task does (decision 27). So the
+next tick leaves the fast path. `tick_dispatched` returns the error before `begin`, so no poller
+runs in that tick, and it subtracts the 1. A tick with no error kept pays nothing more: `idle()`
+reads the same two words. A first version checked for a kept error at the start of every tick. On
+`mac` it raised the instruction gate's `post` count from 1,236 to 1,244, over the tolerance. With
+the count in `callbacks_outstanding`, `post` counted 1,238. While an error is kept, a stray final event of a
+record lowers the count without an underflow, as decision 27 already says of a queued task. That
+window is one tick long.
+
+Each backend has a test that puts a socket in the place of its kernel descriptor with `dup2`, so the
+real kernel call fails. A timer with a record and a timer without one end in that tick. The test
+checks that the tick returns one event and calls one record, that the next tick fails, and that each
+operation gets one final event once the descriptor is back.
+
+What this amendment does not change: a failed `kevent` call loses the changelist it carried. An
+operation whose registration was in that changelist can wait until its deadline or a cancel. No
+test covers that case yet.
+
 ## Open questions for review
 
 1. Should `cancel` of a stale handle be legal, as proposed, or a programmer error that halts?

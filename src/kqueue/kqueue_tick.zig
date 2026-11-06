@@ -67,7 +67,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     if (idle) {
         return produced + tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     }
-    const ready_count = try ready;
+    // A failed call after events were produced returns those events, whose slots are released
+    // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
+    const ready_count = ready catch |failure|
+        return loop.kept_error.keep(&tables.dispatch, failure, produced);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27).

@@ -12,6 +12,7 @@ const file_call = @import("core_scenarios_file_call.zig");
 const post = @import("core_scenarios_post.zig");
 const dispatch = @import("core_scenarios_dispatch.zig");
 const tasks = @import("core_scenarios_tasks.zig");
+const tick_error = @import("core_scenarios_tick_error.zig");
 
 const Slot = core.Slot;
 const SlotTable = core.slot_table.SlotTable;
@@ -487,7 +488,7 @@ const scenarios = [_]scenario.Scenario{
         .run = cancel_a_slot_whose_final_event_is_queued,
     },
 } ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios ++ file_call.scenarios ++
-    post.scenarios ++ dispatch.scenarios ++ tasks.scenarios;
+    post.scenarios ++ dispatch.scenarios ++ tasks.scenarios ++ tick_error.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

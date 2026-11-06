@@ -41,7 +41,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const wait = if (produced == 0) loop.settle_to_sleep(wait_for(loop, wait_ns)) else null;
     const entering = enter_bounded(loop, wait);
     loop.wake_up();
-    const entered = try entering;
+    // A failed enter after events were produced returns those events, whose slots are released
+    // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
+    const entered = entering catch |failure|
+        return loop.kept_error.keep(&tables.dispatch, failure, produced);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27).
@@ -317,4 +320,62 @@ test "a timer that fired early with no room to arm it again leaves the rest to a
     try testing.expect(waited >= wait_ns - core.constants.ns_per_ms);
     try testing.expect(waited < core.constants.ns_per_s);
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
+}
+
+/// A record that counts the final events it receives (decision 26).
+const Record = struct {
+    completion: core.Completion = .init(Record, "completion", called),
+    finals: u32 = 0,
+
+    fn called(record: *Record, event: Event) void {
+        assert(!event.flags.more);
+        record.finals += 1;
+    }
+};
+
+test "a tick whose enter fails after it produced events returns them, and the next tick fails" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var memory: [Loop.memory_bytes(.{ .operations = 4 })]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 4 });
+    defer loop.deinit();
+    var ends: [2]i32 = undefined;
+    const kind = linux.SOCK.STREAM | linux.SOCK.CLOEXEC;
+    try testing.expectEqual(@as(usize, 0), linux.socketpair(linux.AF.UNIX, kind, 0, &ends));
+    defer for (ends) |end| {
+        _ = linux.close(end);
+    };
+
+    // Two timers end in the next tick before its enter: one with a record, one without. The nop
+    // gives the enter an entry to submit, and a socket in place of the ring makes it fail.
+    var record: Record = .{};
+    const operations = [_]core.Operation{
+        .timer(2, 0, 0),
+        core.Operation.timer(0, 0, 0).completion(&record.completion),
+        one_nop[0],
+    };
+    try testing.expectEqual(@as(u32, 3), loop.submit(&operations, &.{}));
+    const ring = loop.ring.io.fd;
+    const saved: i32 = @intCast(linux.dup(ring));
+    try testing.expectEqual(@as(usize, @intCast(ring)), linux.dup3(ends[1], ring, 0));
+
+    // The tick hands over the timer without a record and calls the other's record. The kept
+    // error takes the next tick off the fast path.
+    var events: [4]Event = undefined;
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 2), events[0].user_data);
+    try testing.expectEqual(@as(u32, 1), record.finals);
+    try testing.expect(!loop.tables.dispatch.idle());
+    // The next tick returns the kept error before anything else. A tick that produced nothing
+    // returns its own error at once: the nop's entry is still there to submit.
+    try testing.expectError(error.Unexpected, loop.tick(&events, 0));
+    try testing.expect(loop.tables.dispatch.idle());
+    try testing.expectError(error.Unexpected, loop.tick(&events, 0));
+
+    _ = linux.dup3(saved, ring, 0);
+    _ = linux.close(saved);
+    // A failed tick that produced nothing keeps nothing, so this tick runs, and the nop ends.
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(one_nop[0].user_data, events[0].user_data);
+    try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }

@@ -82,6 +82,9 @@ pub const Loop = struct {
     /// deadline, so the timer is armed about once per wait bound and not once per tick (decision
     /// 12, point 7). The reap sets it to 0 when the timer's event comes back.
     wait_timer_deadline_ns: u64,
+    /// The kernel error of a tick that had already produced events, which the next tick returns
+    /// before it drains anything (decision 5, amendment of 2026-11-06).
+    kept_error: core.tick_error.Kept(TickError),
     /// The read end of this loop's wake pipe in a group, as the `ident` of the readiness that
     /// reports it, or `group_watch_none` (decision 21, point 3).
     group_watch: usize,
@@ -212,6 +215,7 @@ pub const Loop = struct {
         loop.changes_used = 0;
         loop.trigger_armed = false;
         loop.wait_timer_deadline_ns = 0;
+        loop.kept_error = .none;
         loop.group_watch = group_watch_none;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_shape = .{};
@@ -296,6 +300,9 @@ pub const Loop = struct {
     fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         @branchHint(.cold);
         const dispatch = &loop.tables.dispatch;
+        // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
+        // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
+        try loop.kept_error.take(dispatch);
         const wait = dispatch.begin(wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);
@@ -429,4 +436,5 @@ test {
     _ = @import("kqueue_offload_test.zig");
     _ = @import("kqueue_perform_test.zig");
     _ = @import("kqueue_sync_socket_test.zig");
+    _ = @import("kqueue_tick_test.zig");
 }

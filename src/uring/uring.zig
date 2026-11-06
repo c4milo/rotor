@@ -109,6 +109,9 @@ pub const Loop = struct {
     /// so the timer is armed about once per wait bound and not once per tick (decision 6, amended
     /// 2026-09-27). The reap sets it to 0 when the timer's completion comes back.
     wait_timer_deadline_ns: u64,
+    /// The kernel error of a tick that had already produced events, which the next tick returns
+    /// before it drains anything (decision 5, amendment of 2026-11-06).
+    kept_error: core.tick_error.Kept(TickError),
     /// The absolute time the wait timer's entries carry. The kernel reads it when it takes an
     /// entry, which can be a later tick's enter when the completion ring was full, so it lives in
     /// the loop and always holds the deadline the loop wants.
@@ -235,6 +238,7 @@ pub const Loop = struct {
         loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(.{}));
         loop.split = .idle;
         loop.wait_timer_deadline_ns = 0;
+        loop.kept_error = .none;
         loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
         loop.wakes = .{};
@@ -323,6 +327,9 @@ pub const Loop = struct {
     fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         @branchHint(.cold);
         const dispatch = &loop.tables.dispatch;
+        // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
+        // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
+        try loop.kept_error.take(dispatch);
         const wait = dispatch.begin(wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);

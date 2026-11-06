@@ -58,7 +58,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const readiness = loop.readiness[0..room];
     const ready = if (room == 0 or idle) nothing else call_kernel(loop, readiness, wait);
     loop.wake_up();
-    const ready_count = try ready;
+    // A failed call after events were produced returns those events, whose slots are released
+    // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
+    const ready_count = ready catch |failure|
+        return loop.kept_error.keep(&tables.dispatch, failure, produced);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27).
@@ -287,4 +290,69 @@ test "a wait whose timer the kernel refuses carries its timeout and still takes 
     const deadline_ns = again + wait_ns;
     try testing.expectEqual(@as(u32, 0), try wait_past_early_timer(&loop, &readiness, 1, deadline_ns));
     try testing.expect(clock_ns() - again >= wait_ns - core.constants.ns_per_ms);
+}
+
+/// A record that counts the final events it receives (decision 26).
+const Record = struct {
+    completion: core.Completion = .init(Record, "completion", called),
+    finals: u32 = 0,
+
+    fn called(record: *Record, event: Event) void {
+        assert(!event.flags.more);
+        record.finals += 1;
+    }
+};
+
+test "a tick whose call fails after it produced events returns them, and the next tick fails" {
+    if (!epoll.supported) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    var ends: [2]i32 = undefined;
+    const kind = linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC;
+    try testing.expectEqual(@as(usize, 0), linux.socketpair(linux.AF.UNIX, kind, 0, &ends));
+    defer for (ends) |end| {
+        _ = linux.close(end);
+    };
+
+    // A receive waits for readiness, so a tick that polls asks the kernel.
+    var buffer: [8]u8 = undefined;
+    var events: [4]Event = undefined;
+    const receive = core.Operation.receive(1, ends[0], &buffer);
+    try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &.{}));
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+
+    // Two timers end in the next tick before its call: one with a record, one without. A socket
+    // in place of the epoll instance makes the call fail with EINVAL.
+    var record: Record = .{};
+    const timers = [_]core.Operation{
+        .timer(2, 0, 0),
+        core.Operation.timer(0, 0, 0).completion(&record.completion),
+    };
+    try testing.expectEqual(@as(u32, 2), loop.submit(&timers, &.{}));
+    const instance = loop.queue.descriptor;
+    const saved: i32 = @intCast(linux.dup(instance));
+    try testing.expectEqual(@as(usize, @intCast(instance)), linux.dup3(ends[1], instance, 0));
+
+    // The tick hands over the timer without a record and calls the other's record. The kept
+    // error takes the next tick off the fast path.
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expectEqual(@as(u64, 2), events[0].user_data);
+    try testing.expectEqual(@as(u32, 1), record.finals);
+    try testing.expect(!loop.tables.dispatch.idle());
+    // The next tick returns the kept error before anything else. A tick that produced nothing
+    // returns its own error at once.
+    try testing.expectError(error.Unexpected, loop.tick(&events, 0));
+    try testing.expect(loop.tables.dispatch.idle());
+    try testing.expectError(error.Unexpected, loop.tick(&events, 0));
+
+    _ = linux.dup3(saved, instance, 0);
+    _ = linux.close(saved);
+    // A failed tick that produced nothing keeps nothing, so this tick runs, and the receive ends.
+    try testing.expectEqual(@as(usize, 1), linux.write(ends[1], "x", 1));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }
