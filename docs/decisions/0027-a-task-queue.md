@@ -30,7 +30,7 @@ Decision 26 made a loop that several libraries share. An operation may name a `C
 
 The consumers show the need:
 
-- **colibri.** Issue 14's third ruling says that on a shared loop, `colibri.Client.fetch` submits and returns. colibri then calls the caller's record "on a later tick of the loop". That call is not the final event of one rotor operation. It is a callback that a library owes. Today colibri needs a poller that scans its finished exchanges in each tick. colibri also has its own `Ready` ring (its decision 119) and a `pending` bit set of entries to step again.
+- **colibri.** Issue 14's third ruling says that on a shared loop, `colibri.Client.fetch` submits and returns. colibri then calls the caller's record "on a later tick of the loop". That call is not the final event of one rotor operation. It is a callback that a library must still make. Today colibri needs a poller that scans its finished exchanges in each tick. colibri also has its own `Ready` ring (its decision 119) and a `pending` bit set of entries to step again.
 - **cocuyo.** It has an intrusive ready list (its decision 20), a queue of held sends, a TCP send queue and a results queue. Its `drive` runs after every tick.
 - **stompy.** It has its own `Completion`, a guard against a tick inside a callback, an overflow queue of completions, and turns in a fixed order after each tick.
 
@@ -168,7 +168,7 @@ There is no `unschedule` and no option in `Loop.Options`. Open questions 5 and 9
 |---|---|---|---|
 | `Task` | `run` (8 B), `next: ?*Task` (8 B) | 16 B, 8 | the library's struct |
 | `Tasks` | `head`, `tail` (8 B each), `count: u32`, `left: u32` | 24 B, 8 | inside `Dispatch`, so inside `Tables` |
-| `Dispatch` | it gains `tasks`, and `records_in_flight` becomes `callbacks_owed`, with the same `u32` | 72 B today, 96 B with `Tasks` inline | inside `Tables` |
+| `Dispatch` | it gains `tasks`, and `records_in_flight` becomes `callbacks_outstanding`, with the same `u32` | 72 B today, 96 B with `Tasks` inline | inside `Tables` |
 
 Today `Dispatch` holds `pollers: [8]*Poller` (64 B), a `u32`, a `u8` and two `bool`s. That is 71 B, padded to 72 B at alignment 8. `Tasks` adds 24 B at alignment 8, so `Dispatch` becomes 96 B, with no new padding. The change to `Tables` follows from where the compiler places `Dispatch`, which a build must report before the layout is fixed.
 
@@ -180,14 +180,14 @@ Today `Dispatch` holds `pollers: [8]*Poller` (64 B), a `u32`, a `u8` and two `bo
 
   Open question 4 asks which one.
 
-**The counter that `idle()` reads.** `records_in_flight` becomes `callbacks_owed`. It counts two things:
+**The counter that `idle()` reads.** `records_in_flight` becomes `callbacks_outstanding`. It counts two things:
 
 - the operations in flight that named a record;
 - the tasks queued.
 
-`schedule` adds 1, and `run` and `discard` subtract 1 for each task they unlink. `idle()` stays `poller_count == 0 and callbacks_owed == 0`, which is two compares, as today. A program that never schedules a task stays on the fast path.
+`schedule` adds 1, and `run` and `discard` subtract 1 for each task they unlink. `idle()` stays `poller_count == 0 and callbacks_outstanding == 0`, which is two compares, as today. A program that never schedules a task stays on the fast path.
 
-The fold weakens one check of decision 26. `call_records` subtracts 1 at each final event, and that subtraction's overflow check "halts on a final event the count never saw" (`dispatch.zig`). While a task is queued, a final event that the count never saw takes the count down without an underflow. The halt then comes later, or not at all. This record restores part of the check with a class B check, once in each dispatched tick, after `call_records`: `tasks.count <= callbacks_owed`. A stray event that drops the count below the task count halts there. A stray event that drops it less far is not caught until the queue empties. The other choice keeps `records_in_flight` separate and makes `idle()` read a third word. Open question 3 asks which one, and the instruction gate decides.
+The fold weakens one check of decision 26. `call_records` subtracts 1 at each final event, and that subtraction's overflow check "halts on a final event the count never saw" (`dispatch.zig`). While a task is queued, a final event that the count never saw takes the count down without an underflow. The halt then comes later, or not at all. This record restores part of the check with a class B check, once in each dispatched tick, after `call_records`: `tasks.count <= callbacks_outstanding`. A stray event that drops the count below the task count halts there. A stray event that drops it less far is not caught until the queue empties. The other choice keeps `records_in_flight` separate and makes `idle()` read a third word. Open question 3 asks which one, and the instruction gate decides.
 
 **Proposed limits for `src/core/constants.zig`.** Each one gets a doc comment.
 
@@ -200,7 +200,7 @@ Comptime asserts beside them:
 
 - `tasks_per_tick_max >= 1`;
 - `tasks_per_tick_max <= tasks_queued_max`;
-- `tasks_queued_max + operations_max <= maxInt(u32)`, so `callbacks_owed` cannot overflow.
+- `tasks_queued_max + operations_max <= maxInt(u32)`, so `callbacks_outstanding` cannot overflow.
 
 Comptime asserts in `tasks.zig`: `@sizeOf(Task) == 16`, `@sizeOf(Tasks) == 24`, and `@alignOf` of each is 8.
 
@@ -208,7 +208,7 @@ Comptime asserts in `tasks.zig`: `@sizeOf(Task) == 16`, `@sizeOf(Tasks) == 24`, 
 
 The tick steps are named S0 to S5, so that no step shares a name with the once rule. Steps that this record changes are marked **[27]**. kqueue is shown. io_uring and epoll keep their own backend order. The run queue enters none of their backend ticks.
 
-- **S0. The fast path.** `if (dispatch.idle()) return tick_backend(...)`. **[27]** `callbacks_owed` now also counts queued tasks. The two compares are the same.
+- **S0. The fast path.** `if (dispatch.idle()) return tick_backend(...)`. **[27]** `callbacks_outstanding` now also counts queued tasks. The two compares are the same.
 - **S1. `tick_dispatched` (cold) calls `Dispatch.begin(wait_ns)`.**
   1. It checks `assert_class_a(!ticking)`, then sets `ticking` and `polling`.
   2. It calls each poller once, in the order they were added. A poller may call `schedule`.
@@ -226,14 +226,14 @@ The tick steps are named S0 to S5, so that no step shares a name with the once r
 - **S4. `Dispatch.end(events)`.**
   1. It checks `assert_class_a(ticking)`.
   2. It calls `call_records`, as decision 26 built it. A callback may call `schedule`.
-  3. **[27]** It runs the class B check `tasks.count <= callbacks_owed`.
+  3. **[27]** It runs the class B check `tasks.count <= callbacks_outstanding`.
   4. **[27]** It calls `tasks.run()`:
      - It checks the shape of the queue (class B): `count == 0` if and only if `head == null` if and only if `tail == null`, and `count <= tasks_queued_max`.
      - It takes the snapshot `n = min(tasks.count, tasks_per_tick_max)` and sets `left = tasks_per_tick_max`.
      - It runs `for (0..constants.tasks_per_tick_max) |i| { if (i == n) break; ... }`. The body has these steps:
        1. It checks `assert_class_a(head != null)` and `assert_class_a(count >= 1)`, then takes `task = head`.
        2. It sets `head = task.next` and `task.next = null`. When the queue is now empty, it sets `tail = null`.
-       3. It subtracts 1 from `count`, `left` and `callbacks_owed`.
+       3. It subtracts 1 from `count`, `left` and `callbacks_outstanding`.
        4. It calls `task.run(task)`.
      - It sets `left = 0`.
   5. It sets `ticking = false` (defer) and returns the count of events at the front.
@@ -264,10 +264,10 @@ This record amends decision 5, rule 7, and `shutdown.drain`:
 
 - `drain` loops while `loop.in_flight() != 0 or loop.tasks_queued() != 0`, still bounded by `drain_rounds_max`.
 - When the bound is reached with operations still in flight, `drain` fails with `error.StillInFlight`, as today.
-- When the bound is reached with only tasks left, `drain` fails with a new `error.TasksStillQueued`. The kernel then holds nothing, but a library still owes a call.
+- When the bound is reached with only tasks left, `drain` fails with a new `error.TasksStillQueued`. The kernel then holds nothing, but a callback is still outstanding.
 - A task that schedules itself in every tick reaches that bound. It is the same result as an operation that never ends.
 
-The recovery from `error.TasksStillQueued` is `discard_tasks`. The program calls it between ticks. It unlinks each queued task, clears each `next`, subtracts the count from `callbacks_owed`, and calls no task. The program can then call `deinit`. A library whose task the program discarded gets no call, so the program must stop that library first, or accept that the library does not finish its work.
+The recovery from `error.TasksStillQueued` is `discard_tasks`. The program calls it between ticks. It unlinks each queued task, clears each `next`, subtracts the count from `callbacks_outstanding`, and calls no task. The program can then call `deinit`. A library whose task the program discarded gets no call, so the program must stop that library first, or accept that the library does not finish its work.
 
 `deinit` halts while a task is queued. That is a class C check in `assert_empty`, beside its check for pollers. So the once rule holds at shutdown: each queued task ran, or the program discarded it by an explicit call. Open question 7 asks whether to keep `discard_tasks`.
 
@@ -339,7 +339,7 @@ Decision 4 says that "a loop that moves work is a scheduler, and a scheduler's o
     - an I/O scheduler such as Seastar's fair queue.
   - `Operation` stays a closed union.
 - **Decision 26 (a shared loop).**
-  - `records_in_flight` becomes `callbacks_owed`.
+  - `records_in_flight` becomes `callbacks_outstanding`.
   - `begin` returns 0 while a task is queued.
   - `end` runs the tasks after the records, inside the `ticking` window.
   - `assert_empty` also halts on a queued task.
@@ -478,7 +478,7 @@ A reference model in the test, a plain list and a loop, computes the task that e
 | P4 | progress | A task queued at position k runs within ceil(k / `tasks_per_tick_max`) + 1 ends. |
 | P5 | address independence | The same seed, with the tasks in two arrays at different addresses (one reversed), gives the same trace hash. |
 | P6 | conservation | scheduled = run + discarded + queued after every step. |
-| P7 | the counter | `callbacks_owed` = records in flight + `tasks.count` after every step. |
+| P7 | the counter | `callbacks_outstanding` = records in flight + `tasks.count` after every step. |
 | P8 | replay | The same seed twice gives a byte-identical trace. |
 | P9 | the tick of a poller's task | Each task that a poller scheduled in `begin` runs in the same tick's `end`, when it is inside the bound. |
 
@@ -502,7 +502,7 @@ A reference model in the test, a plain list and a loop, computes the task that e
 | `discard_tasks` is not called inside a tick | `Loop.discard_tasks` | A | `core_scenarios_tasks.zig`: a task that calls `discard` through a `Dispatch` with `ticking` set |
 | No task is queued at `deinit` | `assert_empty`, extended | C | `deinit` with a task queued, in each of the three owner files above |
 | `head != null` and `count >= 1` before each pop | `Tasks.run` | A | `core_scenarios_tasks.zig`: a `Tasks` built by hand with `count = 2`, and one task as both `head` and `tail`. The start check passes, and the second pop finds `head == null`. |
-| `tasks.count <= callbacks_owed` | `Dispatch.end`, after `call_records` | B | `core_scenarios_dispatch.zig`: one task queued, `callbacks_owed` at 1, and `end` called with a fabricated final event that names a record. `call_records` drops the count to 0, below `tasks.count`. |
+| `tasks.count <= callbacks_outstanding` | `Dispatch.end`, after `call_records` | B | `core_scenarios_dispatch.zig`: one task queued, `callbacks_outstanding` at 1, and `end` called with a fabricated final event that names a record. `call_records` drops the count to 0, below `tasks.count`. |
 | `count == 0` if and only if `head == null` if and only if `tail == null`; `count <= tasks_queued_max` | start of `Tasks.run` | B | `core_scenarios_tasks.zig`: a `Tasks` built by hand with `count = 1` and `head == null`, passed to `run` |
 | A walk of the queue: its length is `count`, its last node is `tail`, and it ends within `tasks_queued_max` steps | after each push and each run | D | `core_scenarios_tasks.zig`: a `Tasks` built by hand with `count = 3` and two linked tasks, then one `push` |
 | `@sizeOf(Task) == 16`, `@sizeOf(Tasks) == 24`, and the relations of the constants | comptime | comptime | none: the compiler refuses the build |
@@ -527,13 +527,13 @@ The run loop has no check of the count it ran. Its range is `constants.tasks_per
 | the pop from the tail (LIFO) | `test-core`, P3 |
 | the snapshot taken before the pollers | `test-core`, test 12 and P9 |
 | `begin` ignores `tasks.count` | `test-core` test 5, and conformance (b): the tick blocks until the 1 s timer |
-| `schedule` does not add to `callbacks_owed` | `test-core` test 6, and conformance: the tick takes the fast path and the task never runs |
+| `schedule` does not add to `callbacks_outstanding` | `test-core` test 6, and conformance: the tick takes the fast path and the task never runs |
 | the tasks run before `call_records` | `test-core`, test 4 |
 | `task.next` not cleared at the pop | `test-core`, test 11: the head still points at the second task, so its second `push` halts |
 | `tail` not cleared when the queue empties | `test-core`, P6 and the class D walk |
 | the `TasksFull` check skipped | `test-core`, test 7 |
 | `drain` ignores `tasks_queued` | `test-core` test 10, and conformance (c) |
-| `discard` does not subtract from `callbacks_owed` | `test-core`, test 10 (`idle()` stays false) and P7 |
+| `discard` does not subtract from `callbacks_outstanding` | `test-core`, test 10 (`idle()` stays false) and P7 |
 | `task_budget_left` capped at the queue length | `test-core`, test 9 |
 | `task_budget_left` not 0 outside a run | `test-core`, test 9 |
 | the scheduled-twice check deleted | `halt-check`, `core_scenarios_tasks.zig` |
@@ -543,7 +543,7 @@ The run loop has no check of the count it ran. Its range is `constants.tasks_per
 | the check in `discard_tasks` deleted | `halt-check`, `core_scenarios_tasks.zig` |
 | the owner check in `Loop.schedule` deleted | `halt-check`, each of the three owner files |
 | the `deinit` check deleted | `halt-check`, each of the three owner files |
-| the check `tasks.count <= callbacks_owed` deleted | `halt-check`, `core_scenarios_dispatch.zig` |
+| the check `tasks.count <= callbacks_outstanding` deleted | `halt-check`, `core_scenarios_dispatch.zig` |
 
 **No model yet.** The queue is a FIFO with a count bound. The reference-model property test covers it more cheaply than a TLA+ model or a Lean proof, which a later change to `tasks.zig` would have to update in the same commit. A model comes with groups, if groups come. The race gate needs no new suite, because a task never crosses threads.
 
@@ -553,7 +553,7 @@ These are in the order that Camilo should rule on them.
 
 1. **Core or a library?** Should the run queue be in core, or should each library build one over a decision 26 `Poller`? The poller form changes nothing in rotor and passes decision 17's test. Core gives one order and one budget across libraries, takes no poller slot, and runs a continuation in the tick that caused it. Proposed answer: core. colibri's `fetch` completions and cocuyo's ready list are the same queue written twice, and stompy wrote a third.
 2. **The run point.** Should the tasks run in `end`, after the records? Proposed answer: yes, so a continuation that I/O caused runs in the same tick.
-3. **One counter or two?** Should queued tasks fold into `callbacks_owed`, with the class B check `tasks.count <= callbacks_owed`? Or should `records_in_flight` stay separate, with `idle()` reading a third word? Proposed answer: the separate counter, if the instruction gate shows that it costs nothing measurable, because it keeps decision 26's halt whole. The fold otherwise.
+3. **One counter or two?** Should queued tasks fold into `callbacks_outstanding`, with the class B check `tasks.count <= callbacks_outstanding`? Or should `records_in_flight` stay separate, with `idle()` reading a third word? Proposed answer: the separate counter, if the instruction gate shows that it costs nothing measurable, because it keeps decision 26's halt whole. The fold otherwise.
 4. **The layout in `Tables`.** Should `Tasks` be inline (24 B, `Dispatch` from 72 B to 96 B) or behind a pointer that the program hands in (8 B, `Dispatch` from 72 B to 80 B)? Proposed answer: inline, so a library needs no setup from the program. The pointer form is the fallback if the gate or a quiet `mac` run shows a move.
 5. **The budget.** Is `tasks_per_tick_max = 64` right, and may a caller set a lower budget in `Loop.Options`? Is `task_budget_left` right as guidance that the loop does not enforce? Proposed answer: the constant alone in version one, and the value as defined here. Read colibri's and cocuyo's counts per turn before the value is fixed, and set it from the `tasks_64` workload.
 6. **The queue limit.** Is `tasks_queued_max = 65,536` a useful bound? Proposed answer: keep the named limit and `TasksFull`, as TigerStyle and the unbounded-loop lint ask.
@@ -593,20 +593,22 @@ These are in the order that Camilo should rule on them.
 
 Built on 2026-11-06. The code is `src/core/tasks.zig`, the queue in `src/core/dispatch.zig`, the
 calls each backend's `Loop` exports through `core.dispatch.Calls`, and `shutdown.drain`. It
-differs from the proposal in four places.
+differs from the proposal in four places. The counter this record calls `callbacks_owed` was
+renamed `callbacks_outstanding` the same day, by Camilo's choice, because "owed" is not a word
+programmers use for it. This record uses the new name.
 
-1. **One counter (open question 3).** The queued tasks fold into `callbacks_owed`. With the queue
-   in place, a third compare in `idle()` counted 4 more instructions on the work gate's `post` and
-   7 on `post-operation` on `mac`. The gate's counts are the same on every run, so that cost is
-   measurable, and the ruling chose the fold. No class B check of `tasks.count <= callbacks_owed`
-   was built. A scenario cannot prove it: with the check deleted, the run's own subtraction
+1. **One counter (open question 3).** The queued tasks fold into `callbacks_outstanding`. With the
+   queue in place, a third compare in `idle()` counted 4 more instructions on the work gate's
+   `post` and 7 on `post-operation` on `mac`. The gate's counts are the same on every run, so that
+   cost is measurable, and the ruling chose the fold. No class B check of
+   `tasks.count <= callbacks_outstanding` was built. A scenario cannot prove it: with the check deleted, the run's own subtraction
    underflows and halts. The overflow checks of the subtractions stay.
 2. **The class D walk is a function the tests call**, `Tasks.assert_queue`, as the slot table's
    and the timer heap's are. `push` and `run` do not call it.
 3. **The owner checks are in one place.** `core.dispatch.Calls(Loop)` holds the pollers' and the
    tasks' calls once, for all three backends. So one halt scenario in each of the kqueue and the
    epoll owner files proves the check.
-4. **`end` calls `run` before it subtracts.** A compound `callbacks_owed -= tasks.run()` reads the
+4. **`end` calls `run` before it subtracts.** A compound `callbacks_outstanding -= tasks.run()` reads the
    count before the call, and loses the 1 that a task adds when it schedules a task. The kqueue
    conformance suite found it as an integer overflow.
 

@@ -68,11 +68,12 @@ pub const AddPollerError = error{PollersFull};
 pub const Dispatch = struct {
     pollers: [constants.pollers_max]*Poller,
     poller_count: u8,
-    /// The callbacks the loop owes: operations in flight that named a record, and tasks queued
+    /// The callbacks still outstanding: operations in flight that named a record, and tasks queued
     /// (decision 27, open question 3). With no poller, the tick dispatches only while this is above
     /// 0, so a program that names no record and queues no task pays two compares in each tick. One
-    /// word and not two, because a third compare cost the work gate's post 15 instructions.
-    callbacks_owed: u32,
+    /// word and not two, because a third compare cost the work gate's post 4 instructions and
+    /// post-operation 7 on `mac` (decision 27, "What was built").
+    callbacks_outstanding: u32,
     /// True from `begin` to `end`: a callback or a poller that calls `tick` halts.
     ticking: bool,
     /// True while `begin` calls the pollers: a poller that adds or removes a poller halts, because
@@ -84,7 +85,7 @@ pub const Dispatch = struct {
     pub const empty: Dispatch = .{
         .pollers = undefined,
         .poller_count = 0,
-        .callbacks_owed = 0,
+        .callbacks_outstanding = 0,
         .ticking = false,
         .polling = false,
         .tasks = .empty,
@@ -121,7 +122,7 @@ pub const Dispatch = struct {
     /// Queues `task`, which the `end` of a tick calls once (decision 27).
     pub fn schedule(dispatch: *Dispatch, task: *Task) ScheduleError!void {
         try dispatch.tasks.push(task, constants.tasks_queued_max);
-        dispatch.callbacks_owed += 1;
+        dispatch.callbacks_outstanding += 1;
     }
 
     /// Unlinks every queued task without a call. Halts inside a tick: only the program calls it,
@@ -129,19 +130,19 @@ pub const Dispatch = struct {
     pub fn discard_tasks(dispatch: *Dispatch) u32 {
         assert(!dispatch.ticking);
         const discarded = dispatch.tasks.discard();
-        dispatch.callbacks_owed -= discarded;
+        dispatch.callbacks_outstanding -= discarded;
         return discarded;
     }
 
     /// Counts the `records` operations with a record that one `submit` took.
     pub fn note_submitted(dispatch: *Dispatch, records: u32) void {
-        dispatch.callbacks_owed += records;
+        dispatch.callbacks_outstanding += records;
     }
 
     /// True when no poller is added, no operation with a record is in flight and no task is queued:
     /// no callback can run in the next tick, so the tick skips `begin` and `end`.
     pub fn idle(dispatch: *const Dispatch) bool {
-        return dispatch.poller_count == 0 and dispatch.callbacks_owed == 0;
+        return dispatch.poller_count == 0 and dispatch.callbacks_outstanding == 0;
     }
 
     /// The start of a tick: halts inside another tick, then calls every poller once. Returns the
@@ -173,7 +174,7 @@ pub const Dispatch = struct {
         // after: a task that schedules a task adds to the count during the run, and a compound
         // `-=` would read the count before the call and lose that addition.
         const ran = dispatch.tasks.run();
-        dispatch.callbacks_owed -= ran;
+        dispatch.callbacks_outstanding -= ran;
         return kept;
     }
 
@@ -191,7 +192,7 @@ pub const Dispatch = struct {
                 kept += 1;
                 continue;
             }
-            if (!event.flags.more) dispatch.callbacks_owed -= 1;
+            if (!event.flags.more) dispatch.callbacks_outstanding -= 1;
             const record: *Completion = @ptrFromInt(event.user_data);
             record.callback(record, event);
         }
@@ -294,7 +295,7 @@ test "events with a record reach it, and the rest keep their order at the front"
     try testing.expectEqual(@as(u32, 2), counting.events);
     try testing.expectEqual(@as(i32, 6), counting.last_result);
     // The `more` event kept the operation in flight, and the final one ended it.
-    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_owed);
+    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_outstanding);
     try testing.expect(!dispatch.ticking);
 }
 
@@ -433,31 +434,31 @@ const Again = struct {
     }
 };
 
-test "a task that schedules itself keeps the loop owing it, until its last run" {
+test "a task that schedules itself keeps its callback outstanding until its last run" {
     var dispatch: Dispatch = .empty;
     var again: Again = .{ .dispatch = &dispatch, .again = 2 };
     try dispatch.schedule(&again.task);
     for (0..2) |_| {
         _ = dispatch.begin(9);
         _ = dispatch.end(&.{});
-        // The run took one task and the task queued itself: the loop still owes one call.
-        try testing.expectEqual(@as(u32, 1), dispatch.callbacks_owed);
+        // The run took one task and the task queued itself: one callback is still outstanding.
+        try testing.expectEqual(@as(u32, 1), dispatch.callbacks_outstanding);
         try testing.expect(!dispatch.idle());
     }
     _ = dispatch.begin(9);
     _ = dispatch.end(&.{});
-    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_owed);
+    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_outstanding);
     try testing.expect(dispatch.idle());
 }
 
-test "discarding the queue clears what the loop owes, so the next tick skips the dispatch" {
+test "discarding the queue clears the outstanding callbacks, so the next tick skips the dispatch" {
     var dispatch: Dispatch = .empty;
     var order: Order = .{};
     var noting: Noting = .{ .order = &order };
     try dispatch.schedule(&noting.task);
     try testing.expect(!dispatch.idle());
     try testing.expectEqual(@as(u32, 1), dispatch.discard_tasks());
-    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_owed);
+    try testing.expectEqual(@as(u32, 0), dispatch.callbacks_outstanding);
     try testing.expect(dispatch.idle());
     try testing.expectEqual(@as(u32, 0), order.len);
 }
