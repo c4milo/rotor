@@ -261,7 +261,10 @@ was about to push.
   executables' compile, every example built and checked, the hook check and the format check. Every change passes it before it
   is committed. It passes on a Linux host too, where the kqueue suite and its halt scenarios are
   not built, because that backend names libc's kevent types.
-  `zig build test-<module>` and `zig build test-tools` run one target alone.
+  `zig build test-<module>` and `zig build test-tools` run one target alone. The conformance
+  suite's seeded program of three libraries on one loop (`conformance_program.zig`) reads two
+  variables: `ROTOR_CONFORMANCE_SEED` replays one seed first, and
+  `ROTOR_CONFORMANCE_SOAK_SECONDS` runs seed after seed for that many seconds, a soak.
 - Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
   module's test executable that runs under Linux, and the io_uring probe `tools/uring_probe.zig`,
   for Linux on the host's CPU architecture into `zig-out/linux/`, and runs none of them. The
