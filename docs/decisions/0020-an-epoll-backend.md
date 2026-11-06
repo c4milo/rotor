@@ -252,6 +252,38 @@ decided this anyway, because one message at a time is the common case and the lo
 round. Open question 2 makes the same argument against edge triggering, which also needs a call
 that answers EAGAIN. A later attempt needs a way to know a socket is empty without that call.
 
+**Amended on 2026-11-06, by Camilo's choice: a datagram receive takes a batch with `recvmmsg`.**
+`recvmmsg` fills several buffers in one call, and a count below the request shows that the socket
+is empty, so no call answers EAGAIN. The rule above stays for every other operation.
+
+- **Only a receive the reap before also served batches.** Its socket stayed ready, so its batch
+  doubles each reap, from 2 up to `receive_batch_max`, 8. Any other receive asks for 1 and makes
+  one `recvmsg`, as before. A first build that always asked for 8 lost 4.4 to 5.7 percent at one
+  datagram in flight, because each readiness there held one datagram.
+- **A batch is bounded by the group's free buffers and the caller's events**, at
+  `coalesced_segments_max` events for each datagram, so a coalesced datagram always fits.
+- **An error ends the receive in the batch.** `recvmmsg` has taken the socket's error, so a second
+  call would not see it.
+- **The loop holds the call's headers**, in `Loop.batch`, about 900 bytes at its end. On the stack,
+  ReleaseSafe would fill them on every batch. `Loop.reaps` counts reaps for the rule above.
+
+Measured on GitHub's Linux runners on 2026-11-06, `rotor_datagram_epoll` at the change against
+`54ea0c1`, four alternating pairs in each of six jobs (`bench/results/datagram-batch-epoll-github-2026-11-06.md`).
+Each cell is the range of the six jobs' medians:
+
+| workload | change against `54ea0c1` | ticks per round trip, or datagrams per tick |
+|---|---|---|
+| round trips, 1 in flight | -1.1 to +0.0 percent | 2.000, as before |
+| round trips, 64 in flight | +12.5 to +20.5 percent | 0.125, from 1.000 |
+| bursts of 4, coalescing off | 5.86 to 6.11 times | 8, from 1 |
+| bursts of 16, coalescing off | 6.61 to 6.80 times | 8, from 1 |
+| bursts of 4, coalescing on | 3.27 to 3.43 times | 16, from 4 |
+| bursts of 16, coalescing on | 3.03 to 3.13 times | 64, from 16 |
+
+At one datagram in flight every job's lowest and highest pair crossed zero. cachegrind still counts
+about 110 more instructions per round trip there, 4,720 against 4,612, from the reap's added layers;
+the kernel calls are the same.
+
 ## The wait timer
 
 **Added on 2026-09-26: an `epoll_pwait2` call that blocks carries no timeout.** Linux arms an
