@@ -16,7 +16,10 @@ Camilo ruled with colibri's session on 2026-11-06, and issue 14 records the ruli
 
 1. Model the shared loop on Seastar's reactor. Each operation carries a completion record that the
    library owns, a function and a context, and `tick` calls it.
-2. Libraries take the loop at init, and any of them may tick.
+2. Libraries take the loop at init, and any of them may tick. Camilo corrected this on 2026-11-06,
+   with decision 27: only the program ticks a shared loop. A library submits, returns, and finishes
+   its work in records, pollers and tasks, because a library's tick inside the program's call into
+   another library nests one library's callbacks inside the other's.
 3. Subsystems register pollers that the loop calls once per tick.
 4. One loop per thread, shared nothing, as today.
 5. An event of an operation with no record goes back to the caller of `tick`.
@@ -189,6 +192,9 @@ The code is `src/core/dispatch.zig`, the slot and event flag `dispatched`, the c
    work is left. The tick then waits 0 ns. True means nothing else.
 
 A poller sees `now_ns` as the last tick read it, because it runs before this tick reads the clock.
+A tick that blocked read the clock again after its wait, so that reading is never older than the
+end of the last wait. A timer fires when its deadline is at or before `now_ns`, so a poller that
+reads its own deadline from the same reading sees it due too.
 `release_buffers` is valid in a callback once the group's last operation has had its final event.
 
 ### What it measured
