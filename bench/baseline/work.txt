@@ -23,12 +23,18 @@
 # instructions over the tree before it, which counted 1006, are the reap's check for a pending split
 # and a different layout of the tick's code that no line of the split explains. CI run 42149102186
 # and an arm64 container on `mac` both counted 1025.
+#
+# macos-aarch64-kqueue `post-operation`, `timer` and `batch` were raised on 2026-11-06, by Camilo's
+# choice, for decision 26: a program that names no record pays about 6 instructions in each tick,
+# 8 at each operation's submit and 2 at each event. The tree before it counted 2988, 1086 and
+# 24189 on `mac`. Cachegrind on arm64 Linux counted +0.6 to +1.0 percent on io_uring and +1.0 to
+# +2.1 percent on epoll for the same change.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
-post-operation 2965
-timer 1076
-batch 23928
+post-operation 3051
+timer 1111
+batch 24624
 wait 5408
 section linux-x86_64-uring
 post 1146

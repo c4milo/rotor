@@ -21,6 +21,7 @@ const spin_module = @import("spin.zig");
 const timer_heap_module = @import("timer_heap.zig");
 const waiters_module = @import("waiters.zig");
 const deadline = @import("tables_deadline.zig");
+const Dispatch = @import("dispatch.zig").Dispatch;
 
 const Code = event_module.Code;
 const Descriptor = operation_module.Descriptor;
@@ -77,6 +78,8 @@ pub const Tables = struct {
     id: LoopId,
     /// The spin budget from the options, and when the loop last handed over an event (decision 13).
     spin: spin_module.Window,
+    /// The pollers, and the count of operations that named a record (decision 26).
+    dispatch: Dispatch,
 
     pub const Options = struct {
         id: LoopId = 0,
@@ -109,6 +112,7 @@ pub const Tables = struct {
         tables.buffers_registered = 0;
         tables.id = options.id;
         tables.spin = .{ .budget_ns = options.spin_budget_ns, .active_ns = 0 };
+        tables.dispatch = .empty;
     }
 
     /// Records that the backend registered `count` descriptors: once per loop, before an
@@ -153,6 +157,7 @@ pub const Tables = struct {
         // A slot on a list is a slot in use, so no caller's mistake reaches this line alone: it
         // holds the lists to the table.
         assert(tables.pending.count == 0 and tables.finished.count == 0);
+        tables.dispatch.assert_empty();
     }
 
     /// Operations submitted whose final event the caller has not been handed.
@@ -167,6 +172,8 @@ pub const Tables = struct {
         assert(operations.len <= constants.batch_max);
         assert(handles.len == 0 or handles.len == operations.len);
         var taken: u32 = 0;
+        // Summed here and added once after the loop, so the count stays in a register.
+        var records: u32 = 0;
         for (operations) |*operation| {
             operation.assert_valid();
             if (operation.descriptor_registered) {
@@ -183,6 +190,7 @@ pub const Tables = struct {
             if (slot.flags.buffer_registered) assert(slot.buffer_index < tables.buffers_registered);
             const sequence = tables.operation_sequence +% taken;
             tables.statistics.submitted(sequence, index, slot, tables.now_ns);
+            records += @intFromBool(operation.dispatched);
             // A loop that posts to itself would wait on an event only its own tick can produce.
             assert_class_a(slot.code != .post or slot.descriptor != tables.id);
             tables.pending.push(tables.table.slots, index);
@@ -190,6 +198,7 @@ pub const Tables = struct {
             taken += 1;
         }
         tables.operation_sequence +%= taken;
+        tables.dispatch.note_submitted(records);
         assert(taken <= operations.len);
         return taken;
     }
@@ -314,11 +323,12 @@ pub const Tables = struct {
             // its slot stays the loop's (decision 14, rule 2).
             const again = repeats(slot);
             if (slot.flags.sampled and !again) tables.statistics.finished(index, slot, tables.now_ns);
-            events[produced] = .{
-                .user_data = slot.user_data,
-                .result = slot.result,
-                .flags = .{ .more = again },
-            };
+            // The flags are built in a register and stored with the event. A packed literal with two
+            // runtime fields compiled to a read of the old event and a second write (decision 26).
+            var flags: Event.Flags = .{};
+            flags.more = again;
+            flags.dispatched = slot.flags.dispatched;
+            events[produced] = .{ .user_data = slot.user_data, .result = slot.result, .flags = flags };
             if (names_buffer(slot) and slot.result >= 0) {
                 events[produced].flags.buffer = true;
                 events[produced].flags.buffer_id = @intCast(slot.len);

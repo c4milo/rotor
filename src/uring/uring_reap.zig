@@ -76,7 +76,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     // A completion that names no operation is one the backend submitted for itself.
     if (handle.is_none()) return own(loop, cqe);
     const slot = submitted_slot(loop, handle);
-    const event: Event = .{
+    var event: Event = .{
         .user_data = slot.user_data,
         // A datagram's completion counts the prefix in front of it too, so the result the caller
         // sees is the count less a constant the group fixed (decision 15). The probe measured
@@ -84,6 +84,7 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         .result = if (slot.code == .receive_from) cqe.res - loop.datagram_prefix else cqe.res,
         .flags = @bitCast(cqe.flags & flags_passed),
     };
+    event.flags.dispatched = slot.flags.dispatched;
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
     if (event.flags.buffer and slot.code == .receive_from) begin_split(loop, slot.buffer_index, event);
     return event;
@@ -139,6 +140,7 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     // operation's deadline passed, the caller hears `timeout` (decision 5, rule 4).
     if (code == .canceled and slot.flags.timed_out) code = .timeout;
     var event = Event.failure(slot.user_data, code);
+    event.flags.dispatched = slot.flags.dispatched;
     event.flags.more = cqe.flags & linux.IORING_CQE_F_MORE != 0;
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
     return event;

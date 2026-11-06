@@ -16,6 +16,11 @@ business. Inside this tree the build still hands a backend to the conformance su
 that sentence was written for. A consumer that needs a twin still brings its own, as decision 10
 says, and imports it in place of `rotor` rather than around it.
 
+Amended on 2026-11-06 by decision 26: an operation may name a `Completion`, a record that the
+library owns, and the tick calls it for each event of that operation. The event batch stays the
+default, and an operation that names no record is as before. The record replaces the dispatch
+helper's table below. A loop also calls up to `pollers_max` pollers once in each tick.
+
 ## Context
 
 Zig 0.16 defines `std.Io`, an interface of function pointers. rotor can implement that table

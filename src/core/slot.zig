@@ -96,7 +96,8 @@ pub const Slot = extern struct {
         /// The loop is measuring this operation (decision 9, rule 2). Statistics never steer
         /// what the loop does: nothing reads this but the statistics themselves.
         sampled: bool = false,
-        reserved: u1 = 0,
+        /// The operation named a `Completion` (decision 26), and every event of it says so.
+        dispatched: bool = false,
     };
 
     /// Flattens `operation` into a slot the table has just claimed. Leaves `generation` and
@@ -108,7 +109,12 @@ pub const Slot = extern struct {
         slot.timeout_ns = operation.timeout_ns;
         slot.code = operation.code();
         slot.heap_position = heap_position_none;
-        slot.flags = .{};
+        // The flags the operation itself sets, built in a register and stored once. `fill_kind`
+        // adds the rest. A packed literal with two runtime fields compiled to more work.
+        var flags: Flags = .{};
+        flags.descriptor_registered = operation.descriptor_registered;
+        flags.dispatched = operation.dispatched;
+        slot.flags = flags;
         slot.retries = 0;
         slot.result = 0;
         slot.buffer = 0;
@@ -116,7 +122,6 @@ pub const Slot = extern struct {
         slot.len = 0;
         slot.buffer_index = 0;
         slot.fill_kind(operation);
-        slot.flags.descriptor_registered = operation.descriptor_registered;
         assert_class_a(slot.code == operation.code());
     }
 

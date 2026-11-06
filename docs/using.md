@@ -401,11 +401,23 @@ byte of it.
 ## A library that shares a loop
 
 A library such as a resolver takes a `*Loop` from the application and owns no socket, thread or
-loop of its own. What that needs:
+loop of its own. Several libraries may share one loop, and any of them may call `tick`
+(decision 26). What that needs:
 
-- The application owns the loop, calls `tick`, and hands the library the events that are its. An
-  event carries `user_data` and nothing else that names its owner, so the two agree on a
-  convention: a range of `user_data`, or a bit in it, that the library's operations use.
+- Each operation of the library names a `Completion`, a record inside the library's own struct:
+  `Operation.receive_from(0, socket, group).completion(&endpoint.receive)`. The tick calls the
+  record for every event of that operation, `more` events and the final one included, and does not
+  hand those events to the caller of `tick`. Declare the record with
+  `Completion.init(Endpoint, "receive", Endpoint.on_receive)`, and the handler takes `*Endpoint`.
+- Work that is not one operation, such as a batch of sends to flush, goes in a `Poller`, declared
+  with `Poller.init`. `loop.add_poller` adds it, and the loop calls it once in each tick before the
+  tick waits. It returns true when the tick must not block, for example because work is left. At
+  most `pollers_max` (8) pollers; one more returns `error.PollersFull`.
+- A callback or a poller may submit, cancel and give buffers back. A callback may add or remove a
+  poller; a poller may not. A callback or a poller that calls `tick` halts. Remove every poller
+  before `deinit`, which halts on one that is left.
+- An event of an operation that names no record, and a message another loop posted, go to the
+  caller of `tick`, as before.
 - The library submits on the loop's thread only. A caller on another thread reaches it through a
   `Remote` and a message whose tag the library defines.
 - The library's operations in flight count against the loop's `operations`, and its buffers

@@ -308,3 +308,44 @@ test "a wake that finds no room in the submission ring waits for it, and the loo
     try testing.expectEqual(uring.constants.user_data_wake, target.cqe_at(0).user_data);
     target.cq_advance(1);
 }
+
+/// Buffers of the refused group below: two, each big enough for a datagram's prefix and a payload.
+const refused_group_buffers = 2;
+const refused_group_payload_bytes = 64;
+const refused_group_buffer_bytes = core.datagram.prefix_bytes(.{}) + refused_group_payload_bytes;
+
+/// A shape whose prefix differs from the default's, so a shape written too early shows.
+const refused_group_shape: core.datagram.GroupOptions = .{ .control_reserve = 0 };
+
+test "a datagram group the kernel refuses leaves the loop's datagram shape as it was" {
+    if (!uring.supported) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+
+    // The test registers a ring for group 0 itself, which the loop does not know of, so the loop's
+    // own registration of group 0 reaches the kernel and is refused there.
+    const group_bytes = comptime buffers_module.group_bytes(refused_group_buffers, refused_group_buffer_bytes);
+    var taken_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
+    var refused_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
+    var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{
+        .ring_addr = @intFromPtr(&taken_memory),
+        .ring_entries = refused_group_buffers,
+        .bgid = 0,
+    });
+    const rc = linux.io_uring_register(loop.ring.io.fd, .REGISTER_PBUF_RING, &registration, 1);
+    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
+
+    const prefix_before = loop.datagram_prefix;
+    try std.testing.expectError(error.Unexpected, loop.provide_datagram_buffers(
+        0,
+        &refused_memory,
+        refused_group_buffers,
+        refused_group_buffer_bytes,
+        refused_group_shape,
+    ));
+    try std.testing.expectEqual(prefix_before, loop.datagram_prefix);
+    try std.testing.expectEqual(core.datagram.Shape{}, loop.datagram_shape);
+}

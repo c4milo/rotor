@@ -1,8 +1,9 @@
 # 26. A loop that several libraries share
 
-Status: proposed on 2026-11-06, not ruled on. It would amend decision 1, which made the event batch
-the primary shape and kept callbacks as a helper. Decision 1 stays as it is until Camilo rules on
-this record. Nothing in rotor changes before that.
+Status: **accepted** by Camilo on 2026-11-06, with the proposed answer to each open question, and
+**built** the same day. It amends decision 1, which made the event batch the primary shape and
+kept callbacks as a helper: the batch stays the default, and an operation may now name a record.
+"What was built" at the end says where the code differs from the proposal, and what it measured.
 
 ## Context
 
@@ -167,3 +168,61 @@ This record adds one:
    operations.
 5. **Are `Completion` and `Poller` the names?** Proposed: yes, with `Operation.completion`,
    `Loop.add_poller` and `Loop.remove_poller`.
+
+## What was built
+
+The code is `src/core/dispatch.zig`, the slot and event flag `dispatched`, the count in
+`Tables.submit`, and the `tick` of each backend. It differs from the proposal in five places.
+
+1. **A tick with nothing to dispatch skips the dispatch.** With no poller and no record in flight,
+   no callback can run, so `tick` calls the backend directly. The pollers, the records and the
+   check of a tick inside a tick run in `tick_dispatched`, a function of its own that is marked
+   cold. Inside `tick`, that code cost every tick about 12 more instructions in saved registers.
+2. **A poller may not add or remove a poller.** The loop walks the table while it calls the
+   pollers, so such a call halts. A callback may add or remove one.
+3. **`deinit` halts while a poller is still added.** The poller is the library's memory, and the
+   library may free it once the loop has ended.
+4. **Typed helpers.** `Completion.init(Parent, "field", handler)` and
+   `Poller.init(Parent, "field", poll)` write the callback at compile time. The handler takes
+   `*Parent`, and a wrong field, parent or signature fails to compile. The raw form stays.
+5. **What true means.** A poller returns true when the tick must not block, for example because
+   work is left. The tick then waits 0 ns. True means nothing else.
+
+A poller sees `now_ns` as the last tick read it, because it runs before this tick reads the clock.
+`release_buffers` is valid in a callback once the group's last operation has had its final event.
+
+### What it measured
+
+The instruction gate, for a program that names no record and adds no poller, against the tree
+without this record. macOS counts the process's instructions with `/usr/bin/time -l` on `mac`.
+Linux counts user instructions with cachegrind in an arm64 container on `mac`.
+
+| backend | post | post-operation | timer | batch of 32 |
+|---|---:|---:|---:|---:|
+| kqueue | 1229 → 1241 (+1.0%) | 2988 → 3051 (+2.1%) | 1086 → 1111 (+2.3%) | 24189 → 24624 (+1.8%) |
+| io_uring | 1040 → 1046 (+0.6%) | not counted | 1024 → 1031 (+0.7%) | 23532 → 23757 (+1.0%) |
+| epoll | 1205 → 1217 (+1.0%) | not counted | 1070 → 1092 (+2.1%) | 23515 → 23845 (+1.4%) |
+
+Cachegrind put the work in three places: about 8 instructions at each operation's submit, 2 at
+each event, and about 6 in each tick. Two shapes of the code cost more, and were changed:
+
+- A packed struct literal with two runtime fields compiled to a read of the old flags from memory
+  and a second write. Building the flags in a local first saved 5 instructions at each event.
+- The dispatch code inside `tick` made the compiler save four more registers in every tick.
+
+Camilo raised the macOS rows of `bench/baseline/work.txt` for `post-operation`, `timer` and
+`batch` on 2026-11-06. The tree without this record already sat about 1 percent over them.
+
+The scenarios are in `conformance_dispatch.zig`: two libraries on one loop, an operation without a
+record beside one with a record, a callback that submits, the pollers, and a multishot receive
+whose datagrams and final event reach its record. The halt scenarios are in
+`tools/halt/core_scenarios_dispatch.zig`.
+
+Mutations, 20, each CAUGHT. Against `zig build halt-check`: no check of a tick inside a tick, of
+an end or an abandon without a begin, of a poller added twice, of a poller never added, of a
+poller added or removed from a poller, and of a poller left at `deinit`. Against the kqueue
+conformance suite: a tick that always skips the dispatch, a poller whose true does not stop the
+wait, an event without a record that is dropped, a record never called, a submit that counts no
+record, and the flag dropped at the slot, at `drain_finished` and at kqueue's reap. Against the
+Linux gate: the flag dropped at epoll's reap and its batch, and at io_uring's reap and its failure
+path.

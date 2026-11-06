@@ -114,6 +114,14 @@ pub const transfer_retries_max: u8 = 16;
 /// The most buffers one loop may register (decision 3, source 1).
 pub const registered_buffers_max: u16 = 1024;
 
+/// The most pollers one loop may hold (decision 26). colibri and cocuyo need one each today. The
+/// loop keeps a pointer for each, 64 bytes at 8, and calls each one in every tick.
+pub const pollers_max: u8 = 8;
+
+comptime {
+    std.debug.assert(pollers_max >= 1);
+}
+
 /// The most provided-buffer groups one loop may hold, and the most buffers in one group. 32768 is
 /// the most entries an io_uring buffer ring takes (recalled).
 pub const buffer_groups_max: u16 = 16;

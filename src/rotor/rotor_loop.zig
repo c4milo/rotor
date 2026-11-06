@@ -210,6 +210,20 @@ pub const Loop = struct {
         };
     }
 
+    /// Adds `poller`, which the loop calls once in each tick (decision 26).
+    pub fn add_poller(loop: *Loop, poller: *core.Poller) core.dispatch.AddPollerError!void {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.add_poller(poller),
+        };
+    }
+
+    /// Removes `poller`, which must have been added.
+    pub fn remove_poller(loop: *Loop, poller: *core.Poller) void {
+        switch (loop.inner) {
+            inline else => |*inner| inner.remove_poller(poller),
+        }
+    }
+
     /// Operations that have not had their final event.
     pub fn in_flight(loop: *const Loop) u32 {
         return switch (loop.inner) {

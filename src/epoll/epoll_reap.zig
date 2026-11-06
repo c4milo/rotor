@@ -191,7 +191,7 @@ fn serve_batch(loop: *Loop, descriptor: core.Descriptor, index: u32, size: u32, 
         const event: Event = .{
             .user_data = slot.user_data,
             .result = @intCast(length),
-            .flags = .{ .buffer = true, .buffer_id = id, .more = true },
+            .flags = .{ .buffer = true, .buffer_id = id, .more = true, .dispatched = slot.flags.dispatched },
         };
         begin_split(loop, slot.buffer_index, event);
         produced += place(loop, event, events[produced..]);
@@ -246,7 +246,7 @@ fn conclude(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u32
     const tables = &loop.tables;
     const slot = tables.table.at(index);
     assert_class_a(attempt.outcome == .done);
-    var event: Event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{} };
+    var event: Event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{ .dispatched = slot.flags.dispatched } };
     if (attempt.buffer_id) |buffer_id| {
         event.flags.buffer = true;
         event.flags.buffer_id = buffer_id;

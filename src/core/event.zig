@@ -101,7 +101,10 @@ pub const Event = extern struct {
         /// naming the same buffer, and `Loop.datagram` reads this to find the event's bytes. 0 for
         /// every other event.
         segment: u6 = 0,
-        reserved: u5 = 0,
+        /// The operation named a `Completion` (decision 26): `user_data` is its address, and the
+        /// tick calls it with this event and does not hand the event to its caller.
+        dispatched: bool = false,
+        reserved: u4 = 0,
         buffer_id: u16 = 0,
     };
 

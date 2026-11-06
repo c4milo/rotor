@@ -116,7 +116,7 @@ fn serve_one(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u3
     const attempt = perform.attempt(loop, slot);
     if (attempt.outcome != .done) return null;
     var served: Served = .{
-        .event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{} },
+        .event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{ .dispatched = slot.flags.dispatched } },
         .used = core.attempt.used(slot.code, attempt.result),
         .departed = true,
     };

@@ -283,12 +283,43 @@ pub const Loop = struct {
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+        // With no poller and no record in flight, no callback can run in this tick, so the tick
+        // skips the dispatch (decision 26).
+        if (loop.tables.dispatch.idle()) return loop.tick_backend(events, wait_ns);
+        return loop.tick_dispatched(events, wait_ns);
+    }
+
+    /// A tick that calls the pollers first and the records of the events last. It is marked cold
+    /// so that the compiler keeps it out of `tick`: inline, it cost a program with no record 12
+    /// instructions in each tick, in saved registers, on the work gate's post.
+    fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+        @branchHint(.cold);
+        const dispatch = &loop.tables.dispatch;
+        const wait = dispatch.begin(wait_ns);
+        errdefer dispatch.abandon();
+        const produced = try loop.tick_backend(events, wait);
+        return dispatch.end(events[0..produced]);
+    }
+
+    fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
             try tick_module.spin_then_wait(loop, events, wait_ns)
         else
             try tick_module.tick(loop, events, wait_ns);
         loop.tables.spin.note_handed_over(produced, loop.tables.now_ns);
         return produced;
+    }
+
+    /// Adds `poller`, which the loop calls once in each tick (decision 26).
+    pub fn add_poller(loop: *Loop, poller: *core.Poller) core.dispatch.AddPollerError!void {
+        loop.tables.assert_owner();
+        return loop.tables.dispatch.add_poller(poller);
+    }
+
+    /// Removes `poller`, which must have been added.
+    pub fn remove_poller(loop: *Loop, poller: *core.Poller) void {
+        loop.tables.assert_owner();
+        loop.tables.dispatch.remove_poller(poller);
     }
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends

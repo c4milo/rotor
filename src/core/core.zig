@@ -9,6 +9,7 @@ pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
+pub const dispatch = @import("dispatch.zig");
 pub const datagram_split = @import("datagram_split.zig");
 pub const errno = @import("errno.zig");
 pub const event = @import("event.zig");
@@ -35,6 +36,8 @@ pub const waiters = @import("waiters.zig");
 
 pub const Address = operation.Address;
 pub const Code = event.Code;
+pub const Completion = dispatch.Completion;
+pub const Poller = dispatch.Poller;
 pub const Descriptor = operation.Descriptor;
 pub const Delivery = datagram.Delivery;
 pub const Error = event.Error;

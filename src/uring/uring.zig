@@ -310,12 +310,43 @@ pub const Loop = struct {
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+        // With no poller and no record in flight, no callback can run in this tick, so the tick
+        // skips the dispatch (decision 26).
+        if (loop.tables.dispatch.idle()) return loop.tick_backend(events, wait_ns);
+        return loop.tick_dispatched(events, wait_ns);
+    }
+
+    /// A tick that calls the pollers first and the records of the events last. It is marked cold
+    /// so that the compiler keeps it out of `tick`: inline, it cost a program with no record 12
+    /// instructions in each tick, in saved registers, on the work gate's post.
+    fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+        @branchHint(.cold);
+        const dispatch = &loop.tables.dispatch;
+        const wait = dispatch.begin(wait_ns);
+        errdefer dispatch.abandon();
+        const produced = try loop.tick_backend(events, wait);
+        return dispatch.end(events[0..produced]);
+    }
+
+    fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
             try tick_module.spin_then_wait(loop, events, wait_ns)
         else
             try tick_module.tick(loop, events, wait_ns);
         loop.tables.spin.note_handed_over(produced, loop.tables.now_ns);
         return produced;
+    }
+
+    /// Adds `poller`, which the loop calls once in each tick (decision 26).
+    pub fn add_poller(loop: *Loop, poller: *core.Poller) core.dispatch.AddPollerError!void {
+        loop.tables.assert_owner();
+        return loop.tables.dispatch.add_poller(poller);
+    }
+
+    /// Removes `poller`, which must have been added.
+    pub fn remove_poller(loop: *Loop, poller: *core.Poller) void {
+        loop.tables.assert_owner();
+        loop.tables.dispatch.remove_poller(poller);
     }
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
@@ -427,48 +458,6 @@ test {
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
-}
-
-/// Buffers of the refused group below: two, each big enough for a datagram's prefix and a payload.
-const refused_group_buffers = 2;
-const refused_group_payload_bytes = 64;
-const refused_group_buffer_bytes = core.datagram.prefix_bytes(.{}) + refused_group_payload_bytes;
-
-/// A shape whose prefix differs from the default's, so a shape written too early shows.
-const refused_group_shape: core.datagram.GroupOptions = .{ .control_reserve = 0 };
-
-test "a datagram group the kernel refuses leaves the loop's datagram shape as it was" {
-    if (!supported) return error.SkipZigTest;
-    const linux = std.os.linux;
-    const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    try loop.init(&memory, options);
-    defer loop.deinit();
-
-    // The test registers a ring for group 0 itself, which the loop does not know of, so the loop's
-    // own registration of group 0 reaches the kernel and is refused there.
-    const group_bytes = comptime buffers.group_bytes(refused_group_buffers, refused_group_buffer_bytes);
-    var taken_memory: [group_bytes]u8 align(buffers.group_alignment) = undefined;
-    var refused_memory: [group_bytes]u8 align(buffers.group_alignment) = undefined;
-    var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{
-        .ring_addr = @intFromPtr(&taken_memory),
-        .ring_entries = refused_group_buffers,
-        .bgid = 0,
-    });
-    const rc = linux.io_uring_register(loop.ring.io.fd, .REGISTER_PBUF_RING, &registration, 1);
-    try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
-
-    const prefix_before = loop.datagram_prefix;
-    try std.testing.expectError(error.Unexpected, loop.provide_datagram_buffers(
-        0,
-        &refused_memory,
-        refused_group_buffers,
-        refused_group_buffer_bytes,
-        refused_group_shape,
-    ));
-    try std.testing.expectEqual(prefix_before, loop.datagram_prefix);
-    try std.testing.expectEqual(core.datagram.Shape{}, loop.datagram_shape);
 }
 
 test "entries default to the operations rounded up to a power of two, capped at the ring's most" {

@@ -19,6 +19,8 @@ pub const loop_declarations = [_][]const u8{
     "cancel",
     "post",
     "tick",
+    "add_poller",
+    "remove_poller",
     "in_flight",
     "now_ns",
     "wait_descriptor",
@@ -74,6 +76,8 @@ const Complete = struct {
     pub fn cancel() void {}
     pub fn post() void {}
     pub fn tick() void {}
+    pub fn add_poller() void {}
+    pub fn remove_poller() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}
     pub fn wait_descriptor() void {}
