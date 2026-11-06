@@ -17,6 +17,12 @@
 # arm64 on an Arm Neoverse N2 (CPU part 0xd49). The arm64 counts matched, workload for workload, a
 # run under Valgrind 3.23.0 in an arm64 container on `mac`. io_uring has no `wait`: its loop has no
 # call that wakes itself.
+#
+# linux-aarch64-uring `timer` was set from 1004 to 1025 on 2026-11-05, by Camilo's choice, after
+# 06549d2 made the loop split coalesced datagrams (decision 15). The workload splits nothing. The 19
+# instructions over the tree before it, which counted 1006, are the reap's check for a pending split
+# and a different layout of the tick's code that no line of the split explains. CI run 42149102186
+# and an arm64 container on `mac` both counted 1025.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1218
@@ -38,7 +44,7 @@ wait 822
 section linux-aarch64-uring
 post 1029
 post-operation 2734
-timer 1004
+timer 1025
 batch 23043
 section linux-aarch64-epoll
 post 1212
