@@ -22,6 +22,7 @@ help, and what coalescing gains where it can.
   highest pair. The rates beside it are the median of each side.
 - The epoll half did not run: `zig build bench-echo` does not install `rotor_datagram_epoll`, and
   the job's script did not stop at the missing program. Every row below is io_uring.
+  `datagram-coalesce-epoll-github-2026-11-05.md` measures epoll.
 - These are CI numbers, so none enters `docs/costs.md`.
 
 ## Round trips, after the split against before

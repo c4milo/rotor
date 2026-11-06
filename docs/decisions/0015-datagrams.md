@@ -465,8 +465,14 @@ What it costs and gains, measured on GitHub's Linux runners on io_uring on 2026-
 (`bench/results/datagram-coalesce-github-2026-11-05.md`). Where GRO cannot help, one datagram at a
 time into small buffers, the reap's second walk of each control block cost 0.5 to 1.6 percent with
 64 round trips in flight, at the edge of what those runners show. Where bursts arrive, coalescing
-received bursts of 4 datagrams 1.8 times as fast and bursts of 16 3.3 to 3.9 times. epoll was not
-measured.
+received bursts of 4 datagrams 1.8 times as fast and bursts of 16 3.3 to 3.9 times.
+
+epoll was measured the same way at v0.9.0 (`bench/results/datagram-coalesce-epoll-github-2026-11-05.md`).
+Coalescing received bursts of 4 5.3 to 5.5 times as fast there, and bursts of 16 32 to 34 times.
+Most of that is decision 20's rule that one readiness serves one operation per direction. With
+coalescing off, each tick takes one datagram, the socket buffer fills, and the kernel drops the
+rest. One coalesced receive takes the whole burst, and epoll then reached 28 to 34 percent of
+io_uring's rate.
 
 The scenarios are in `conformance_udp_coalesce.zig`: a coalesced send of three datagrams arrives
 as three events from one buffer, four datagrams arrive one a tick through an events array of one,
