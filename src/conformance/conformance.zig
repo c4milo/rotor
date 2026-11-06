@@ -175,5 +175,7 @@ test {
     _ = @import("conformance_shuffle.zig");
     _ = @import("conformance_tasks.zig");
     _ = @import("conformance_stall.zig");
+    _ = @import("conformance_shutdown.zig");
+    _ = @import("conformance_shutdown_cancel.zig");
     _ = @import("conformance_wait_descriptor.zig");
 }
