@@ -301,6 +301,33 @@ test "a wait with no room for the timer's entry carries its timeout and takes it
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 }
 
+/// How long a test waits for a completion of its own setup before it fails: the longest wait a tick
+/// allows, far past the 5 ms timer the test arms. Only a lost completion reaches this bound.
+const setup_wait_ns = core.constants.wait_ns_max;
+
+/// The enters a setup wait makes at most. An enter ends at a completion, at the bound, or early
+/// with none posted, so more than one can be necessary (`constants.empty_wakes_max`).
+const setup_enters_max = 16;
+
+/// Waits up to `setup_wait_ns` for the kernel to post a completion. When none comes, it fails the
+/// test with a message. An enter with no bound would wait forever.
+fn wait_for_completion(loop: *Loop) !void {
+    const start_ns = clock_ns();
+    const deadline_ns = start_ns + setup_wait_ns;
+    for (0..setup_enters_max) |_| {
+        if (loop.ring.cq_ready() != 0) return;
+        const now_ns = clock_ns();
+        if (now_ns >= deadline_ns) break;
+        const entered = try loop.ring.enter(deadline_ns - now_ns);
+        try testing.expectEqual(ring_module.Entered.submitted, entered);
+    }
+    if (loop.ring.cq_ready() != 0) return;
+    std.debug.print("the kernel posted no completion in {d} ms\n", .{
+        (clock_ns() - start_ns) / core.constants.ns_per_ms,
+    });
+    return error.TestUnexpectedResult;
+}
+
 test "a timer that fired early with no room to arm it again leaves the rest to a timeout" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
@@ -308,14 +335,14 @@ test "a timer that fired early with no room to arm it again leaves the rest to a
     try loop.init(&memory, .{ .operations = 2 });
     defer loop.deinit();
 
-    // A timer 5 ms out, and an enter that waits for its completion with no bound of its own. A
-    // bound of 20 ms ended first once, on a GitHub arm64 runner running every test binary at once
-    // (run 36607058823). A bound of 1 s ended once with no completion posted, at a load of 17.
+    // A timer 5 ms out, and enters that wait for its completion up to `setup_wait_ns`. A bound of
+    // 20 ms ended first once, on a GitHub arm64 runner running every test binary at once (run
+    // 36607058823). A bound of 1 s ended once with no completion posted, at a load of 17.
     loop.tables.now_ns = clock_ns();
     const now_ns = loop.tables.now_ns;
     try testing.expect(arm_wait_timer(&loop, now_ns, now_ns + 5 * core.constants.ns_per_ms));
     _ = try loop.ring.enter(null);
-    try testing.expectEqual(ring_module.Entered.submitted, try loop.ring.enter_until_completion());
+    try wait_for_completion(&loop);
     try testing.expectEqual(@as(u32, 1), loop.ring.cq_ready());
 
     const far: linux.kernel_timespec = .{ .sec = far_s, .nsec = 0 };
