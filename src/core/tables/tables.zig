@@ -413,6 +413,8 @@ pub const Tables = struct {
     pub const arm = deadline.arm;
     /// How long a tick may block: `tables_deadline.zig`.
     pub const wait_bound = deadline.wait_bound;
+    /// The nearest timer or poller limit, where a spin stops: `tables_deadline.zig`.
+    pub const earliest_deadline_ns = deadline.earliest_deadline_ns;
     /// Core's part of a host's `wait_limit`: `tables_deadline.zig`.
     pub const wait_limit = deadline.wait_limit;
     /// A tick's first expiry, of timers only: `tables_deadline.zig`.

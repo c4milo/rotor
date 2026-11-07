@@ -92,15 +92,15 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
 /// Decision 13: polls with ticks that do not wait until one spin budget after the loop last handed
 /// over an event, and blocks for what is left of `wait_ns` only if nothing came. A poll is `tick`
 /// with a zero wait and nothing else, so what arrives while the loop polls is handed over as a
-/// blocking tick would hand it. A tick after that window, or with a timer due inside it, does not
-/// poll. `Loop.tick` calls this only when `core.spin.applies`.
+/// blocking tick would hand it. A tick after that window, or with a timer or a poller's limit due
+/// inside it, does not poll. `Loop.tick` calls this only when `core.spin.applies`.
 pub fn spin_then_wait(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const tables = &loop.tables;
     assert(core.spin.applies(tables.spin.budget_ns, wait_ns));
     const first = try tick(loop, events, 0);
     if (first != 0) return first;
     const start_ns = tables.now_ns;
-    const earliest_ns = tables.timers.earliest_ns();
+    const earliest_ns = tables.earliest_deadline_ns();
     const budget_ns = tables.spin.budget_ns;
     var spin = core.spin.Spin.begin(budget_ns, start_ns, tables.spin.active_ns, earliest_ns) orelse
         return tick(loop, events, wait_ns);

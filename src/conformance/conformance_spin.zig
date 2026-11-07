@@ -148,3 +148,38 @@ test "a timer due inside the budget ends the spin before it starts, and the loop
     // Sleeping until the timer costs a few ticks. Polling until it would cost the time to it.
     try testing.expect(least_cpu_ns < timer_after_ns / 2);
 }
+
+/// A library's poller that answers a deadline until the loop's clock reaches it.
+const Deadline = struct {
+    poller: core.Poller = .init(Deadline, "poller", polled),
+    loop: *backend.Loop,
+    at_ns: u64,
+
+    fn polled(deadline: *Deadline) core.WaitLimit {
+        if (deadline.loop.now_ns() >= deadline.at_ns) return .none;
+        return .at(deadline.at_ns);
+    }
+};
+
+test "a poller's limit due inside the budget ends the spin before it starts" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init_spin(budget_ns);
+    defer harness.deinit();
+
+    const limit_after_ns = budget_ns / 2;
+    var events: [1]Event = undefined;
+    var least_cpu_ns: u64 = std.math.maxInt(u64);
+    for (0..attempts) |_| {
+        try hand_over_one(&harness);
+        const at_ns = harness.loop.now_ns() + limit_after_ns;
+        var deadline: Deadline = .{ .loop = &harness.loop, .at_ns = at_ns };
+        try harness.loop.add_poller(&deadline.poller);
+        defer harness.loop.remove_poller(&deadline.poller);
+        const spent = try timed_tick(&harness, &events, 100 * ms);
+        least_cpu_ns = @min(least_cpu_ns, spent.cpu_ns);
+    }
+    // The pollers run once per tick, before a spin, so a spin does not see the limit come due. It
+    // would poll until the end of the window. Sleeping until the limit costs a few calls.
+    try testing.expect(least_cpu_ns < limit_after_ns / 2);
+}

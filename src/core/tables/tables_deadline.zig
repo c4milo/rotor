@@ -56,6 +56,15 @@ pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     return @min(wait_ns, earliest - tables.now_ns);
 }
 
+/// The least of the nearest timer and the pollers' limit, on the loop's clock, or null when neither
+/// exists. A deadline inside a spin's window ends the spin before it starts, so the tick sleeps
+/// until the deadline and does not poll for it (decision 13, point 2; decision 29).
+pub fn earliest_deadline_ns(tables: *const Tables) ?u64 {
+    const earliest = earliest_limit(tables);
+    if (earliest == @intFromEnum(WaitLimit.none)) return null;
+    return earliest;
+}
+
 /// The least of the nearest timer and the pollers' limit, on the loop's clock: `maxInt(u64)`, the
 /// value of `.none`, when neither exists.
 fn earliest_limit(tables: *const Tables) u64 {
