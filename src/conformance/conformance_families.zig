@@ -76,6 +76,16 @@ const user_data_receiver = 1;
 const user_data_sender = 2;
 const user_data_question = 3;
 const user_data_answer = 4;
+const user_data_stranger = 5;
+
+/// The datagram a third socket sends to each receiver before a scenario. Under parallel runs,
+/// another process can send to a receiver that is not connected. macOS can give a socket on `::`
+/// the port of a socket on 127.0.0.1, and the IPv4 datagrams to that port then reach the 127.0.0.1
+/// socket. The scenario must put this datagram aside. Its bytes are not `question` or `answer`, so
+/// a scenario that takes it fails its check of the bytes.
+const stranger_payload = "from a stranger";
+/// The most receivers `send_strangers` sends to.
+const strangers_max = 2;
 
 /// One group per socket, because a group serves one socket's receives and both sockets receive.
 const Groups = struct {
@@ -112,6 +122,7 @@ const Pair = struct {
             .sender = sender,
             .address = try sync.local_address(receiver),
         };
+        try send_strangers(harness, loopback, &.{ pair.address, try sync.local_address(sender) });
         try harness.submit(&.{
             Operation.receive_from(user_data_receiver, receiver, groups.receiver),
             Operation.receive_from(user_data_sender, sender, groups.sender),
@@ -129,30 +140,96 @@ const Pair = struct {
     }
 };
 
-/// Sends `bytes` from `socket` with `out`, and hands back the datagram `receive_user_data` took,
-/// copied out of its buffer, which goes back to `group`.
+/// Sends `stranger_payload` to each of `targets` from a third socket bound to `loopback`. The
+/// datagrams wait in the receivers' sockets, so a caller sends them before it arms a receive.
+fn send_strangers(harness: *Harness, loopback: *const Address, targets: []const Address) !void {
+    std.debug.assert(targets.len <= strangers_max);
+    const stranger = try sync.open_datagram(loopback.family, loopback, .{});
+    defer sync.close_now(stranger);
+    var outs: [strangers_max]Outbound = undefined;
+    var sends: [strangers_max]Operation = undefined;
+    for (targets, 0..) |target, i| {
+        outs[i] = .{
+            .peer = target,
+            .local = undefined,
+            .segment_bytes = 0,
+            .ecn = .not_ect,
+            .flags = .{ .peer = true },
+        };
+        sends[i] = Operation.send_to(user_data_stranger, stranger, stranger_payload, &outs[i]);
+    }
+    try harness.submit(sends[0..targets.len], &.{});
+    var events: [strangers_max]Event = undefined;
+    try harness.collect(events[0..targets.len]);
+    for (events[0..targets.len]) |event| {
+        try testing.expectEqual(@as(u32, stranger_payload.len), try event.outcome());
+    }
+}
+
+/// What `cross` waits for: one datagram, from one peer, on one receive.
+const Expected = struct {
+    bytes: []const u8,
+    from: *const Address,
+    receive_user_data: u64,
+};
+
+/// The most events `cross` takes for one datagram: its send, the datagram, and up to six from other
+/// sockets, which it puts aside.
+const crossing_events_max = 8;
+
+/// Sends `bytes` from `socket` with `out`, and hands back what the datagram that `expected` names
+/// carried. It puts aside a datagram from any other peer, so a datagram from another process cannot
+/// fail the scenario. Each buffer goes back to its group.
 fn cross(
     harness: *Harness,
+    groups: Groups,
     socket: core.Descriptor,
-    bytes: []const u8,
     out: *const Outbound,
     send_user_data: u64,
-    receive_user_data: u64,
-    group: core.BufferGroup,
+    expected: *const Expected,
 ) !Received {
-    try harness.submit(&.{Operation.send_to(send_user_data, socket, bytes, out)}, &.{});
-    var events: [2]Event = undefined;
-    try harness.collect(&events);
-    try testing.expectEqual(@as(u32, @intCast(bytes.len)), try (try Harness.find(
-        &events,
-        send_user_data,
-    )).outcome());
-    const got = try Harness.find(&events, receive_user_data);
-    try testing.expect(got.flags.more);
-    const delivery = harness.loop.datagram(group, got);
-    try testing.expectEqualStrings(bytes, delivery.bytes);
-    harness.loop.give_back_buffer(group, got.flags.buffer_id);
+    try harness.submit(&.{Operation.send_to(send_user_data, socket, expected.bytes, out)}, &.{});
+    var sent = false;
+    var heard: ?Received = null;
+    var taken: u32 = 0;
+    while (!sent or heard == null) : (taken += 1) {
+        if (taken == crossing_events_max) return error.EventsMissing;
+        var events: [1]Event = undefined;
+        try harness.collect(&events);
+        if (events[0].user_data == send_user_data and !events[0].flags.message) {
+            const sent_bytes = try events[0].outcome();
+            try testing.expectEqual(@as(u32, @intCast(expected.bytes.len)), sent_bytes);
+            sent = true;
+        } else if (try take(harness, groups, &events[0], expected)) |from| {
+            try testing.expect(heard == null);
+            heard = from;
+        }
+    }
+    return heard.?;
+}
+
+/// Gives back the buffer of a receive's `event`. It hands back what the datagram carried when its
+/// peer is the one `expected` names, and null when another socket sent it.
+fn take(harness: *Harness, groups: Groups, event: *const Event, expected: *const Expected) !?Received {
+    const group = switch (event.user_data) {
+        user_data_receiver => groups.receiver,
+        user_data_sender => groups.sender,
+        else => return error.EventNotFound,
+    };
+    try testing.expect(!event.flags.message);
+    try testing.expect(event.flags.more);
+    const delivery = harness.loop.datagram(group, event.*);
+    defer harness.loop.give_back_buffer(group, event.flags.buffer_id);
+    if (!same_peer(&delivery.from.peer, expected.from)) return null;
+    try testing.expectEqual(expected.receive_user_data, event.user_data);
+    try testing.expectEqualStrings(expected.bytes, delivery.bytes);
     return delivery.from;
+}
+
+/// True when `a` and `b` name one socket: the same family, port and address bytes.
+fn same_peer(a: *const Address, b: *const Address) bool {
+    if (a.family != b.family or a.port != b.port) return false;
+    return std.mem.eql(u8, &a.bytes, &b.bytes);
 }
 
 /// What a received datagram must carry: its peer, the loopback address it was sent to, and the
@@ -182,14 +259,22 @@ fn question_and_answer(loopback: *const Address) !void {
         .ecn = .ect0,
         .flags = .{ .peer = true, .ecn = true },
     };
-    const heard = try cross(&harness, pair.sender, question, &asked, user_data_question, user_data_receiver, groups.receiver);
+    const heard = try cross(&harness, groups, pair.sender, &asked, user_data_question, &.{
+        .bytes = question,
+        .from = &sender_address,
+        .receive_user_data = user_data_receiver,
+    });
     try expect_received(&heard, &sender_address, loopback);
     try testing.expect(heard.flags.ecn);
     try testing.expectEqual(core.datagram.Ecn.ect0, heard.ecn);
 
     // The answer goes back from the address the question was sent to, unmarked.
     const reply = Outbound.reply_to(&heard);
-    const answered = try cross(&harness, pair.receiver, answer, &reply, user_data_answer, user_data_sender, groups.sender);
+    const answered = try cross(&harness, groups, pair.receiver, &reply, user_data_answer, &.{
+        .bytes = answer,
+        .from = &pair.address,
+        .receive_user_data = user_data_sender,
+    });
     try expect_received(&answered, &pair.address, loopback);
     try testing.expectEqual(core.datagram.Ecn.not_ect, answered.ecn);
     try pair.close(&harness);
@@ -231,19 +316,10 @@ fn open_dual_stack() !core.Descriptor {
     return error.AddressInUse;
 }
 
-/// Checks that `peer` is the IPv4-mapped form of 127.0.0.1 at `port`.
-fn expect_mapped_loopback(peer: *const Address, port: u16) !void {
-    const mapped_prefix = [_]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
-    try testing.expectEqual(Address.Family.ipv6, peer.family);
-    try testing.expectEqual(port, peer.port);
-    try testing.expectEqualSlices(u8, &mapped_prefix, peer.bytes[0..mapped_prefix.len]);
-    const ipv4_bytes = 4;
-    try testing.expectEqualSlices(
-        u8,
-        loopback4.bytes[0..ipv4_bytes],
-        peer.bytes[mapped_prefix.len..][0..ipv4_bytes],
-    );
-}
+/// The IPv4-mapped form of 127.0.0.1, `::ffff:127.0.0.1`. The server names its IPv4 client so, and
+/// `cross` takes the question only from that peer: a server that names it otherwise does not hear
+/// the question, and the scenario fails with `EventsMissing`.
+const mapped_loopback = [Address.ipv6_bytes]u8{ 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1 };
 
 test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     // A server on `::` answering a client on an IPv4 socket, which is how a QUIC server listens
@@ -261,6 +337,9 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     defer sync.close_now(client);
     const server_port = (try sync.local_address(server)).port;
     const client_port = (try sync.local_address(client)).port;
+    try send_strangers(&harness, &loopback4, &.{
+        Address.ipv4(.{ 127, 0, 0, 1 }, server_port), Address.ipv4(.{ 127, 0, 0, 1 }, client_port),
+    });
     var receives: [2]core.Handle = undefined;
     try harness.submit(&.{
         Operation.receive_from(user_data_receiver, server, groups.receiver),
@@ -280,8 +359,12 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
         .ecn = .ect0,
         .flags = .{ .peer = true, .ecn = true },
     };
-    const heard = try cross(&harness, client, question, &asked, user_data_question, user_data_receiver, groups.receiver);
-    try expect_mapped_loopback(&heard.peer, client_port);
+    const client_mapped = Address.ipv6(mapped_loopback, client_port, 0);
+    const heard = try cross(&harness, groups, client, &asked, user_data_question, &.{
+        .bytes = question,
+        .from = &client_mapped,
+        .receive_user_data = user_data_receiver,
+    });
     try testing.expect(heard.flags.ecn);
     try testing.expectEqual(core.datagram.Ecn.ect0, heard.ecn);
 
@@ -289,7 +372,12 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     var reply = Outbound.reply_to(&heard);
     reply.ecn = .ect0;
     reply.flags.ecn = true;
-    const answered = try cross(&harness, server, answer, &reply, user_data_answer, user_data_sender, groups.sender);
+    const server4 = Address.ipv4(.{ 127, 0, 0, 1 }, server_port);
+    const answered = try cross(&harness, groups, server, &reply, user_data_answer, &.{
+        .bytes = answer,
+        .from = &server4,
+        .receive_user_data = user_data_sender,
+    });
     try testing.expectEqual(Address.Family.ipv4, answered.peer.family);
     try testing.expectEqual(server_port, answered.peer.port);
     try testing.expect(answered.flags.ecn);
