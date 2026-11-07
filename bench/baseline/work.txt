@@ -83,16 +83,20 @@
 # then asked for lower rows: macOS kqueue `post`, `wait`, `task` and `poller` (median of 3 runs
 # on `mac`), and seven epoll rows on arm64 and x86-64, CI's counts at `dd13331`, run 42343959723.
 # io_uring has no offload drain, so its rows did not move.
+# On 2026-11-07 the fair tick order of W3 landed. A tick that hands over an event from the lists
+# pays for the share of decision 12, point 6, so Camilo raised `post-operation`, `timer` and
+# `record` on macOS kqueue (median of 3 runs on `mac`) and on arm64 io_uring and epoll
+# (cachegrind). Its fast path took arm64 io_uring `post`, `task` and `poller` under, so they fell.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
-post-operation 3051
-timer 1111
+post-operation 3114
+timer 1151
 batch 24624
 wait 5296
 task 615
 tasks-64 4558
-record 1222
+record 1283
 poller 573
 section linux-x86_64-uring
 post-operation 3030
@@ -114,21 +118,21 @@ tasks-64 4236
 record 1276
 poller 619
 section linux-aarch64-uring
-post 1061
-post-operation 2794
-timer 1025
+post 1039
+post-operation 2905
+timer 1082
 batch 23757
-task 559
+task 545
 tasks-64 3910
-record 1153
-poller 516
+record 1199
+poller 505
 section linux-aarch64-epoll
 post 1150
-post-operation 2931
-timer 1051
+post-operation 3039
+timer 1104
 batch 23845
 wait 632
 task 593
 tasks-64 3985
-record 1175
+record 1228
 poller 557
