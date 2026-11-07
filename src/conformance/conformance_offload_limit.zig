@@ -115,7 +115,7 @@ pub const Pool = struct {
         if (head == pool.tail.load(.acquire)) return false;
         const work = pool.works[head % pool_works];
         pool.head.store(head +% 1, .release);
-        work.run(work, 0);
+        work.run(0);
         _ = pool.served.fetchAdd(1, .release);
         return true;
     }

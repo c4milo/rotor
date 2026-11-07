@@ -145,7 +145,7 @@ fn hand_out_one() *core.offload.Work {
 fn answer_as_a_worker_the_loop_has_no_ring_for() void {
     const work = hand_out_one();
     scenario.reached_violation();
-    work.run(work, offload_workers);
+    work.run(offload_workers);
 }
 
 /// The `offload` policy with no offload: nothing would ever answer, so every file operation would

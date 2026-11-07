@@ -62,7 +62,7 @@ const Pool = struct {
     /// The worker thread: take the work it was given and run it.
     fn serve(pool: *Pool, worker: u16) void {
         const work = pool.handed[worker].swap(null, .acquire).?;
-        work.run(work, worker);
+        work.run(worker);
     }
 };
 

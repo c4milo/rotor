@@ -98,7 +98,7 @@ pub const Pool = struct {
                 continue;
             }
             if (pool.handed.swap(null, .acquire)) |work| {
-                work.run(work, 0);
+                work.run(0);
                 _ = pool.served.fetchAdd(1, .monotonic);
                 idle = 0;
                 continue;

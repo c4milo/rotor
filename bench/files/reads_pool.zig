@@ -102,7 +102,7 @@ pub const Pool = struct {
             if (head != worker.tail.load(.seq_cst)) {
                 const work = worker.queue[head & queue_mask];
                 worker.head.store(head +% 1, .release);
-                work.run(work, index);
+                work.run(index);
                 continue;
             }
             if (worker.stopping.load(.acquire)) return;

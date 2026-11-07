@@ -162,7 +162,7 @@ fn push_a_result_into_a_full_ring() void {
         if (!ring.push(.{ .tag = 0, .payload = work.index })) return;
     }
     scenario.reached_violation();
-    work.run(work, 0);
+    work.run(0);
 }
 
 const scenarios = [_]scenario.Scenario{

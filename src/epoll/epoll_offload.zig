@@ -71,7 +71,7 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
     in_flight.note_handed_out(index, slot.descriptor);
     const work = &loop.works[index];
     work.* = .{
-        .run = run,
+        .function = run,
         .owner = loop,
         .index = index,
         .tag = tag,

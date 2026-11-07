@@ -234,7 +234,7 @@ test "a slot's request carries its buffer, and a sync's carries none" {
 
 test "a work's request carries the bytes the loop copied, and a sync's carries none" {
     const read: Work = .{
-        .run = undefined,
+        .function = undefined,
         .owner = undefined,
         .index = 0,
         .tag = .read,

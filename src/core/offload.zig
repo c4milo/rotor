@@ -49,11 +49,10 @@ pub const FilePolicy = enum {
 
 /// One operation handed out. The loop fills it, one worker runs it, and neither writes it again.
 pub const Work = struct {
-    /// The caller's worker calls this exactly once, on its own thread, passing its own index. It
-    /// performs the system call and hands the result back to the loop that owns this work.
-    ///
-    /// A backend fills it with its own function, which casts `owner` back to its own `Loop`.
-    run: *const fn (work: *Work, worker: u16) void,
+    /// What `run` calls. It performs the system call and hands the result back to the loop that
+    /// owns this work. A backend fills it with its own function, which casts `owner` back to its
+    /// own `Loop`.
+    function: *const fn (work: *Work, worker: u16) void,
     /// The loop that handed this out, opaque so that `core` names no backend type.
     owner: *anyopaque,
     /// The slot this work finishes. The loop reads it back off the mailbox and finishes it there.
@@ -69,6 +68,11 @@ pub const Work = struct {
     /// The operations an offload is ever handed. The two syncs are here because they block as long
     /// as the device takes.
     pub const Tag = enum { read, write, fdatasync, fsync };
+
+    /// The caller's worker calls this exactly once, on its own thread, passing its own index.
+    pub fn run(work: *Work, worker: u16) void {
+        work.function(work, worker);
+    }
 };
 
 /// The caller's side of the hand-off.
@@ -76,7 +80,7 @@ pub const Offload = struct {
     /// Passed back to `submit` untouched. rotor never reads through it.
     context: ?*anyopaque,
     /// rotor calls this on the loop thread to hand one operation out. The caller arranges for some
-    /// thread of its own to call `work.run(work, worker)`, once, with that thread's index.
+    /// thread of its own to call `work.run(worker)`, once, with that thread's index.
     ///
     /// It returns nothing. A caller that cannot take the work now must queue it: the operation
     /// already has a slot, and decision 5 owes it exactly one final event. A caller that wants to

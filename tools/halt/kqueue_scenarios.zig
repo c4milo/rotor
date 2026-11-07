@@ -136,7 +136,7 @@ fn hand_out_one() *core.offload.Work {
 fn answer_as_a_worker_the_loop_has_no_ring_for() void {
     const work = hand_out_one();
     scenario.reached_violation();
-    work.run(work, offload_workers);
+    work.run(offload_workers);
 }
 
 /// A worker's push into a full ring. The loop hands out at most `offload_in_flight_max` operations,
@@ -150,7 +150,7 @@ fn push_a_result_into_a_full_ring() void {
         if (!ring.push(.{ .tag = 0, .payload = work.index })) return;
     }
     scenario.reached_violation();
-    work.run(work, 0);
+    work.run(0);
 }
 
 /// The `offload` policy with no offload: nothing would ever answer, so every file operation would
