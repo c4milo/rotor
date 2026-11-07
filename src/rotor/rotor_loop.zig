@@ -350,8 +350,8 @@ pub const Loop = struct {
 
     /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it may
     /// sleep, on the loop's clock: `.now` while a task is queued, an operation waits to be
-    /// submitted, a result waits to be handed over, a ring holds a message, or the nearest timer or
-    /// poller limit is due. A poller that returned `.now`, a wake the last tick took, and a record
+    /// submitted, a result waits to be handed over, a ring holds a message or a worker's result,
+    /// the last tick kept a kernel error, or the nearest timer or poller limit is due. A poller that returned `.now`, a wake the last tick took, and a record
     /// or a task the last tick called each give `.now`. Otherwise `.at` of the nearest limit, or
     /// `.none`. It reads no clock and changes no state. Only the program calls it, on the loop's
     /// thread, between ticks: inside a tick it halts. `SharedLoop` does not declare it.

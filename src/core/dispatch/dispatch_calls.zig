@@ -13,8 +13,8 @@ const ScheduleError = tasks_module.ScheduleError;
 const Task = tasks_module.Task;
 
 /// The calls of decisions 26 to 29 that every backend's `Loop` exports, written once. `Loop` has
-/// a `tables: Tables` field and an `inbox: Inbox` field. Each call checks that the loop's own
-/// thread makes it (decision 8, class B).
+/// a `tables: Tables` field, an `inbox: Inbox` field and a `kept_error` field, a `tick_error.Kept`.
+/// Each call checks that the loop's own thread makes it (decision 8, class B).
 pub fn Calls(comptime Loop: type) type {
     return struct {
         /// Adds `poller`, which the loop calls once in each tick (decision 26).
@@ -71,9 +71,11 @@ pub fn Calls(comptime Loop: type) type {
         /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it
         /// may sleep: `.now` while work is left, `.at` the nearest timer or poller limit, and
         /// `.none` when neither exists. It reads no clock and changes no state. Program only, and
-        /// it halts inside a tick (class B).
+        /// it halts inside a tick (class B). A kept tick error is work left: the next tick returns
+        /// it, and a host that slept first would not see it (decision 5, amendment of 2026-11-06).
         pub fn wait_limit(loop: *Loop) WaitLimit {
             loop.tables.assert_owner();
+            if (loop.kept_error.failure != null) return .now;
             const limit = loop.tables.wait_limit();
             if (limit == .now) return .now;
             if (loop.inbox.holds_messages(loop.tables.id)) return .now;

@@ -296,6 +296,10 @@ It returns `.now` when any of these holds:
 - a task is queued;
 - operations wait to be submitted, or results wait to be handed over;
 - a mailbox still holds messages;
+- an offload worker's result is in a ring to the loop. The build added it, and Camilo ruled on
+  2026-11-07 that it stays (see "What was built", item 2);
+- a tick kept a kernel error, which the next tick returns (decision 5, amendment of 2026-11-06).
+  The review of the build added it on 2026-11-07 (see "What was built", item 6);
 - the least of the nearest timer and `until_ns` is at or before `now_ns`. This covers a poller that
   returned `.now`, a deadline that is due, a wake that the last tick took, and a record or a task
   that the last tick called.
@@ -470,7 +474,8 @@ assertion is deleted:
 | the drain stores `.now` with no poller | `test-core`, test 3, and the no-poller scenario |
 | `end` does not store `.now` after a callback | `test-core`, test 4, and the host cycle |
 | `wait_limit` ignores `until_ns`, and misses a wake or a poller's `.now` | `test-core`, test 5, and the host cycle |
-| `wait_limit` ignores a mailbox that holds messages | `test-core`, test 5 |
+| `wait_limit` ignores a mailbox that holds messages | the host cycle: `test-core` does not reach the backend's call |
+| `wait_limit` ignores a kept tick error | `test-core`, with a fabricated kept error |
 | `reserve_group` returns an id that is reserved | `test-core`, test 6, and the two-library scenario |
 | a release clears the reservation | `test-core`, test 6 |
 | each halt deleted | `halt-check` |
@@ -558,7 +563,8 @@ Where the code differs from the proposal:
    wake is in a place that the next message takes, or that no caller reads. `Event.message` keeps
    its check of the tag of each message that is not a wake.
 2. **`wait_limit` reads the offload's rings too.** A worker's result is in a ring to the loop, as a
-   message is, and the host would sleep on it. The record named only the mailboxes.
+   message is, and the host would sleep on it. The record named only the mailboxes. Camilo ruled
+   on 2026-11-07 that the read stays.
 3. **More halt scenarios than the table of "How it would be checked".** The owner checks of
    `reserve_buffer_group` and `wait_limit`, on each backend. The halt of a provide with a group that
    no caller reserved runs on each backend, through `tools/halt/buffer_release.zig`. The check of
@@ -568,6 +574,12 @@ Where the code differs from the proposal:
    that the loop gave that id.
 5. **The halt scenarios that take a tag above the limit post `message_tag_wake + 1`.** A tag of
    `message_tag_max + 1` is the wake's tag now, which a post accepts.
+6. **`wait_limit` returns `.now` while a tick's kernel error is kept.** A tick whose kernel call
+   fails after it produced events returns the events and keeps the error for the next tick
+   (decision 5, amendment of 2026-11-06). The first build did not read the kept error. A host that
+   ticked once and trusted `wait_limit` then slept, and the error stayed unreturned until a wake.
+   The review of 2026-11-07 found it. The check is in `dispatch_calls.zig`, so it holds on the three
+   backends. `test-core` holds it with a fabricated kept error (decision 10).
 
 The instruction gate on `mac` on 2026-11-07, section `macos-aarch64-kqueue`, with
 `zig build work-gate`. The column `48cacba` is the tree before this record, measured the same day.

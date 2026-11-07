@@ -6,6 +6,7 @@ const std = @import("std");
 const testing = std.testing;
 const core = @import("../core.zig");
 const dispatch_module = @import("dispatch.zig");
+const dispatch_calls = @import("dispatch_calls.zig");
 
 const Completion = dispatch_module.Completion;
 const Dispatch = dispatch_module.Dispatch;
@@ -207,4 +208,37 @@ test "wait_limit reads now while an operation waits to be submitted" {
     const timer: core.Operation = .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 10 } } };
     try testing.expectEqual(@as(u32, 1), tables.submit(&.{timer}, &handles));
     try testing.expectEqual(WaitLimit.now, tables.wait_limit());
+}
+
+/// A loop of no backend: the fields that `dispatch_calls.Calls(Host).wait_limit` reads.
+const Host = struct {
+    slots: [capacity]Slot,
+    entries: [capacity]TimerHeap.Entry,
+    starts: [capacity]u64,
+    heartbeat: Heartbeat,
+    tables: Tables,
+    inbox: core.inbox.Inbox,
+    kept_error: core.tick_error.Kept(error{Unexpected}),
+
+    fn init(host: *Host) void {
+        host.tables.init(&host.slots, &host.entries, &host.starts, &host.heartbeat, .{ .id = 0 });
+        host.tables.now_ns = 1_000;
+        host.inbox = .init(null, &.{}, null);
+        host.kept_error = .none;
+    }
+};
+
+test "wait_limit reads now while a tick's kernel error is kept, and the timer once it is taken" {
+    var host: Host = undefined;
+    host.init();
+    const calls = dispatch_calls.Calls(Host);
+    host.tables.timers.arm(0, 3_000);
+    try testing.expectEqual(WaitLimit.at(3_000), calls.wait_limit(&host));
+    // A kernel call failed after the tick produced 2 events (decision 5, amendment of 2026-11-06).
+    const dispatch = &host.tables.dispatch;
+    try testing.expectEqual(@as(u32, 2), try host.kept_error.keep(dispatch, error.Unexpected, 2));
+    try testing.expectEqual(WaitLimit.now, calls.wait_limit(&host));
+    // The next tick takes the error first, and then the host may sleep until the timer.
+    try testing.expectError(error.Unexpected, host.kept_error.take(dispatch));
+    try testing.expectEqual(WaitLimit.at(3_000), calls.wait_limit(&host));
 }
