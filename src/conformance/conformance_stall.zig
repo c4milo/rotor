@@ -243,9 +243,12 @@ fn hold_for(span_ns: u64) void {
     while (clock_ns() - started_ns < span_ns) std.atomic.spinLoopHint();
 }
 
-/// A record that holds the loop for `hold_ns` when its event comes.
+/// A record that holds the loop for `hold_ns` when its event comes. Its hold is the stall the
+/// scenario counts, so it is made with `core.Completion.init` and not timed by the harness: a busy
+/// machine stretches the hold, and the harness's limit would then fail the scenario for the stall it
+/// makes on purpose.
 const Holding = struct {
-    completion: core.Completion = completion(Holding, "completion", completed),
+    completion: core.Completion = .init(Holding, "completion", completed),
     events: u32 = 0,
 
     fn completed(holding: *Holding, event: Event) void {
