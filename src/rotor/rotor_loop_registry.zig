@@ -141,3 +141,51 @@ test "attach refuses memory that holds a registry of one process" {
     var member: Registry = undefined;
     try testing.expectError(error.NotAGroup, member.attach(&memory));
 }
+
+/// A pipe has a read end and a write end.
+const pipe_ends = 2;
+
+/// A pipe for a test: its read end is a descriptor that no backend's wake reaches.
+fn test_pipe() ![pipe_ends]core.Descriptor {
+    var ends: [pipe_ends]i32 = undefined;
+    if (linux) {
+        const rc = std.os.linux.pipe2(&ends, .{ .CLOEXEC = true });
+        if (std.os.linux.errno(rc) != .SUCCESS) return error.Unexpected;
+    } else if (std.c.pipe(&ends) != 0) return error.Unexpected;
+    return ends;
+}
+
+test "a remote counts the wakes the kernel refused, and its deinit keeps the count" {
+    if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
+        return error.SkipZigTest;
+    }
+    const loop_count = 2;
+    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: Registry = undefined;
+    registry.init(&memory, loop_count);
+    const ends = try test_pipe();
+    defer for (ends) |end| {
+        _ = if (linux) std.os.linux.close(end) else std.c.close(end);
+    };
+    // Loop 0 publishes the read end of a pipe, and it sleeps: each post asks for a wake.
+    switch (registry.inner) {
+        inline else => |*inner| {
+            inner.set(0, ends[0]);
+            inner.begin_sleep(0);
+        },
+    }
+    var remote: loop_module.Remote = undefined;
+    try remote.init(&registry, 1);
+    try testing.expectEqual(0, remote.dropped_wakes());
+    try remote.post(0, .{ .payload = 1, .tag = 0 });
+    // io_uring reads the kernel's answer in `deinit`, kqueue and epoll in `post`.
+    remote.deinit();
+    try testing.expectEqual(1, remote.dropped_wakes());
+    switch (registry.inner) {
+        inline else => |*inner| {
+            inner.end_sleep(0);
+            inner.clear(0);
+        },
+    }
+}

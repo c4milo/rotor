@@ -139,6 +139,10 @@ program that sleeps in a wait of its own holds in that wait, and the module gain
 name, `dropped_wakes`. It counts the wakes an io_uring loop's `deinit` dropped, and it is 0 on
 kqueue and epoll.
 
+**Added on 2026-11-06 by decision 4's third amendment of that day:** the `Remote` surface gained
+the same name, `dropped_wakes`. It counts the wakes a `Remote` dropped since `init`, on every
+backend.
+
 ## Alternatives it beat
 
 **Implement the std.Io table directly.** Cost: 109 functions to write and keep current against

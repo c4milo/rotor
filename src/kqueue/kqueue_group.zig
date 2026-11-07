@@ -93,9 +93,17 @@ pub fn watch_event(watch: Descriptor) Kevent {
 /// loop has not read, and a write it refuses is dropped, as `Queue.wake` drops a refused trigger:
 /// the message is in the ring, and the loop reads it at its next tick.
 pub fn send(descriptor: Descriptor) void {
+    _ = wake_sent(descriptor);
+}
+
+/// `send`, and true when the loop has the wake. The write took the byte, or it failed with EAGAIN:
+/// the pipe is full, so it holds a wake the loop has not read. A `Remote` counts each false
+/// (decision 4, third amendment of 2026-11-06).
+pub fn wake_sent(descriptor: Descriptor) bool {
     assert(descriptor >= 0);
     const byte = [1]u8{1};
-    _ = std.c.write(descriptor, &byte, byte.len);
+    const rc = std.c.write(descriptor, &byte, byte.len);
+    return rc >= 0 or std.posix.errno(rc) == .AGAIN;
 }
 
 /// The loop reads what senders wrote to its pipe, up to `group_wake_drain_bytes`. What is left keeps
@@ -145,7 +153,10 @@ test "a wake written to a pipe is read back, and a full pipe refuses without blo
         }
     }
     try testing.expect(full);
-    send(wake.send);
+    // A full pipe holds a wake the loop has not read, so the refused write drops no wake.
+    try testing.expect(wake_sent(wake.send));
     drain(wake.watch);
     try testing.expect(std.c.read(wake.watch, &byte, 1) == 1);
+    // A write to the read end is refused, and that wake is dropped.
+    try testing.expect(!wake_sent(wake.watch));
 }

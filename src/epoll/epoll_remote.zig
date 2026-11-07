@@ -18,6 +18,9 @@
 //! One thread owns a `Remote`, as one thread owns a loop. Two threads posting through one remote
 //! would put two producers on a single-producer ring, which `core/mailbox.zig`'s ordering argument
 //! forbids. `init` records the thread, and `post` and `deinit` halt on any other.
+//!
+//! A wake the kernel refuses is no error: the message is in the ring, and the target reads it when
+//! its wait ends. `dropped_wakes` counts each one (decision 4, third amendment of 2026-11-06).
 const std = @import("std");
 const builtin = @import("builtin");
 const assert = std.debug.assert;
@@ -35,6 +38,9 @@ pub const Remote = struct {
     owner: usize,
     /// This remote's id among the ids of `registry`, which names it as the sender of a message.
     id: core.LoopId,
+    /// The wakes the kernel refused since `init`, which `dropped_wakes` reads. Only the owner
+    /// thread writes it.
+    dropped_wake_count: u64,
 
     /// Claims `id` for the calling thread. It creates nothing: on this backend a remote is a
     /// producer of rings the registry already holds. It cannot fail here; the error set is the
@@ -45,7 +51,12 @@ pub const Remote = struct {
     /// one producer.
     pub fn init(remote: *Remote, registry: *Registry, id: core.LoopId) InitError!void {
         assert(id < registry.loops());
-        remote.* = .{ .registry = registry, .owner = core.tables.thread_identity(), .id = id };
+        remote.* = .{
+            .registry = registry,
+            .owner = core.tables.thread_identity(),
+            .id = id,
+            .dropped_wake_count = 0,
+        };
         registry.set_remote(id);
         assert(registry.get(id) == core.mailbox.descriptor_remote);
     }
@@ -65,7 +76,17 @@ pub const Remote = struct {
         assert(target != remote.id);
         assert(message.tag <= core.constants.message_tag_max);
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
-        if (wake) |descriptor| queue_module.Queue.wake(descriptor);
+        const descriptor = wake orelse return;
+        // In a group the registry holds the eventfd its creator made, and the same write wakes it.
+        if (!queue_module.Queue.wake_sent(descriptor)) remote.dropped_wake_count += 1;
+    }
+
+    /// The wakes the kernel refused since `init`. Read it on the owner thread, or after that thread
+    /// ended. It stays readable after `deinit`, until the next `init`. Each message is in its
+    /// target's ring, and the target reads it when its wait ends (decision 4, third amendment of
+    /// 2026-11-06).
+    pub fn dropped_wakes(remote: *const Remote) u64 {
+        return remote.dropped_wake_count;
     }
 
     /// Halts when another thread calls into the remote: a programmer error, and one that would put
@@ -163,4 +184,39 @@ test "a message reaches the ring, a sleeping target is woken, and a full ring is
         try remote.post(0, .{ .payload = sent, .tag = 0 });
     }
     try testing.expectError(error.MailboxFull, remote.post(0, .{ .payload = 0, .tag = 0 }));
+}
+
+test "a wake the kernel refuses is counted, and the message still waits in the ring" {
+    if (!posts_run_here) return error.SkipZigTest;
+    var registry: Registry = undefined;
+    const loops: u16 = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) = undefined;
+    registry.init(&memory, loops);
+
+    // Loop 0 publishes the read end of a pipe, and the kernel refuses a write to it.
+    var ends: [2]i32 = undefined;
+    try testing.expectEqual(@as(usize, 0), std.os.linux.pipe2(&ends, .{ .CLOEXEC = true }));
+    defer for (ends) |end| {
+        _ = std.os.linux.close(end);
+    };
+    registry.set(0, ends[0]);
+    defer registry.clear(0);
+    var remote: Remote = undefined;
+    try remote.init(&registry, 1);
+    try testing.expectEqual(@as(u64, 0), remote.dropped_wakes());
+
+    // Awake, the target needs no wake, and none is dropped.
+    try remote.post(0, .{ .payload = 1, .tag = 0 });
+    try testing.expectEqual(@as(u64, 0), remote.dropped_wakes());
+    registry.begin_sleep(0);
+    try remote.post(0, .{ .payload = 2, .tag = 0 });
+    try remote.post(0, .{ .payload = 3, .tag = 0 });
+    registry.end_sleep(0);
+    try testing.expectEqual(@as(u64, 2), remote.dropped_wakes());
+
+    // The count stays readable after `deinit`, and every message is in the ring.
+    remote.deinit();
+    try testing.expectEqual(@as(u64, 2), remote.dropped_wakes());
+    var out: [4]core.Message = undefined;
+    try testing.expectEqual(@as(u32, 3), registry.mailbox(1, 0).pop_into(&out));
 }

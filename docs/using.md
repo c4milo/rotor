@@ -357,8 +357,11 @@ may do to it is post a message:
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
   one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
   loop's post produces an event: `MailboxFull` or `LoopNotFound`. `SystemResources`, `Unanswered`
-  and `Unexpected` are still in the set and no backend returns them since 2026-09-25. A `Remote`
-  belongs to one thread as a loop does.
+  and `Unexpected` are still in the set and no backend returns them since 2026-09-25. A wake the
+  kernel refuses is no error: the message is in the mailbox, and the target reads it when its wait
+  ends. `remote.dropped_wakes()` says how many wakes the remote dropped since `init`, and it is
+  still readable after `deinit`. On io_uring it is a lower bound: an answer the kernel posts after
+  the remote's last enter is not read. A `Remote` belongs to one thread as a loop does.
 - The offload's workers answer through rings of their own, not through a `Remote`.
 
 At most `loops_max` (256) loops and remotes share one registry.

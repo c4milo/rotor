@@ -50,6 +50,7 @@ pub const remote_declarations = [_][]const u8{
     "init",
     "deinit",
     "post",
+    "dropped_wakes",
 };
 
 /// Fails the compile, naming the first declaration `Loop` lacks.
@@ -116,9 +117,10 @@ const CompleteRemote = struct {
     pub fn init() void {}
     pub fn deinit() void {}
     pub fn post() void {}
+    pub fn dropped_wakes() void {}
 };
 
-test "a remote with every declaration passes the check, and the list is exactly those three" {
+test "a remote with every declaration passes the check, and the list is exactly those four" {
     comptime check_remote(CompleteRemote);
     try testing.expectEqual(remote_declarations.len, @typeInfo(CompleteRemote).@"struct".decls.len);
 }

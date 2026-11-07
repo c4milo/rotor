@@ -14,7 +14,9 @@
 //! A post is finished when it returns. The push either fitted or it did not, and the answer is the
 //! return value, `core.remote.PostError`. Nothing here is asynchronous, so nothing here needs a
 //! completion. Of the five errors in that set, this backend answers two: `MailboxFull` and
-//! `LoopNotFound`.
+//! `LoopNotFound`. A wake the kernel refuses is no error: the message is in the ring, and the
+//! target reads it when its wait ends. `dropped_wakes` counts each one (decision 4, third
+//! amendment of 2026-11-06).
 //!
 //! One thread owns a `Remote`, as one thread owns a loop. Two threads posting through one remote
 //! would put two producers on a single-producer ring, which `core/mailbox.zig`'s ordering
@@ -38,6 +40,9 @@ pub const Remote = struct {
     owner: usize,
     /// This remote's id among the ids of `registry`, which names it as the sender of a message.
     id: core.LoopId,
+    /// The wakes the kernel refused since `init`, which `dropped_wakes` reads. Only the owner
+    /// thread writes it.
+    dropped_wake_count: u64,
 
     /// Claims `id` for the calling thread. It creates nothing: on this backend a remote is a
     /// producer of rings the registry already holds. It cannot fail here; the error set is the
@@ -48,7 +53,12 @@ pub const Remote = struct {
     /// producer.
     pub fn init(remote: *Remote, registry: *Registry, id: core.LoopId) InitError!void {
         assert(id < registry.loops());
-        remote.* = .{ .registry = registry, .owner = core.tables.thread_identity(), .id = id };
+        remote.* = .{
+            .registry = registry,
+            .owner = core.tables.thread_identity(),
+            .id = id,
+            .dropped_wake_count = 0,
+        };
         registry.set_remote(id);
         assert(registry.get(id) == core.mailbox.descriptor_remote);
     }
@@ -73,7 +83,19 @@ pub const Remote = struct {
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
         const descriptor = wake orelse return;
         // In a group the target's wake is a pipe its group's creator made (decision 21, point 3).
-        if (remote.registry.group) group_module.send(descriptor) else queue_module.Queue.wake(descriptor);
+        const sent = if (remote.registry.group)
+            group_module.wake_sent(descriptor)
+        else
+            queue_module.Queue.wake_sent(descriptor);
+        if (!sent) remote.dropped_wake_count += 1;
+    }
+
+    /// The wakes the kernel refused since `init`. Read it on the owner thread, or after that thread
+    /// ended. It stays readable after `deinit`, until the next `init`. Each message is in its
+    /// target's ring, and the target reads it when its wait ends (decision 4, third amendment of
+    /// 2026-11-06).
+    pub fn dropped_wakes(remote: *const Remote) u64 {
+        return remote.dropped_wake_count;
     }
 
     /// Halts when another thread calls into the remote: a programmer error, and one that would put
@@ -178,4 +200,45 @@ test "a message reaches the ring the target drains, and a full ring is refused" 
         try remote.post(0, .{ .payload = sent, .tag = 0 });
     }
     try testing.expectError(error.MailboxFull, remote.post(0, .{ .payload = 0, .tag = 0 }));
+}
+
+test "a wake the kernel refuses is counted, in a group and out of one" {
+    // `post` reaches `Queue.wake_sent`, which is Darwin's `EVFILT_USER`, so this test runs on
+    // Darwin alone.
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    var registry: Registry = undefined;
+    const loops: u16 = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) = undefined;
+    registry.init(&memory, loops);
+
+    // Loop 0 publishes the read end of a pipe. It is no kqueue, so the kernel refuses a trigger on
+    // it, and it refuses a write to it too.
+    var ends: [2]std.c.fd_t = undefined;
+    try testing.expectEqual(@as(c_int, 0), std.c.pipe(&ends));
+    defer for (ends) |end| {
+        _ = std.c.close(end);
+    };
+    registry.set(0, ends[0]);
+    defer registry.clear(0);
+    var remote: Remote = undefined;
+    try remote.init(&registry, 1);
+    try testing.expectEqual(@as(u64, 0), remote.dropped_wakes());
+
+    // Awake, the target needs no wake, and none is dropped.
+    try remote.post(0, .{ .payload = 1, .tag = 0 });
+    try testing.expectEqual(@as(u64, 0), remote.dropped_wakes());
+    registry.begin_sleep(0);
+    try remote.post(0, .{ .payload = 2, .tag = 0 });
+    try testing.expectEqual(@as(u64, 1), remote.dropped_wakes());
+    registry.group = true;
+    try remote.post(0, .{ .payload = 3, .tag = 0 });
+    registry.group = false;
+    registry.end_sleep(0);
+    try testing.expectEqual(@as(u64, 2), remote.dropped_wakes());
+
+    // The count stays readable after `deinit`, and every message is in the ring.
+    remote.deinit();
+    try testing.expectEqual(@as(u64, 2), remote.dropped_wakes());
+    var out: [4]core.Message = undefined;
+    try testing.expectEqual(@as(u32, 3), registry.mailbox(1, 0).pop_into(&out));
 }

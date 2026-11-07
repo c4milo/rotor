@@ -63,8 +63,19 @@ pub fn close(wakes: []const Wake) void {
 /// as every backend drops a refused wake: the message is in the ring, and the loop reads it at its
 /// next tick.
 pub fn send(descriptor: Descriptor) void {
+    _ = wake_sent(descriptor);
+}
+
+/// `send`, and true when the loop has the wake. The write added one to the count, or it failed with
+/// EAGAIN: the count is at its most, so the eventfd is readable already. A `Remote` counts each
+/// false (decision 4, third amendment of 2026-11-06).
+pub fn wake_sent(descriptor: Descriptor) bool {
     assert(descriptor >= 0);
-    _ = linux.write(descriptor, std.mem.asBytes(&one), @sizeOf(u64));
+    const rc = linux.write(descriptor, std.mem.asBytes(&one), @sizeOf(u64));
+    return switch (linux.errno(rc)) {
+        .SUCCESS, .AGAIN => true,
+        else => false,
+    };
 }
 
 /// The loop empties the count of its eventfd, once it saw it readable. A read that finds no count
@@ -95,4 +106,24 @@ test "a group's eventfds count the wakes, and the loop's read empties them" {
     // Empty, a read returns at once: the loop's drain never blocks it.
     drain(wakes[0].watch);
     try testing.expectEqual(linux.E.AGAIN, linux.errno(linux.read(wakes[0].watch, std.mem.asBytes(&counter), 8)));
+}
+
+test "a wake to an eventfd whose count is at its most is held, and one to a pipe's read end is not" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    var wakes: [1]Wake = undefined;
+    try make(&wakes);
+    defer close(&wakes);
+    // The count can reach one short of 2^64. A write past it fails with EAGAIN, and the eventfd
+    // is readable already.
+    const most: u64 = std.math.maxInt(u64) - 1;
+    try testing.expectEqual(@as(usize, 8), linux.write(wakes[0].send, std.mem.asBytes(&most), 8));
+    try testing.expect(wake_sent(wakes[0].send));
+    drain(wakes[0].watch);
+
+    var ends: [2]i32 = undefined;
+    try testing.expectEqual(@as(usize, 0), linux.pipe2(&ends, .{ .CLOEXEC = true }));
+    defer for (ends) |end| {
+        _ = linux.close(end);
+    };
+    try testing.expect(!wake_sent(ends[0]));
 }

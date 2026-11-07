@@ -262,6 +262,57 @@ its system call, and a test hands it `overcommitted` on every pass.
 | kqueue's `dropped_wakes` gives 1 | `test-rotor` | CAUGHT |
 | `Ring.sqe_at` reads past the entries that wait | `halt-check`, the Linux gate | CAUGHT |
 
+**Amended a third time on 2026-11-06, by Camilo's request of that day: a `Remote` counts the
+wakes it drops.** `Remote.dropped_wakes` returns the count since `init`, and it stays readable after
+`deinit`. It is a plain `u64` that only the owner thread writes. It is wider than the `u32` of
+`Loop.dropped_wakes`, because a `Remote` counts from `init` with no bound, and a loop's count holds
+only the wakes of one `deinit`. The `Remote` surface gains that one name. A drop is no error, for the reason the second amendment gives: the message is in the mailbox.
+
+Every backend can drop a wake, so no backend returns a constant 0:
+
+- On kqueue and epoll, the kernel refuses the trigger or the write, for example to a descriptor that
+  is no kqueue or eventfd. EAGAIN on an eventfd or a group's pipe is no drop: the target is
+  readable already.
+- On io_uring, the kernel answers a wake below 0, or the remote's ring has no free entry for it.
+  `deinit` now sends a wake that an earlier enter left in the ring, and counts it when it stays.
+  An answer the kernel posts after the remote's last enter is not read before the ring closes, so
+  on io_uring the count is a lower bound. A wake to a loop that stopped after the registry read
+  also counts, so a normal shutdown can leave the count above 0.
+
+The kernel answers EBUSY only under load, so `send_wake` and `deinit_through` in
+`uring_remote.zig` take the enter as a parameter, as `Loop.deinit_through` does. The other drops
+come from the real kernel: each test points the registry at a pipe's read end.
+
+Mutations, each measured against the target named:
+
+| mutation | caught by | result |
+|---|---|---|
+| kqueue's `post` keeps no count | `test-kqueue` | CAUGHT |
+| kqueue's `post` takes a group's wake as sent | `test-kqueue` | CAUGHT |
+| kqueue's `init` leaves a count that is not 0 | `test-kqueue` | CAUGHT |
+| kqueue's `Queue.wake_sent` gives true always | `test-kqueue` | CAUGHT |
+| kqueue's group wake counts EAGAIN as a drop | `test-kqueue` | CAUGHT |
+| kqueue's group wake gives true always | `test-kqueue` | CAUGHT |
+| kqueue's `dropped_wakes` gives 0 | `test-kqueue` | CAUGHT |
+| the `Remote` surface lacks `dropped_wakes` | `test-core` | CAUGHT |
+| the public module's `dropped_wakes` gives 0 | `test-rotor`; `rotor`, the Linux gate, both ways | CAUGHT |
+| io_uring counts no wake that finds no free entry | `uring`, the Linux gate | CAUGHT |
+| io_uring counts no answer below 0 | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` counts no wake left in the ring | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` makes no enter for a wake that waits | `uring`, the Linux gate | CAUGHT |
+| io_uring's group wake keeps no count | `uring`, the Linux gate | CAUGHT |
+| io_uring's `init` leaves a count that is not 0 | `uring`, the Linux gate | CAUGHT |
+| io_uring counts every answer | `uring`, the Linux gate | CAUGHT |
+| epoll's `post` keeps no count | `epoll`, the Linux gate | CAUGHT |
+| epoll's `Queue.wake_sent` counts EAGAIN as a drop | `epoll`, the Linux gate | CAUGHT |
+| epoll's `Queue.wake_sent` gives true always | `epoll`, the Linux gate | CAUGHT |
+| epoll's `init` leaves a count that is not 0 | `epoll`, the Linux gate | CAUGHT |
+| the Linux group wake counts EAGAIN as a drop | `linux-shared`, the Linux gate | CAUGHT |
+| the Linux group wake gives true always | `linux-shared`, the Linux gate | CAUGHT |
+
+The new assertion of `drop_answers`, that the answers ready fit the completion ring, checks what the
+kernel returned. No parameter reaches it, so it has no halt scenario (decision 8).
+
 ### When one core is hot
 
 The loop accepts the imbalance. It never migrates anything on its own, because a loop that
@@ -351,9 +402,10 @@ exports it. What it settled that this paragraph did not say:
 - On io_uring, since 2026-09-25, `post` pushes the message into the ring and, when the target
   sleeps, submits a wake from the remote's own ring without waiting for its answer. A wake the
   kernel refuses is dropped, as kqueue and epoll drop theirs: the message is in the ring, and the
-  target reads it when it next ticks. Until that day the post submitted the message as a
-  `MSG_RING` and waited up to `remote_wait_ns` for the kernel's answer, and a post whose answer
-  had not come was `Unanswered`.
+  target reads it when it next ticks. Since 2026-11-06 `Remote.dropped_wakes` counts each drop, on
+  every backend (the third amendment of that day). Until 2026-09-25 the post submitted the message
+  as a `MSG_RING` and waited up to `remote_wait_ns` for the kernel's answer, and a post whose
+  answer had not come was `Unanswered`.
 - The remote's ring holds `constants.remote_entries` entries, one: it submits one wake at a time
   in an enter of its own, and drops the answers to earlier wakes before the next.
 - A `Remote` belongs to one thread. `init` records the thread's identity, the address of the

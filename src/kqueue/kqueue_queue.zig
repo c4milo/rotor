@@ -103,10 +103,17 @@ pub const Queue = struct {
     /// returns at once with no timeout. A zero timeout cost about 500 instructions more per round
     /// trip of two wakes, measured with two threads and no rotor on macOS 26.6.2 on 2026-09-29.
     pub fn wake(target: core.Descriptor) void {
+        _ = wake_sent(target);
+    }
+
+    /// `wake`, and true when the kernel took the trigger. The kernel refuses it when `target` is no
+    /// kqueue, for example after its loop closed the kqueue the registry named. A `Remote` counts
+    /// each refusal (decision 4, third amendment of 2026-11-06).
+    pub fn wake_sent(target: core.Descriptor) bool {
         assert(target >= 0);
         const trigger: [1]Kevent = .{user_event(0, std.c.NOTE.TRIGGER)};
         var none: [0]Kevent = .{};
-        _ = std.c.kevent(target, &trigger, trigger.len, &none, 0, null);
+        return std.c.kevent(target, &trigger, trigger.len, &none, 0, null) >= 0;
     }
 };
 

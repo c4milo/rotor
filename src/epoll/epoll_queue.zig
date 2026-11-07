@@ -282,9 +282,20 @@ pub const Queue = struct {
     /// Wakes the loop whose eventfd is `target` out of its wait. Any thread may call it: it is one
     /// write to a descriptor, and it touches no memory of the target loop.
     pub fn wake(target: core.Descriptor) void {
+        _ = wake_sent(target);
+    }
+
+    /// `wake`, and true when the target has the wake. The write added one to the count, or it
+    /// failed with EAGAIN: the count is at its most, so the eventfd is readable already. A
+    /// `Remote` counts each false (decision 4, third amendment of 2026-11-06).
+    pub fn wake_sent(target: core.Descriptor) bool {
         assert(target >= 0);
         const one: u64 = 1;
-        _ = linux.write(target, std.mem.asBytes(&one), @sizeOf(u64));
+        const rc = linux.write(target, std.mem.asBytes(&one), @sizeOf(u64));
+        return switch (linux.errno(rc)) {
+            .SUCCESS, .AGAIN => true,
+            else => false,
+        };
     }
 
     /// Empties the wake counter, which the reap calls when it sees the wake readiness. Without this
@@ -350,6 +361,23 @@ test "a queue woken through its group's eventfd waits on it and leaves it open" 
     queue.deinit();
     // The group's creator owns the eventfd, so the loop's end leaves it open.
     try testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.fcntl(shared, linux.F.GETFD, 0)));
+}
+
+test "a wake to a count at its most is held, and a wake the kernel refuses is not" {
+    if (!supported) return error.SkipZigTest;
+    var queue = try Queue.init();
+    defer queue.deinit();
+    // The count can reach one short of 2^64. A write past it fails with EAGAIN, and the eventfd
+    // is readable already.
+    const most: u64 = std.math.maxInt(u64) - 1;
+    try testing.expectEqual(@as(usize, 8), linux.write(queue.wake_descriptor, std.mem.asBytes(&most), 8));
+    try testing.expect(Queue.wake_sent(queue.wake_descriptor));
+    queue.drain_wake();
+    const pair = try pipe_pair();
+    defer for (pair) |end| {
+        _ = linux.close(end);
+    };
+    try testing.expect(!Queue.wake_sent(pair[0]));
 }
 
 test "arming adds a descriptor the kernel does not hold, and modifies one it does" {

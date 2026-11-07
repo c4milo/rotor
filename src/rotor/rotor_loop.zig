@@ -59,6 +59,15 @@ pub const Remote = struct {
             inline else => |*inner| inner.post(target, message),
         };
     }
+
+    /// The wakes the kernel refused since `init`, or that found no room to be sent. It stays
+    /// readable after `deinit`, until the next `init`. Each message is in its target's mailbox,
+    /// and the target reads it when its wait ends (decision 4, third amendment of 2026-11-06).
+    pub fn dropped_wakes(remote: *const Remote) u64 {
+        return switch (remote.inner) {
+            inline else => |*inner| inner.dropped_wakes(),
+        };
+    }
 };
 
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
