@@ -10,6 +10,7 @@ const assert = std.debug.assert;
 const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
+const fair = @import("conformance_fair.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
@@ -66,6 +67,31 @@ fn send_burst(harness: *Harness, sender: core.Descriptor, to: Address) !void {
         try harness.collect(&sent);
         try testing.expectEqual(@as(u32, 1), try sent[0].outcome());
     }
+}
+
+/// The socket option of macOS that reports how many datagrams wait in a socket, from
+/// `<sys/socket.h>`. Zig's standard library does not name it.
+const so_numrcvpkt = 0x1112;
+
+/// The most times `wait_queued` reads the count before it fails, and the pause between two reads.
+const queued_reads_max = 1000;
+const queued_pause_ms = 1;
+
+/// Waits until `datagrams` datagrams wait in `receiver`, so the first tick can read the whole
+/// burst. On macOS a datagram over loopback can reach its socket after its send returns. Without
+/// the wait, a loaded machine took 11 and 12 ticks for one burst (2026-11-07). Linux reports no
+/// count of datagrams, so there the wait ends when the socket is readable.
+fn wait_queued(receiver: core.Descriptor, datagrams: u32) !void {
+    if (builtin.os.tag == .linux) return fair.wait_readable(receiver);
+    for (0..queued_reads_max) |_| {
+        var count: c_int = 0;
+        var length: std.c.socklen_t = @sizeOf(c_int);
+        const rc = std.c.getsockopt(receiver, std.c.SOL.SOCKET, so_numrcvpkt, @ptrCast(&count), &length);
+        if (rc != 0) return error.Unexpected;
+        if (count >= datagrams) return;
+        _ = std.c.poll(&.{}, 0, queued_pause_ms);
+    }
+    return error.NotQueued;
 }
 
 /// What one burst's receive took: datagrams, the ticks that handed any over, and the final event
@@ -152,6 +178,7 @@ test "bursts of datagrams waiting in a socket arrive in order, in fewer ticks th
     var events: [events_len]Event = undefined;
     for (0..bursts) |_| {
         try send_burst(&sending, sender, to);
+        try wait_queued(receiver, burst_datagrams);
         const taken = try take_burst(&harness, &receive, &events);
         try testing.expectEqual(@as(u32, burst_datagrams), taken.datagrams);
         try testing.expect(taken.ticks <= burst_ticks_max);
