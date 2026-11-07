@@ -16,6 +16,50 @@ const SlotTable = @import("slot_table.zig").SlotTable;
 
 pub const RegisterError = error{ SystemResources, Unexpected };
 
+/// A buffer group id of one loop. Only `reserve_buffer_group` makes one, so a library cannot name
+/// another library's group by a literal (decision 29). A deliberate `@enumFromInt` compiles, and the
+/// loop cannot see it. Size 2 B.
+pub const BufferGroup = enum(u16) { _ };
+
+/// What `reserve_buffer_group` returns when every id of the loop is reserved (decision 29).
+pub const ReserveError = error{BufferGroupsFull};
+
+/// The ids of one loop's groups that a caller reserved (decision 29): one bit for each of the
+/// `buffer_groups_max` ids. A reservation ends at the loop's `deinit`, and no call gives an id back.
+/// Size 2 B.
+pub const Reservations = struct {
+    mask: Mask,
+
+    const Mask = std.meta.Int(.unsigned, constants.buffer_groups_max);
+
+    pub const empty: Reservations = .{ .mask = 0 };
+
+    /// Reserves the lowest id that no caller holds, and returns it. The id is a function of the
+    /// order of the calls. A scan of the mask, on a call a library makes once, at init.
+    pub fn reserve(reservations: *Reservations) ReserveError!BufferGroup {
+        if (reservations.mask == std.math.maxInt(Mask)) return error.BufferGroupsFull;
+        // The mask is not full, so the lowest clear bit is below `buffer_groups_max`.
+        const id: std.math.Log2Int(Mask) = @intCast(@ctz(~reservations.mask));
+        reservations.mask |= @as(Mask, 1) << id;
+        return @enumFromInt(id);
+    }
+
+    /// Halts unless a caller reserved `group`: what a provide checks (decision 29, class C, on a
+    /// cold path). Returns the id as an index of the loop's group table.
+    pub fn reserved(reservations: *const Reservations, group: BufferGroup) u16 {
+        const id = @intFromEnum(group);
+        // The cast halts on an id at or above `buffer_groups_max`, which has no bit in the mask.
+        const bit = @as(Mask, 1) << @intCast(id);
+        assert(reservations.mask & bit != 0);
+        return id;
+    }
+};
+
+comptime {
+    assert(@sizeOf(BufferGroup) == 2);
+    assert(@sizeOf(Reservations) == 2);
+}
+
 /// `Unsupported`: the kernel refused the buffer ring itself. io_uring answers EINVAL for that, and
 /// for a misaligned ring and a count that is not a power of two; both of those are now assertions,
 /// so what is left is a kernel that cannot do provided buffer rings at all. Before this the three
@@ -169,6 +213,19 @@ pub const Group = struct {
 };
 
 const testing = std.testing;
+
+test "reserve hands out the lowest free id, then BufferGroupsFull, and an id stays reserved" {
+    var reservations: Reservations = .empty;
+    for (0..constants.buffer_groups_max) |expected| {
+        const group = try reservations.reserve();
+        try testing.expectEqual(@as(u16, @intCast(expected)), @intFromEnum(group));
+        try testing.expectEqual(@as(u16, @intCast(expected)), reservations.reserved(group));
+    }
+    try testing.expectError(error.BufferGroupsFull, reservations.reserve());
+    var partial: Reservations = .{ .mask = 0b1011 };
+    try testing.expectEqual(@as(u16, 2), @intFromEnum(try partial.reserve()));
+    try testing.expectEqual(@as(u16, 4), @intFromEnum(try partial.reserve()));
+}
 
 test "a group hands out every buffer once, lowest id first, and takes them back" {
     var memory: [64]u8 = undefined;

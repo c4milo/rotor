@@ -133,9 +133,9 @@ const Polling = struct {
     poller: core.Poller = stall.poller(Polling, "poller", polled),
     worked: bool = false,
 
-    fn polled(polling: *Polling) bool {
+    fn polled(polling: *Polling) core.WaitLimit {
         polling.calls += 1;
-        return polling.worked;
+        return if (polling.worked) .now else .none;
     }
 };
 
@@ -172,7 +172,6 @@ test "each poller runs once a tick, and one that did work keeps the tick from bl
 const backend = @import("backend");
 const sync = backend.sync;
 
-const group_id = 6;
 const group_buffers = 32;
 const buffer_bytes = 2048;
 const group_bytes = backend.buffers.group_bytes(group_buffers, buffer_bytes);
@@ -188,6 +187,7 @@ const datagrams = 25;
 /// A library whose record receives datagrams and gives each buffer back.
 const Receiver = struct {
     harness: *Harness,
+    group: core.BufferGroup,
     completion: core.Completion = stall.completion(Receiver, "completion", received),
     datagrams: u32 = 0,
     finals: u32 = 0,
@@ -196,7 +196,7 @@ const Receiver = struct {
         if (!event.flags.more) receiver.finals += 1;
         if (!event.flags.buffer) return;
         receiver.datagrams += 1;
-        receiver.harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+        receiver.harness.loop.give_back_buffer(receiver.group, event.flags.buffer_id);
     }
 };
 
@@ -230,8 +230,9 @@ test "a multishot receive that names a record hands every datagram and its end t
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(group_id, &group_memory, group_buffers, buffer_bytes, .{});
-    defer harness.loop.release_buffers(group_id);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_datagram_buffers(group, &group_memory, group_buffers, buffer_bytes, .{});
+    defer harness.loop.release_buffers(group);
     var sending: Harness = undefined;
     try sending.init(1, null);
     defer sending.deinit();
@@ -240,8 +241,8 @@ test "a multishot receive that names a record hands every datagram and its end t
     const sender = try sync.open_datagram(.ipv4, &loopback, .{});
     defer sync.close_now(sender);
 
-    var receiver: Receiver = .{ .harness = &harness };
-    const receive = Operation.receive_from(0, socket, group_id).completion(&receiver.completion);
+    var receiver: Receiver = .{ .harness = &harness, .group = group };
+    const receive = Operation.receive_from(0, socket, group).completion(&receiver.completion);
     var handles: [1]core.Handle = undefined;
     try harness.submit(&.{receive}, &handles);
     try send_datagrams(&sending, sender, socket);

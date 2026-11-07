@@ -18,89 +18,29 @@ const Task = tasks_module.Task;
 const Tasks = tasks_module.Tasks;
 const ScheduleError = tasks_module.ScheduleError;
 
-/// What an operation names to have the tick call its function for each of its events. The library
-/// puts it inside its own struct. `init` points it at a static `Call` that finds that struct again.
-/// Size 8 B, alignment 8.
-pub const Completion = struct {
-    call: *const Call,
-
-    /// A static entry: the callback's name and its function (decision 28). `init` makes one,
-    /// named `@typeName(Parent) ++ "." ++ field`. A `Call` written by hand is a container-level
-    /// `const` with a literal name: another thread may read the name after a library frees its
-    /// record, so it must be static data, and the compiler cannot refuse one on the stack.
-    pub const Call = struct {
-        name: [:0]const u8,
-        function: *const fn (completion: *Completion, event: Event) void,
-    };
-
-    /// A record at `field` of `Parent` that calls `handler` with its parent for each event. The
-    /// compiler checks the field, the parent and the handler, and the callback it makes costs the
-    /// same indirect call as one written by hand, after one load of the static `Call`.
-    pub fn init(
-        comptime Parent: type,
-        comptime field: []const u8,
-        comptime handler: fn (parent: *Parent, event: Event) void,
-    ) Completion {
-        comptime assert(@FieldType(Parent, field) == Completion);
-        const Static = struct {
-            fn function(completion: *Completion, event: Event) void {
-                const parent: *Parent = @alignCast(@fieldParentPtr(field, completion));
-                handler(parent, event);
-            }
-            const call: Call = .{ .name = name_of(Parent, field), .function = function };
-        };
-        return .{ .call = &Static.call };
-    }
-};
-
-/// What a library adds to have the loop call its function once in each tick, before the tick waits.
-/// The function returns true when the tick must not block, for example because work is left: the
-/// tick then waits 0 ns. True means nothing else. Size 8 B, alignment 8.
-pub const Poller = struct {
-    call: *const Call,
-
-    /// A static entry, as `Completion.Call` is.
-    pub const Call = struct {
-        name: [:0]const u8,
-        function: *const fn (poller: *Poller) bool,
-    };
-
-    /// A poller at `field` of `Parent` that calls `handler` with its parent.
-    pub fn init(
-        comptime Parent: type,
-        comptime field: []const u8,
-        comptime handler: fn (parent: *Parent) bool,
-    ) Poller {
-        comptime assert(@FieldType(Parent, field) == Poller);
-        const Static = struct {
-            fn function(poller: *Poller) bool {
-                const parent: *Parent = @alignCast(@fieldParentPtr(field, poller));
-                return handler(parent);
-            }
-            const call: Call = .{ .name = name_of(Parent, field), .function = function };
-        };
-        return .{ .call = &Static.call };
-    }
-};
+const callbacks = @import("dispatch_callbacks.zig");
+/// What an operation names to have the tick call its function: `dispatch_callbacks.zig`.
+pub const Completion = callbacks.Completion;
+/// What a library adds to have the loop call its function in each tick: `dispatch_callbacks.zig`.
+pub const Poller = callbacks.Poller;
+/// How long a tick may wait, which a poller returns: `dispatch_callbacks.zig`.
+pub const WaitLimit = callbacks.WaitLimit;
+/// The name of the callback at `field` of `Parent`: `dispatch_callbacks.zig`.
+pub const name_of = callbacks.name_of;
 
 comptime {
-    assert(@sizeOf(Completion) == 8);
-    assert(@sizeOf(Poller) == 8);
     // The heartbeat is not here: it is on a line of its own, so `Dispatch` keeps the size and the
-    // alignment it had before decision 28.
-    assert(@sizeOf(Dispatch) == 96);
+    // alignment it had before decision 28. `until_ns` adds 8 B (decision 29).
+    assert(@sizeOf(Dispatch) == 104);
     assert(@alignOf(Dispatch) == 8);
 }
-
-/// The name of the callback at `field` of `Parent`, for example `colibri.client.Client.receive`.
-pub const name_of = @import("../stall.zig").name_of;
 
 pub const AddPollerError = error{PollersFull};
 
 /// The calls every backend's `Loop` exports: `dispatch_calls.zig`.
 pub const Calls = @import("dispatch_calls.zig").Calls;
 
-/// The state of the dispatch, which `Tables` holds. Size 96 B, alignment 8.
+/// The state of the dispatch, which `Tables` holds. Size 104 B, alignment 8.
 pub const Dispatch = struct {
     pollers: [constants.pollers_max]*Poller,
     poller_count: u8,
@@ -118,6 +58,10 @@ pub const Dispatch = struct {
     polling: bool,
     /// The task queue (decision 27). Its count is the third word `idle` reads.
     tasks: Tasks,
+    /// The least limit the pollers answered in the last `begin` (decision 29). A wake, and an
+    /// `end` that called a callback, store `.now` while a poller is in the table. It is `.none`
+    /// while the table is empty, so a tick on the fast path never reads a stale limit.
+    until_ns: WaitLimit,
 
     pub const empty: Dispatch = .{
         .pollers = undefined,
@@ -126,6 +70,7 @@ pub const Dispatch = struct {
         .ticking = false,
         .polling = false,
         .tasks = .empty,
+        .until_ns = .none,
     };
 
     pub fn add_poller(dispatch: *Dispatch, poller: *Poller) AddPollerError!void {
@@ -137,7 +82,8 @@ pub const Dispatch = struct {
         dispatch.poller_count += 1;
     }
 
-    /// Removes `poller`, which must have been added. The pollers after it keep their order.
+    /// Removes `poller`, which must have been added. The pollers after it keep their order. A
+    /// removal that empties the table writes `.none` in `until_ns` (decision 29).
     pub fn remove_poller(dispatch: *Dispatch, poller: *Poller) void {
         assert(!dispatch.polling);
         const count = dispatch.poller_count;
@@ -147,6 +93,23 @@ pub const Dispatch = struct {
         const after = dispatch.pollers[index + 1 .. count];
         std.mem.copyForwards(*Poller, dispatch.pollers[index .. count - 1], after);
         dispatch.poller_count = count - 1;
+        if (dispatch.poller_count == 0) dispatch.until_ns = .none;
+    }
+
+    /// A `Message.wake` that a drain took (decision 29): the next tick must not block before its
+    /// pollers run. It stores `.now` only while a poller is in the table, because only then does a
+    /// tick run `begin`, which writes the limit again.
+    pub fn note_wake(dispatch: *Dispatch) void {
+        if (dispatch.poller_count != 0) dispatch.until_ns = .now;
+    }
+
+    /// The limit a host reads before it sleeps (decision 29): `.now` while a task is queued, and
+    /// `until_ns` otherwise. Halts inside a tick (class B): only the program calls it, between
+    /// ticks.
+    pub fn limit_between_ticks(dispatch: *const Dispatch) WaitLimit {
+        assert(!dispatch.ticking);
+        if (dispatch.tasks.count != 0) return .now;
+        return dispatch.until_ns;
     }
 
     /// Halts inside a tick, or when a poller is still added or a task is still queued: what
@@ -185,25 +148,28 @@ pub const Dispatch = struct {
         return dispatch.poller_count == 0 and dispatch.callbacks_outstanding == 0;
     }
 
-    /// The start of a tick: halts inside another tick, then calls every poller once. Returns the
-    /// wait the tick may block for: 0 when a poller did work or a task is queued, and `wait_ns`
-    /// otherwise. A task queued now runs in this tick's `end`, so the tick must not sleep first.
-    /// `heartbeat` is the loop's (decision 28): it names each poller while it runs.
+    /// The start of a tick: halts inside another tick, then calls every poller once and stores the
+    /// least of their limits in `until_ns` (decision 29). Returns the wait the tick may block for:
+    /// 0 when that limit is `.now` or a task is queued, and `wait_ns` otherwise. The tick bounds
+    /// that wait at `until_ns` later, in `Tables.wait_bound`. A task queued now runs in this tick's
+    /// `end`, so the tick must not sleep first. `heartbeat` is the loop's (decision 28): it names
+    /// each poller while it runs.
     pub fn begin(dispatch: *Dispatch, heartbeat: *Heartbeat, wait_ns: u64) u64 {
         assert_class_a(!dispatch.ticking);
         dispatch.ticking = true;
         dispatch.polling = true;
-        var worked = false;
+        var least: u64 = @intFromEnum(WaitLimit.none);
         // A poller cannot add or remove one, so the count read here is the count it calls.
         const polled = dispatch.poller_count;
         for (dispatch.pollers[0..polled]) |poller| {
             heartbeat.enter(&poller.call.name);
-            if (poller.call.function(poller)) worked = true;
+            least = @min(least, @intFromEnum(poller.call.function(poller)));
         }
         // A `begin` with no poller leaves the heartbeat as it is: `running` is null already.
         if (polled != 0) heartbeat.leave_polling(polled);
         dispatch.polling = false;
-        return if (worked or dispatch.tasks.count != 0) 0 else wait_ns;
+        dispatch.until_ns = @enumFromInt(least);
+        return if (dispatch.until_ns == .now or dispatch.tasks.count != 0) 0 else wait_ns;
     }
 
     /// The end of a tick: calls the record of each event that has one, and moves the other events
@@ -222,6 +188,11 @@ pub const Dispatch = struct {
         // `-=` would read the count before the call and lose that addition.
         const ran = dispatch.tasks.run(heartbeat);
         dispatch.callbacks_outstanding -= ran;
+        // A record or a task can change what a poller would answer, so a host that reads the limit
+        // now does not sleep (decision 29). The next `begin` writes `until_ns` again before any
+        // `wait_bound` reads it, so only `wait_limit` reads this store.
+        const called = kept != events.len or ran != 0;
+        if (called and dispatch.poller_count != 0) dispatch.until_ns = .now;
         return kept;
     }
 
@@ -301,9 +272,9 @@ const Polling = struct {
     poller: Poller = .init(Polling, "poller", polled),
     worked: bool = false,
 
-    fn polled(polling: *Polling) bool {
+    fn polled(polling: *Polling) WaitLimit {
         polling.calls += 1;
-        return polling.worked;
+        return if (polling.worked) .now else .none;
     }
 };
 
@@ -412,11 +383,11 @@ const Queueing = struct {
     dispatch: *Dispatch,
     queued: ?*Task,
 
-    fn polled(queueing: *Queueing) bool {
-        const task = queueing.queued orelse return false;
+    fn polled(queueing: *Queueing) WaitLimit {
+        const task = queueing.queued orelse return .none;
         queueing.queued = null;
         queueing.dispatch.schedule(task) catch unreachable;
-        return false;
+        return .none;
     }
 };
 

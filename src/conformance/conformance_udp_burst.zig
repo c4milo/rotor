@@ -18,8 +18,7 @@ const Address = core.Address;
 const Outbound = core.datagram.Outbound;
 const sync = backend.sync;
 
-const group: core.datagram.GroupOptions = .{};
-const group_id = 3;
+const shape: core.datagram.GroupOptions = .{};
 
 /// Fewer buffers than one burst has datagrams, so a batch that kept a buffer it did not fill
 /// would run the group dry within `bursts` bursts.
@@ -76,11 +75,12 @@ const Taken = struct { datagrams: u32 = 0, ticks: u32 = 0, failed: ?Event = null
 /// The multishot receive of the burst scenarios, on `receiver` into the group.
 const Receive = struct {
     receiver: core.Descriptor,
+    group: core.BufferGroup,
     handle: core.Handle = undefined,
 
     fn start(receive: *Receive, harness: *Harness) !void {
         var handles: [1]core.Handle = undefined;
-        try harness.submit(&.{Operation.receive_from(1, receive.receiver, group_id)}, &handles);
+        try harness.submit(&.{Operation.receive_from(1, receive.receiver, receive.group)}, &handles);
         receive.handle = handles[0];
     }
 };
@@ -119,9 +119,9 @@ fn take_one(harness: *Harness, receive: *Receive, event: Event, taken: *Taken) !
     }
     // io_uring can end a multishot receive with a success, whose event holds a datagram.
     if (!event.flags.more) try receive.start(harness);
-    const delivery = harness.loop.datagram(group_id, event);
+    const delivery = harness.loop.datagram(receive.group, event);
     try testing.expectEqualSlices(u8, &.{@as(u8, @intCast(taken.datagrams))}, delivery.bytes);
-    harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+    harness.loop.give_back_buffer(receive.group, event.flags.buffer_id);
     taken.datagrams += 1;
 }
 
@@ -136,7 +136,8 @@ test "bursts of datagrams waiting in a socket arrive in order, in fewer ticks th
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(group_id, &memory, group_buffers, buffer_bytes, group);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_datagram_buffers(group, &memory, group_buffers, buffer_bytes, shape);
     var sending: Harness = undefined;
     try sending.init(1, null);
     defer sending.deinit();
@@ -146,7 +147,7 @@ test "bursts of datagrams waiting in a socket arrive in order, in fewer ticks th
     defer sync.close_now(sender);
     const to = try sync.local_address(receiver);
 
-    var receive: Receive = .{ .receiver = receiver };
+    var receive: Receive = .{ .receiver = receiver, .group = group };
     try receive.start(&harness);
     var events: [events_len]Event = undefined;
     for (0..bursts) |_| {
@@ -170,7 +171,8 @@ test "a receive whose socket meets an error while datagrams wait ends with the e
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(group_id, &whole_memory, whole_buffers, buffer_bytes, group);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_datagram_buffers(group, &whole_memory, whole_buffers, buffer_bytes, shape);
     var sending: Harness = undefined;
     try sending.init(1, null);
     defer sending.deinit();
@@ -186,7 +188,7 @@ test "a receive whose socket meets an error while datagrams wait ends with the e
     try send_burst(&sending, sender, try sync.local_address(receiver));
     sync.close_now(sender);
 
-    var receive: Receive = .{ .receiver = receiver };
+    var receive: Receive = .{ .receiver = receiver, .group = group };
     try receive.start(&harness);
     var events: [events_len]Event = undefined;
     // One tick that serves the receive. On epoll it takes one datagram, so the next reap batches.
@@ -255,7 +257,8 @@ fn coalesced_burst(events: []Event, sends: u32, segments: u32) !void {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(group_id, &coalesced_memory, coalesced_buffers, coalesced_buffer_bytes, group);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_datagram_buffers(group, &coalesced_memory, coalesced_buffers, coalesced_buffer_bytes, shape);
     var sending: Harness = undefined;
     try sending.init(1, null);
     defer sending.deinit();
@@ -265,7 +268,7 @@ fn coalesced_burst(events: []Event, sends: u32, segments: u32) !void {
     defer sync.close_now(sender);
     try send_coalesced(&sending, sender, try sync.local_address(receiver), sends, segments);
 
-    var receive: Receive = .{ .receiver = receiver };
+    var receive: Receive = .{ .receiver = receiver, .group = group };
     try receive.start(&harness);
     const total = sends * segments;
     var received: u32 = 0;
@@ -280,10 +283,10 @@ fn coalesced_burst(events: []Event, sends: u32, segments: u32) !void {
                 try testing.expectError(error.BuffersExhausted, event.outcome());
                 continue;
             }
-            const delivery = harness.loop.datagram(group_id, event);
+            const delivery = harness.loop.datagram(group, event);
             const expected: [coalesced_segment_bytes]u8 = @splat(@intCast(received));
             try testing.expectEqualSlices(u8, &expected, delivery.bytes);
-            harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+            harness.loop.give_back_buffer(group, event.flags.buffer_id);
             received += 1;
         }
     }

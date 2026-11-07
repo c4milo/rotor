@@ -206,6 +206,7 @@ var group_memory: [group_slack]u8 align(group_alignment) = undefined;
 /// exactly the lie a caller tells when its own memory is not aligned.
 fn provide_a_group_that_is_not_aligned() void {
     loop.init_tables(&memory, options);
+    const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const misaligned = blk: {
         @setRuntimeSafety(false);
@@ -213,7 +214,7 @@ fn provide_a_group_that_is_not_aligned() void {
         break :blk start[0..group_scenario_bytes];
     };
     scenario.reached_violation();
-    loop.provide_buffers(0, misaligned, group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(group, misaligned, group_buffers, group_buffer_bytes) catch {};
 }
 
 /// Aligned memory, so the group is made, and then the same group id again: the second call would
@@ -225,9 +226,10 @@ fn provide_one_group_id_twice() void {
         const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
         break :blk start[0..group_scenario_bytes];
     };
-    loop.provide_buffers(0, aligned, group_buffers, group_buffer_bytes) catch return;
+    const group = loop.reserve_buffer_group() catch return;
+    loop.provide_buffers(group, aligned, group_buffers, group_buffer_bytes) catch return;
     scenario.reached_violation();
-    loop.provide_buffers(0, aligned, group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(group, aligned, group_buffers, group_buffer_bytes) catch {};
 }
 
 /// The buffers are registered once per loop. A second call would replace what the first recorded
@@ -253,10 +255,11 @@ fn give_back_a_buffer_the_group_does_not_hold() void {
         const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
         break :blk start[0..group_scenario_bytes];
     };
-    loop.provide_buffers(0, aligned, group_buffers, group_buffer_bytes) catch return;
-    _ = loop.groups[0].take() orelse return;
+    const group = loop.reserve_buffer_group() catch return;
+    loop.provide_buffers(group, aligned, group_buffers, group_buffer_bytes) catch return;
+    _ = loop.groups[@intFromEnum(group)].take() orelse return;
     scenario.reached_violation();
-    loop.give_back_buffer(0, group_buffers);
+    loop.give_back_buffer(group, group_buffers);
 }
 
 // The Remote's assertions (decision 4). Each is a mistake only the caller can make. A remote's
@@ -300,12 +303,12 @@ fn post_from_a_remote_to_itself() void {
     _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
+/// A tag above `message_tag_wake`, which the receiving loop could not fit in an event's result.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
     remote_one.init(&remote_registry, 1) catch return;
     scenario.reached_violation();
-    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_wake + 1 }) catch {};
 }
 
 /// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
@@ -326,9 +329,16 @@ fn release_a_group_never_provided() void {
     buffer_release.release_a_group_never_provided(&loop);
 }
 
+/// A group provided that no caller reserved (`buffer_release.zig`).
+fn provide_a_group_never_reserved() void {
+    loop.init_tables(&memory, options);
+    buffer_release.provide_a_group_never_reserved(&loop);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
+    .{ .name = "buffers: provide a group never reserved", .run = provide_a_group_never_reserved },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,

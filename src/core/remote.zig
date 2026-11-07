@@ -105,7 +105,7 @@ pub fn post_now(
     message: Message,
 ) SendError!?Descriptor {
     assert(target != sender);
-    assert(message.tag <= constants.message_tag_max);
+    assert(message.tag <= constants.message_tag_wake);
     const known = registry orelse return error.LoopNotFound;
     return send(known, sender, target, message);
 }

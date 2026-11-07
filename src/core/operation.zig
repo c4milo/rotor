@@ -11,6 +11,7 @@ const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const datagram = @import("datagram.zig");
+const BufferGroup = @import("buffer_group.zig").BufferGroup;
 const Completion = @import("dispatch/dispatch.zig").Completion;
 
 /// An open file, socket or listener. An integer, so a consumer's deterministic twin of the
@@ -21,11 +22,16 @@ pub const Descriptor = i32;
 pub const LoopId = u16;
 
 /// What one loop posts to another: 16 bytes. Anything larger travels as an index or a pointer in
-/// `payload`, into memory the two sides agreed on. `tag` is at most `constants.message_tag_max`.
+/// `payload`, into memory the two sides agreed on. `tag` is at most `constants.message_tag_max`,
+/// or `constants.message_tag_wake` for `wake`.
 pub const Message = extern struct {
     payload: u64,
     tag: u32,
     reserved: u32 = 0,
+
+    /// Wakes the loop it is posted to, and reaches no one (decision 29). The loop drops it, hands
+    /// no event for it, and does not block before its pollers run again.
+    pub const wake: Message = .{ .payload = 0, .tag = constants.message_tag_wake };
 };
 
 /// An IPv4 or IPv6 endpoint. rotor's own type, because no kernel type is part of the surface.
@@ -137,8 +143,8 @@ pub const Operation = struct {
 
     /// Where received bytes land: a buffer the caller names, or a buffer the kernel picks from
     /// the provided-buffer group, which the event then names in `buffer_id`. A multishot receive
-    /// takes a group.
-    pub const Target = union(enum) { buffer: Buffer, group: u16 };
+    /// takes a group, which `reserve_buffer_group` gave (decision 29).
+    pub const Target = union(enum) { buffer: Buffer, group: BufferGroup };
 
     /// Result: bytes sent, which may be fewer than the buffer holds. Two sends in flight on one
     /// socket may reach the peer in either order, and a short one leaves a gap the other fills:
@@ -198,7 +204,7 @@ pub const Operation = struct {
     /// submission instead (`tools/uring_probe_datagram.zig`, 2026-09-20). One accessor cannot
     /// read two layouts, and an illegal state the type cannot express beats one an assertion
     /// refuses.
-    pub const ReceiveFrom = struct { socket: Descriptor, group: u16 };
+    pub const ReceiveFrom = struct { socket: Descriptor, group: BufferGroup };
 
     /// One datagram out. Result: the bytes sent, which is every byte of `buffer` or none — a
     /// datagram send is not short. `to` says where it goes, what address to send it from, what
@@ -230,7 +236,7 @@ pub const Operation = struct {
         return .{ .user_data = user_data, .kind = .{ .receive = .{ .socket = socket, .target = .{ .buffer = .{ .bytes = bytes } } } } };
     }
     /// A multishot receive from provided-buffer group `group`.
-    pub fn receive_group(user_data: u64, socket: Descriptor, group: u16) Operation {
+    pub fn receive_group(user_data: u64, socket: Descriptor, group: BufferGroup) Operation {
         return .{ .user_data = user_data, .kind = .{ .receive = .{ .socket = socket, .target = .{ .group = group }, .multishot = true } } };
     }
     pub fn send(user_data: u64, socket: Descriptor, bytes: []const u8) Operation {
@@ -260,7 +266,7 @@ pub const Operation = struct {
     pub fn post(user_data: u64, target: LoopId, message: Message) Operation {
         return .{ .user_data = user_data, .kind = .{ .post = .{ .target = target, .message = message } } };
     }
-    pub fn receive_from(user_data: u64, socket: Descriptor, group: u16) Operation {
+    pub fn receive_from(user_data: u64, socket: Descriptor, group: BufferGroup) Operation {
         return .{ .user_data = user_data, .kind = .{ .receive_from = .{ .socket = socket, .group = group } } };
     }
     pub fn send_to(user_data: u64, socket: Descriptor, bytes: []const u8, to: *const datagram.Outbound) Operation {
@@ -330,7 +336,7 @@ pub const Operation = struct {
             .post => |kind| {
                 assert(operation.timeout_ns == 0);
                 assert(kind.target < constants.loops_max);
-                assert(kind.message.tag <= constants.message_tag_max);
+                assert(kind.message.tag <= constants.message_tag_wake);
             },
             .receive_from => |kind| assert_receive_from(kind),
             .send_to => |kind| assert_send_to(kind),
@@ -345,7 +351,7 @@ pub const Operation = struct {
                 assert_transfer(kind.socket, buffer.bytes.len);
                 assert_socket_buffer(buffer.registered);
             },
-            .group => |group| assert_class_a(group < constants.buffer_groups_max),
+            .group => |group| assert_class_a(@intFromEnum(group) < constants.buffer_groups_max),
         }
     }
 
@@ -362,7 +368,7 @@ pub const Operation = struct {
     /// A datagram receive names an open socket and a buffer group below `buffer_groups_max`.
     fn assert_receive_from(kind: ReceiveFrom) void {
         assert(kind.socket >= 0);
-        assert(kind.group < constants.buffer_groups_max);
+        assert(@intFromEnum(kind.group) < constants.buffer_groups_max);
     }
 
     /// A datagram send names where it goes. A segment size, when it names one, is smaller than

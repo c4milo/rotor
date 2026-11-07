@@ -45,6 +45,8 @@ pub const Address = operation.Address;
 pub const Code = event.Code;
 pub const Completion = dispatch.Completion;
 pub const Poller = dispatch.Poller;
+pub const WaitLimit = dispatch.WaitLimit;
+pub const BufferGroup = buffer_group.BufferGroup;
 pub const Task = tasks.Task;
 pub const ScheduleError = tasks.ScheduleError;
 pub const Descriptor = operation.Descriptor;
@@ -68,6 +70,8 @@ test {
     _ = datagram_split;
     _ = dispatch;
     _ = @import("dispatch/dispatch_calls.zig");
+    _ = @import("dispatch/dispatch_callbacks.zig");
+    _ = @import("dispatch/dispatch_test_limit.zig");
     _ = @import("dispatch/dispatch_test.zig");
     _ = errno;
     _ = event;

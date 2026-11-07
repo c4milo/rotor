@@ -233,8 +233,9 @@ const Sockets = struct {
         sync.close_now(sockets.sender);
     }
 
-    fn datagrams(sockets: *const Sockets) !actions.Datagrams {
+    fn datagrams(sockets: *const Sockets, group: core.BufferGroup) !actions.Datagrams {
         return .{
+            .group = group,
             .receiver = sockets.receiver,
             .sender = sockets.sender,
             .out = .{
@@ -260,14 +261,15 @@ fn run_seed(seed: u64, totals: *Totals) !void {
     try peer.init(actions.peer_id, &registry);
     defer peer.deinit();
     const memory = &group_memory;
-    try main.loop.provide_datagram_buffers(actions.group_id, memory, actions.group_buffers, actions.buffer_bytes, .{});
-    defer main.loop.release_buffers(actions.group_id);
+    const group = try main.loop.reserve_buffer_group();
+    try main.loop.provide_datagram_buffers(group, memory, actions.group_buffers, actions.buffer_bytes, .{});
+    defer main.loop.release_buffers(group);
     const sockets = try Sockets.open(&main);
     defer sockets.close();
 
     var program: Program = undefined;
     const stream: actions.Stream = .{ .client = sockets.stream[0], .server = sockets.stream[1] };
-    program.init(seed, &main, &peer, stream, try sockets.datagrams());
+    program.init(seed, &main, &peer, stream, try sockets.datagrams(group));
     // Registered last, so it runs first: the seed prints before any cleanup can halt.
     errdefer {
         std.debug.print("conformance program: seed 0x{x} failed; replay with {s}=0x{x}\n", .{ seed, seed_variable, seed });

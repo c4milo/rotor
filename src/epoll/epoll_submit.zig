@@ -159,7 +159,6 @@ const Operation = core.Operation;
 const Fixture = struct {
     const operations = 8;
     const options: Loop.Options = .{ .operations = operations };
-    const group_id = 1;
     const buffer_bytes = 8;
     const buffers = 4;
     const group_bytes = epoll.buffers.group_bytes(buffers, buffer_bytes);
@@ -169,11 +168,13 @@ const Fixture = struct {
     group_memory: [group_bytes]u8 align(epoll.buffers.group_alignment),
     loop: Loop,
     pair: [pair_ends]i32,
+    group: core.BufferGroup,
 
     fn init(fixture: *Fixture) !void {
         try fixture.loop.init(&fixture.memory, options);
         errdefer fixture.loop.deinit();
-        try fixture.loop.provide_buffers(group_id, &fixture.group_memory, buffers, buffer_bytes);
+        fixture.group = try fixture.loop.reserve_buffer_group();
+        try fixture.loop.provide_buffers(fixture.group, &fixture.group_memory, buffers, buffer_bytes);
         const flags = linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC;
         if (linux.errno(linux.socketpair(linux.AF.UNIX, flags, 0, &fixture.pair)) != .SUCCESS) {
             return error.Unexpected;
@@ -200,7 +201,7 @@ const Fixture = struct {
     fn from_group(fixture: *const Fixture) Operation {
         return .{ .user_data = 1, .kind = .{ .receive = .{
             .socket = fixture.pair[0],
-            .target = .{ .group = group_id },
+            .target = .{ .group = fixture.group },
         } } };
     }
 };
@@ -221,7 +222,7 @@ test "a receive from a group finds its bytes at the flush, and names its buffer 
     try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
     try testing.expect(events[0].flags.buffer);
     try testing.expectEqual(@as(u32, Fixture.buffer_bytes), try events[0].outcome());
-    loop.give_back_buffer(Fixture.group_id, events[0].flags.buffer_id);
+    loop.give_back_buffer(fixture.group, events[0].flags.buffer_id);
 }
 
 test "a receive from a group whose buffers are all out waits for bytes and does not fail" {

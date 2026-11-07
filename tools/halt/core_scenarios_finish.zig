@@ -38,7 +38,7 @@ fn flushed(tables: *core.Tables, operation: core.Operation) u32 {
 fn single_shot_from_group() core.Operation {
     return .{ .user_data = 1, .kind = .{ .receive = .{
         .socket = socket,
-        .target = .{ .group = group_id },
+        .target = .{ .group = @enumFromInt(group_id) },
     } } };
 }
 

@@ -21,7 +21,6 @@ const ticks_max = 1000;
 /// inside a larger static block, which the guide recommends for a caller that builds on every
 /// backend.
 const buffers = rotor.buffers;
-const group_id: u16 = 0;
 const group_count: u16 = 4;
 const group_buffer_bytes: u32 = 256;
 const bytes = buffers.group_bytes(group_count, group_buffer_bytes);
@@ -73,25 +72,26 @@ pub fn main() !void {
     std.debug.print("guide: every step of docs/using.md ran, on the {t} backend\n", .{rotor.backend()});
 }
 
-/// "Buffers": a provided-buffer group whose memory is aligned forward, a multishot receive that lets
-/// the kernel pick a buffer, the bytes read from that buffer, the buffer given back, and the
-/// receive cancelled.
+/// "Buffers": a group id the loop reserves, a provided-buffer group whose memory is aligned
+/// forward, a multishot receive that lets the kernel pick a buffer, the bytes read from that
+/// buffer, the buffer given back, and the receive cancelled.
 fn receive_into_a_group(loop: *rotor.Loop, pair: Pair, events: []rotor.Event) !void {
+    const group = try loop.reserve_buffer_group();
     const start = std.mem.alignForward(usize, @intFromPtr(&backing), buffers.group_alignment);
     const memory: []align(buffers.group_alignment) u8 =
         @as([*]align(buffers.group_alignment) u8, @ptrFromInt(start))[0..bytes];
-    try loop.provide_buffers(group_id, memory, group_count, group_buffer_bytes);
+    try loop.provide_buffers(group, memory, group_count, group_buffer_bytes);
 
     var handle: [1]rotor.Handle = undefined;
-    const receive = rotor.Operation.receive_group(receive_group_data, pair.server, group_id);
+    const receive = rotor.Operation.receive_group(receive_group_data, pair.server, group);
     if (loop.submit(&.{receive}, &handle) != 1) return error.NotTaken;
     const message = "a buffer the kernel picked";
     try submit_one(loop, rotor.Operation.send(send_data, pair.client, message));
     const delivered = try next_event(loop, receive_group_data, events);
     if (!delivered.flags.buffer or !delivered.flags.more) return error.NotFromTheGroup;
-    const got = loop.provided_buffer(group_id, delivered.flags.buffer_id)[0..try delivered.outcome()];
+    const got = loop.provided_buffer(group, delivered.flags.buffer_id)[0..try delivered.outcome()];
     if (!std.mem.eql(u8, message, got)) return error.WrongBytes;
-    loop.give_back_buffer(group_id, delivered.flags.buffer_id);
+    loop.give_back_buffer(group, delivered.flags.buffer_id);
     _ = try (try next_event(loop, send_data, events)).outcome();
 
     loop.cancel(handle[0]);

@@ -10,7 +10,6 @@ const perform = @import("kqueue_perform.zig");
 const Loop = kqueue.Loop;
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-const group_id = 2;
 const group_buffers = 2;
 const group_buffer_bytes = 8;
 
@@ -21,7 +20,9 @@ test "a receive from a group that would block gives its buffer back and asks to 
     loop.init_tables(&memory, options);
     const group_bytes = comptime kqueue.buffers.group_bytes(group_buffers, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
-    try loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
+    const group = try loop.reserve_buffer_group();
+    const group_id = @intFromEnum(group);
+    try loop.provide_buffers(group, &group_memory, group_buffers, group_buffer_bytes);
     const pair = try @import("kqueue_testing.zig").nonblocking_pair();
     defer for (pair) |descriptor| {
         _ = std.c.close(descriptor);
@@ -29,7 +30,7 @@ test "a receive from a group that would block gives its buffer back and asks to 
 
     _ = loop.submit(&.{.{ .user_data = 1, .kind = .{ .receive = .{
         .socket = pair[0],
-        .target = .{ .group = group_id },
+        .target = .{ .group = group },
         .multishot = true,
     } } }}, &.{});
     const index = loop.tables.pending.pop(loop.tables.table.slots).?;
@@ -47,7 +48,7 @@ test "a receive from a group that would block gives its buffer back and asks to 
     try testing.expectEqual(@as(i32, 3), received.result);
     try testing.expectEqual(@as(?u16, 0), received.buffer_id);
     try testing.expectEqual(@as(u16, group_buffers - 1), loop.groups[group_id].free_count);
-    try testing.expectEqualStrings("abc", loop.provided_buffer(group_id, 0)[0..3]);
+    try testing.expectEqualStrings("abc", loop.provided_buffer(group, 0)[0..3]);
 
     slot.state = .submitted;
     loop.tables.finish(index, slot);

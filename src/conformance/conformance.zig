@@ -200,5 +200,6 @@ test {
     _ = @import("conformance_storm.zig");
     _ = @import("conformance_wait_descriptor.zig");
     _ = @import("conformance_wake_reuse.zig");
+    _ = @import("conformance_wait_limit.zig");
     _ = @import("conformance_registry.zig");
 }

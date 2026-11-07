@@ -45,6 +45,8 @@ pub const loop_declarations = [_][]const u8{
     "give_back_buffer",
     "release_buffers",
     "provided_buffer",
+    "reserve_buffer_group",
+    "wait_limit",
 };
 
 /// Every public declaration of a backend's `Remote`: what a thread that owns no loop holds to
@@ -111,6 +113,8 @@ const Complete = struct {
     pub fn give_back_buffer() void {}
     pub fn release_buffers() void {}
     pub fn provided_buffer() void {}
+    pub fn reserve_buffer_group() void {}
+    pub fn wait_limit() void {}
 };
 
 test "a loop with every declaration passes the check" {

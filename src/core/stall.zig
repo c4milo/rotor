@@ -15,7 +15,8 @@ const assert = std.debug.assert;
 const constants = @import("constants.zig");
 const statistics_module = @import("statistics.zig");
 
-const Poller = @import("dispatch/dispatch.zig").Poller;
+const dispatch = @import("dispatch/dispatch.zig");
+const Poller = dispatch.Poller;
 const Statistics = statistics_module.Statistics;
 const Stall = statistics_module.Stall;
 
@@ -309,9 +310,9 @@ const run_name: Name = "library.Task.run";
 const Server = struct {
     poller: Poller = .init(Server, "poller", polled),
 
-    fn polled(server: *Server) bool {
+    fn polled(server: *Server) dispatch.WaitLimit {
         _ = server;
-        return false;
+        return .none;
     }
 };
 

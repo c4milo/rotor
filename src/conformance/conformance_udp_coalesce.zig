@@ -19,8 +19,7 @@ const Address = core.Address;
 const Outbound = core.datagram.Outbound;
 const sync = backend.sync;
 
-const group: core.datagram.GroupOptions = .{};
-const group_id = 2;
+const shape: core.datagram.GroupOptions = .{};
 const group_buffers = 4;
 
 /// Room for a coalesced datagram of up to 64 KiB, after the group's prefix.
@@ -94,13 +93,14 @@ fn end(harness: *Harness, handle: core.Handle) !void {
 /// `segment_bytes` when it is not 0, and collects `events.len` events.
 fn exchange(
     harness: *Harness,
+    group: core.BufferGroup,
     pair: Pair,
     payload: []const u8,
     segment_bytes: u16,
     events: []Event,
 ) !core.Handle {
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
     var out = outbound(pair, segment_bytes);
     try harness.submit(&.{Operation.send_to(2, pair.sender, payload, &out)}, &.{});
     try harness.collect(events);
@@ -112,12 +112,13 @@ test "a socket that coalesces hands each datagram of a segmented send over as an
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
+    const group = try harness.loop.reserve_buffer_group();
     try harness.loop.provide_datagram_buffers(
-        group_id,
+        group,
         &large_memory,
         group_buffers,
         large_buffer_bytes,
-        group,
+        shape,
     );
     // Coalescing is the default.
     const pair = try Pair.open_default();
@@ -129,24 +130,24 @@ test "a socket that coalesces hands each datagram of a segmented send over as an
         // macOS has no GRO: the option opens the socket and changes nothing, so a datagram
         // arrives whole and names no segment size.
         var events: [2]Event = undefined;
-        const handle = try exchange(&harness, pair, &payload, 0, &events);
+        const handle = try exchange(&harness, group, pair, &payload, 0, &events);
         const got = try Harness.find(&events, 1);
-        const delivery = harness.loop.datagram(group_id, got);
+        const delivery = harness.loop.datagram(group, got);
         try testing.expectEqualSlices(u8, &payload, delivery.bytes);
         try testing.expectEqual(@as(u16, 0), delivery.from.segment_bytes);
-        harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+        harness.loop.give_back_buffer(group, got.flags.buffer_id);
         return end(&harness, handle);
     }
     // The send's event and one event for each of the three datagrams.
     var events: [4]Event = undefined;
-    const handle = try exchange(&harness, pair, &payload, 8, &events);
+    const handle = try exchange(&harness, group, pair, &payload, 8, &events);
     try testing.expectEqual(@as(u32, payload.len), try (try Harness.find(&events, 2)).outcome());
     var received: u32 = 0;
     var buffer_id: ?u16 = null;
     for (events) |event| {
         if (event.user_data != 1) continue;
         try testing.expect(event.flags.more);
-        const delivery = harness.loop.datagram(group_id, event);
+        const delivery = harness.loop.datagram(group, event);
         try testing.expectEqualSlices(u8, payload[received * 8 ..][0..8], delivery.bytes);
         try testing.expectEqual(@as(u16, 0), delivery.from.segment_bytes);
         try testing.expectEqual(pair.sender_port, delivery.from.peer.port);
@@ -156,7 +157,7 @@ test "a socket that coalesces hands each datagram of a segmented send over as an
         received += 1;
     }
     try testing.expectEqual(@as(u32, 3), received);
-    for (0..received) |_| harness.loop.give_back_buffer(group_id, buffer_id.?);
+    for (0..received) |_| harness.loop.give_back_buffer(group, buffer_id.?);
     try end(&harness, handle);
 }
 
@@ -166,11 +167,12 @@ test "the datagrams of a coalesced one that do not fit a tick's events come in t
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(group_id, &large_memory, group_buffers, large_buffer_bytes, group);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_datagram_buffers(group, &large_memory, group_buffers, large_buffer_bytes, shape);
     const pair = try Pair.open_default();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
     const payload: [40]u8 = @splat('s');
     var out = outbound(pair, 10);
     try harness.submit(&.{Operation.send_to(2, pair.sender, &payload, &out)}, &.{});
@@ -182,8 +184,8 @@ test "the datagrams of a coalesced one that do not fit a tick's events come in t
         if (try harness.loop.tick(&one, 10 * core.constants.ns_per_ms) == 0) continue;
         if (one[0].user_data != 1) continue;
         try testing.expectEqual(@as(u6, @intCast(segments)), one[0].flags.segment);
-        try testing.expectEqual(@as(usize, 10), harness.loop.datagram(group_id, one[0]).bytes.len);
-        harness.loop.give_back_buffer(group_id, one[0].flags.buffer_id);
+        try testing.expectEqual(@as(usize, 10), harness.loop.datagram(group, one[0]).bytes.len);
+        harness.loop.give_back_buffer(group, one[0].flags.buffer_id);
         segments += 1;
     }
     try testing.expectEqual(@as(u32, 4), segments);
@@ -253,26 +255,27 @@ test "a socket that does not coalesce takes a segmented send as one datagram per
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
+    const group = try harness.loop.reserve_buffer_group();
     try harness.loop.provide_datagram_buffers(
-        group_id,
+        group,
         &large_memory,
         group_buffers,
         large_buffer_bytes,
-        group,
+        shape,
     );
     const pair = try Pair.open(false);
     defer pair.close();
 
     const payload: [24]u8 = @splat('d');
     var events: [4]Event = undefined;
-    const handle = try exchange(&harness, pair, &payload, 8, &events);
+    const handle = try exchange(&harness, group, pair, &payload, 8, &events);
     var received: u32 = 0;
     for (events) |event| {
         if (event.user_data != 1) continue;
-        const delivery = harness.loop.datagram(group_id, event);
+        const delivery = harness.loop.datagram(group, event);
         try testing.expectEqual(@as(usize, 8), delivery.bytes.len);
         try testing.expectEqual(@as(u16, 0), delivery.from.segment_bytes);
-        harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+        harness.loop.give_back_buffer(group, event.flags.buffer_id);
         received += 1;
     }
     try testing.expectEqual(@as(u32, 3), received);
@@ -295,10 +298,10 @@ const Taken = struct { datagrams: u32 = 0, bytes: usize = 0 };
 /// Receives datagrams until `bytes` have arrived. A multishot receive can end with a success: on
 /// io_uring on 2026-10-26 the kernel ended it after 32 datagrams, with the 32nd as its final event,
 /// and the rest waited in the socket. So a final event that carries bytes submits the receive again.
-fn take(harness: *Harness, receiver: core.Descriptor, bytes: usize) !Taken {
+fn take(harness: *Harness, group: core.BufferGroup, receiver: core.Descriptor, bytes: usize) !Taken {
     var taken: Taken = .{};
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, receiver, group)}, &handles);
     var events: [segment_buffers]Event = undefined;
     var round: u32 = 0;
     while (taken.bytes < bytes and round < segment_rounds_max) : (round += 1) {
@@ -306,12 +309,12 @@ fn take(harness: *Harness, receiver: core.Descriptor, bytes: usize) !Taken {
         for (events[0..count]) |event| {
             if (event.user_data != 1) continue;
             _ = try event.outcome();
-            const delivery = harness.loop.datagram(group_id, event);
+            const delivery = harness.loop.datagram(group, event);
             taken.datagrams += 1;
             taken.bytes += delivery.bytes.len;
-            harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+            harness.loop.give_back_buffer(group, event.flags.buffer_id);
             if (event.flags.more) continue;
-            try harness.submit(&.{Operation.receive_from(1, receiver, group_id)}, &handles);
+            try harness.submit(&.{Operation.receive_from(1, receiver, group)}, &handles);
         }
     }
     try end(harness, handles[0]);
@@ -323,12 +326,13 @@ test "the largest segmented send is the largest IPv4 datagram in 64 segments, an
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
+    const group = try harness.loop.reserve_buffer_group();
     try harness.loop.provide_datagram_buffers(
-        group_id,
+        group,
         &segment_memory,
         segment_buffers,
         segment_buffer_bytes,
-        group,
+        shape,
     );
     // A socket that does not coalesce, so each segment arrives as a datagram of its own. On
     // loopback a coalescing socket took this send as separate datagrams too, on 2026-10-26.
@@ -349,7 +353,7 @@ test "the largest segmented send is the largest IPv4 datagram in 64 segments, an
     try harness.collect(&sent);
     if (!linux) return testing.expectError(error.Unsupported, sent[0].outcome());
     try testing.expectEqual(@as(u32, ipv4_payload_bytes_max), try sent[0].outcome());
-    const taken = try take(&harness, pair.receiver, ipv4_payload_bytes_max);
+    const taken = try take(&harness, group, pair.receiver, ipv4_payload_bytes_max);
     try testing.expectEqual(@as(usize, ipv4_payload_bytes_max), taken.bytes);
     try testing.expectEqual(segments, taken.datagrams);
 
@@ -367,32 +371,33 @@ test "a socket whose group cannot hold a coalesced datagram does not coalesce, s
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
+    const group = try harness.loop.reserve_buffer_group();
     try harness.loop.provide_datagram_buffers(
-        group_id,
+        group,
         &small_memory,
         group_buffers,
         small_buffer_bytes,
-        group,
+        shape,
     );
     const pair = try Pair.open_default();
     defer pair.close();
 
     // Three datagrams of 300 bytes: one fits a buffer, and the three coalesced would not.
     const segment_bytes = 300;
-    try testing.expect(core.datagram.payload_capacity(small_buffer_bytes, group) >= segment_bytes);
+    try testing.expect(core.datagram.payload_capacity(small_buffer_bytes, shape) >= segment_bytes);
     var payload: [3 * segment_bytes]u8 = undefined;
     for (&payload, 0..) |*byte, index| byte.* = @truncate(index);
     var events: [4]Event = undefined;
-    const handle = try exchange(&harness, pair, &payload, segment_bytes, &events);
+    const handle = try exchange(&harness, group, pair, &payload, segment_bytes, &events);
     var received: u32 = 0;
     for (events) |event| {
         if (event.user_data != 1) continue;
-        const delivery = harness.loop.datagram(group_id, event);
+        const delivery = harness.loop.datagram(group, event);
         try testing.expect(!delivery.from.flags.truncated);
         try testing.expectEqualSlices(u8, payload[received * segment_bytes ..][0..segment_bytes], delivery.bytes);
         // Each datagram has a buffer of its own: the receive turned coalescing off.
         try testing.expectEqual(@as(u6, 0), event.flags.segment);
-        harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+        harness.loop.give_back_buffer(group, event.flags.buffer_id);
         received += 1;
     }
     try testing.expectEqual(@as(u32, 3), received);

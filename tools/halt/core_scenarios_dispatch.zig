@@ -11,8 +11,8 @@ const Dispatch = core.dispatch.Dispatch;
 
 var dispatch: Dispatch align(@alignOf(Dispatch)) = .empty;
 
-fn polled(_: *core.Poller) bool {
-    return false;
+fn polled(_: *core.Poller) core.WaitLimit {
+    return .none;
 }
 
 const polled_call: core.Poller.Call = .{ .name = "polled", .function = polled };
@@ -25,6 +25,15 @@ fn begin_a_tick_inside_a_tick() void {
     _ = dispatch.begin(&heartbeat, 0);
     scenario.reached_violation();
     _ = dispatch.begin(&heartbeat, 0);
+}
+
+/// A host's `wait_limit` inside a tick: what a callback or a poller that calls it does
+/// (decision 29). With the check deleted, the call returns the limit.
+fn read_the_wait_limit_inside_a_tick() void {
+    dispatch = .empty;
+    _ = dispatch.begin(&heartbeat, 0);
+    scenario.reached_violation();
+    _ = dispatch.limit_between_ticks();
 }
 
 /// The end of a tick that never began. With the check deleted, `end` hands the events back.
@@ -58,9 +67,9 @@ fn remove_a_poller_never_added() void {
     dispatch.remove_poller(&poller);
 }
 
-fn removing(_: *core.Poller) bool {
+fn removing(_: *core.Poller) core.WaitLimit {
     dispatch.remove_poller(&poller);
-    return false;
+    return .none;
 }
 
 const removing_call: core.Poller.Call = .{ .name = "removing", .function = removing };
@@ -76,9 +85,9 @@ fn remove_a_poller_from_a_poller() void {
     _ = dispatch.begin(&heartbeat, 0);
 }
 
-fn adding(_: *core.Poller) bool {
+fn adding(_: *core.Poller) core.WaitLimit {
     dispatch.add_poller(&poller) catch {};
-    return false;
+    return .none;
 }
 
 const adding_call: core.Poller.Call = .{ .name = "adding", .function = adding };
@@ -217,6 +226,10 @@ pub const scenarios = [_]scenario.Scenario{
     .{ .name = "dispatch: add a poller from a poller", .run = add_a_poller_from_a_poller },
     .{ .name = "dispatch: end a loop with a poller", .run = end_a_loop_with_a_poller },
     .{ .name = "dispatch: begin a tick inside a tick", .run = begin_a_tick_inside_a_tick },
+    .{
+        .name = "dispatch: read the wait limit inside a tick",
+        .run = read_the_wait_limit_inside_a_tick,
+    },
     .{ .name = "dispatch: end a tick that never began", .run = end_a_tick_that_never_began },
     .{ .name = "dispatch: abandon a tick that never began", .run = abandon_a_tick_that_never_began },
     .{ .name = "dispatch: add one poller twice", .run = add_one_poller_twice },

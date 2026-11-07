@@ -23,7 +23,7 @@
 //! enters the kernel once its check is deleted.
 //!
 //! With its assertion deleted, no scenario here makes a Linux system call: `submit`, `cancel`,
-//! `cancel_all`, `assert_empty` and the registry make none, and each remote `post` answers
+//! `cancel_all`, `assert_empty`, `reserve_buffer_group`, `wait_limit` and the registry make none, and each remote `post` answers
 //! `LoopNotFound` from the registry before it pushes a message or wakes anything.
 const std = @import("std");
 const core = @import("core");
@@ -50,6 +50,31 @@ fn submit_from_another_thread() void {
 fn submit_on_this_thread() void {
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &.{});
+}
+
+/// With the owner check deleted, the reservation takes the lowest id and returns it (decision 29).
+fn reserve_a_group_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    const thread = std.Thread.spawn(.{}, reserve_a_group_on_this_thread, .{}) catch return;
+    thread.join();
+}
+
+fn reserve_a_group_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.reserve_buffer_group() catch {};
+}
+
+/// A host's `wait_limit` from a second thread (decision 29). With the owner check deleted, the
+/// call reads the tables and returns `.none`.
+fn read_the_wait_limit_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    const thread = std.Thread.spawn(.{}, read_the_wait_limit_on_this_thread, .{}) catch return;
+    thread.join();
+}
+
+fn read_the_wait_limit_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.wait_limit();
 }
 
 /// The handle names a timer still queued, so with the owner check deleted the cancel marks it and
@@ -250,12 +275,12 @@ fn post_through_remote_one() void {
     _ = remote_one.post(0, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A tag above `message_tag_max`, the most a message may carry on every backend.
+/// A tag above `message_tag_wake`, the most a post accepts on every backend.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
     claim_remote_one_by_hand(1);
     scenario.reached_violation();
-    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_wake + 1 }) catch {};
 }
 
 const scenarios = [_]scenario.Scenario{
@@ -300,6 +325,11 @@ const scenarios = [_]scenario.Scenario{
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "remote: post a tag above the limit", .run = post_a_tag_above_the_limit },
+    .{ .name = "owner: reserve a group from another thread", .run = reserve_a_group_from_another_thread },
+    .{
+        .name = "owner: read the wait limit from another thread",
+        .run = read_the_wait_limit_from_another_thread,
+    },
 };
 
 pub fn main(init: std.process.Init) !void {

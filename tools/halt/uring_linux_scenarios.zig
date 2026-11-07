@@ -120,6 +120,7 @@ var group_memory: [group_scenario_bytes + 2 * group_alignment]u8 align(group_ali
 /// assertions stay on either way (CLAUDE.md non-negotiable 1).
 fn provide_a_group_that_is_not_aligned() void {
     loop.init(&memory, options) catch return;
+    const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const misaligned = blk: {
         @setRuntimeSafety(false);
@@ -128,7 +129,7 @@ fn provide_a_group_that_is_not_aligned() void {
         break :blk start[0..group_scenario_bytes];
     };
     scenario.reached_violation();
-    loop.provide_buffers(0, misaligned, group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(group, misaligned, group_buffers, group_buffer_bytes) catch {};
 }
 
 /// The group's memory, aligned forward at run time, as the scenario above aligns it.
@@ -138,14 +139,19 @@ fn aligned_group_memory() []align(group_alignment) u8 {
     return start[0..group_scenario_bytes];
 }
 
+/// The group the main thread reserved, which the second thread names (decision 29). With the owner
+/// check deleted, a call that names it passes the check of a reserved group too.
+var reserved_group: core.BufferGroup align(@alignOf(core.BufferGroup)) = undefined;
+
 fn provide_a_group_from_another_thread() void {
     loop.init(&memory, options) catch return;
+    reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_a_group_on_this_thread);
 }
 
 fn provide_a_group_on_this_thread() void {
     scenario.reached_violation();
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
 }
 
 /// A datagram group needs buffers larger than a datagram's prefix, or `provide_datagram_buffers`
@@ -158,15 +164,16 @@ var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alig
 /// and returns what it answers, and the scenario returns.
 fn provide_datagram_buffers_from_another_thread() void {
     loop.init(&memory, options) catch return;
+    reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_datagram_buffers_on_this_thread);
 }
 
 fn provide_datagram_buffers_on_this_thread() void {
     const base = std.mem.alignForward(usize, @intFromPtr(&datagram_memory), group_alignment);
     const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
-    const group = start[0..datagram_group_bytes];
+    const group_memory_of = start[0..datagram_group_bytes];
     scenario.reached_violation();
-    loop.provide_datagram_buffers(0, group, group_buffers, datagram_buffer_bytes, .{}) catch {};
+    loop.provide_datagram_buffers(reserved_group, group_memory_of, group_buffers, datagram_buffer_bytes, .{}) catch {};
 }
 
 /// The main thread provides the group. With the owner check deleted, the second thread writes one
@@ -174,22 +181,24 @@ fn provide_datagram_buffers_on_this_thread() void {
 /// system call.
 fn give_back_a_buffer_from_another_thread() void {
     loop.init(&memory, options) catch return;
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
+    reserved_group = loop.reserve_buffer_group() catch return;
+    loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
     on_another_thread(give_back_a_buffer_on_this_thread);
 }
 
 fn give_back_a_buffer_on_this_thread() void {
     scenario.reached_violation();
-    loop.give_back_buffer(0, 0);
+    loop.give_back_buffer(reserved_group, 0);
 }
 
 /// The same group id twice. With the check deleted, `provide_buffers` asks the kernel for a second
 /// ring under the same id and returns what it answers, and the scenario returns.
 fn provide_one_group_id_twice() void {
     loop.init(&memory, options) catch return;
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
+    const group = loop.reserve_buffer_group() catch return;
+    loop.provide_buffers(group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
     scenario.reached_violation();
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
 }
 
 /// The buffers twice. With the check deleted, `register_buffers` asks the kernel to register them
@@ -279,6 +288,13 @@ fn release_a_group_never_provided() void {
     buffer_release.release_a_group_never_provided(&loop);
 }
 
+/// A group provided that no caller reserved (`buffer_release.zig`). With the check deleted, the
+/// kernel takes the group's ring and the scenario returns.
+fn provide_a_group_never_reserved() void {
+    loop.init(&memory, options) catch return;
+    buffer_release.provide_a_group_never_reserved(&loop);
+}
+
 /// An entry past those the kernel has not taken, which `send_noted_wakes` would count as a wake it
 /// dropped. The ring holds no waiting entry after `init`. With the check deleted, `sqe_at` returns
 /// an entry of the ring that holds what its last use left, and the scenario returns.
@@ -348,6 +364,7 @@ fn release_a_wake_to_a_stand_in_that_is_not_open() void {
 const scenarios = [_]scenario.Scenario{
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
+    .{ .name = "buffers: provide a group never reserved", .run = provide_a_group_never_reserved },
     .{ .name = "tick: tick with no room for an event", .run = tick_with_no_room_for_an_event },
     .{
         .name = "tick: tick with more events than a batch",

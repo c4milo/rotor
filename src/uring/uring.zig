@@ -119,6 +119,8 @@ pub const Loop = struct {
     wake_stand_in: core.Descriptor,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
+    /// The group ids a caller reserved (decision 29). A provide halts on an id that is not here.
+    buffer_groups: core.buffer_group.Reservations,
     /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
     /// 2026-11-05): the next reap hands it over before any new completion.
     split: core.datagram_split.Split,
@@ -253,6 +255,7 @@ pub const Loop = struct {
         loop.group_wake_armed = false;
         loop.wake_stand_in = -1;
         loop.groups = @splat(buffers.Group.none);
+        loop.buffer_groups = .empty;
     }
 
     /// Every operation must have had its final event (decision 5, rule 7), no tick may run, and no
@@ -389,6 +392,8 @@ pub const Loop = struct {
     // The view a library holds and the heartbeat of decision 28.
     pub const shared = dispatch_calls.shared;
     pub const heartbeat = dispatch_calls.heartbeat;
+    // The host's wait limit of decision 29.
+    pub const wait_limit = dispatch_calls.wait_limit;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
@@ -419,10 +424,11 @@ pub const Loop = struct {
     pub const provide_datagram_buffers = buffers.provide_datagram_buffers;
     pub const datagram = buffers.datagram;
     pub const provided_buffer = buffers.provided_buffer;
+    pub const reserve_buffer_group = buffers.reserve;
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        return loop.inbox.drain_mailboxes(loop.tables.id, events);
+        return loop.inbox.drain_mailboxes(loop.tables.id, events, &loop.tables.dispatch);
     }
 
     /// Tells the registry this loop is about to sleep, and looks at its mailboxes once more:

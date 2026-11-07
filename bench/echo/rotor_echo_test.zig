@@ -110,6 +110,7 @@ const Fixture = struct {
         try fixture.client_loop.init(&client_memory, client_options);
         errdefer fixture.client_loop.deinit();
         const bytes = backend.buffers.group_bytes(group.count, group.buffer_bytes);
+        try testing.expectEqual(server.group_id, try fixture.server_loop.reserve_buffer_group());
         try fixture.server_loop.provide_buffers(
             server.group_id,
             group_memory[0..bytes],

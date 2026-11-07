@@ -438,7 +438,7 @@ test "a multishot operation is counted once and records no latency" {
     const receive_kind = @intFromEnum(Operation.Code.receive);
 
     var multishot = fixture.receive(1, 0);
-    multishot.kind.receive.target = .{ .group = 0 };
+    multishot.kind.receive.target = .{ .group = @enumFromInt(0) };
     multishot.kind.receive.multishot = true;
     _ = tables.submit(&.{multishot}, &.{});
     const index = fixture.hand_to_kernel();
@@ -480,7 +480,7 @@ test "a receive from a group the loop finished names its buffer, and one that fa
     const tables = &fixture.tables;
     const from_group: Operation = .{ .user_data = 5, .kind = .{ .receive = .{
         .socket = 3,
-        .target = .{ .group = 1 },
+        .target = .{ .group = @enumFromInt(1) },
     } } };
     _ = tables.submit(&.{ from_group, from_group }, &.{});
     const received = tables.pending.peek().?;

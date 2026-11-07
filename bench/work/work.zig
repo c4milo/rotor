@@ -115,9 +115,9 @@ const Calls = struct {
     }
 
     /// Reports no work, so the tick waits as it would without the poller.
-    fn polled(calls: *Calls) bool {
+    fn polled(calls: *Calls) core.WaitLimit {
         calls.count += 1;
-        return false;
+        return .none;
     }
 
     /// Fails unless one call came since the last check.

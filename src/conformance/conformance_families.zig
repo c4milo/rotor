@@ -63,9 +63,6 @@ test "accept, connect, and bytes both ways over IPv6 loopback" {
     try testing.expectEqualStrings("pong!", to_client[0..5]);
 }
 
-/// One group per socket, because a group serves one socket's receives and both sockets receive.
-const receiver_group = 1;
-const sender_group = 2;
 const group_buffers = 4;
 const buffer_bytes = 512;
 const group_bytes = backend.buffers.group_bytes(group_buffers, buffer_bytes);
@@ -80,6 +77,24 @@ const user_data_sender = 2;
 const user_data_question = 3;
 const user_data_answer = 4;
 
+/// One group per socket, because a group serves one socket's receives and both sockets receive.
+const Groups = struct {
+    receiver: core.BufferGroup,
+    sender: core.BufferGroup,
+
+    /// Reserves both groups on the harness's loop and provides each from its memory.
+    fn provide(harness: *Harness) !Groups {
+        const groups: Groups = .{
+            .receiver = try harness.loop.reserve_buffer_group(),
+            .sender = try harness.loop.reserve_buffer_group(),
+        };
+        const loop = &harness.loop;
+        try loop.provide_datagram_buffers(groups.receiver, &receiver_memory, group_buffers, buffer_bytes, .{});
+        try loop.provide_datagram_buffers(groups.sender, &sender_memory, group_buffers, buffer_bytes, .{});
+        return groups;
+    }
+};
+
 /// A bound receiver and a sender of one family, each with a multishot receive armed.
 const Pair = struct {
     receiver: core.Descriptor,
@@ -87,7 +102,7 @@ const Pair = struct {
     address: Address,
     receives: [2]core.Handle = undefined,
 
-    fn open(harness: *Harness, loopback: *const Address) !Pair {
+    fn open(harness: *Harness, groups: Groups, loopback: *const Address) !Pair {
         const receiver = try sync.open_datagram(loopback.family, loopback, .{});
         errdefer sync.close_now(receiver);
         const sender = try sync.open_datagram(loopback.family, loopback, .{});
@@ -98,8 +113,8 @@ const Pair = struct {
             .address = try sync.local_address(receiver),
         };
         try harness.submit(&.{
-            Operation.receive_from(user_data_receiver, receiver, receiver_group),
-            Operation.receive_from(user_data_sender, sender, sender_group),
+            Operation.receive_from(user_data_receiver, receiver, groups.receiver),
+            Operation.receive_from(user_data_sender, sender, groups.sender),
         }, &pair.receives);
         return pair;
     }
@@ -123,7 +138,7 @@ fn cross(
     out: *const Outbound,
     send_user_data: u64,
     receive_user_data: u64,
-    group: u16,
+    group: core.BufferGroup,
 ) !Received {
     try harness.submit(&.{Operation.send_to(send_user_data, socket, bytes, out)}, &.{});
     var events: [2]Event = undefined;
@@ -156,9 +171,8 @@ fn question_and_answer(loopback: *const Address) !void {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(receiver_group, &receiver_memory, group_buffers, buffer_bytes, .{});
-    try harness.loop.provide_datagram_buffers(sender_group, &sender_memory, group_buffers, buffer_bytes, .{});
-    const pair = try Pair.open(&harness, loopback);
+    const groups = try Groups.provide(&harness);
+    const pair = try Pair.open(&harness, groups, loopback);
     const sender_address = try sync.local_address(pair.sender);
 
     const asked: Outbound = .{
@@ -168,14 +182,14 @@ fn question_and_answer(loopback: *const Address) !void {
         .ecn = .ect0,
         .flags = .{ .peer = true, .ecn = true },
     };
-    const heard = try cross(&harness, pair.sender, question, &asked, user_data_question, user_data_receiver, receiver_group);
+    const heard = try cross(&harness, pair.sender, question, &asked, user_data_question, user_data_receiver, groups.receiver);
     try expect_received(&heard, &sender_address, loopback);
     try testing.expect(heard.flags.ecn);
     try testing.expectEqual(core.datagram.Ecn.ect0, heard.ecn);
 
     // The answer goes back from the address the question was sent to, unmarked.
     const reply = Outbound.reply_to(&heard);
-    const answered = try cross(&harness, pair.receiver, answer, &reply, user_data_answer, user_data_sender, sender_group);
+    const answered = try cross(&harness, pair.receiver, answer, &reply, user_data_answer, user_data_sender, groups.sender);
     try expect_received(&answered, &pair.address, loopback);
     try testing.expectEqual(core.datagram.Ecn.not_ect, answered.ecn);
     try pair.close(&harness);
@@ -218,8 +232,7 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try harness.loop.provide_datagram_buffers(receiver_group, &receiver_memory, group_buffers, buffer_bytes, .{});
-    try harness.loop.provide_datagram_buffers(sender_group, &sender_memory, group_buffers, buffer_bytes, .{});
+    const groups = try Groups.provide(&harness);
     const server = try sync.open_datagram(.ipv6, &any6, .{});
     defer sync.close_now(server);
     const client = try sync.open_datagram(.ipv4, &loopback4, .{});
@@ -228,8 +241,8 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     const client_port = (try sync.local_address(client)).port;
     var receives: [2]core.Handle = undefined;
     try harness.submit(&.{
-        Operation.receive_from(user_data_receiver, server, receiver_group),
-        Operation.receive_from(user_data_sender, client, sender_group),
+        Operation.receive_from(user_data_receiver, server, groups.receiver),
+        Operation.receive_from(user_data_sender, client, groups.sender),
     }, &receives);
     // Ended whatever happens, so a failed check reports itself and not the loop's teardown.
     defer {
@@ -245,7 +258,7 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
         .ecn = .ect0,
         .flags = .{ .peer = true, .ecn = true },
     };
-    const heard = try cross(&harness, client, question, &asked, user_data_question, user_data_receiver, receiver_group);
+    const heard = try cross(&harness, client, question, &asked, user_data_question, user_data_receiver, groups.receiver);
     try expect_mapped_loopback(&heard.peer, client_port);
     try testing.expect(heard.flags.ecn);
     try testing.expectEqual(core.datagram.Ecn.ect0, heard.ecn);
@@ -254,7 +267,7 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     var reply = Outbound.reply_to(&heard);
     reply.ecn = .ect0;
     reply.flags.ecn = true;
-    const answered = try cross(&harness, server, answer, &reply, user_data_answer, user_data_sender, sender_group);
+    const answered = try cross(&harness, server, answer, &reply, user_data_answer, user_data_sender, groups.sender);
     try testing.expectEqual(Address.Family.ipv4, answered.peer.family);
     try testing.expectEqual(server_port, answered.peer.port);
     try testing.expect(answered.flags.ecn);

@@ -53,9 +53,9 @@ const TickCount = struct {
     poller: core.Poller = .init(TickCount, "poller", polled),
     ticks: u32 = 0,
 
-    fn polled(tick_count: *TickCount) bool {
+    fn polled(tick_count: *TickCount) core.WaitLimit {
         tick_count.ticks += 1;
-        return false;
+        return .none;
     }
 };
 

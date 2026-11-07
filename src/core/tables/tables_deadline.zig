@@ -14,6 +14,7 @@ const tables_module = @import("tables.zig");
 const Event = event_module.Event;
 const Slot = slot_module.Slot;
 const Tables = tables_module.Tables;
+const WaitLimit = @import("../dispatch/dispatch.zig").WaitLimit;
 
 /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a timer.
 /// A slot being resubmitted keeps the deadline it has.
@@ -41,15 +42,39 @@ fn start_ns(tables: *const Tables, slot: *const Slot) u64 {
 }
 
 /// How long a tick may block: not at all while queued work waits for the next flush, and never
-/// past the nearest deadline. Null means do not block.
+/// past the nearest deadline, a timer's or a poller's limit (decision 29). Null means do not
+/// block. A limit at or before this tick's stamp gives no wait, so the next `begin` calls the
+/// poller again, and the poller sees its deadline due.
 pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     assert(wait_ns <= constants.wait_ns_max);
     if (wait_ns == 0) return null;
     const lists = tables.finished.count + tables.fired.count;
     if (tables.pending.count != 0 or lists != 0) return null;
-    const earliest = tables.timers.earliest_ns() orelse return wait_ns;
+    const earliest = earliest_limit(tables);
+    if (earliest == @intFromEnum(WaitLimit.none)) return wait_ns;
     if (earliest <= tables.now_ns) return null;
     return @min(wait_ns, earliest - tables.now_ns);
+}
+
+/// The least of the nearest timer and the pollers' limit, on the loop's clock: `maxInt(u64)`, the
+/// value of `.none`, when neither exists.
+fn earliest_limit(tables: *const Tables) u64 {
+    const timer = tables.timers.earliest_ns() orelse @intFromEnum(WaitLimit.none);
+    return @min(timer, @intFromEnum(tables.dispatch.until_ns));
+}
+
+/// Core's part of `Loop.wait_limit`, a host's last call before it sleeps (decision 29). `.now`
+/// while a task is queued, operations wait to be submitted, results wait to be handed over, or
+/// the least of the nearest timer and the pollers' limit is at or before `now_ns`. Otherwise `.at`
+/// of that least value, or `.none` when neither exists. It reads no clock and changes nothing.
+/// Halts inside a tick. The backend adds its mailboxes.
+pub fn wait_limit(tables: *const Tables) WaitLimit {
+    if (tables.dispatch.limit_between_ticks() == .now) return .now;
+    const lists = tables.finished.count + tables.fired.count;
+    if (tables.pending.count != 0 or lists != 0) return .now;
+    const earliest = earliest_limit(tables);
+    if (earliest <= tables.now_ns) return .now;
+    return .at(earliest);
 }
 
 /// A tick's first expiry, before it asks the kernel anything: moves the due timers at the head

@@ -25,6 +25,7 @@ const constants = @import("constants.zig");
 const uring = @import("uring.zig");
 const datagram_module = @import("uring_datagram.zig");
 
+const BufferGroup = core.buffer_group.BufferGroup;
 const Loop = uring.Loop;
 
 pub const group_alignment = core.buffer_group.group_alignment;
@@ -79,19 +80,26 @@ pub fn register(loop: *Loop, buffers: []const []u8) RegisterError!void {
     loop.tables.note_buffers(buffers.len);
 }
 
-/// Makes group `group_id` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,
+/// Reserves the lowest group id that no caller holds, and returns it (decision 29). The id is the
+/// caller's until the loop's `deinit`. `BufferGroupsFull` when every id is reserved.
+pub fn reserve(loop: *Loop) core.buffer_group.ReserveError!BufferGroup {
+    loop.assert_owner();
+    return loop.buffer_groups.reserve();
+}
+
+/// Makes group `group` of this loop out of `memory`: `count` buffers of `buffer_bytes` each,
 /// every one handed to the kernel. `memory` holds `group_bytes(count, buffer_bytes)` bytes aligned
 /// to `group_alignment`, the kernel's ring first and the buffers after it, and stays the loop's
-/// until `deinit`.
+/// until `deinit`. Halts on a group that no caller reserved (decision 29).
 pub fn provide(
     loop: *Loop,
-    group_id: u16,
+    group: BufferGroup,
     memory: []align(group_alignment) u8,
     count: u16,
     buffer_bytes: u32,
 ) ProvideError!void {
     loop.assert_owner();
-    assert(group_id < core.constants.buffer_groups_max);
+    const group_id = loop.buffer_groups.reserved(group);
     assert(loop.groups[group_id].ring == null);
     // The parameter's type says `align(group_alignment)`, which the compiler checks at the call
     // site and cannot check for memory whose alignment a caller asserted rather than declared: an
@@ -124,8 +132,8 @@ pub fn provide(
         else => return error.Unexpected,
     }
 
-    const group = &loop.groups[group_id];
-    group.* = .{
+    const provided = &loop.groups[group_id];
+    provided.* = .{
         .ring = @ptrCast(ring_memory.ptr),
         .buffers = buffers,
         .holders = holders,
@@ -133,24 +141,25 @@ pub fn provide(
         .count = count,
     };
     @memset(holders, 0);
-    IoUring.buf_ring_init(group.ring.?);
+    IoUring.buf_ring_init(provided.ring.?);
     const mask = IoUring.buf_ring_mask(count);
     for (0..count) |index| {
         const buffer_id: u16 = @intCast(index);
-        IoUring.buf_ring_add(group.ring.?, group.bytes_of(buffer_id), buffer_id, mask, buffer_id);
+        IoUring.buf_ring_add(provided.ring.?, provided.bytes_of(buffer_id), buffer_id, mask, buffer_id);
     }
-    IoUring.buf_ring_advance(group.ring.?, count);
+    IoUring.buf_ring_advance(provided.ring.?, count);
 }
 
-/// Takes group `group_id` back (rotor issue 13): its memory is the caller's again, and the id may
+/// Takes group `group` back (rotor issue 13): its memory is the caller's again, and the id may
 /// be provided again. Halts while an operation in flight names the group, so a multishot receive
 /// from it must reach its final event first. A buffer the caller still holds is plain memory after
 /// this, and its `give_back` halts. The datagram shape stays fixed (`core.datagram.Shape`).
 ///
 /// The kernel forgets the group's buffer ring. It answers EINVAL for a group it does not hold, so
 /// the assertion on its answer is the check that the group was provided.
-pub fn release(loop: *Loop, group_id: u16) void {
+pub fn release(loop: *Loop, group: BufferGroup) void {
     loop.assert_owner();
+    const group_id = @intFromEnum(group);
     assert(group_id < core.constants.buffer_groups_max);
     core.buffer_group.assert_unused(&loop.tables.table, group_id);
     var registration = std.mem.zeroInit(linux.io_uring_buf_reg, .{ .bgid = group_id });
@@ -159,17 +168,18 @@ pub fn release(loop: *Loop, group_id: u16) void {
     loop.groups[group_id] = .none;
 }
 
-/// Hands buffer `buffer_id` of group `group_id` back to the kernel, after the caller has read the
+/// Hands buffer `buffer_id` of group `group` back to the kernel, after the caller has read the
 /// bytes the receive event named. One ring entry written, and no system call. A buffer the events of
 /// a split datagram name goes back at the last of their give-backs.
-pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
+pub fn give_back(loop: *Loop, group: BufferGroup, buffer_id: u16) void {
     loop.assert_owner();
+    const group_id = @intFromEnum(group);
     assert_class_a(group_id < core.constants.buffer_groups_max);
-    const group = &loop.groups[group_id];
-    if (!core.buffer_group.release(group.holders, buffer_id)) return;
-    const ring = group.ring.?;
-    const mask = IoUring.buf_ring_mask(group.count);
-    IoUring.buf_ring_add(ring, group.bytes_of(buffer_id), buffer_id, mask, 0);
+    const provided = &loop.groups[group_id];
+    if (!core.buffer_group.release(provided.holders, buffer_id)) return;
+    const ring = provided.ring.?;
+    const mask = IoUring.buf_ring_mask(provided.count);
+    IoUring.buf_ring_add(ring, provided.bytes_of(buffer_id), buffer_id, mask, 0);
     IoUring.buf_ring_advance(ring, 1);
 }
 
@@ -187,33 +197,34 @@ pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
 /// leaves the shape as it was.
 pub fn provide_datagram_buffers(
     loop: *Loop,
-    group_id: u16,
+    group: BufferGroup,
     memory: []align(group_alignment) u8,
     count: u16,
     buffer_bytes: u32,
-    group: core.datagram.GroupOptions,
+    options: core.datagram.GroupOptions,
 ) ProvideError!void {
-    core.datagram.check_buffer_bytes(buffer_bytes, group);
-    try provide(loop, group_id, memory, count, buffer_bytes);
-    loop.datagram_shape.fix(group);
-    loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
+    core.datagram.check_buffer_bytes(buffer_bytes, options);
+    try provide(loop, group, memory, count, buffer_bytes);
+    loop.datagram_shape.fix(options);
+    loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(options));
 }
 
-/// The datagram an event of group `group_id` names: the only supported reader of that
+/// The datagram an event of group `group` names: the only supported reader of that
 /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
 /// caller's until `give_back_buffer`.
-pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
+pub fn datagram(loop: *const Loop, group: BufferGroup, event: core.Event) core.Delivery {
     assert(!event.flags.message);
     assert(event.flags.buffer);
-    const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
+    const buffer = loop.provided_buffer(group, event.flags.buffer_id);
     const bytes: u32 = @intCast(event.result);
     const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
     const capacity = buffer.len - @as(usize, @intCast(loop.datagram_prefix));
     return core.datagram_split.view(whole, capacity, event);
 }
 
-/// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
-pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
+/// The bytes of the provided buffer a receive event named: `buffer_id` of `group`.
+pub fn provided_buffer(loop: *const Loop, group: BufferGroup, buffer_id: u16) []u8 {
+    const group_id = @intFromEnum(group);
     assert_class_a(group_id < core.constants.buffer_groups_max);
     return loop.groups[group_id].bytes_of(buffer_id);
 }
@@ -245,10 +256,12 @@ test "a buffer a split datagram holds goes back to the kernel at its last event'
     const ring: *align(group_alignment) linux.io_uring_buf_ring = @ptrCast(&ring_memory);
     IoUring.buf_ring_init(ring);
     loop.groups[0] = .{ .ring = ring, .buffers = &buffers, .holders = &holders, .buffer_bytes = 64, .count = count };
+    const group = try reserve(&loop);
+    try testing.expectEqual(@as(u16, 0), @intFromEnum(group));
     core.buffer_group.hold(&holders, 1, 3);
-    give_back(&loop, 0, 1);
-    give_back(&loop, 0, 1);
+    give_back(&loop, group, 1);
+    give_back(&loop, group, 1);
     try testing.expectEqual(@as(u16, 0), ring.tail);
-    give_back(&loop, 0, 1);
+    give_back(&loop, group, 1);
     try testing.expectEqual(@as(u16, 1), ring.tail);
 }

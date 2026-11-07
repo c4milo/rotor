@@ -13,15 +13,34 @@ const mailbox = @import("mailbox.zig");
 const offload = @import("offload.zig");
 const operation = @import("operation.zig");
 
+const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
 const Event = event.Event;
 const LoopId = operation.LoopId;
 const Mailbox = mailbox.Mailbox;
+const Message = operation.Message;
 const Registry = mailbox.Registry;
 
-/// The event that hands `message` over.
-fn message_event(message: operation.Message) Event {
-    return Event.message(message.payload, message.tag);
-}
+/// What one visit of a ring writes: an event for each message, and none for a `Message.wake`
+/// (decision 29). The drain counts the wakes as the messages the ring gave less the events written.
+/// A wake still counts as one message of the visit, so a ring of wakes cannot keep the drain longer
+/// than `messages_per_drain` for each visit.
+const Visit = struct {
+    out: []Event,
+    written: u32 = 0,
+
+    /// Writes the event of `message` into the next place, and counts it only when it is not a
+    /// wake. A wake leaves an event of tag 0 in a place that the next message takes, or that no
+    /// caller reads. There is no branch, so the compiler keeps the ring's pop inline in the drain.
+    /// A branch here made it a call: the work gate's `timer` row counted 1,179 instructions against
+    /// 1,158 on `mac` (decision 29, "What was built"). `Event.message` keeps its check of the tag
+    /// of every message that is not a wake.
+    fn write(visit: *Visit, message: Message) void {
+        const wake = message.tag == constants.message_tag_wake;
+        const tag = if (wake) 0 else message.tag;
+        visit.out[visit.written] = Event.message(message.payload, tag);
+        visit.written += @intFromBool(!wake);
+    }
+};
 
 pub const Inbox = struct {
     /// Where loops find each other's mailboxes. Null for a loop that posts to none and that none
@@ -67,10 +86,14 @@ pub const Inbox = struct {
     /// A cursor at 0 visits the senders in the order of the plain loop below, which needs no wrap.
     /// The cursor stays at 0 until a drain runs out of events, so a loop that is not loaded pays
     /// only the cursor's load. Any other cursor takes `drain_from_cursor`.
-    pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event) u32 {
+    ///
+    /// A `Message.wake` writes no event. It counts in its ring's visit, and a drain that took one
+    /// tells `dispatch` (decision 29).
+    pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, dispatch: *Dispatch) u32 {
         const registry = inbox.registry orelse return 0;
-        if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events);
+        if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, dispatch);
         var produced: u32 = 0;
+        var wakes: u32 = 0;
         for (0..registry.loops()) |sender| {
             if (sender == receiver) continue;
             const room = @min(events.len - produced, constants.messages_per_drain);
@@ -80,9 +103,13 @@ pub const Inbox = struct {
             }
             // An empty ring costs a visit and no room.
             const ring = registry.mailbox(@intCast(sender), receiver);
-            produced += ring.pop_as(Event, events[produced..][0..room], message_event);
+            var visit: Visit = .{ .out = events[produced..][0..room] };
+            const popped = ring.pop_each(room, &visit, Visit.write);
+            produced += visit.written;
+            wakes += popped - visit.written;
         }
         assert(produced <= events.len);
+        if (wakes != 0) dispatch.note_wake();
         return produced;
     }
 
@@ -94,11 +121,13 @@ pub const Inbox = struct {
         registry: *Registry,
         receiver: LoopId,
         events: []Event,
+        dispatch: *Dispatch,
     ) u32 {
         const loops = registry.loops();
         const cursor = inbox.sender_cursor;
         assert(cursor < loops);
         var produced: u32 = 0;
+        var wakes: u32 = 0;
         var sender: usize = cursor;
         for (0..loops) |_| {
             if (sender == loops) sender = 0;
@@ -109,12 +138,29 @@ pub const Inbox = struct {
                     break;
                 }
                 const ring = registry.mailbox(@intCast(sender), receiver);
-                produced += ring.pop_as(Event, events[produced..][0..room], message_event);
+                var visit: Visit = .{ .out = events[produced..][0..room] };
+                const popped = ring.pop_each(room, &visit, Visit.write);
+                produced += visit.written;
+                wakes += popped - visit.written;
             }
             sender += 1;
         }
         assert(produced <= events.len);
+        if (wakes != 0) dispatch.note_wake();
         return produced;
+    }
+
+    /// True while a ring to loop `receiver` holds a message: another loop's mailbox or an offload
+    /// worker's. A host that reads it before it sleeps does not sleep on a message (decision 29).
+    /// It reads each ring once, and changes nothing.
+    pub fn holds_messages(inbox: *const Inbox, receiver: LoopId) bool {
+        if (offload.pending(inbox.completions)) return true;
+        const registry = inbox.registry orelse return false;
+        for (0..registry.loops()) |sender| {
+            if (sender == receiver) continue;
+            if (!registry.mailbox(@intCast(sender), receiver).is_empty()) return true;
+        }
+        return false;
     }
 
     /// Tells the registry loop `receiver` is about to sleep, then looks at its mailboxes once more:

@@ -147,14 +147,42 @@ fn aligned_group_memory() []align(group_alignment) u8 {
     return start[0..group_scenario_bytes];
 }
 
+/// The group the main thread reserved, which the second thread names (decision 29). With the owner
+/// check deleted, a call that names it passes the check of a reserved group too.
+var reserved_group: core.BufferGroup align(@alignOf(core.BufferGroup)) = undefined;
+
 fn provide_a_group_from_another_thread() void {
     loop.init_tables(&memory, options);
+    reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_a_group_on_this_thread);
 }
 
 fn provide_a_group_on_this_thread() void {
     scenario.reached_violation();
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+    loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch {};
+}
+
+/// With the check deleted, the reservation takes the lowest id and returns it.
+fn reserve_a_group_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(reserve_a_group_on_this_thread);
+}
+
+fn reserve_a_group_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.reserve_buffer_group() catch {};
+}
+
+/// A host's `wait_limit` from a second thread (decision 29). With the check deleted, the call reads
+/// the tables and returns `.none`.
+fn read_the_wait_limit_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(read_the_wait_limit_on_this_thread);
+}
+
+fn read_the_wait_limit_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.wait_limit();
 }
 
 /// A datagram group needs buffers larger than a datagram's prefix, or `provide_datagram_buffers`
@@ -167,15 +195,16 @@ var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alig
 /// the datagram shape after it.
 fn provide_datagram_buffers_from_another_thread() void {
     loop.init_tables(&memory, options);
+    reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_datagram_buffers_on_this_thread);
 }
 
 fn provide_datagram_buffers_on_this_thread() void {
     const base = std.mem.alignForward(usize, @intFromPtr(&datagram_memory), group_alignment);
     const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
-    const group = start[0..datagram_group_bytes];
+    const group_memory_of = start[0..datagram_group_bytes];
     scenario.reached_violation();
-    loop.provide_datagram_buffers(0, group, group_buffers, datagram_buffer_bytes, .{}) catch {};
+    loop.provide_datagram_buffers(reserved_group, group_memory_of, group_buffers, datagram_buffer_bytes, .{}) catch {};
 }
 
 /// The main thread provides the group and takes one buffer out, as a receive would. So with the
@@ -184,14 +213,15 @@ var taken_buffer: u16 = undefined;
 
 fn give_back_a_buffer_from_another_thread() void {
     loop.init_tables(&memory, options);
-    loop.provide_buffers(0, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
-    taken_buffer = loop.groups[0].take() orelse return;
+    reserved_group = loop.reserve_buffer_group() catch return;
+    loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
+    taken_buffer = loop.groups[@intFromEnum(reserved_group)].take() orelse return;
     on_another_thread(give_back_a_buffer_on_this_thread);
 }
 
 fn give_back_a_buffer_on_this_thread() void {
     scenario.reached_violation();
-    loop.give_back_buffer(0, taken_buffer);
+    loop.give_back_buffer(reserved_group, taken_buffer);
 }
 
 /// A registry of two ids, which the scenarios claim as a loop and a remote would.
@@ -268,6 +298,11 @@ fn hand_out_the_heartbeat_on_this_thread() void {
 }
 
 pub const scenarios = [_]scenario.Scenario{
+    .{ .name = "owner: reserve a group from another thread", .run = reserve_a_group_from_another_thread },
+    .{
+        .name = "owner: read the wait limit from another thread",
+        .run = read_the_wait_limit_from_another_thread,
+    },
     .{
         .name = "owner: hand out the view from another thread",
         .run = hand_out_the_view_from_another_thread,

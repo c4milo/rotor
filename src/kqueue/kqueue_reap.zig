@@ -157,7 +157,6 @@ const Fixture = struct {
     const operations = 8;
     const entries = 8;
     const options: Loop.Options = .{ .operations = operations, .entries = entries };
-    const group_id = 1;
     const buffer_bytes = 8;
     const buffers = 4;
     const group_bytes = kqueue.buffers.group_bytes(buffers, buffer_bytes);
@@ -166,11 +165,13 @@ const Fixture = struct {
     group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment),
     loop: Loop,
     pair: [testing_module.pair_ends]i32,
+    group: core.BufferGroup,
 
     fn init(fixture: *Fixture) !void {
         try fixture.loop.init(&fixture.memory, options);
         errdefer fixture.loop.deinit();
-        try fixture.loop.provide_buffers(group_id, &fixture.group_memory, buffers, buffer_bytes);
+        fixture.group = try fixture.loop.reserve_buffer_group();
+        try fixture.loop.provide_buffers(fixture.group, &fixture.group_memory, buffers, buffer_bytes);
         fixture.pair = try testing_module.nonblocking_pair();
     }
 
@@ -210,7 +211,7 @@ test "one readiness serves a multishot receive until the bytes it reported are r
     var fixture: Fixture = undefined;
     try fixture.init();
     defer fixture.deinit();
-    try fixture.wait(&.{Operation.receive_group(1, fixture.pair[0], Fixture.group_id)});
+    try fixture.wait(&.{Operation.receive_group(1, fixture.pair[0], fixture.group)});
 
     // Three buffers' worth arrive before the tick, and one readiness reports all of them.
     const filled = 3;
@@ -230,7 +231,7 @@ test "a readiness is served no further than the amount it reports" {
     var fixture: Fixture = undefined;
     try fixture.init();
     defer fixture.deinit();
-    try fixture.wait(&.{Operation.receive_group(1, fixture.pair[0], Fixture.group_id)});
+    try fixture.wait(&.{Operation.receive_group(1, fixture.pair[0], fixture.group)});
     try fixture.send(3 * Fixture.buffer_bytes);
     var events: [Fixture.buffers]Event = undefined;
 
@@ -255,7 +256,7 @@ test "every readiness keeps room for one event, and the one before it takes what
     };
     var own: [1]u8 = undefined;
     try fixture.wait(&.{
-        Operation.receive_group(1, fixture.pair[0], Fixture.group_id),
+        Operation.receive_group(1, fixture.pair[0], fixture.group),
         Operation.receive(2, other[0], &own),
     });
     try fixture.send(3 * Fixture.buffer_bytes);
@@ -308,11 +309,11 @@ test "an operation behind a multishot receive that ran out of buffers is still s
     var loop: Loop = undefined;
     try loop.init(&memory, options);
     defer loop.deinit();
-    const group_id = 1;
     const buffer_bytes = 8;
     const group_bytes = comptime kqueue.buffers.group_bytes(1, buffer_bytes);
     var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
-    try loop.provide_buffers(group_id, &group_memory, 1, buffer_bytes);
+    const group = try loop.reserve_buffer_group();
+    try loop.provide_buffers(group, &group_memory, 1, buffer_bytes);
     const pair = try @import("kqueue_testing.zig").nonblocking_pair();
     defer for (pair) |descriptor| {
         _ = std.c.close(descriptor);
@@ -321,7 +322,7 @@ test "an operation behind a multishot receive that ran out of buffers is still s
     // The multishot receive waits first and keeps the filter; the one-shot receive waits behind.
     var own: [buffer_bytes]u8 = undefined;
     const waiting = [_]Operation{
-        Operation.receive_group(1, pair[0], group_id),
+        Operation.receive_group(1, pair[0], group),
         Operation.receive(2, pair[0], &own),
     };
     try testing.expectEqual(@as(u32, 2), loop.submit(&waiting, &.{}));

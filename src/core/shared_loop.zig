@@ -28,15 +28,17 @@ const Message = operation_module.Message;
 const Operation = operation_module.Operation;
 const Poller = dispatch.Poller;
 const Task = tasks_module.Task;
+const BufferGroup = buffer_group.BufferGroup;
 const group_alignment = buffer_group.group_alignment;
 
 /// The calls a library may make on the view: each is the `Loop` call of the same name.
 pub const library_calls = [_][]const u8{
-    "submit",           "cancel",                   "post",
-    "now_ns",           "schedule",                 "is_scheduled",
-    "task_budget_left", "add_poller",               "remove_poller",
-    "provide_buffers",  "provide_datagram_buffers", "datagram",
-    "provided_buffer",  "give_back_buffer",         "release_buffers",
+    "submit",               "cancel",                   "post",
+    "now_ns",               "schedule",                 "is_scheduled",
+    "task_budget_left",     "add_poller",               "remove_poller",
+    "provide_buffers",      "provide_datagram_buffers", "datagram",
+    "provided_buffer",      "give_back_buffer",         "release_buffers",
+    "reserve_buffer_group",
 };
 
 /// The calls that only the program makes. The view declares each one as a compile error that states
@@ -126,48 +128,54 @@ pub fn SharedLoop(comptime Loop: type) type {
             loop(shared).remove_poller(poller);
         }
 
+        /// `Loop.reserve_buffer_group`: a library calls it once, at init, and keeps the id until
+        /// the loop's `deinit` (decision 29).
+        pub fn reserve_buffer_group(shared: *Shared) Result(Loop.reserve_buffer_group) {
+            return loop(shared).reserve_buffer_group();
+        }
+
         /// `Loop.provide_buffers`.
         pub fn provide_buffers(
             shared: *Shared,
-            group_id: u16,
+            group: BufferGroup,
             memory: []align(group_alignment) u8,
             count: u16,
             buffer_bytes: u32,
         ) Result(Loop.provide_buffers) {
-            return loop(shared).provide_buffers(group_id, memory, count, buffer_bytes);
+            return loop(shared).provide_buffers(group, memory, count, buffer_bytes);
         }
 
         /// `Loop.provide_datagram_buffers`.
         pub fn provide_datagram_buffers(
             shared: *Shared,
-            group_id: u16,
+            group: BufferGroup,
             memory: []align(group_alignment) u8,
             count: u16,
             buffer_bytes: u32,
-            group: GroupOptions,
+            options: GroupOptions,
         ) Result(Loop.provide_datagram_buffers) {
             const view = loop(shared);
-            return view.provide_datagram_buffers(group_id, memory, count, buffer_bytes, group);
+            return view.provide_datagram_buffers(group, memory, count, buffer_bytes, options);
         }
 
         /// `Loop.datagram`.
-        pub fn datagram(shared: *const Shared, group_id: u16, event: Event) Delivery {
-            return loop_const(shared).datagram(group_id, event);
+        pub fn datagram(shared: *const Shared, group: BufferGroup, event: Event) Delivery {
+            return loop_const(shared).datagram(group, event);
         }
 
         /// `Loop.provided_buffer`.
-        pub fn provided_buffer(shared: *const Shared, group_id: u16, buffer_id: u16) []u8 {
-            return loop_const(shared).provided_buffer(group_id, buffer_id);
+        pub fn provided_buffer(shared: *const Shared, group: BufferGroup, buffer_id: u16) []u8 {
+            return loop_const(shared).provided_buffer(group, buffer_id);
         }
 
         /// `Loop.give_back_buffer`.
-        pub fn give_back_buffer(shared: *Shared, group_id: u16, buffer_id: u16) void {
-            loop(shared).give_back_buffer(group_id, buffer_id);
+        pub fn give_back_buffer(shared: *Shared, group: BufferGroup, buffer_id: u16) void {
+            loop(shared).give_back_buffer(group, buffer_id);
         }
 
         /// `Loop.release_buffers`.
-        pub fn release_buffers(shared: *Shared, group_id: u16) void {
-            loop(shared).release_buffers(group_id);
+        pub fn release_buffers(shared: *Shared, group: BufferGroup) void {
+            loop(shared).release_buffers(group);
         }
 
         /// The calls that only the program makes, which fail to compile here.
@@ -253,4 +261,6 @@ test "the view declares each refused call, so the compiler states the rule" {
     try testing.expect(@hasDecl(View, "submit"));
     try testing.expect(!@hasDecl(View, "in_flight"));
     try testing.expect(!@hasDecl(View, "wait_descriptor"));
+    // Only the program sleeps, so the view does not declare the host's call (decision 29).
+    try testing.expect(!@hasDecl(View, "wait_limit"));
 }

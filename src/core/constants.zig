@@ -128,12 +128,16 @@ comptime {
     std.debug.assert(offload_in_flight_max >= 1);
 }
 
-/// The largest tag a `Message` may carry. io_uring delivers a posted message as a completion
-/// whose 32-bit result is the sender's to choose, and a result in [-4095, -1] is an errno. The
-/// uring backend sets the top bit of the tag, so a message's result is below -4095 and never
-/// reads as an operation's. A tag at or below this value leaves that range clear on Linux 5.18
-/// and later, with no kernel flag to depend on.
-pub const message_tag_max: u32 = 0x7fff_f000;
+/// The largest tag that a caller's `Message` may carry: one less than `message_tag_wake`
+/// (decision 29). io_uring delivers a posted message as a completion whose 32-bit result is the
+/// sender's to choose, and a result in [-4095, -1] is an errno. The uring backend sets the top bit
+/// of the tag, so a message's result is below -4095 and never reads as an operation's.
+pub const message_tag_max: u32 = 0x7fff_efff;
+
+/// The tag of `Message.wake`, the old `message_tag_max`. The loop drops such a message, and hands
+/// no event for it (decision 29). It is the largest tag that a post accepts. A tag at or below it
+/// leaves the errno range clear on Linux 5.18 and later, with no kernel flag to depend on.
+pub const message_tag_wake: u32 = 0x7fff_f000;
 
 /// The most ticks one `drain` makes before it gives up, each waiting `drain_wait_ns` at most. A
 /// cancelled operation ends within a tick or two, so a loop that is still not empty after this
@@ -247,8 +251,9 @@ comptime {
     assert(spin_rounds_max >= 1);
     assert(transfer_bytes_max <= std.math.maxInt(i32));
     assert(loops_max >= 2);
-    assert(message_tag_max < 1 << 31);
-    assert((1 << 31) - message_tag_max > errno_max);
+    assert(message_tag_max < message_tag_wake);
+    assert(message_tag_wake < 1 << 31);
+    assert((1 << 31) - message_tag_wake > errno_max);
     assert(transfer_retries_max >= 1);
     assert(std.math.isPowerOfTwo(buffers_per_group_max));
     assert(std.math.isPowerOfTwo(buffer_ring_alignment));

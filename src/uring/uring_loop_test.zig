@@ -196,7 +196,6 @@ const group_buffer_bytes = 8;
 /// rises.
 const datagram_rounds = 3 * 8;
 
-const datagram_group = 0;
 const datagram_buffers = 4;
 const datagram_buffer_bytes = core.datagram.prefix_bytes(.{}) + 64;
 
@@ -208,6 +207,7 @@ test "more datagrams than the ring has entries reuse the message scratch" {
 
     const group_bytes = comptime buffers_module.group_bytes(datagram_buffers, datagram_buffer_bytes);
     var group_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
+    const datagram_group = try fixture.loop.reserve_buffer_group();
     try fixture.loop.provide_datagram_buffers(
         datagram_group,
         &group_memory,
@@ -369,8 +369,9 @@ test "a datagram group the kernel refuses leaves the loop's datagram shape as it
     try loop.init(&memory, options);
     defer loop.deinit();
 
-    // The test registers a ring for group 0 itself, which the loop does not know of, so the loop's
-    // own registration of group 0 reaches the kernel and is refused there.
+    // The test registers a ring for the group the loop reserves first, 0, itself. The loop does not
+    // know of it, so the loop's own registration of that group reaches the kernel and is refused
+    // there.
     const group_bytes = comptime buffers_module.group_bytes(refused_group_buffers, refused_group_buffer_bytes);
     var taken_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
     var refused_memory: [group_bytes]u8 align(buffers_module.group_alignment) = undefined;
@@ -382,9 +383,11 @@ test "a datagram group the kernel refuses leaves the loop's datagram shape as it
     const rc = linux.io_uring_register(loop.ring.io.fd, .REGISTER_PBUF_RING, &registration, 1);
     try std.testing.expectEqual(linux.E.SUCCESS, linux.errno(rc));
 
+    const group = try loop.reserve_buffer_group();
+    try std.testing.expectEqual(@as(u16, 0), @intFromEnum(group));
     const prefix_before = loop.datagram_prefix;
     try std.testing.expectError(error.Unexpected, loop.provide_datagram_buffers(
-        0,
+        group,
         &refused_memory,
         refused_group_buffers,
         refused_group_buffer_bytes,

@@ -36,6 +36,7 @@ const core = @import("core");
 const backend = @import("backend");
 const placement = @import("harness").placement;
 const pieces_module = @import("rotor_echo_pieces.zig");
+const group_module = @import("rotor_echo_group.zig");
 const Pieces = pieces_module.Pieces;
 
 const Loop = backend.Loop;
@@ -56,8 +57,9 @@ const entries = 4096;
 /// Events one tick may hand over.
 const events_max = 1024;
 
-/// The provided-buffer group the multishot receives draw from.
-pub const group_id = 0;
+/// The group the multishot receives draw from, and its count: `rotor_echo_group.zig`.
+pub const group_id = group_module.group_id;
+pub const group_buffers_from = group_module.group_buffers_from;
 
 /// The group's memory, cut into `--buffer-bytes` pieces. Fixed, so a larger buffer means fewer
 /// of them: a provided-buffer pool trades the size of a buffer against how many are free at once.
@@ -188,17 +190,6 @@ fn buffers_of() !u16 {
     return count;
 }
 
-/// The count a group gets: `most` when nothing was asked for, and otherwise what was asked for,
-/// which must be a power of two, as a buffer ring's size is, and no more than `most`. A count too
-/// large is refused rather than cut down, so a run never measures a group it did not ask for.
-pub fn group_buffers_from(wanted: ?u16, most: u16) !u16 {
-    std.debug.assert(std.math.isPowerOfTwo(most));
-    const asked = wanted orelse return most;
-    if (asked == 0 or !std.math.isPowerOfTwo(asked)) return error.GroupBuffersNotPowerOfTwo;
-    if (asked > most) return error.GroupBuffersBeyondPool;
-    return asked;
-}
-
 pub fn main(init: std.process.Init) !void {
     const port = try parse(init);
     forget_connections();
@@ -250,7 +241,9 @@ fn serve(index: u32, listener: core.Descriptor) void {
         @panic("the loop refused its memory");
     defer loop.deinit();
 
-    loop.provide_buffers(group_id, pool_of(index), group_buffers, buffer_bytes) catch
+    const group = loop.reserve_buffer_group() catch @panic("the loop has no group id left");
+    std.debug.assert(group == group_id);
+    loop.provide_buffers(group, pool_of(index), group_buffers, buffer_bytes) catch
         @panic("the buffer group was refused");
 
     submit_one(&loop, .{

@@ -74,7 +74,7 @@ pub const Remote = struct {
     pub fn post(remote: *Remote, target: core.LoopId, message: core.Message) PostError!void {
         remote.assert_owner();
         assert(target != remote.id);
-        assert(message.tag <= core.constants.message_tag_max);
+        assert(message.tag <= core.constants.message_tag_wake);
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
         const descriptor = wake orelse return;
         // In a group the registry holds the eventfd its creator made, and the same write wakes it.

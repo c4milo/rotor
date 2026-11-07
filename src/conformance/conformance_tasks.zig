@@ -108,9 +108,9 @@ const Polling = struct {
     tick: *const u32,
     at: u32,
 
-    fn polled(polling: *Polling) bool {
+    fn polled(polling: *Polling) core.WaitLimit {
         if (polling.tick.* == polling.at) polling.loop.loop.schedule(&polling.queued.task) catch unreachable;
-        return false;
+        return .none;
     }
 };
 

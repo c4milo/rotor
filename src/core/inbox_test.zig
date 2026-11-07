@@ -1,6 +1,7 @@
-//! Tests of `inbox.zig`: the sender cursor of `Inbox.drain_mailboxes` (W3, ruled 2026-11-07). In a
-//! file of their own because the property test holds a registry of 64 loops in a static, which a
-//! library file may not declare (tools/lint global-state).
+//! Tests of `inbox.zig`: the sender cursor of `Inbox.drain_mailboxes` (W3, ruled 2026-11-07), and
+//! the drain of a `Message.wake` (decision 29). In a file of their own because the property test
+//! holds a registry of 64 loops in a static, which a library file may not declare (tools/lint
+//! global-state).
 const std = @import("std");
 const constants = @import("constants.zig");
 const event = @import("event.zig");
@@ -8,8 +9,12 @@ const inbox_module = @import("inbox.zig");
 const mailbox = @import("mailbox.zig");
 const operation = @import("operation.zig");
 
+const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
 const Event = event.Event;
 const Inbox = inbox_module.Inbox;
+const Message = operation.Message;
+const Poller = @import("dispatch/dispatch.zig").Poller;
+const WaitLimit = @import("dispatch/dispatch.zig").WaitLimit;
 const LoopId = operation.LoopId;
 const Registry = mailbox.Registry;
 const testing = std.testing;
@@ -25,10 +30,12 @@ const TestInbox = struct {
     memory: [test_registry_bytes]u8 align(layout.memory_alignment),
     registry: Registry,
     inbox: Inbox,
+    dispatch: Dispatch,
 
     fn init(fixture: *TestInbox) void {
         fixture.registry.init(&fixture.memory, test_loops);
         fixture.inbox = Inbox.init(&fixture.registry, &.{}, null);
+        fixture.dispatch = .empty;
     }
 
     /// Pushes `count` messages from `sender` to `receiver`, each tagged with the sender's id.
@@ -41,7 +48,7 @@ const TestInbox = struct {
 
     /// One drain into `events`. It writes the sender of each event, its tag, to `senders`.
     fn drain(fixture: *TestInbox, receiver: LoopId, events: []Event, senders: []u8) !u32 {
-        const count = fixture.inbox.drain_mailboxes(receiver, events);
+        const count = fixture.inbox.drain_mailboxes(receiver, events, &fixture.dispatch);
         for (events[0..count], senders[0..count]) |message, *sender| {
             try testing.expect(message.flags.message);
             sender.* = '0' + @as(u8, @intCast(message.result));
@@ -116,6 +123,52 @@ test "an empty ring costs a visit and no room" {
     try testing.expectEqual(@as(LoopId, 3), fixture.inbox.sender_cursor);
 }
 
+/// A poller that answers `.none`, so the table is not empty.
+const Idle = struct {
+    poller: Poller = .init(Idle, "poller", polled),
+
+    fn polled(_: *Idle) WaitLimit {
+        return .none;
+    }
+};
+
+test "a wake writes no event, counts in its ring's visit, and stores now only with a poller" {
+    var fixture: TestInbox = undefined;
+    fixture.init();
+    const ring = fixture.registry.mailbox(1, 0);
+    for (0..constants.messages_per_drain) |_| try testing.expect(ring.push(Message.wake));
+    try fixture.fill(1, 0, 1);
+    try fixture.fill(2, 0, 1);
+    var events: [2 * constants.messages_per_drain]Event = undefined;
+    var senders: [2 * constants.messages_per_drain]u8 = undefined;
+    // The wakes fill sender 1's visit, so its message waits, and sender 2's is the one event.
+    try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
+    try testing.expectEqual(@as(u8, '2'), senders[0]);
+    // With no poller in the table, the wakes store nothing.
+    try testing.expectEqual(WaitLimit.none, fixture.dispatch.until_ns);
+    try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
+    try testing.expectEqual(@as(u8, '1'), senders[0]);
+    // With a poller, a wake stores now.
+    var idle: Idle = .{};
+    try fixture.dispatch.add_poller(&idle.poller);
+    try testing.expect(ring.push(Message.wake));
+    try testing.expect(fixture.inbox.holds_messages(0));
+    try testing.expectEqual(@as(u32, 0), try fixture.drain(0, &events, &senders));
+    try testing.expectEqual(WaitLimit.now, fixture.dispatch.until_ns);
+    try testing.expect(!fixture.inbox.holds_messages(0));
+}
+
+test "holds_messages reads every ring to the receiver, and not the ring from itself" {
+    var fixture: TestInbox = undefined;
+    fixture.init();
+    try testing.expect(!fixture.inbox.holds_messages(2));
+    try fixture.fill(2, 2, 1);
+    try testing.expect(!fixture.inbox.holds_messages(2));
+    try fixture.fill(4, 2, 1);
+    try testing.expect(fixture.inbox.holds_messages(2));
+    try testing.expect(!fixture.inbox.holds_messages(3));
+}
+
 /// The drains within which a sender with messages is visited, with `loops` loops and a room of
 /// `room` events (W3, section 3.6): `ceil((L - 2) / ceil(M / 32)) + 1`.
 fn visit_bound(loops: u32, room: u32) u32 {
@@ -131,8 +184,9 @@ const reserve_events_max = constants.batch_max / constants.mailbox_share_divisor
 fn expect_visits(inbox: *Inbox, receiver: LoopId, loops: u32, room: u32, holds: []const bool) !void {
     var events: [reserve_events_max]Event = undefined;
     var seen: [constants.loops_max]bool = @splat(false);
+    var dispatch: Dispatch = .empty;
     for (0..visit_bound(loops, room)) |_| {
-        const count = inbox.drain_mailboxes(receiver, events[0..room]);
+        const count = inbox.drain_mailboxes(receiver, events[0..room], &dispatch);
         for (events[0..count]) |message| seen[@intCast(message.result)] = true;
     }
     for (holds[0..loops], seen[0..loops]) |held, visited| try testing.expect(!held or visited);

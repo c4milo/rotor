@@ -1,6 +1,6 @@
 //! The public `Loop` and `Remote`, which wrap the backend this process runs.
-//! `rotor_loop_backend.zig` says how a process comes to run one, and `rotor_loop_registry.zig`
-//! holds the public `Registry`.
+//! `rotor_loop_backend.zig` says how a process comes to run one, `rotor_loop_registry.zig` holds
+//! the public `Registry`, and `rotor_loop_buffers.zig` holds the calls of a loop's buffers.
 //!
 //! Each type below wraps a tagged union with one member per backend this build carries. On Darwin
 //! that is kqueue alone, so a call there has no branch to take.
@@ -11,6 +11,7 @@ const uring = @import("uring");
 const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 const backend_module = @import("rotor_loop_backend.zig");
+const buffers = @import("rotor_loop_buffers.zig");
 
 const constants = core.constants;
 
@@ -319,9 +320,11 @@ pub const Loop = struct {
     /// that thread while it sleeps elsewhere. A host that must sleep elsewhere calls
     /// `rotor.require_backend(.epoll)` first on Linux.
     ///
-    /// What the host does:
-    /// - It waits for the descriptor to be readable, then calls `tick` with a wait of 0 until a
-    ///   tick delivers nothing, then waits again.
+    /// What the host does, in a cycle (decision 29):
+    /// - It ticks with a wait of 0.
+    /// - It calls `wait_limit` as its last call before it sleeps. On `.now` it ticks again.
+    /// - It sleeps in its own wait, with this descriptor among what it waits on. On `.at(t)` it
+    ///   sleeps for `t -| now_ns()` at most. On `.none` its own wait bounds the sleep.
     /// - It ticks that way after it submits or cancels too, before it waits: an operation reaches
     ///   the kernel in a tick.
     /// - It gives every tick a wait of 0. A tick that blocks arms the loop's wait timer, which
@@ -329,10 +332,10 @@ pub const Loop = struct {
     /// - It does nothing else to the descriptor. It does not read it, close it, or change what it
     ///   holds, and it stops waiting on it before `deinit`, which closes it.
     ///
-    /// What does not make it readable, so the host wakes for it by its own means: a timer or an
-    /// operation's deadline that comes due, which a tick finds by reading the clock; and a message
-    /// another loop or a `Remote` posts, or an offload worker's result, because only a loop that
-    /// blocks in `tick` asks to be woken for those.
+    /// What does not make it readable, so the host wakes for it by its own means: a timer, a
+    /// poller's limit or an operation's deadline that comes due, which `wait_limit` reports; and a
+    /// message or a `Message.wake` another loop or a `Remote` posts, or an offload worker's result,
+    /// because only a loop that blocks in `tick` asks to be woken for those.
     ///
     /// While an operation of the loop waits on a descriptor, this one is not readable after a tick
     /// that delivers nothing. While none waits, a tick with a wait of 0 asks the kernel nothing,
@@ -341,6 +344,19 @@ pub const Loop = struct {
     pub fn wait_descriptor(loop: *const Loop) ?core.Descriptor {
         return switch (loop.inner) {
             inline else => |*inner| inner.wait_descriptor(),
+        };
+    }
+
+    /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it may
+    /// sleep, on the loop's clock: `.now` while a task is queued, an operation waits to be
+    /// submitted, a result waits to be handed over, a ring holds a message, or the nearest timer or
+    /// poller limit is due. A poller that returned `.now`, a wake the last tick took, and a record
+    /// or a task the last tick called each give `.now`. Otherwise `.at` of the nearest limit, or
+    /// `.none`. It reads no clock and changes no state. Only the program calls it, on the loop's
+    /// thread, between ticks: inside a tick it halts. `SharedLoop` does not declare it.
+    pub fn wait_limit(loop: *Loop) core.WaitLimit {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.wait_limit(),
         };
     }
 
@@ -392,87 +408,16 @@ pub const Loop = struct {
         }
     }
 
-    /// Registers buffers once, before an operation names one by index (decision 3, source 1).
-    pub fn register_buffers(loop: *Loop, blocks: []const []u8) RegisterError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.register_buffers(blocks),
-        };
-    }
-
-    /// Registers descriptors once, before an operation names one by index.
-    pub fn register_descriptors(
-        loop: *Loop,
-        descriptors: []const core.Descriptor,
-    ) RegisterError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.register_descriptors(descriptors),
-        };
-    }
-
-    /// Makes group `group_id` out of `memory`: `count` buffers of `buffer_bytes`, in one block of
-    /// `buffers.group_bytes(count, buffer_bytes)` bytes aligned to `buffers.group_alignment`.
-    pub fn provide_buffers(
-        loop: *Loop,
-        group_id: u16,
-        memory: []align(group_alignment) u8,
-        count: u16,
-        buffer_bytes: u32,
-    ) ProvideError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.provide_buffers(group_id, memory, count, buffer_bytes),
-        };
-    }
-
-    /// A buffer group for datagrams, with room in front of every buffer for what a datagram
-    /// carries (decision 15). One loop serves one datagram shape: the first call fixes it, and a
-    /// later call with a different `GroupOptions` halts.
-    pub fn provide_datagram_buffers(
-        loop: *Loop,
-        group_id: u16,
-        memory: []align(group_alignment) u8,
-        count: u16,
-        buffer_bytes: u32,
-        group: core.datagram.GroupOptions,
-    ) ProvideError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.provide_datagram_buffers(
-                group_id,
-                memory,
-                count,
-                buffer_bytes,
-                group,
-            ),
-        };
-    }
-
-    /// The datagram an event of group `group_id` names: the only reader of such a buffer.
-    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.datagram(group_id, event),
-        };
-    }
-
-    /// Returns a provided buffer to its group, after the caller has read it.
-    pub fn give_back_buffer(loop: *Loop, group_id: u16, buffer_id: u16) void {
-        switch (loop.inner) {
-            inline else => |*inner| inner.give_back_buffer(group_id, buffer_id),
-        }
-    }
-
-    /// Takes group `group_id` back, so its memory is the caller's and the id may be provided
-    /// again. Halts while an operation in flight names the group (rotor issue 13).
-    pub fn release_buffers(loop: *Loop, group_id: u16) void {
-        switch (loop.inner) {
-            inline else => |*inner| inner.release_buffers(group_id),
-        }
-    }
-
-    /// The bytes of the provided buffer a receive event named.
-    pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.provided_buffer(group_id, buffer_id),
-        };
-    }
+    // The buffers of decisions 3, 12 and 29: `rotor_loop_buffers.zig`.
+    pub const register_buffers = buffers.register_buffers;
+    pub const register_descriptors = buffers.register_descriptors;
+    pub const reserve_buffer_group = buffers.reserve_buffer_group;
+    pub const provide_buffers = buffers.provide_buffers;
+    pub const provide_datagram_buffers = buffers.provide_datagram_buffers;
+    pub const datagram = buffers.datagram;
+    pub const give_back_buffer = buffers.give_back_buffer;
+    pub const release_buffers = buffers.release_buffers;
+    pub const provided_buffer = buffers.provided_buffer;
 };
 
 /// The alignment of a provided-buffer group's memory. Every backend asks for io_uring's figure, so

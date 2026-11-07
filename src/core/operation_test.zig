@@ -29,7 +29,7 @@ test "an operation names its code and a well-formed one passes assert_valid" {
         .{ .user_data = 1, .kind = .{ .accept = .{ .listener = 3, .multishot = true } } },
         .{ .user_data = 2, .kind = .{ .receive = .{
             .socket = 4,
-            .target = .{ .group = 0 },
+            .target = .{ .group = @enumFromInt(0) },
             .multishot = true,
         } } },
         .{ .user_data = 3, .timeout_ns = constants.ns_per_s, .kind = .{ .read = .{
@@ -97,7 +97,7 @@ test "each constructor builds its kind with every field it was given, and nothin
         Operation.accept(1, 3, true),
         Operation.connect(2, 4, &address),
         Operation.receive(3, 5, &bytes),
-        Operation.receive_group(4, 6, 2),
+        Operation.receive_group(4, 6, @enumFromInt(2)),
         Operation.send(5, 7, bytes[0..3]),
         Operation.shutdown(6, 8, .send),
         Operation.close(7, 9),
@@ -106,7 +106,7 @@ test "each constructor builds its kind with every field it was given, and nothin
         Operation.fdatasync(10, 12),
         Operation.timer(11, 1_000, 500),
         Operation.post(12, 13, .{ .payload = 99, .tag = 7 }),
-        Operation.receive_from(13, 14, 3),
+        Operation.receive_from(13, 14, @enumFromInt(3)),
         Operation.send_to(14, 15, bytes[0..1], &outbound),
         Operation.fsync(15, 16),
     };
@@ -125,7 +125,7 @@ test "each constructor builds its kind with every field it was given, and nothin
     try std.testing.expect(built[1].kind.connect.socket == 4 and built[1].kind.connect.address == &address);
     try std.testing.expect(built[2].kind.receive.socket == 5 and !built[2].kind.receive.multishot);
     try std.testing.expect(built[2].kind.receive.target.buffer.bytes.len == 4);
-    try std.testing.expect(built[3].kind.receive.multishot and built[3].kind.receive.target.group == 2);
+    try std.testing.expect(built[3].kind.receive.multishot and @intFromEnum(built[3].kind.receive.target.group) == 2);
     try std.testing.expect(built[4].kind.send.socket == 7 and built[4].kind.send.buffer.bytes.len == 3);
     try std.testing.expect(built[5].kind.shutdown.socket == 8 and built[5].kind.shutdown.how == .send);
     try std.testing.expect(built[6].kind.close.descriptor == 9);
@@ -134,7 +134,7 @@ test "each constructor builds its kind with every field it was given, and nothin
     try std.testing.expect(built[8].kind.write.offset == 8192 and built[9].kind.fdatasync.file == 12);
     try std.testing.expect(built[10].kind.timer.after_ns == 1_000 and built[10].kind.timer.repeat_ns == 500);
     try std.testing.expect(built[11].kind.post.target == 13 and built[11].kind.post.message.payload == 99);
-    try std.testing.expect(built[12].kind.receive_from.socket == 14 and built[12].kind.receive_from.group == 3);
+    try std.testing.expect(built[12].kind.receive_from.socket == 14 and @intFromEnum(built[12].kind.receive_from.group) == 3);
     try std.testing.expect(built[13].kind.send_to.socket == 15 and built[13].kind.send_to.to == &outbound);
     try std.testing.expect(built[13].kind.send_to.buffer.bytes.len == 1);
     try std.testing.expect(built[14].kind.fsync.file == 16);

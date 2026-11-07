@@ -380,9 +380,10 @@ test "an attempt that is done marks the events of an operation that names a reco
     var record: core.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const descriptor = 5;
+    const group = try loop.reserve_buffer_group();
     try testing.expectEqual(@as(u32, 2), loop.submit(&.{
         core.Operation.receive(0, descriptor, &bytes).completion(&record),
-        core.Operation.receive_group(0, descriptor, 1).completion(&record),
+        core.Operation.receive_group(0, descriptor, group).completion(&record),
     }, &.{}));
     const single = wait_to_read(&loop, descriptor);
     const multishot = wait_to_read(&loop, descriptor);
@@ -396,7 +397,6 @@ test "an attempt that is done marks the events of an operation that names a reco
 }
 
 /// The group of the batch test, which holds every datagram that test sends.
-const batch_group_id = 1;
 const batch_buffers = 4;
 const batch_buffer_bytes = 2048;
 
@@ -425,10 +425,11 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     try loop.init(&memory, options);
     defer loop.deinit();
     const group_bytes = comptime epoll.buffers.group_bytes(batch_buffers, batch_buffer_bytes);
-    var group: [group_bytes]u8 align(epoll.buffers.group_alignment) = undefined;
+    var group_memory: [group_bytes]u8 align(epoll.buffers.group_alignment) = undefined;
     const count = batch_buffers;
-    try loop.provide_datagram_buffers(batch_group_id, &group, count, batch_buffer_bytes, .{});
-    defer loop.release_buffers(batch_group_id);
+    const group = try loop.reserve_buffer_group();
+    try loop.provide_datagram_buffers(group, &group_memory, count, batch_buffer_bytes, .{});
+    defer loop.release_buffers(group);
     const loopback = core.Address.ipv4(.{ 127, 0, 0, 1 }, 0);
     const socket = try epoll.sync.open_datagram(.ipv4, &loopback, .{ .coalesce = false });
     defer epoll.sync.close_now(socket);
@@ -436,7 +437,7 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     defer epoll.sync.close_now(sender);
 
     var record: core.Completion = .{ .call = &ignore_call };
-    const receive = core.Operation.receive_from(0, socket, batch_group_id).completion(&record);
+    const receive = core.Operation.receive_from(0, socket, group).completion(&record);
     var handles: [1]core.Handle = undefined;
     try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &handles));
     var events: [batch_events]Event = undefined;
@@ -451,7 +452,7 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     var marked: u32 = 0;
     for (events[0..produced]) |event| {
         marked += @intFromBool(event.flags.dispatched and event.flags.more and event.flags.buffer);
-        if (event.flags.buffer) loop.give_back_buffer(batch_group_id, event.flags.buffer_id);
+        if (event.flags.buffer) loop.give_back_buffer(group, event.flags.buffer_id);
     }
     // The cancel's final event goes to the record through the tick, so the loop ends empty, and a
     // check that fails below fails without a halt in the `defer`s.

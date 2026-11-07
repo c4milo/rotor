@@ -320,7 +320,6 @@ test "a send to a peer that closed ends with broken_pipe, and raises no signal" 
     try testing.expectEqual(signals_before, broken_pipe_signals.load(.monotonic));
 }
 
-const group_id = 3;
 const group_buffers = 2;
 const group_buffer_bytes = 16;
 
@@ -336,8 +335,9 @@ test "a multishot receive names the provided buffer of each event and ends when 
 
     const group_bytes = comptime backend.buffers.group_bytes(group_buffers, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
-    try harness.loop.provide_buffers(group_id, &group_memory, group_buffers, group_buffer_bytes);
-    try harness.submit(&.{Operation.receive_group(1, pair[1], group_id)}, &.{});
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_buffers(group, &group_memory, group_buffers, group_buffer_bytes);
+    try harness.submit(&.{Operation.receive_group(1, pair[1], group)}, &.{});
 
     // Two messages take the two buffers, and none is given back, so the third finds the group
     // empty, which ends the operation. Each message is received before the next is sent, so
@@ -349,7 +349,7 @@ test "a multishot receive names the provided buffer of each event and ends when 
         try harness.collect(&events);
         const received = try Harness.find(&events, 1);
         try testing.expect(received.flags.more and received.flags.buffer);
-        const bytes = harness.loop.provided_buffer(group_id, received.flags.buffer_id);
+        const bytes = harness.loop.provided_buffer(group, received.flags.buffer_id);
         try testing.expectEqualStrings(message, bytes[0..try received.outcome()]);
     }
     try testing.expectEqual(@as(u32, 1), harness.loop.in_flight());
@@ -376,16 +376,17 @@ test "a multishot receive ends with one final 0 when the peer shuts its sending 
     // One buffer, so a receive that kept it would leave the group empty for the next receive.
     const group_bytes = comptime backend.buffers.group_bytes(1, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
-    try harness.loop.provide_buffers(group_id, &group_memory, 1, group_buffer_bytes);
+    const group = try harness.loop.reserve_buffer_group();
+    try harness.loop.provide_buffers(group, &group_memory, 1, group_buffer_bytes);
     try harness.submit(&.{
-        Operation.receive_group(1, pair[1], group_id), Operation.send(2, pair[0], "last"),
+        Operation.receive_group(1, pair[1], group), Operation.send(2, pair[0], "last"),
     }, &.{});
     var events: [2]Event = undefined;
     try harness.collect(&events);
     const received = try Harness.find(&events, 1);
     try testing.expect(received.flags.more and received.flags.buffer);
     try testing.expectEqual(@as(u32, 4), try received.outcome());
-    harness.loop.give_back_buffer(group_id, received.flags.buffer_id);
+    harness.loop.give_back_buffer(group, received.flags.buffer_id);
 
     // The end of the stream ends the receive: its event of 0 is final and names no buffer.
     try harness.submit(&.{Operation.shutdown(3, pair[0], .send)}, &.{});
@@ -396,7 +397,7 @@ test "a multishot receive ends with one final 0 when the peer shuts its sending 
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 
     // The buffer is still the group's: a receive submitted now finds it, and ends the same way.
-    try harness.submit(&.{Operation.receive_group(4, pair[1], group_id)}, &.{});
+    try harness.submit(&.{Operation.receive_group(4, pair[1], group)}, &.{});
     try harness.collect(events[0..1]);
     try testing.expect(events[0].is_final() and !events[0].flags.buffer);
     try testing.expectEqual(@as(u32, 0), try events[0].outcome());

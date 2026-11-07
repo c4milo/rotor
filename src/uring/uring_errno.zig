@@ -115,9 +115,9 @@ comptime {
     assert(errno_max >= 1);
     assert(errno_max <= std.math.maxInt(Errno));
     assert(!@typeInfo(E).@"enum".is_exhaustive);
-    // A message's result is its tag with the top bit set (`core.constants.message_tag_max`), so
-    // the largest one is below every errno's result, and `errno_of` is never handed a message.
-    const message_result_max = std.math.minInt(i32) + @as(i64, core.constants.message_tag_max);
+    // A message's result is its tag with the top bit set, at most `core.constants.message_tag_wake`,
+    // so the largest one is below every errno's result, and `errno_of` is never handed a message.
+    const message_result_max = std.math.minInt(i32) + @as(i64, core.constants.message_tag_wake);
     assert(message_result_max < -errno_max);
 }
 

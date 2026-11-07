@@ -46,8 +46,9 @@ fn drain_from_a_cursor_past_the_last_loop() void {
     registry.init(&registry_memory, loops);
     var inbox = core.inbox.Inbox.init(&registry, &.{}, null);
     inbox.sender_cursor = loops;
+    var dispatch: core.dispatch.Dispatch = .empty;
     scenario.reached_violation();
-    _ = inbox.drain_mailboxes(0, &events);
+    _ = inbox.drain_mailboxes(0, &events, &dispatch);
 }
 
 const slots_count = 4;

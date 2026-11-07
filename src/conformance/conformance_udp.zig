@@ -17,13 +17,11 @@ const Outbound = core.datagram.Outbound;
 const sync = backend.sync;
 
 /// The group's reserve. The default, because that is what a caller gets who says nothing.
-const group: core.datagram.GroupOptions = .{};
+const shape: core.datagram.GroupOptions = .{};
 
 /// Buffers in the group, and what each holds: the prefix plus room for the datagrams below.
 const group_buffers = 8;
 const buffer_bytes = 512;
-/// Not 0, so a read that names the wrong group cannot pass by naming the default.
-const group_id = 1;
 
 const group_bytes = backend.buffers.group_bytes(group_buffers, buffer_bytes);
 var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
@@ -53,14 +51,19 @@ const Pair = struct {
     }
 };
 
-fn provide(harness: *Harness) !void {
+/// Reserves a group and provides it. The first id is reserved and left unused, so the group's id is
+/// not 0, and a read that names the wrong group cannot pass by naming id 0.
+fn provide(harness: *Harness) !core.BufferGroup {
+    _ = try harness.loop.reserve_buffer_group();
+    const group = try harness.loop.reserve_buffer_group();
     try harness.loop.provide_datagram_buffers(
-        group_id,
+        group,
         &group_memory,
         group_buffers,
         buffer_bytes,
-        group,
+        shape,
     );
+    return group;
 }
 
 const message = "a datagram crosses";
@@ -77,13 +80,13 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    const group = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
 
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -106,11 +109,11 @@ test "a datagram crosses, and the receiver is told which peer sent it" {
     const got = try Harness.find(&events, 1);
     // The result is the datagram's own bytes: never the prefix in front of them (decision 15).
     try testing.expectEqual(@as(u32, message.len), try got.outcome());
-    const delivery = harness.loop.datagram(group_id, got);
+    const delivery = harness.loop.datagram(group, got);
     try testing.expectEqualStrings(message, delivery.bytes);
     try testing.expectEqual(sender_address.port, delivery.from.peer.port);
     try testing.expectEqualSlices(u8, &loopback.bytes, &delivery.from.peer.bytes);
-    harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+    harness.loop.give_back_buffer(group, got.flags.buffer_id);
     try end(&harness, handles[0]);
 }
 
@@ -119,12 +122,12 @@ test "a datagram's bytes are read through the loop and not from the front of its
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    const group = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
     var out: Outbound = .{
         .peer = pair.address,
         .local = undefined,
@@ -137,14 +140,14 @@ test "a datagram's bytes are read through the loop and not from the front of its
     try harness.collect(&events);
 
     const got = try Harness.find(&events, 1);
-    const buffer = harness.loop.provided_buffer(group_id, got.flags.buffer_id);
+    const buffer = harness.loop.provided_buffer(group, got.flags.buffer_id);
     // The whole point of the prefix: the datagram does not start where its buffer does. A
     // caller that read `buffer[0..count]` would get the head and the address instead, which is
     // the mistake the accessor exists to prevent.
-    const prefix = core.datagram.prefix_bytes(group);
+    const prefix = core.datagram.prefix_bytes(shape);
     try testing.expect(!std.mem.eql(u8, buffer[0..message.len], message));
     try testing.expectEqualStrings(message, buffer[prefix..][0..message.len]);
-    harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+    harness.loop.give_back_buffer(group, got.flags.buffer_id);
     try end(&harness, handles[0]);
 }
 
@@ -153,12 +156,12 @@ test "a multishot receive takes datagram after datagram from one submission" {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    const group = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
 
     var out: Outbound = .{
         .peer = pair.address,
@@ -183,7 +186,7 @@ test "a multishot receive takes datagram after datagram from one submission" {
             try testing.expectEqual(@as(u32, message.len), try event.outcome());
             // Every datagram but the last says there is more to come (decision 5, rule 1).
             try testing.expect(event.flags.more);
-            harness.loop.give_back_buffer(group_id, event.flags.buffer_id);
+            harness.loop.give_back_buffer(group, event.flags.buffer_id);
             received += 1;
         }
     }
@@ -198,15 +201,15 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    const group = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group)}, &handles);
 
     // One byte more than a buffer can hold past its prefix.
-    const capacity = core.datagram.payload_capacity(buffer_bytes, group);
+    const capacity = core.datagram.payload_capacity(buffer_bytes, shape);
     var large: [buffer_bytes]u8 = @splat('x');
     var out: Outbound = .{
         .peer = pair.address,
@@ -221,11 +224,11 @@ test "a datagram larger than the buffer's room is reported, not silently cut" {
     try harness.collect(&events);
     const got = try Harness.find(&events, 1);
     const count = try got.outcome();
-    const delivery = harness.loop.datagram(group_id, got);
+    const delivery = harness.loop.datagram(group, got);
     // The kernel keeps what fits and says the rest is gone. Both kernels must say so.
     try testing.expect(delivery.from.flags.truncated);
     try testing.expect(count <= capacity);
-    harness.loop.give_back_buffer(group_id, got.flags.buffer_id);
+    harness.loop.give_back_buffer(group, got.flags.buffer_id);
     try end(&harness, handles[0]);
 }
 
@@ -234,12 +237,12 @@ test "a cancelled datagram receive ends with one final event and leaves nothing 
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    const group = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.receive_from(7, pair.receiver, group_id)}, &handles);
+    try harness.submit(&.{Operation.receive_from(7, pair.receiver, group)}, &handles);
     var events: [4]Event = undefined;
     _ = try harness.loop.tick(&events, 0);
 
@@ -289,7 +292,7 @@ test "a segmented send is carried where the kernel segments and refused where it
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    try provide(&harness);
+    _ = try provide(&harness);
 
     const pair = try Pair.open();
     defer pair.close();
@@ -370,9 +373,9 @@ const Receiver = struct {
         var harness: Harness = undefined;
         try harness.init(1, receiver.registry);
         defer harness.deinit();
-        try provide(&harness);
+        const group = try provide(&harness);
         var handles: [1]core.Handle = undefined;
-        try harness.submit(&.{Operation.receive_from(1, receiver.socket, group_id)}, &handles);
+        try harness.submit(&.{Operation.receive_from(1, receiver.socket, group)}, &handles);
         var events: [1]Event = undefined;
         var count: u32 = 0;
         var tick: u32 = 0;
@@ -381,7 +384,7 @@ const Receiver = struct {
         }
         if (count != 1) return error.NoDatagram;
         receiver.now_after_wake_ns = harness.loop.now_ns();
-        harness.loop.give_back_buffer(group_id, events[0].flags.buffer_id);
+        harness.loop.give_back_buffer(group, events[0].flags.buffer_id);
         try end(&harness, handles[0]);
     }
 };

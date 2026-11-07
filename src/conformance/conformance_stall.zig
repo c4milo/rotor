@@ -55,14 +55,14 @@ pub fn completion(
 pub fn poller(
     comptime Parent: type,
     comptime field: []const u8,
-    comptime handler: fn (parent: *Parent) bool,
+    comptime handler: fn (parent: *Parent) core.WaitLimit,
 ) core.Poller {
     return .init(Parent, field, struct {
-        fn timed(parent: *Parent) bool {
+        fn timed(parent: *Parent) core.WaitLimit {
             const started_ns = clock_ns();
-            const worked = handler(parent);
+            const limit = handler(parent);
             measure(started_ns);
-            return worked;
+            return limit;
         }
     }.timed);
 }
@@ -110,9 +110,9 @@ const Slow = struct {
         slow.called();
     }
 
-    fn polled(slow: *Slow) bool {
+    fn polled(slow: *Slow) core.WaitLimit {
         slow.called();
-        return false;
+        return .none;
     }
 
     fn ran(slow: *Slow) void {

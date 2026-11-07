@@ -250,16 +250,16 @@ const Library = struct {
     /// Set when a call inside the tick failed, which a callback cannot return.
     failed: bool = false,
 
-    fn polled(library: *Library) bool {
+    fn polled(library: *Library) core.WaitLimit {
         library.polls += 1;
-        if (!library.running) return false;
+        if (!library.running) return .none;
         if (!library.loop.is_scheduled(&library.task) and library.random.chance(1, 4)) {
             library.again = @intCast(library.random.below(task_again_max + 1));
             library.loop.schedule(&library.task) catch {
                 library.failed = true;
             };
         }
-        return library.random.chance(1, 3);
+        return if (library.random.chance(1, 3)) .now else .none;
     }
 
     fn ran(library: *Library) void {

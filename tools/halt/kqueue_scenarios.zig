@@ -234,12 +234,12 @@ fn post_from_a_remote_to_itself() void {
     _ = remote_one.post(1, .{ .payload = 0, .tag = 0 }) catch {};
 }
 
-/// A tag above `message_tag_max`, which the receiving loop could not fit in an event's result.
+/// A tag above `message_tag_wake`, which the receiving loop could not fit in an event's result.
 fn post_a_tag_above_the_limit() void {
     remote_registry.init(&remote_registry_memory, remote_ids);
     remote_one.init(&remote_registry, 1) catch return;
     scenario.reached_violation();
-    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_max + 1 }) catch {};
+    _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_wake + 1 }) catch {};
 }
 
 /// Memory for one small group, with two alignments of slack: the scenario aligns a pointer forward
@@ -266,6 +266,7 @@ var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = und
 /// non-negotiable 1), and that is the gap this covers.
 fn provide_a_group_that_is_not_aligned() void {
     loop.init_tables(&memory, options);
+    const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
     const misaligned = blk: {
         @setRuntimeSafety(false);
@@ -274,7 +275,7 @@ fn provide_a_group_that_is_not_aligned() void {
     };
     scenario.reached_violation();
     loop.provide_buffers(
-        0,
+        group,
         misaligned,
         group_scenario_buffers,
         group_scenario_buffer_bytes,
@@ -340,9 +341,9 @@ fn aligned_group_memory() []align(group_scenario_alignment) u8 {
     return start[0..group_scenario_bytes];
 }
 
-fn provide_the_group() kqueue.buffers.ProvideError!void {
+fn provide_the_group(group: core.BufferGroup) kqueue.buffers.ProvideError!void {
     return loop.provide_buffers(
-        0,
+        group,
         aligned_group_memory(),
         group_scenario_buffers,
         group_scenario_buffer_bytes,
@@ -353,9 +354,10 @@ fn provide_the_group() kqueue.buffers.ProvideError!void {
 /// leave the first group's buffers with the caller and no way to give them back.
 fn provide_one_group_id_twice() void {
     loop.init_tables(&memory, options);
-    provide_the_group() catch return;
+    const group = loop.reserve_buffer_group() catch return;
+    provide_the_group(group) catch return;
     scenario.reached_violation();
-    provide_the_group() catch {};
+    provide_the_group(group) catch {};
 }
 
 /// The buffers are registered once per loop. A second call would replace what the first recorded
@@ -374,10 +376,11 @@ fn register_buffers_twice() void {
 /// room and the id check is the only assertion this call can reach.
 fn give_back_a_buffer_the_group_does_not_hold() void {
     loop.init_tables(&memory, options);
-    provide_the_group() catch return;
-    _ = loop.groups[0].take() orelse return;
+    const group = loop.reserve_buffer_group() catch return;
+    provide_the_group(group) catch return;
+    _ = loop.groups[@intFromEnum(group)].take() orelse return;
     scenario.reached_violation();
-    loop.give_back_buffer(0, group_scenario_buffers);
+    loop.give_back_buffer(group, group_scenario_buffers);
 }
 
 /// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
@@ -396,6 +399,12 @@ fn release_a_group_in_use() void {
 fn release_a_group_never_provided() void {
     loop.init_tables(&memory, options);
     buffer_release.release_a_group_never_provided(&loop);
+}
+
+/// A group provided that no caller reserved (`buffer_release.zig`).
+fn provide_a_group_never_reserved() void {
+    loop.init_tables(&memory, options);
+    buffer_release.provide_a_group_never_reserved(&loop);
 }
 
 /// A tick keeps the registrations of a failed call (decision 12, point 10, proposed on
@@ -418,6 +427,7 @@ const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
+    .{ .name = "buffers: provide a group never reserved", .run = provide_a_group_never_reserved },
     .{
         .name = "loop: end a loop with an operation in flight",
         .run = end_a_loop_with_an_operation_in_flight,

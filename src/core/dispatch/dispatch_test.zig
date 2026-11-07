@@ -8,7 +8,7 @@
 //! The properties, with decision 27's numbers where its table has the property:
 //!
 //! - P3: the calls of each step, pollers, records and tasks, equal the model's, in order.
-//! - The wait: `begin` returns 0 exactly when a poller worked or a task is queued.
+//! - The wait: `begin` returns 0 exactly when a poller returned `.now` or a task is queued.
 //! - P7: `callbacks_outstanding` equals the operations with a record in flight plus `tasks.count`.
 //! - P9: a task that a poller queues inside the budget runs in the same tick's `end`.
 //! - `idle` is true exactly when no poller is added and no callback is outstanding.
@@ -30,6 +30,7 @@ const Name = stall.Name;
 const Completion = dispatch_module.Completion;
 const Dispatch = dispatch_module.Dispatch;
 const Poller = dispatch_module.Poller;
+const WaitLimit = dispatch_module.WaitLimit;
 const Model = model_module.Model;
 const PollerPlan = model_module.PollerPlan;
 const Trace = model_module.Trace;
@@ -60,8 +61,8 @@ const PollerRecord = struct {
     id: u32,
     fixture: *Fixture,
 
-    fn polled(poller: *PollerRecord) bool {
-        return poller.fixture.on_poll(poller.id);
+    fn polled(poller: *PollerRecord) WaitLimit {
+        return if (poller.fixture.on_poll(poller.id)) .now else .none;
     }
 };
 
@@ -430,9 +431,9 @@ const Naming = struct {
         naming.seen[0] = naming.heartbeat.running.load(.monotonic);
     }
 
-    fn polled(naming: *Naming) bool {
+    fn polled(naming: *Naming) WaitLimit {
         naming.seen[1] = naming.heartbeat.running.load(.monotonic);
-        return false;
+        return .none;
     }
 
     fn ran(naming: *Naming) void {

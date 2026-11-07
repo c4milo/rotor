@@ -92,7 +92,7 @@ const Fixture = struct {
     fn receive_from(fixture: *Fixture, user_data: u64) Handle {
         return fixture.start(.{ .user_data = user_data, .kind = .{ .receive_from = .{
             .socket = 5,
-            .group = 0,
+            .group = @enumFromInt(0),
         } } });
     }
 };
@@ -202,7 +202,7 @@ test "a multishot operation keeps its slot while more follows and ends with one 
     fixture.init();
     const handle = fixture.start(.{ .user_data = 7, .kind = .{ .receive = .{
         .socket = 5,
-        .target = .{ .group = 1 },
+        .target = .{ .group = @enumFromInt(1) },
         .multishot = true,
     } } });
     const buffer_three = linux.IORING_CQE_F_BUFFER | (3 << linux.IORING_CQE_BUFFER_SHIFT);

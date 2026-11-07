@@ -108,6 +108,8 @@ pub const Loop = struct {
     datagram_shape: core.datagram.Shape,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
+    /// The group ids a caller reserved (decision 29). A provide halts on an id that is not here.
+    buffer_groups: core.buffer_group.Reservations,
     /// The descriptors `register_descriptors` named, by index. `tables.descriptors_registered`
     /// says how many hold one.
     descriptors: [core.constants.registered_descriptors_max]core.Descriptor,
@@ -248,6 +250,7 @@ pub const Loop = struct {
         loop.group_watch = group_watch_none;
         loop.wake_stand_in = -1;
         loop.groups = @splat(buffers.Group.none);
+        loop.buffer_groups = .empty;
         loop.datagram_shape = .{};
     }
 
@@ -372,6 +375,8 @@ pub const Loop = struct {
     // The view a library holds and the heartbeat of decision 28.
     pub const shared = dispatch_calls.shared;
     pub const heartbeat = dispatch_calls.heartbeat;
+    // The host's wait limit of decision 29.
+    pub const wait_limit = dispatch_calls.wait_limit;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
@@ -398,48 +403,14 @@ pub const Loop = struct {
     pub const give_back_buffer = buffers.give_back;
     pub const release_buffers = buffers.release;
 
-    /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
-    /// chosen here, once, and `provide_buffers` is untouched, so no stream caller gains a
-    /// precondition. One loop serves one datagram shape: the first call fixes it, and a later
-    /// call with a different one halts (`core.datagram.Shape`).
-    ///
-    /// The shape is checked and recorded after `provide` returns, so a call from another thread
-    /// halts on `provide`'s owner check before it writes anything.
-    pub fn provide_datagram_buffers(
-        loop: *Loop,
-        group_id: u16,
-        memory: []align(buffers.group_alignment) u8,
-        count: u16,
-        buffer_bytes: u32,
-        group: core.datagram.GroupOptions,
-    ) buffers.ProvideError!void {
-        core.datagram.check_buffer_bytes(buffer_bytes, group);
-        try buffers.provide(loop, group_id, memory, count, buffer_bytes);
-        loop.datagram_shape.fix(group);
-    }
-
-    /// The datagram an event of group `group_id` names: the only supported reader of that
-    /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
-    /// caller's until `give_back_buffer`.
-    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
-        assert(!event.flags.message);
-        assert(event.flags.buffer);
-        const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
-        const bytes: u32 = @intCast(event.result);
-        const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
-        const capacity = buffer.len - core.datagram.prefix_bytes(loop.datagram_shape.options);
-        return core.datagram_split.view(whole, capacity, event);
-    }
-
-    /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
-    pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
-        assert(group_id < core.constants.buffer_groups_max);
-        return loop.groups[group_id].bytes_of(buffer_id);
-    }
+    pub const provide_datagram_buffers = buffers.provide_datagram_buffers;
+    pub const datagram = buffers.datagram;
+    pub const provided_buffer = buffers.provided_buffer;
+    pub const reserve_buffer_group = buffers.reserve;
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        return loop.inbox.drain_mailboxes(loop.tables.id, events);
+        return loop.inbox.drain_mailboxes(loop.tables.id, events, &loop.tables.dispatch);
     }
 
     /// Tells the registry and the offload's workers this loop is about to sleep: `core.inbox`'s.

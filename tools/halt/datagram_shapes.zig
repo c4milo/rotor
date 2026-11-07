@@ -25,14 +25,16 @@ pub fn Scenario(comptime Loop: type, comptime buffers: type) type {
         var first_memory: [group_bytes + alignment]u8 align(alignment) = undefined;
         var second_memory: [group_bytes + alignment]u8 align(alignment) = undefined;
 
-        /// Provides group 0 with the default shape, then group 1 with `other_shape`. With the
-        /// check deleted, the second group is made and the scenario returns.
+        /// Provides a group with the default shape, then a second group with `other_shape`. With
+        /// the check deleted, the second group is made and the scenario returns.
         pub fn provide_two_shapes(loop: *Loop) void {
+            const first_group = loop.reserve_buffer_group() catch return;
+            const second_group = loop.reserve_buffer_group() catch return;
             const first = aligned(&first_memory);
-            loop.provide_datagram_buffers(0, first, buffer_count, buffer_bytes, .{}) catch return;
+            loop.provide_datagram_buffers(first_group, first, buffer_count, buffer_bytes, .{}) catch return;
             const second = aligned(&second_memory);
             scenario.reached_violation();
-            loop.provide_datagram_buffers(1, second, buffer_count, buffer_bytes, other_shape) catch {};
+            loop.provide_datagram_buffers(second_group, second, buffer_count, buffer_bytes, other_shape) catch {};
         }
 
         /// The memory aligned forward at run time, so the scenario does not depend on the

@@ -1,8 +1,9 @@
 //! `zig build test-compile-fail`: proves that a library cannot tick, drain, end or cancel
-//! everything on a loop it shares (decision 28). Each file of `tools/compile_fail/` calls one
-//! refused call of `rotor.SharedLoop`, and its compile must fail with the message that states the
-//! rule. A compile that succeeds, or that fails with another message, fails the step. `zig build
-//! test` depends on it.
+//! everything on a loop it shares (decision 28), and cannot name a buffer group by a literal or
+//! answer a poller with a `bool` (decision 29). Each file of `tools/compile_fail/` makes one such
+//! call, and its compile must fail with the message that states the rule or names the type. A
+//! compile that succeeds, or that fails with another message, fails the step. `zig build test`
+//! depends on it.
 const std = @import("std");
 const modules = @import("modules.zig");
 
@@ -10,7 +11,7 @@ const modules = @import("modules.zig");
 const Case = struct { file: []const u8, message: []const u8 };
 
 /// One case for each name of `core.shared_loop.refused_calls`, with the message of its declaration
-/// in `src/core/shared_loop.zig`.
+/// in `src/core/shared_loop.zig`, then the two types of decision 29, with the compiler's message.
 pub const cases = [_]Case{
     .{
         .file = "tick",
@@ -21,6 +22,16 @@ pub const cases = [_]Case{
     .{ .file = "deinit", .message = "only the program ends a shared loop" },
     .{ .file = "cancel_all", .message = "cancel_all cancels every library's operations" },
     .{ .file = "discard_tasks", .message = "only the program discards the task queue" },
+    // Decision 29: the types of a group id and of a poller's answer.
+    .{
+        .file = "release_buffers",
+        .message = "expected type 'buffer_group.BufferGroup', found 'comptime_int'",
+    },
+    .{
+        .file = "poller",
+        .message = "expected type 'fn (*poller.Library) dispatch.dispatch_callbacks.WaitLimit', " ++
+            "found 'fn (*poller.Library) bool'",
+    },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.

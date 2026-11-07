@@ -1,4 +1,4 @@
-//! The calls of decisions 26, 27 and 28 that every backend's `Loop` exports, written once: the
+//! The calls of decisions 26 to 29 that every backend's `Loop` exports, written once: the
 //! pollers, the tasks, the view a library holds, and the heartbeat. Split from `dispatch.zig` for
 //! the 500-line limit.
 const dispatch_module = @import("dispatch.zig");
@@ -8,12 +8,13 @@ const tasks_module = @import("../tasks.zig");
 
 const AddPollerError = dispatch_module.AddPollerError;
 const Poller = dispatch_module.Poller;
+const WaitLimit = dispatch_module.WaitLimit;
 const ScheduleError = tasks_module.ScheduleError;
 const Task = tasks_module.Task;
 
-/// The calls of decisions 26, 27 and 28 that every backend's `Loop` exports, written once. `Loop`
-/// has a `tables: Tables` field. Each call checks that the loop's own thread makes it (decision 8,
-/// class B).
+/// The calls of decisions 26 to 29 that every backend's `Loop` exports, written once. `Loop` has
+/// a `tables: Tables` field and an `inbox: Inbox` field. Each call checks that the loop's own
+/// thread makes it (decision 8, class B).
 pub fn Calls(comptime Loop: type) type {
     return struct {
         /// Adds `poller`, which the loop calls once in each tick (decision 26).
@@ -65,6 +66,18 @@ pub fn Calls(comptime Loop: type) type {
         pub fn discard_tasks(loop: *Loop) u32 {
             loop.tables.assert_owner();
             return loop.tables.dispatch.discard_tasks();
+        }
+
+        /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it
+        /// may sleep: `.now` while work is left, `.at` the nearest timer or poller limit, and
+        /// `.none` when neither exists. It reads no clock and changes no state. Program only, and
+        /// it halts inside a tick (class B).
+        pub fn wait_limit(loop: *Loop) WaitLimit {
+            loop.tables.assert_owner();
+            const limit = loop.tables.wait_limit();
+            if (limit == .now) return .now;
+            if (loop.inbox.holds_messages(loop.tables.id)) return .now;
+            return limit;
         }
 
         /// The view that the program hands to each library (decision 28). Its address is the

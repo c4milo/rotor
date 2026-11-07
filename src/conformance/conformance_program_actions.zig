@@ -16,8 +16,7 @@ const Kind = ledger_module.Kind;
 const us = core.constants.ns_per_us;
 const ms = core.constants.ns_per_ms;
 
-/// The provided-buffer group of the datagram receive.
-pub const group_id = 3;
+/// The buffers of the provided-buffer group of the datagram receive.
 pub const group_buffers = 32;
 pub const buffer_bytes = 2048;
 
@@ -82,6 +81,8 @@ pub const Stream = struct {
 
 /// A datagram receiver and sender over loopback, and the ids each side saw.
 pub const Datagrams = struct {
+    /// The provided-buffer group of the datagram receive, which the program reserved.
+    group: core.BufferGroup,
     receiver: core.Descriptor,
     sender: core.Descriptor,
     out: core.datagram.Outbound,
@@ -107,12 +108,12 @@ pub const Library = struct {
     added: bool = false,
     polls: u32 = 0,
 
-    fn polled(library: *Library) bool {
+    fn polled(library: *Library) core.WaitLimit {
         const program = library.program;
         library.polls += 1;
-        if (program.stopping) return false;
+        if (program.stopping) return .none;
         if (program.random.chance(1, 3)) program.jobs.schedule_any(program, .poller) catch |err| program.fail(err);
-        return program.random.chance(1, 4);
+        return if (program.random.chance(1, 4)) .now else .none;
     }
 };
 
@@ -226,7 +227,7 @@ fn submit_udp_receive(program: *Program) !void {
     if (datagrams.receive_entry != null) return;
     const entry = program.ledger.claim(&program.random) orelse return;
     entry.timeout_set = false;
-    try submit(program, entry, Operation.receive_from(0, datagrams.receiver, group_id), .udp_receive);
+    try submit(program, entry, Operation.receive_from(0, datagrams.receiver, datagrams.group), .udp_receive);
     datagrams.receive_entry = entry;
 }
 
@@ -321,8 +322,8 @@ pub fn on_more(program: *Program, entry: *Entry, event: Event) !void {
 fn on_datagram(program: *Program, event: Event) !void {
     if (!event.flags.buffer) return error.DatagramWithoutBuffer;
     const datagrams = &program.datagrams;
-    defer program.main.loop.give_back_buffer(group_id, event.flags.buffer_id);
-    const delivery = program.main.loop.datagram(group_id, event);
+    defer program.main.loop.give_back_buffer(datagrams.group, event.flags.buffer_id);
+    const delivery = program.main.loop.datagram(datagrams.group, event);
     if (delivery.bytes.len != @sizeOf(u64)) return error.DatagramLengthWrong;
     const id = std.mem.readInt(u64, delivery.bytes[0..@sizeOf(u64)], .little);
     if (id >= datagrams.next_id) return error.DatagramNeverSent;

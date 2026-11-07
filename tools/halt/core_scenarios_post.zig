@@ -16,7 +16,7 @@ fn post_to_the_loop_itself() void {
 }
 
 fn post_a_tag_above_the_limit_with_no_operation() void {
-    const above: core.Message = .{ .payload = 1, .tag = core.constants.message_tag_max + 1 };
+    const above: core.Message = .{ .payload = 1, .tag = core.constants.message_tag_wake + 1 };
     scenario.reached_violation();
     _ = core.remote.post_now(null, 0, 1, above) catch {};
 }

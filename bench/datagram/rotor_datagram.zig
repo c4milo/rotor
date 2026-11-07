@@ -64,12 +64,6 @@ const operations = 2 * in_flight_max + 64;
 const entries = 4096;
 const events_max = 1024;
 
-/// The two buffer groups: one per socket, because a group serves one socket's receives and both
-/// sockets receive here. `provide_datagram_buffers` fixes one reserve for the loop, which both
-/// groups then share.
-const server_group = 0;
-const client_group = 1;
-
 /// Buffers per group, and the bytes of each: the prefix plus the largest payload offered.
 const group_buffers = 512;
 const bytes_max = 1400;
@@ -117,8 +111,14 @@ const Options = struct {
     seconds: u64 = 3,
 };
 
+/// The two buffer groups: one per socket, because a group serves one socket's receives and both
+/// sockets receive here. `provide_datagram_buffers` fixes one reserve for the loop, which both
+/// groups then share.
+const Groups = struct { server: core.BufferGroup, client: core.BufferGroup };
+
 const Run = struct {
     loop: *Loop,
+    groups: Groups,
     options: Options,
     deadline_ns: u64,
     round_trips: u64 = 0,
@@ -152,21 +152,26 @@ pub fn main(init: std.process.Init) !void {
         .flags = .{ .peer = true },
     };
 
-    try provide(&loop);
-    var state: Run = .{ .loop = &loop, .options = options, .deadline_ns = 0 };
+    const groups = try provide(&loop);
+    var state: Run = .{ .loop = &loop, .groups = groups, .options = options, .deadline_ns = 0 };
     const span_ns = try run(&state, server, client);
     try report(init, &state, span_ns);
 }
 
-fn provide(loop: *Loop) !void {
-    try loop.provide_datagram_buffers(server_group, &server_memory, group_buffers, buffer_bytes, .{});
-    try loop.provide_datagram_buffers(client_group, &client_memory, group_buffers, buffer_bytes, .{});
+fn provide(loop: *Loop) !Groups {
+    const groups: Groups = .{
+        .server = try loop.reserve_buffer_group(),
+        .client = try loop.reserve_buffer_group(),
+    };
+    try loop.provide_datagram_buffers(groups.server, &server_memory, group_buffers, buffer_bytes, .{});
+    try loop.provide_datagram_buffers(groups.client, &client_memory, group_buffers, buffer_bytes, .{});
+    return groups;
 }
 
 /// Arms both receives, fills the window, and keeps it full until the deadline. Returns the span.
 fn run(state: *Run, server: core.Descriptor, client: core.Descriptor) !u64 {
     const loop = state.loop;
-    try arm_receives(loop, server, client);
+    try arm_receives(loop, state.groups, server, client);
 
     const started = now_ns();
     state.deadline_ns = started + state.options.seconds * core.constants.ns_per_s;
@@ -187,15 +192,15 @@ fn run(state: *Run, server: core.Descriptor, client: core.Descriptor) !u64 {
     return span;
 }
 
-fn arm_receives(loop: *Loop, server: core.Descriptor, client: core.Descriptor) !void {
+fn arm_receives(loop: *Loop, groups: Groups, server: core.Descriptor, client: core.Descriptor) !void {
     const armed = loop.submit(&.{
-        receive_from(user_data_server_receive, server, server_group),
-        receive_from(user_data_client_receive, client, client_group),
+        receive_from(user_data_server_receive, server, groups.server),
+        receive_from(user_data_client_receive, client, groups.client),
     }, &.{});
     if (armed != 2) return error.SubmitRefused;
 }
 
-fn receive_from(user_data: u64, socket: core.Descriptor, group: u16) Operation {
+fn receive_from(user_data: u64, socket: core.Descriptor, group: core.BufferGroup) Operation {
     return .{ .user_data = user_data, .kind = .{ .receive_from = .{
         .socket = socket,
         .group = group,
@@ -215,7 +220,7 @@ fn handle(state: *Run, event: Event, server: core.Descriptor, client: core.Descr
 /// QUIC server makes per packet.
 fn serve(state: *Run, event: Event, server: core.Descriptor) void {
     const received = event.outcome() catch return;
-    const delivery = state.loop.datagram(server_group, event);
+    const delivery = state.loop.datagram(state.groups.server, event);
     // The window slot rides in the first bytes, so the client knows which round trip returned.
     const slot = slot_of(delivery.bytes);
     to_client[slot] = Outbound.reply_to(&delivery.from);
@@ -224,15 +229,15 @@ fn serve(state: *Run, event: Event, server: core.Descriptor) void {
         .buffer = .{ .bytes = delivery.bytes[0..received] },
         .to = &to_client[slot],
     } } }}, &.{});
-    state.loop.give_back_buffer(server_group, event.flags.buffer_id);
+    state.loop.give_back_buffer(state.groups.server, event.flags.buffer_id);
 }
 
 /// The client side: one round trip closed, its latency recorded, and another sent unless the
 /// deadline has passed.
 fn complete_round_trip(state: *Run, event: Event, client: core.Descriptor) void {
-    defer state.loop.give_back_buffer(client_group, event.flags.buffer_id);
+    defer state.loop.give_back_buffer(state.groups.client, event.flags.buffer_id);
     _ = event.outcome() catch return;
-    const delivery = state.loop.datagram(client_group, event);
+    const delivery = state.loop.datagram(state.groups.client, event);
     const slot = slot_of(delivery.bytes);
     const at_ns = now_ns();
     state.round_trips += 1;

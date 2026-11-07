@@ -123,7 +123,7 @@ fn submit_a_timer_with_a_deadline_of_its_own() void {
 fn post_a_tag_above_the_limit() void {
     const operation: core.Operation = .{ .user_data = 1, .kind = .{ .post = .{
         .target = 1,
-        .message = .{ .payload = 0, .tag = core.constants.message_tag_max + 1 },
+        .message = .{ .payload = 0, .tag = core.constants.message_tag_wake + 1 },
     } } };
     scenario.reached_violation();
     operation.assert_valid();
@@ -256,7 +256,7 @@ fn name_a_registered_buffer_above_the_limit() void {
 fn receive_a_datagram_from_a_group_above_the_limit() void {
     const operation: core.Operation = .{ .user_data = 1, .kind = .{ .receive_from = .{
         .socket = 3,
-        .group = core.constants.buffer_groups_max,
+        .group = @enumFromInt(core.constants.buffer_groups_max),
     } } };
     scenario.reached_violation();
     operation.assert_valid();

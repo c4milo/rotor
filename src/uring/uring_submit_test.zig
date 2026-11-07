@@ -98,7 +98,7 @@ test "a multishot accept and a multishot receive from a group set their flags" {
 
     const receive = prepared(.{ .user_data = 1, .kind = .{ .receive = .{
         .socket = 8,
-        .target = .{ .group = 2 },
+        .target = .{ .group = @enumFromInt(2) },
         .multishot = true,
     } } }, .{});
     try testing.expectEqual(linux.IORING_OP.RECV, receive.opcode);
@@ -124,7 +124,7 @@ test "a registered descriptor's index rides in fd, with the fixed-file flag besi
 
     // A receive from a group keeps its own flag: the two are or-ed, not assigned.
     const receive = prepared(.{ .user_data = 1, .descriptor_registered = true, .kind = .{
-        .receive = .{ .socket = 2, .target = .{ .group = 1 }, .multishot = true },
+        .receive = .{ .socket = 2, .target = .{ .group = @enumFromInt(1) }, .multishot = true },
     } }, .{});
     const both: u8 = linux.IOSQE_FIXED_FILE | linux.IOSQE_BUFFER_SELECT;
     try testing.expectEqual(both, receive.flags);

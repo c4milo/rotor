@@ -36,7 +36,6 @@ const sync = backend.sync;
 /// aligned, and 65,535 is odd.
 const buffer_bytes = std.mem.alignForward(u32, core.datagram.prefix_bytes(.{}) + core.constants.coalesced_bytes_max, 64);
 const group_buffers = 64;
-const group_id = 0;
 
 /// Sends outstanding at once, at most.
 const in_flight_max = 64;
@@ -70,6 +69,7 @@ const Options = struct {
 
 const Run = struct {
     loop: *Loop,
+    group: core.BufferGroup,
     options: Options,
     client: core.Descriptor,
     server: core.Descriptor,
@@ -95,7 +95,8 @@ pub fn main(init: std.process.Init) !void {
     var loop: Loop = undefined;
     try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
     defer loop.deinit();
-    try loop.provide_datagram_buffers(group_id, &group_memory, group_buffers, buffer_bytes, .{});
+    const group = try loop.reserve_buffer_group();
+    try loop.provide_datagram_buffers(group, &group_memory, group_buffers, buffer_bytes, .{});
 
     const any_port = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
     const server = try sync.open_datagram(.ipv4, &any_port, .{ .coalesce = options.coalesce });
@@ -109,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
         .ecn = .not_ect,
         .flags = .{ .peer = true },
     };
-    var state: Run = .{ .loop = &loop, .options = options, .client = client, .server = server };
+    var state: Run = .{ .loop = &loop, .group = group, .options = options, .client = client, .server = server };
     const span_ns = try run(&state);
     try report(init, &state, span_ns);
 }
@@ -134,7 +135,7 @@ fn run(state: *Run) !u64 {
 fn arm(state: *Run) void {
     _ = state.loop.submit(&.{.{ .user_data = user_data_receive, .kind = .{ .receive_from = .{
         .socket = state.server,
-        .group = group_id,
+        .group = state.group,
     } } }}, &.{});
 }
 
@@ -157,7 +158,7 @@ fn handle(state: *Run, event: Event) void {
     if (event.flags.buffer) {
         state.datagrams += 1;
         if (event.flags.segment == 0) state.receives += 1;
-        state.loop.give_back_buffer(group_id, event.flags.buffer_id);
+        state.loop.give_back_buffer(state.group, event.flags.buffer_id);
     }
     // A multishot receive can end with a success, or when the group ran dry: start it again.
     if (!event.flags.more and now_ns() < state.deadline_ns) arm(state);

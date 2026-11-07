@@ -192,7 +192,7 @@ pub const Slot = extern struct {
             .buffer => |buffer| slot.fill_transfer(receive.socket, buffer.bytes, buffer.registered),
             .group => |group| {
                 slot.descriptor = receive.socket;
-                slot.buffer_index = group;
+                slot.buffer_index = @intFromEnum(group);
                 slot.flags.buffer_group = true;
             },
         }
@@ -327,7 +327,7 @@ test "fill flattens a multishot receive from a group, a post and a timer" {
     var slot = claimed();
     slot.fill(&.{ .user_data = 1, .kind = .{ .receive = .{
         .socket = 4,
-        .target = .{ .group = 2 },
+        .target = .{ .group = @enumFromInt(2) },
         .multishot = true,
     } } });
     try testing.expect(slot.flags.multishot and slot.flags.buffer_group);
