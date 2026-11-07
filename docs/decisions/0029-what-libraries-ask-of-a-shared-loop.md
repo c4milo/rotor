@@ -1,8 +1,9 @@
 # 29. What libraries on a shared loop ask of it
 
-Status: accepted on 2026-11-06 (see "Ruling"). Every cost here is a prior: a row of
-`docs/costs.md` at the `mac` median, or an instruction count from arithmetic. Nothing was measured
-for this record before the ruling.
+Status: accepted on 2026-11-06 (see "Ruling"), and **built** on 2026-11-07 with the names of
+decision 30 (see "What was built"). Every cost in the sections before "What was built" is a prior:
+a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic. Nothing was
+measured for this record before the ruling.
 
 ## Ruling, 2026-11-06
 
@@ -518,6 +519,77 @@ These items of CLAUDE.md's "Ask before" apply:
 The record adds no dependency, no edge to the module graph, and no file to decision 7's list. It
 weakens no assertion. It changes the API of decisions 15 and 26: the calls that name a group and a
 poller's handler. No tag holds that API yet, because `v0.9.0` is older than decision 26.
+
+## What was built
+
+Built on 2026-11-07, before decision 30, by the build order of decision 30's ruling. Decision 30,
+open question 1, renamed two names of this record before the build: `reserve_group` is
+`reserve_buffer_group`, and `GroupsFull` is `BufferGroupsFull`. The other sections keep the old
+names. The code:
+
+- `src/core/dispatch/dispatch_callbacks.zig` holds `Completion`, `Poller` and `WaitLimit`, split
+  from `dispatch.zig` for the 500-line limit. `dispatch.zig` declares each one.
+- `Dispatch.until_ns`, a `WaitLimit`. The compiler put it at offset 88, after `tasks`. `Dispatch`
+  is 104 bytes, and its alignment stays 8. A comptime assert holds both.
+- `Dispatch.note_wake`, which the drain calls, and `Dispatch.limit_between_ticks`, which halts
+  inside a tick.
+- `Tables.wait_bound` takes the least of the nearest timer and `until_ns`. `Tables.wait_limit` is
+  core's part of the host's call.
+- `Inbox.drain_mailboxes` takes the loop's `*Dispatch`. `Inbox.holds_messages` reads every ring to
+  the loop.
+- `src/core/buffer_group.zig`: `BufferGroup`, `ReserveError` and `Reservations`, the mask. Each
+  backend's `Loop` holds the mask as `buffer_groups`, beside `groups`, and resets it at `init`.
+- `wait_limit` is written once, in `dispatch_calls.zig`, for the three backends. The public module
+  declares it, and `SharedLoop` does not.
+- `src/rotor/rotor_loop_buffers.zig` holds the buffer calls of the public `Loop`, split from
+  `rotor_loop.zig` for the 500-line limit.
+- `tools/compile_fail/release_buffers.zig` and `tools/compile_fail/poller.zig`.
+- `src/conformance/conformance_wait_limit.zig` holds the scenarios of the poller's limit, the wakes
+  and the host. `conformance_buffer_release.zig` holds the two libraries on one loop. The scenario
+  of the wakes from another thread is the race gate's scenario too.
+
+Where the code differs from the proposal:
+
+1. **The drain writes a wake with no branch.** A first build compared the tag in a branch. The
+   compiler then made the ring's pop a call, and each tick paid it. On `mac`, the `timer` row of
+   the work gate counted 1,179 instructions, against 1,151 at `48cacba`. Now the drain writes the
+   event of each message. A wake gets tag 0, and the count of events does not grow for it. The
+   drain counts the wakes as the messages the ring gave less the events it wrote. The event of a
+   wake is in a place that the next message takes, or that no caller reads. `Event.message` keeps
+   its check of the tag of each message that is not a wake.
+2. **`wait_limit` reads the offload's rings too.** A worker's result is in a ring to the loop, as a
+   message is, and the host would sleep on it. The record named only the mailboxes.
+3. **More halt scenarios than the table of "How it would be checked".** The owner checks of
+   `reserve_buffer_group` and `wait_limit`, on each backend. The halt of a provide with a group that
+   no caller reserved runs on each backend, through `tools/halt/buffer_release.zig`. The check of
+   `wait_limit` inside a tick runs through `Dispatch.limit_between_ticks`.
+4. **`bench/echo/rotor_echo.zig` names its group by a cast.** The server is the only user of each
+   of its loops. It names the first group a loop reserves, 0, as a constant, and `serve` asserts
+   that the loop gave that id.
+5. **The halt scenarios that take a tag above the limit post `message_tag_wake + 1`.** A tag of
+   `message_tag_max + 1` is the wake's tag now, which a post accepts.
+
+The instruction gate on `mac` on 2026-11-07, section `macos-aarch64-kqueue`, with
+`zig build work-gate`. The column `48cacba` is the tree before this record, measured the same day.
+The baseline is `bench/baseline/work.txt`, which this build does not change.
+
+| row | baseline | `48cacba` | this build | against the baseline |
+|---|---:|---:|---:|---:|
+| `post` | 1217 | 1200 | 1226 | +0.7 percent |
+| `post-operation` | 3114 | 3114 | 3158 | +1.4 percent |
+| `timer` | 1151 | 1151 | 1159 | +0.7 percent |
+| `batch` | 24624 | 24806 | 24801 | +0.7 percent |
+| `wait` | 5296 | 5299 | 5311 | +0.3 percent |
+| `task` | 615 | 606 | 620 | +0.8 percent |
+| `tasks-64` | 4558 | 4535 | 4543 | -0.3 percent |
+| `record` | 1283 | 1283 | 1296 | +1.0 percent |
+| `poller` | 573 | 564 | 575 | +0.3 percent |
+
+Each row is inside the tolerance of 2 percent. Against `48cacba`, `post` grew by 2.2 percent and
+`task` by 2.3 percent, more than the priors of "What it costs". The priors counted 5 and 3
+instructions for those rows, and the gate counted 26 and 14. Two runs of the same build differed
+by up to 4 instructions on a row. The baselines do not change: a new `poller` baseline waits for
+the build of both records, as "Ask before" says.
 
 ## Sources
 

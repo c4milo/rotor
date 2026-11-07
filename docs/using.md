@@ -231,22 +231,29 @@ Three ways to hand the loop memory for bytes:
   `registered_buffers_max` (1,024). An operation then names one by index in `Buffer.registered`,
   and io_uring skips pinning its pages per operation. kqueue accepts the same calls and gains
   nothing from them.
-- A provided-buffer group: `provide_buffers(&loop, group_id, memory, count, buffer_bytes)`, with
+- A provided-buffer group. First `const group = try loop.reserve_buffer_group()`, once: it
+  returns the lowest group id that no caller holds, as a `rotor.BufferGroup`, which is yours until
+  the loop's `deinit` (decision 29). Each call that names a group takes that type, so a literal id
+  fails to compile, and two libraries on one loop cannot take the same group. It returns
+  `error.BufferGroupsFull` when every id is reserved. Then
+  `provide_buffers(&loop, group, memory, count, buffer_bytes)`, with
   `memory` one block of `buffers.group_bytes(count, buffer_bytes)` bytes aligned to
   `buffers.group_alignment`; the loop keeps its bookkeeping at the front and the buffers after it.
-  `count` is a power of two. `Operation.receive_group` lets the kernel pick a buffer; the event
-  carries `flags.buffer` and `buffer_id`, and `loop.provided_buffer(group_id, buffer_id)` is its
-  bytes. The buffer is the caller's from that event until `loop.give_back_buffer(group_id,
+  `count` is a power of two. A provide with a group that no caller reserved halts.
+  `Operation.receive_group` lets the kernel pick a buffer; the event
+  carries `flags.buffer` and `buffer_id`, and `loop.provided_buffer(group, buffer_id)` is its
+  bytes. The buffer is the caller's from that event until `loop.give_back_buffer(group,
   buffer_id)`, whether or not the receive has ended. A group that runs out ends a multishot
   receive with `buffers_exhausted`: give buffers back and submit it again. The end of the stream
   ends it too, with a final event of 0 that names no buffer. At most
   `buffer_groups_max` groups (16) of `buffers_per_group_max` (32,768).
 
-  `loop.release_buffers(group_id)` takes a group back: its memory is yours again, and you may
-  provide the id again. Call it after the final event of every receive from the group. It halts
-  while an operation still names the group. A buffer you hold at the release is plain memory, and
-  its `give_back_buffer` halts. A library that stops and starts on a loop that lives on releases its
-  group at the stop, and so uses one id and not one for each start.
+  `loop.release_buffers(group)` takes a group back: its memory is yours again, and you may
+  provide the group again. The id stays reserved: no call gives it back. Call it after the final
+  event of every receive from the group. It halts while an operation still names the group. A
+  buffer you hold at the release is plain memory, and its `give_back_buffer` halts. A library that
+  stops and starts on a loop that lives on releases its group at the stop, and so uses one id and
+  not one for each start.
 
   **Check the alignment you got, do not assume it.** io_uring requires the 64 KiB of
   `buffers.group_alignment` and rotor asserts it, so a misaligned group halts with a named assertion
@@ -283,10 +290,10 @@ names an index instead of a descriptor. A `close` always names a descriptor of t
 ## Datagrams
 
 A datagram group is a provided-buffer group with room in front of every buffer for the peer
-address and the control messages: `provide_datagram_buffers(&loop, group_id, memory, count,
-buffer_bytes, .{})`, from one block as above. One loop serves one datagram shape: the first
+address and the control messages: `provide_datagram_buffers(&loop, group, memory, count,
+buffer_bytes, .{})`, with a group that `reserve_buffer_group` gave and one block as above. One loop serves one datagram shape: the first
 datagram group fixes it, and a later group with different options halts, because the loop reads
-every datagram at the offset that shape gives. `receive_from` receives into it, one event per datagram, and `loop.datagram(group_id, event)` is the only reader
+every datagram at the offset that shape gives. `receive_from` receives into it, one event per datagram, and `loop.datagram(group, event)` is the only reader
 of such a buffer: it returns a `Delivery` with the peer, the local address when the socket was asked
 for it, the ECN
 codepoint, and the bytes.
@@ -375,7 +382,9 @@ may do to it is post a message:
   application's memory, `registry.init(&memory, loops)` once, and each loop gets an `id` below
   `loops` and the `registry` in its options. `post{ .target, .message }` from one loop arrives in
   the target's next tick as an event with `flags.message`, `user_data` the payload and `result`
-  the tag (at most `message_tag_max`). The sender's own final event says 0, `mailbox_full` or
+  the tag (at most `message_tag_max`). `rotor.Message.wake`, whose tag is `message_tag_wake`, is
+  the one message that makes no event: the loop drops it, and its next tick does not block before
+  its pollers run (decision 29). The sender's own final event says 0, `mailbox_full` or
   `loop_not_found`. On every backend the mailbox between two loops holds `mailbox_messages`
   (256), and `rotor.post_bounded` is true. A loop that sleeps is woken by the post that finds it
   asleep: on io_uring with an `IORING_OP_MSG_RING` that carries no message. Between two loops
@@ -455,7 +464,7 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
 - The program calls `loop.shared()` and hands each library the `*SharedLoop` it returns, which the
   library keeps. Its address is the loop's, and each call on it is the `Loop` call of the same
   name: `submit`, `cancel`, `post`, `now_ns`, `schedule`, `is_scheduled`, `task_budget_left`,
-  `add_poller`, `remove_poller`, and the buffer group calls. `tick`, `drain`, `deinit`,
+  `add_poller`, `remove_poller`, `reserve_buffer_group`, and the buffer group calls. `tick`, `drain`, `deinit`,
   `cancel_all` and `discard_tasks` fail to compile on it, with a message that states the rule
   (decision 28). A library that casts the view back to a `*Loop` and ticks inside a callback still
   halts.
@@ -471,8 +480,18 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
   the library frees the record.
 - Work that is not one operation, such as a batch of sends to flush, goes in a `Poller`, declared
   with `Poller.init`. `loop.add_poller` adds it, and the loop calls it once in each tick before the
-  tick waits. It returns true when the tick must not block, for example because work is left. At
-  most `pollers_max` (8) pollers; one more returns `error.PollersFull`.
+  tick waits. It returns a `rotor.WaitLimit` (decision 29): `.now` when the tick must not block, for
+  example because work is left; `.at(ns)` for a deadline on the loop's clock, `now_ns`; and `.none`
+  otherwise. The tick bounds its wait at the least limit of its pollers, as it bounds it at the
+  nearest timer, so a deadline that moves needs no timer. At most `pollers_max` (8) pollers; one
+  more returns `error.PollersFull`.
+- A library that another thread wakes keeps a flag, a `std.atomic.Value(bool)`, in its own struct,
+  and reads it in its poller with acquire order. The other thread stores the flag with release
+  order, then posts `rotor.Message.wake` through its `Remote` or its own loop. The wake reaches no
+  one. A loop that sleeps wakes, and its next tick calls the poller. `MailboxFull` on a wake is
+  safe to drop: the ring holds messages, so the loop does not sleep until it reads them.
+- A library reserves its buffer group with `shared.reserve_buffer_group()` once, at init, and keeps
+  the `BufferGroup` until the loop's `deinit`.
 - Work that continues later, such as the caller's callback after an exchange ends, goes in a
   `Task`, declared with `Task.init(Client, "done", Client.on_done)`. `loop.schedule(&client.done)`
   queues it, and the loop calls it once. A task queued by the program, a poller or a record runs in
@@ -510,9 +529,16 @@ the loop when the loop has something to deliver (decision 23).
 - **`loop.wait_descriptor()` is what the host waits on**: the loop's kqueue, or its epoll instance.
   It answers null on io_uring. The host adds it to its own wait for read readiness. rotor's tests
   wait with a second epoll instance on Linux and a second kqueue on macOS.
-- **The host's cycle**: wait for the descriptor to be readable, call `tick` with a wait of 0 until
-  a tick delivers nothing, and wait again. It runs the same ticks after it submits or cancels,
-  before it waits, because an operation reaches the kernel in a tick.
+- **The host's cycle** (decision 29): tick with a wait of 0. Call `loop.wait_limit()` as the last
+  call before the sleep, and tick again on `.now`. Then sleep in the host's own wait, with the
+  descriptor among what it waits on: on `.at(t)` for `t -| loop.now_ns()` at most, and on `.none`
+  for as long as the host's own wait allows. `wait_limit` reads no clock and changes nothing. It
+  answers `.now` while a task is queued, an operation waits to be submitted, a result waits to be
+  handed over, a ring holds a message, or the nearest timer or poller limit is due. A poller that
+  returned `.now`, a wake the last tick took, and a record or a task the last tick called each
+  give `.now` too. It halts inside a tick, and `SharedLoop` does not declare it. The host runs the
+  same ticks after it submits or cancels, before it waits, because an operation reaches the kernel
+  in a tick.
 - **Every tick gets a wait of 0.** A tick that blocks arms the loop's wait timer, which makes the
   descriptor readable later for no operation.
 - **The host does nothing else to the descriptor.** It does not read it, close it, or change what
@@ -522,10 +548,10 @@ the loop when the loop has something to deliver (decision 23).
 
 What the descriptor does not report, so that the host wakes for it by its own means:
 
-- **A timer or an operation's deadline that comes due.** A tick finds those by reading the clock.
-  A host bounds its own wait by its nearest timer, or wakes on a period.
-- **A message another loop or a `Remote` posts, and an offload worker's result.** Only a loop that
-  blocks in `tick` asks to be woken for those.
+- **A timer, a poller's limit or an operation's deadline that comes due.** A tick finds those by
+  reading the clock. The host bounds its own wait by what `wait_limit` answers.
+- **A message or a wake another loop or a `Remote` posts, and an offload worker's result.** Only a
+  loop that blocks in `tick` asks to be woken for those.
 
 There is one more limit. While an operation of the loop waits on a descriptor, the wait descriptor
 is not readable after a tick that delivers nothing. While none waits, a tick with a wait of 0 asks
@@ -629,7 +655,8 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 | file operations out on the offload per loop; more stay queued | `offload_in_flight_max`, 256 |
 | registered descriptors, registered buffers | 1,024 each |
 | provided-buffer groups, buffers per group | 16, 32,768 |
-| a message's tag | `message_tag_max`, 0x7fff_f000 |
+| a message's tag | `message_tag_max`, 0x7fff_efff |
+| the tag of `Message.wake` | `message_tag_wake`, 0x7fff_f000 |
 | messages queued from one loop to another (kqueue) | `mailbox_messages`, 256 |
 | registrations in, readiness out, per tick (kqueue) | `changes_max`, `readiness_max`, 256 |
 
