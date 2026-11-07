@@ -8,7 +8,7 @@ Amended on 2026-11-06 by Camilo: `src/uring/uring.zig`, `src/kqueue/kqueue.zig` 
 (decision 26). Ledger rows H1 to H3 hold the numbers. The hint landed in d1657ce before this
 amendment, which is the mistake the amendment corrects. The lint does not report `@branchHint`.
 
-Amended on 2026-11-07 by Camilo: `src/core/stall.zig` joins the table, for one use, `noinline` on
+Amended on 2026-11-06 by Camilo: `src/core/stall.zig` joins the table, for one use, `noinline` on
 `Heartbeat.check_turn` (decision 28). Ledger row H5 holds the numbers. The lint does not report
 `noinline`.
 

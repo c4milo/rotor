@@ -54,16 +54,16 @@
 # count 63 more instructions. With that change every older row counted within 3 instructions of the
 # tree before it.
 #
-# `task` and `tasks-64` were raised on 2026-11-07 for decision 28, by Camilo's ruling 2 of that
+# `task` and `tasks-64` were raised on 2026-11-06 for decision 28, by Camilo's ruling 2 of that
 # record: the loop stores the name of each callback before it calls it, so a watch can name the
 # one that holds the loop. Each tick also compares its turn with the stall threshold. The counts
-# are from the tree after the optimisation of 2026-11-07, before the `noinline` turn check of
+# are from the tree after the optimisation of 2026-11-06, before the `noinline` turn check of
 # ledger row H5, which counts 3 fewer on arm64 Linux and the same on `mac`. On `mac` they are the
 # median of three runs that agreed within 2 instructions, and on arm64 Linux, cachegrind in an
 # arm64 container on `mac`. The linux-x86_64 `task` and `tasks-64` rows are deleted, so CI prints
 # them.
 #
-# The rows that decision 28 moved past the tolerance were raised on 2026-11-07 to the counts of
+# The rows that decision 28 moved past the tolerance were raised on 2026-11-06 to the counts of
 # the final tree, with H5, by Camilo's ruling 2 of that day. For each row, the list gives the count
 # at c05913b, the tree before decision 28, and the line before: macos `post` 1231 and 1218, `poller`
 # 573 and 570; linux-aarch64-uring `post` 1043 and 1029, `record` 1134 and 1128, `poller` 501 and

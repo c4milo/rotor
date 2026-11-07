@@ -13,7 +13,7 @@ names no record and adds no poller, with the hint and without it. The tree is d1
 | H2 | `src/uring/uring.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch | 1090, 2878, 1057, 23782 | 1046, 2794, 1031, 23757 | arm64 container on `mac`, cachegrind | d1657ce | 2026-11-06 |
 | H3 | `src/epoll/epoll.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch | 1265, 3163, 1115, 23870 | 1217, 3070, 1092, 23845 | arm64 container on `mac`, cachegrind | d1657ce | 2026-11-06 |
 | H4 | `src/uring/uring_submit.zig`, `flush`, its call of `send_wakes` | `@call(.always_inline, ...)` | work gate on io_uring: post, post-operation, task, record, poller | 1061, 2823, 544, 1143, 510 | 1043, 2787, 535, 1134, 501 | arm64 container on `mac`, cachegrind | this commit | 2026-11-06 |
-| H5 | `src/core/stall.zig`, `Heartbeat.check_turn` | `noinline` | work gate on io_uring, then epoll: post, post-operation, task, record, poller | 1067, 2835, 559, 1156, 519; 1234, 3103, 634, 1218, 598 | 1061, 2823, 556, 1153, 516; 1228, 3091, 631, 1215, 595 | arm64 container on `mac`, cachegrind | this commit | 2026-11-07 |
+| H5 | `src/core/stall.zig`, `Heartbeat.check_turn` | `noinline` | work gate on io_uring, then epoll: post, post-operation, task, record, poller | 1067, 2835, 559, 1156, 519; 1234, 3103, 634, 1218, 598 | 1061, 2823, 556, 1153, 516; 1228, 3091, 631, 1215, 595 | arm64 container on `mac`, cachegrind | this commit | 2026-11-06 |
 
 Without the hint the compiler inlines `tick_dispatched` into `tick`, and every tick saves more
 registers, also when it skips the dispatch. The counts are the same on every run, so the gain is

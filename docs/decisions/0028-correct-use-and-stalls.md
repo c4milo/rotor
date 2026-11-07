@@ -1,7 +1,7 @@
 # 28. A shared loop that refuses wrong use, and stalls a program can see
 
-Status: accepted on 2026-11-06 (see "Ruling"), built the same day, and made cheaper on 2026-11-07.
-Camilo ruled on the open items of the build on 2026-11-07 (see "Ruling, 2026-11-07").
+Status: accepted on 2026-11-06 (see "Ruling, 2026-11-06"), then built and made cheaper the same
+day. Camilo ruled on the open items of the build that day too (see "Ruling on the build").
 "What was built" at the end says where the code differs from the proposal, and what it measured.
 Every other cost here is a prior: a row of `docs/costs.md` at the `mac` median, or an instruction
 count from arithmetic. Nothing was measured for this record before the ruling.
@@ -27,9 +27,9 @@ It amends these records:
 - decision 23, because a host that sleeps in its own wait turns the stall count off;
 - decision 2, with new rows in "In version one".
 
-## Ruling, 2026-11-07
+## Ruling on the build
 
-Camilo ruled on the four items that the build left open:
+Camilo ruled on 2026-11-06 on the four items that the build left open:
 
 1. **`src/core/stall.zig` joins decision 7's list of hot files, for one use**: `noinline` on
    `Heartbeat.check_turn`. Decision 7 records the amendment, and ledger row H5 holds the counts
@@ -602,7 +602,7 @@ the same day:
   build called it only when a threshold was set. Item 10 of "Where the code differs from the
   proposal" changed that: each tick pays one wrapping compare, also under a null threshold. A
   null threshold reaches `check_turn` only for a span of `maxInt(u64)`, and `check_turn` returns
-  at once. So a null threshold counts no stall. Camilo accepted this cost on 2026-11-07 (ruling 3
+  at once. So a null threshold counts no stall. Camilo accepted this cost on 2026-11-06 (ruling 3
   of that day). `note_clock` stores the stamp in each case, because a watch reads the stamp with
   or without a threshold.
 
@@ -658,14 +658,14 @@ the same day:
 
 ### What it measured
 
-#### After the rulings of 2026-11-07
+#### After the rulings of 2026-11-06
 
 The final tree is the optimised tree below, with the `noinline` turn check of ledger row H5. On
 `mac`, `/usr/bin/time -l` counted three runs of each tree, and the table gives the median. The
 runs of one tree agreed within 10 instructions, except `tasks-64` at `c05913b`, within 41. On arm64
 Linux, cachegrind counted one run in an arm64 container on `mac`. `c05913b` was counted again
 the same way. "Line before" is the row of `bench/baseline/work.txt` before ruling 2 of
-2026-11-07: for `task` and `tasks-64`, the counts that ruling 2 of 2026-11-06 set.
+2026-11-06: for `task` and `tasks-64`, the counts that ruling 2 of 2026-11-06 set.
 
 | row | backend | line before | `c05913b` | final | change | final against the line | raised to |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -698,7 +698,7 @@ the same way. "Line before" is the row of `bench/baseline/work.txt` before rulin
 
 The gate compares each count with its line, and not with the count at `c05913b`. So a row fails
 when the change and the distance of `c05913b` from the line pass 2 percent together. Eight rows
-failed, and ruling 2 of 2026-11-07 raised each to its final count:
+failed, and ruling 2 of 2026-11-06 raised each to its final count:
 
 - `poller` on each backend moved past the tolerance by itself. It is one tick with one poller,
   so it pays the 13 or more instructions that "What each instruction that is left buys" counts.
@@ -717,9 +717,9 @@ three moved past 2 percent on arm64, so the other x86-64 rows keep their values.
 and `record` fail only by their distance from the line at `c05913b`. If x86-64 sat as close to
 its lines, CI's x86-64 runner fails those rows too.
 
-#### After the optimisation of 2026-11-07
+#### After the optimisation of 2026-11-06
 
-Camilo ruled on 2026-11-07 to make the build cheaper first. The target was each row of the work
+Camilo ruled on 2026-11-06 to make the build cheaper first. The target was each row of the work
 gate except `task` and `tasks-64` within 2 percent of `c05913b`, the tree before this record, with
 no change to a behaviour that this record decides. The counts below are the instruction gate with
 the default threshold. On `mac`, `/usr/bin/time -l` counted three runs of the optimised tree, which
@@ -793,7 +793,7 @@ was inline in the tick, so the tick kept `wait_ns` in a saved register: one move
 register held before. One more branch comes from item 9, where the stamp after a wait moved before
 the check of a failed wait. `post` has two ticks, so io_uring's `post` is over by 4. A `noinline`
 turn check removes 3 of them in each tick on arm64 Linux, and none on `mac`. Camilo ruled on
-2026-11-07 that the code uses it (ruling 1 of that day): decision 7 lists `src/core/stall.zig`,
+2026-11-06 that the code uses it (ruling 1 of that day): decision 7 lists `src/core/stall.zig`,
 and ledger row H5 holds the counts.
 
 `poller` cannot meet the target. It is one tick with one poller, so it pays the 7 instructions of
@@ -838,7 +838,7 @@ The first build stored the name's pointer, which each callback loaded from its `
 the comparison were not run on a quiet `mac`, which the record asked for.
 
 `bench/baseline/work.txt` takes the counts of the optimised tree for `task` and `tasks-64`, by
-Camilo's ruling 2, and the rows that "After the rulings of 2026-11-07" names. On x86-64 the
+Camilo's ruling 2, and the rows that "After the rulings of 2026-11-06" names. On x86-64 the
 `task`, `tasks-64` and `poller` rows are deleted, so CI prints them.
 
 ### How it is checked
@@ -923,7 +923,7 @@ Mutations of the rulings and of the review, each against the narrowest target:
 | io_uring and epoll: the stamp after the return of a failed wait | the Linux gate, `uring` and `epoll` | CAUGHT, CAUGHT |
 | the public `Loop.shared` without its owner check | `halt-check` | CAUGHT |
 
-Mutations of the optimisation of 2026-11-07, each against the narrowest target:
+Mutations of the optimisation of 2026-11-06, each against the narrowest target:
 
 | mutation | target | result |
 |---|---|---|
@@ -951,7 +951,7 @@ wait. The two mutations of that stamp above fail it.
 **Load 3 is NOT CAUGHT by any test of the code, and the model is its only proof.** A test on one
 thread cannot run the loop between load 1 and load 3, and no test on two cores makes that order on
 demand. `spec/tla/heartbeat/` holds it: its third mutant deletes load 3 and fails `zig build tla`.
-CLAUDE.md asks for a test that fails when the code breaks. Camilo accepted on 2026-11-07 that the
+CLAUDE.md asks for a test that fails when the code breaks. Camilo accepted on 2026-11-06 that the
 model, and not a test of the code, proves load 3 (ruling 4 of that day).
 
 ### Open after the build
