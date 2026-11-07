@@ -147,6 +147,29 @@ backend.
 `dropped_wakes` counts every wake the loop dropped since `init`, on every backend, and returns a
 `u64`, as a `Remote`'s does.
 
+### Amendment of 2026-11-07: the names of the public API
+
+Colibri's audit of the public APIs of the Zig projects found nine names in rotor that did not follow
+the Zig idioms the projects share. Camilo accepted all nine on 2026-11-07, for v0.10.0, before
+decision 30 is built. Each change goes through `core/surface.zig`, the public module and every
+backend.
+
+| # | Old | New |
+| --- | --- | --- |
+| 1 | `Operation.accept(user_data, listener, multishot: bool)` | `Operation.accept(user_data, listener)` and `Operation.accept_multishot(user_data, listener)` |
+| 2 | `Operation.Code`, `Work.Code`, `Operation.code()` | `Operation.Tag`, `Work.Tag`, `Operation.tag()`. `rotor.Code` stays the failure code |
+| 3 | `Registry.close_wakes` | `Registry.deinit` |
+| 4 | `Registry.loops()` | `Registry.loop_count()` |
+| 5 | `rotor.offload.Offload`, `rotor.statistics.Statistics`, `rotor.offload_memory_bytes(workers)` | `rotor.Offload`, `rotor.Statistics`, `Offload.memory_bytes(workers)` |
+| 6 | `Loop.heartbeat()` returns the heartbeat the loop writes. `Handle.next_generation` is public | `Loop.heartbeat()` returns a `Heartbeat` view that declares only `watch`, as `SharedLoop` does. `next_generation` is a function of `core/handle.zig` |
+| 7 | The field `Work.run`, called as `work.run(work, worker)` | The field `Work.function`, and the method `work.run(worker)` |
+| 8 | `Loop.memory_bytes(options: Options)`, `Loop.init(loop, memory, options: Options)` | Both take `*const Options`. A caller writes `&.{...}` or `&options` |
+| 9 | `rotor.AddPollerError`, `rotor.ScheduleError` | `Loop.AddPollerError`, `Loop.ScheduleError`, beside the other error sets of `Loop` |
+
+The records written before this date keep the old names where they describe what was built then.
+`zig build test-compile-fail` holds four of the changes: a multishot flag passed to `accept`, a
+writer call on the `Heartbeat` view, `Handle.next_generation`, and options passed by value.
+
 ## Alternatives it beat
 
 **Implement the std.Io table directly.** Cost: 109 functions to write and keep current against
