@@ -182,37 +182,34 @@ test "a loop held off its tick is handed the deadlines it missed, and does not s
     try harness.loop.drain(&events);
 }
 
-/// Attempts the drift measurement gets. A loop that schedules from the clock drifts on every one
-/// of them, so the verdict is the best attempt, not the first: the noise here is one-sided.
-/// Preempting this thread can only make a punctual loop look late, never make a late loop look
-/// punctual, so a single attempt fails on a busy machine while proving nothing. The first version
-/// took one attempt and failed `zig build test`, which runs the suites in parallel.
+/// Attempts the drift scenario gets. An attempt decides only when a tick reads the clock in the
+/// window where the two kinds of loop differ. A thread preempted through that whole window makes
+/// no tick there, and the attempt decides nothing. It cannot pass a loop that drifts. The
+/// scenario returns at the first attempt that decides, so the count costs nothing on a quiet
+/// machine.
 ///
-/// Ten and not five, because the worst load this test meets is the run right after a rebuild,
-/// when the compiler holds every core and the drift signal is three quarters of a period. The
-/// scenario returns on the first attempt under the bound, so the count costs nothing when the
-/// machine is quiet.
+/// Until 2026-11-07 the scenario timed two fires with the host clock and compared them to a bound.
+/// Under load on macOS, 16 copies of the suite beside 12 busy loops, the best of ten attempts
+/// measured 49.1 ms against a bound of 47.5 ms. Preemption of the test thread made a punctual
+/// loop look late. The window check reads only `now_ns`, so the time the thread waits to run
+/// cannot change the verdict.
 const drift_attempts = 10;
 
 test "a repeating timer's period is measured from its deadline, so a late loop does not drift" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    // Two periods without drift; 2.75 with. The bound sits between them, a quarter of a period
-    // from each, which a busy machine has to eat before it can turn one verdict into the other.
-    const drifted_ns = period_ns * 11 / 4;
-    const bound_ns = (2 * period_ns + drifted_ns) / 2;
-
-    var best_ns: u64 = std.math.maxInt(u64);
     var attempt: u32 = 0;
     while (attempt < drift_attempts) : (attempt += 1) {
-        best_ns = @min(best_ns, try measure_two_fires());
-        if (best_ns < bound_ns) return;
+        if (try second_fire_decides()) return;
     }
-    try testing.expect(best_ns < bound_ns);
+    // No attempt made a tick in the window, so none could tell a punctual loop from one that drifts.
+    return error.NoTickInDriftWindow;
 }
 
-/// One attempt: how long two fires of a repeating timer take, measured from the tick that armed
-/// it, with the loop held off before the first fire is taken.
-fn measure_two_fires() !u64 {
+/// One attempt. Takes the first fire of a repeating timer late, then ticks without a wait until the
+/// second fire comes. Returns whether the tick that handed the second fire read the clock in the
+/// window between two second deadlines: the one measured from the first deadline, and the one a
+/// loop that drifts measures from the clock.
+fn second_fire_decides() !bool {
     var harness: Harness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
@@ -220,31 +217,52 @@ fn measure_two_fires() !u64 {
     var handles: [1]core.Handle = undefined;
     try harness.submit(&.{Operation.timer(11, period_ns, period_ns)}, &handles);
     var events: [8]Event = undefined;
-    // The submit arms nothing; this tick does, and it is when the first deadline starts running.
+    // The submit arms nothing. This tick arms the timer, and its reading starts the first period.
     _ = try harness.loop.tick(&events, 0);
-    const started_ns = now_ns();
+    // The second deadline, measured from the first deadline (decision 14, rule 3).
+    const second_due_ns = harness.loop.now_ns() + 2 * period_ns;
 
-    // Be late *before* the first fire is taken, not after. That is the whole of this test: the
-    // loop must notice the first deadline three quarters of a period after it passed, and the
-    // second deadline must still be two periods from the start.
+    // Be late before the first fire is taken. The loop sees the first deadline three quarters of
+    // a period after it passed, and the second deadline stays two periods from the start.
     //
-    // A loop that schedules the next fire from the clock puts it at 1.75 + 1 periods. One that
-    // schedules from the deadline puts it at 2. Holding off *after* taking a fire cannot tell
-    // them apart, because the re-arm has already happened by then, and the first version of this
-    // test did exactly that and passed against a loop that drifted.
+    // A loop that schedules the next fire from the clock puts it one period after the tick that
+    // took the first fire: 2.75 periods or later. A hold after the first fire cannot tell the two
+    // loops apart, because the re-arm happened before the hold. The first version of this test
+    // held off there, and passed against a loop that drifted.
     hold_off(period_ns * 7 / 4);
 
-    var fired: u32 = 0;
-    while (fired < 2) {
-        const count = try harness.loop.tick(&events, core.constants.ns_per_s);
-        for (events[0..count]) |event| try testing.expect(event.flags.more);
-        fired += count;
-    }
-    const elapsed_ns = now_ns() - started_ns;
+    // The first deadline passed, so the next tick hands its fire. A hold that overran the second
+    // deadline too gets that fire in the same tick, after the re-arm.
+    var fired = try take_fires(&harness, &events, 0, second_due_ns);
+    try testing.expect(fired >= 1);
+    // A loop that drifts measures the second deadline from this reading.
+    const drifted_due_ns = harness.loop.now_ns() + period_ns;
+    while (fired < 2) fired = try take_fires(&harness, &events, fired, second_due_ns);
+    const fired_ns = harness.loop.now_ns();
+    // A fire comes no earlier than its deadline.
+    try testing.expect(fired_ns >= second_due_ns);
 
     harness.loop.cancel(handles[0]);
     try harness.loop.drain(&events);
-    return elapsed_ns;
+    // The second fire came at a tick before the deadline of a loop that drifts. Such a loop would
+    // have handed only the first fire by then, and `take_fires` would have failed.
+    return fired_ns < drifted_due_ns;
+}
+
+/// One tick without a wait, for the drift scenario. Returns how many fires the scenario has after
+/// it, from `fired` before it. A tick that read the clock at or past the second deadline has handed
+/// the second fire. A loop that drifts holds that fire until its own deadline, and fails here when
+/// a tick reads the clock between the two. The check also ends the scenario's loop, because the
+/// clock passes the second deadline.
+fn take_fires(harness: *Harness, events: []Event, fired: u32, second_due_ns: u64) !u32 {
+    const count = try harness.loop.tick(events, 0);
+    for (events[0..count]) |event| {
+        try testing.expectEqual(@as(u64, 11), event.user_data);
+        try testing.expect(event.flags.more);
+    }
+    const total = fired + count;
+    try testing.expect(total >= 2 or harness.loop.now_ns() < second_due_ns);
+    return total;
 }
 
 test "now_ns is 0 before the first tick, and the tick that fires a timer has read its deadline" {
