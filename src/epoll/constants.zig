@@ -38,6 +38,11 @@ pub const wait_timer_rearms_max: u32 = 4;
 /// events can hold. Eight keeps the call's headers at 512 bytes on the stack.
 pub const receive_batch_max: u32 = 8;
 
+/// The entries of one `epoll_pwait2` answer that name no operation and write no event: the wake
+/// eventfd and the wait timer. Each takes a readiness place, so the kernel's reserve of a tick adds
+/// them (W3, ruled 2026-11-07).
+pub const own_entries_max: u32 = 2;
+
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
@@ -46,4 +51,6 @@ comptime {
     assert(wait_timer_user_data > std.math.maxInt(i32));
     assert(wait_timer_user_data != wake_user_data);
     assert(wait_timer_rearms_max >= 1);
+    assert(own_entries_max <= @import("core").constants.kernel_own_max);
+    assert(own_entries_max < readiness_max);
 }
