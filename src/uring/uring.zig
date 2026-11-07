@@ -107,8 +107,9 @@ pub const Loop = struct {
     /// The loops this loop's posts must wake whose wake found no room in the submission ring yet.
     /// A tick does not block while one is left, so no wake is lost (`uring_submit.zig`).
     wakes: core.remote.Wakes,
-    /// The wakes the last `deinit` dropped, which `dropped_wakes` reads. `init` sets it to 0.
-    deinit_dropped_wakes: u32,
+    /// The wakes this loop dropped since `init`, which `dropped_wakes` reads. Only a refusal
+    /// writes it: a refused answer, a refused group write, or a wake `deinit` could not send.
+    dropped_wake_count: u64,
     /// In a group, the eventfd its creator made for this loop, and -1 outside one (decision 21,
     /// point 3). The loop keeps a poll of it in the ring.
     group_wake: core.Descriptor,
@@ -250,7 +251,7 @@ pub const Loop = struct {
         loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{}, null);
         loop.wakes = .{};
-        loop.deinit_dropped_wakes = 0;
+        loop.dropped_wake_count = 0;
         loop.group_wake = -1;
         loop.group_wake_armed = false;
         loop.wake_stand_in = -1;
@@ -271,7 +272,7 @@ pub const Loop = struct {
     pub fn deinit_through(loop: *Loop, enters: anytype) void {
         loop.tables.assert_owner();
         loop.tables.assert_ended();
-        loop.deinit_dropped_wakes = submit_module.send_noted_wakes(loop, enters);
+        loop.dropped_wake_count += submit_module.send_noted_wakes(loop, enters);
         if (loop.inbox.registry) |registry| {
             if (!registry.group) wake_module.release(registry, loop.tables.id, loop.wake_stand_in);
             registry.clear(loop.tables.id);
@@ -279,13 +280,13 @@ pub const Loop = struct {
         loop.ring.deinit();
     }
 
-    /// The wakes the last `deinit` dropped: the kernel took no entry for them in
-    /// `constants.deinit_wake_passes_max` passes, or an enter failed (decision 4, amended
-    /// 2026-11-06). Read after `deinit`, until the next `init`. Each message is in its target's
-    /// ring, and the target reads it when its wait ends, at most `core.constants.wait_ns_max`
-    /// later.
-    pub fn dropped_wakes(loop: *const Loop) u32 {
-        return loop.deinit_dropped_wakes;
+    /// The wakes the loop dropped since `init`, read until the next `init` (decision 4, fourth
+    /// amendment of 2026-11-06). The kernel answered a wake below 0, refused a group's write, or
+    /// took no entry for a wake in `deinit`. A target that stopped refuses its wake, so a normal
+    /// shutdown can leave it above 0. Each message is in its target's ring, and the target reads
+    /// it when its wait ends, at most `core.constants.wait_ns_max` later.
+    pub fn dropped_wakes(loop: *const Loop) u64 {
+        return loop.dropped_wake_count;
     }
 
     /// Halts when an operation has not had its final event. `deinit` calls it before it touches

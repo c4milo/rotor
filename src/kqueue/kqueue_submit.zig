@@ -41,9 +41,24 @@ pub fn flush(loop: *Loop) void {
         flush_one(loop, index, tables.table.at(index), &wakes);
     }
     if (loop.inbox.registry) |registry| {
-        if (registry.group) wakes.send(registry, group_module.send) else wakes.send(registry, queue_module.Queue.wake);
+        const dropped = &loop.dropped_wake_count;
+        if (registry.group) {
+            wakes.send(registry, group_module.wake_sent, dropped);
+        } else {
+            wakes.send(registry, queue_module.Queue.wake_sent, dropped);
+        }
     }
     assert(tables.pending.count <= queued);
+}
+
+/// Sends the one wake a `post` asked for, and counts it in `loop.dropped_wake_count` when the
+/// kernel refused it (decision 4, fourth amendment of 2026-11-06).
+pub fn wake_one(loop: *Loop, group: bool, descriptor: core.Descriptor) void {
+    const sent = if (group)
+        group_module.wake_sent(descriptor)
+    else
+        queue_module.Queue.wake_sent(descriptor);
+    if (!sent) loop.dropped_wake_count += 1;
 }
 
 fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) void {

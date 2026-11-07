@@ -122,17 +122,20 @@ pub const Wakes = struct {
         wakes.targets.set(target);
     }
 
-    /// Wakes every loop noted once, through `wake`, the backend's own call. A loop that stopped
+    /// Wakes every loop noted once, through `wake`, the backend's own call. `wake` answers false
+    /// when the kernel refused the wake, and each refusal adds one to `dropped`, the loop's count.
+    /// Only a refusal writes it (decision 4, fourth amendment of 2026-11-06). A loop that stopped
     /// since has no descriptor in the registry, and nothing wakes it.
     pub fn send(
         wakes: *const Wakes,
         registry: *mailbox.Registry,
-        comptime wake: fn (Descriptor) void,
+        comptime wake: fn (Descriptor) bool,
+        dropped: *u64,
     ) void {
         var noted = wakes.targets.iterator(.{});
         while (noted.next()) |target| {
             const descriptor = registry.get(@intCast(target));
-            if (descriptor >= 0) wake(descriptor);
+            if (descriptor >= 0 and !wake(descriptor)) dropped.* += 1;
         }
     }
 };
@@ -182,9 +185,10 @@ test "a flush wakes each loop it noted once, however often, and none that stoppe
         threadlocal var woken: [loop_count]Descriptor align(@alignOf(Descriptor)) = undefined;
         threadlocal var count: usize = 0;
 
-        fn wake(descriptor: Descriptor) void {
+        fn wake(descriptor: Descriptor) bool {
             woken[count] = descriptor;
             count += 1;
+            return true;
         }
     };
     var memory: [mailbox.Registry.memory_bytes(loop_count)]u8 align(layout.memory_alignment) =
@@ -199,7 +203,34 @@ test "a flush wakes each loop it noted once, however often, and none that stoppe
     wakes.note(2);
     registry.clear(2);
     WakeLog.count = 0;
-    wakes.send(&registry, WakeLog.wake);
+    var dropped: u64 = 0;
+    wakes.send(&registry, WakeLog.wake, &dropped);
     try testing.expectEqual(@as(usize, 1), WakeLog.count);
     try testing.expectEqual(@as(Descriptor, 41), WakeLog.woken[0]);
+    try testing.expectEqual(@as(u64, 0), dropped);
+}
+
+test "a flush counts each wake the kernel refused, and only those" {
+    const loop_count = 4;
+    // Refuses the wake to every descriptor but 41, as a kernel refuses one to a loop that stopped.
+    const Refuse = struct {
+        fn wake(descriptor: Descriptor) bool {
+            return descriptor == 41;
+        }
+    };
+    var memory: [mailbox.Registry.memory_bytes(loop_count)]u8 align(layout.memory_alignment) =
+        undefined;
+    var registry: mailbox.Registry = undefined;
+    registry.init(&memory, loop_count);
+    registry.set(1, 41);
+    registry.set(2, 42);
+    registry.set(3, 43);
+    var wakes: Wakes = .{};
+    wakes.note(1);
+    wakes.note(2);
+    wakes.note(3);
+    // The count adds to what the loop dropped before.
+    var dropped: u64 = 5;
+    wakes.send(&registry, Refuse.wake, &dropped);
+    try testing.expectEqual(@as(u64, 7), dropped);
 }

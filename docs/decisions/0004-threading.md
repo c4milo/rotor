@@ -313,6 +313,71 @@ Mutations, each measured against the target named:
 The new assertion of `drop_answers`, that the answers ready fit the completion ring, checks what the
 kernel returned. No parameter reaches it, so it has no halt scenario (decision 8).
 
+**Amended a fourth time on 2026-11-06, by Camilo's ruling of that day: `Loop.dropped_wakes`
+counts every wake the loop dropped since `init`, on every backend.** This replaces what the second
+amendment said of the count's meaning, and its 0 on kqueue and epoll. The count stays readable
+after `deinit`, until the next `init`, as a `Remote`'s does. A loop drops a wake in three places:
+
+- in `Loop.post`, on kqueue and epoll, when the kernel refuses the trigger or the write;
+- in a flush that sends the wakes of post operations: on kqueue and epoll the kernel refuses the
+  call, and on io_uring a group's write fails, or the reap reads a wake's answer below 0;
+- in `deinit` on io_uring: the wakes the second amendment counts, and each answer below 0 that the
+  passes read, and those after the last pass.
+
+Every refused wake counts. That includes a wake to a target that stopped after the registry read,
+so a normal shutdown can leave the count above 0. On io_uring the count is a lower bound, for the
+reason the third amendment gives for a `Remote`.
+
+The count is a `u64`, as a `Remote`'s is. A count since `init` has no bound, and a `u32` could wrap
+in a long run, which halts in a safe build. The count is exact and is no sampled statistic. It is a
+field of each backend's loop and not of `Statistics`, so that layout does not change. Each backend
+adds one only where a wake was refused, so the path where the kernel takes the wake writes nothing.
+`core.remote.Wakes.send` takes a wake call that answers whether it was sent, and the loop's count.
+Built on 2026-11-07 on `48cacba`.
+
+The work gate's two post workloads, counted at `48cacba` and with this change, on `mac` and in an
+arm64 container on `mac` with cachegrind. No row of any section moved past the tolerance of 2
+percent.
+
+| section | workload | before | after |
+|---|---|---:|---:|
+| macos-aarch64-kqueue | `post` | 1198 | 1198 |
+| macos-aarch64-kqueue | `post-operation` | 3114 | 3114 |
+| linux-aarch64-epoll | `post` | 1142 | 1148 |
+| linux-aarch64-epoll | `post-operation` | 3039 | 3039 |
+| linux-aarch64-uring | `post` | 1039 | 1039 |
+| linux-aarch64-uring | `post-operation` | 2905 | 2905 |
+
+Mutations, each measured against the target named:
+
+| mutation | caught by | result |
+|---|---|---|
+| `Wakes.send` never counts a refusal | `test-core` | CAUGHT |
+| `Wakes.send` counts every wake | `test-core` | CAUGHT |
+| kqueue's `post` keeps no count | `test-kqueue` | CAUGHT |
+| kqueue's `post` takes a group's wake as sent | `test-kqueue` | CAUGHT |
+| kqueue's flush keeps no count | `test-kqueue` | CAUGHT |
+| kqueue's flush in a group keeps no count | `test-kqueue` | CAUGHT |
+| kqueue's `init` leaves a count that is not 0 | `test-kqueue` | CAUGHT |
+| kqueue's `dropped_wakes` gives 0 | `test-kqueue` | CAUGHT |
+| io_uring's reap counts no refused wake | `test-uring`; `uring`, the Linux gate | CAUGHT |
+| io_uring's reap counts every refused answer | `test-uring` | CAUGHT |
+| io_uring's `init` leaves a count that is not 0 | `test-uring` | CAUGHT |
+| io_uring's group write keeps no count | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` counts no refused answer | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` counts every answer to a wake | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` reads no answer after the last pass | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` replaces the count | `uring`, the Linux gate | CAUGHT |
+| epoll's `post` keeps no count | `epoll`, the Linux gate | CAUGHT |
+| epoll's flush keeps no count | `epoll`, the Linux gate | CAUGHT |
+| epoll's `init` leaves a count that is not 0 | `epoll`, the Linux gate | CAUGHT |
+| epoll's `dropped_wakes` gives 0 | `epoll`, the Linux gate | CAUGHT |
+| the public module's `dropped_wakes` gives 0 | `test-rotor`; `rotor`, the Linux gate, both ways | CAUGHT |
+| the public module's `dropped_wakes` narrows to `u32` | `test-rotor` | CAUGHT |
+
+The new assertions of the loop's `drop_answers` check what the kernel returned. No parameter
+reaches them, so they have no halt scenario (decision 8).
+
 **Amended on 2026-11-06, by Camilo's ruling of that day: the registry keeps the descriptor that
 wakes each loop for the registry's whole life.** A sender reads that descriptor from the registry,
 pushes its message, and then wakes the loop through it. Until this day each loop made its own wake

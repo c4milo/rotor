@@ -201,6 +201,46 @@ test "a remote counts the wakes the kernel refused, and its deinit keeps the cou
     }
 }
 
+test "a loop counts the wakes the kernel refused, and its deinit keeps the count" {
+    if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
+        return error.SkipZigTest;
+    }
+    const loop_count = 2;
+    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: Registry = undefined;
+    registry.init(&memory, loop_count);
+    defer registry.close_wakes();
+    const ends = try test_pipe();
+    defer for (ends) |end| {
+        _ = if (linux) std.os.linux.close(end) else std.c.close(end);
+    };
+    // Loop 0 publishes the read end of a pipe, and it sleeps: each post asks for a wake.
+    switch (registry.inner) {
+        inline else => |*inner| {
+            inner.set(0, ends[0]);
+            inner.begin_sleep(0);
+        },
+    }
+    const sizing: loop_module.Loop.Options = .{ .operations = 1 };
+    var loop_memory: [loop_module.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var loop: loop_module.Loop = undefined;
+    try loop.init(&loop_memory, .{ .operations = 1, .id = 1, .registry = &registry });
+    try testing.expectEqual(0, loop.dropped_wakes());
+    try loop.post(0, .{ .payload = 1, .tag = 0 });
+    // io_uring sends the wake and reads the kernel's answer in `deinit`, kqueue and epoll in
+    // `post` (decision 4, fourth amendment of 2026-11-06).
+    loop.deinit();
+    try testing.expectEqual(1, loop.dropped_wakes());
+    switch (registry.inner) {
+        inline else => |*inner| {
+            inner.end_sleep(0);
+            inner.clear(0);
+        },
+    }
+}
+
 /// True when `descriptor` is open in this process.
 fn is_open(descriptor: core.Descriptor) bool {
     if (linux) {

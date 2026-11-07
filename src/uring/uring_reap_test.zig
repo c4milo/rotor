@@ -224,8 +224,14 @@ test "a wake, and the answer to one this loop sent, yield no event and end no op
     const wake = constants.user_data_wake;
     // The completion a wake leaves on the loop it woke, and the answer on the loop that sent it.
     try testing.expectEqual(none, fixture.cancel_answer(wake, null));
-    // A wake the kernel refused: the target stopped and its ring is gone.
+    try testing.expectEqual(@as(u64, 0), fixture.loop.dropped_wakes());
+    // A wake the kernel refused: the target stopped and its ring is gone. The loop counts it
+    // (decision 4, fourth amendment of 2026-11-06).
     try testing.expectEqual(none, fixture.cancel_answer(wake, .BADF));
+    try testing.expectEqual(@as(u64, 1), fixture.loop.dropped_wakes());
+    // A refused answer of another kind is no wake, and the count stays.
+    try testing.expectEqual(none, fixture.cancel_answer(constants.user_data_cancel, .NOENT));
+    try testing.expectEqual(@as(u64, 1), fixture.loop.dropped_wakes());
     try testing.expectEqual(@as(u32, 1), fixture.loop.in_flight());
 }
 

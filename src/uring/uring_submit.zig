@@ -206,7 +206,8 @@ fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
 /// it sleeps, however many messages the flush posted it (decision 12, point 6). A target the
 /// submission ring has no room for stays noted, and the tick does not block while one is
 /// (`uring_tick.zig`), so no wake is lost. A target that stopped since has no ring in the
-/// registry, and nothing wakes it.
+/// registry, and nothing wakes it. A group's write the kernel refuses is dropped, and counts in
+/// `loop.dropped_wake_count`. The reap counts a refused `MSG_RING` when its answer comes back.
 fn send_wakes(loop: *Loop) void {
     const registry = loop.inbox.registry orelse return;
     const noted = loop.wakes;
@@ -217,7 +218,7 @@ fn send_wakes(loop: *Loop) void {
             if (registry.group) {
                 // In a group the target published its eventfd, and a write to it is the wake
                 // (decision 21, point 3).
-                group.send(descriptor);
+                if (!group.wake_sent(descriptor)) loop.dropped_wake_count += 1;
             } else {
                 const sqe = loop.ring.get_sqe() orelse return;
                 prepare_wake(sqe, descriptor);
@@ -254,18 +255,41 @@ pub const KernelEnter = struct {
 /// A wake left after the last pass is dropped. Each message is in its ring, and the target reads
 /// it when its wait ends. The result counts the targets still noted and the wakes still in the
 /// submission ring. A target can be in both, when a tick left its wake in the ring and a later
-/// post noted it again, and then it counts twice: two wakes were dropped.
+/// post noted it again, and then it counts twice: two wakes were dropped. The result also counts
+/// each wake the kernel answered below 0, among the answers the passes read and the answers after
+/// the last pass (decision 4, fourth amendment of 2026-11-06).
 pub fn send_noted_wakes(loop: *Loop, enters: anytype) u32 {
+    var refused: u32 = 0;
     var pass: u32 = 0;
     while (pass < constants.deinit_wake_passes_max and wakes_unsent(loop)) : (pass += 1) {
-        loop.ring.cq_advance(loop.ring.cq_ready());
+        refused += drop_answers(&loop.ring);
         send_wakes(loop);
         _ = enters.enter(&loop.ring) catch break;
     }
     assert(pass <= constants.deinit_wake_passes_max);
+    // The kernel answers a `MSG_RING` when it takes the entry, so the answers to the last pass are
+    // in the completion ring now (recalled, not measured: `io_msg_ring` completes at issue).
+    refused += drop_answers(&loop.ring);
     const noted: u32 = @intCast(loop.wakes.targets.count());
     assert(noted <= core.constants.loops_max);
-    return noted + wakes_in_submission_ring(&loop.ring);
+    return refused + noted + wakes_in_submission_ring(&loop.ring);
+}
+
+/// Drops every completion in the ring, and returns how many of them answer a wake below 0: a wake
+/// the kernel refused, for example to a descriptor that is no ring. `deinit` calls it after it
+/// asserts that no operation is in flight, so no other completion yields an event.
+fn drop_answers(ring: *ring_module.Ring) u32 {
+    const ready = ring.cq_ready();
+    assert(ready <= ring.io.cq.cqes.len);
+    var refused: u32 = 0;
+    var offset: u32 = 0;
+    while (offset < ready) : (offset += 1) {
+        const cqe = ring.cqe_at(offset);
+        if (cqe.user_data == constants.user_data_wake and cqe.res < 0) refused += 1;
+    }
+    ring.cq_advance(ready);
+    assert(refused <= ready);
+    return refused;
 }
 
 /// True while a wake is noted, or an entry waits in the submission ring.

@@ -196,13 +196,14 @@ pub const Loop = struct {
         }
     }
 
-    /// The wakes the last `deinit` dropped, read after `deinit` and until the next `init`. On
-    /// io_uring a `post` leaves its wake to the next tick, and `deinit` sends the wakes no tick
-    /// sent. When the kernel answers EBUSY on every pass, or an enter fails, `deinit` stops with
-    /// wakes left and drops them (decision 4, amended 2026-11-06). Each message is in its target's mailbox, and the
-    /// target reads it when its wait ends, at most `wait_ns_max` later. Always 0 on kqueue and
-    /// epoll.
-    pub fn dropped_wakes(loop: *const Loop) u32 {
+    /// The wakes the loop dropped since `init`, on every backend. It stays readable after
+    /// `deinit`, until the next `init` (decision 4, fourth amendment of 2026-11-06). A wake is
+    /// dropped when the kernel refuses it, in `post`, in a tick that sends the wakes of post
+    /// operations, or in `deinit`. On io_uring `deinit` also drops a wake it found no room to
+    /// send. A target that stopped refuses its wake, so a normal shutdown can leave the count
+    /// above 0. Each message is in its target's mailbox, and the target reads it when its wait
+    /// ends, at most `wait_ns_max` later.
+    pub fn dropped_wakes(loop: *const Loop) u64 {
         return switch (loop.inner) {
             inline else => |*inner| inner.dropped_wakes(),
         };

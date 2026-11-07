@@ -125,7 +125,13 @@ fn submitted_slot(loop: *Loop, handle: Handle) *Slot {
 fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
     assert(cqe.res < 0);
     const handle = Handle.from_bits(cqe.user_data);
-    if (handle.is_none()) return own(loop, cqe);
+    if (handle.is_none()) {
+        // A wake this loop sent and the kernel refused, for example to a target that stopped: the
+        // message is in the target's ring, and the loop counts the wake as dropped (decision 4,
+        // fourth amendment of 2026-11-06).
+        if (cqe.user_data == constants.user_data_wake) loop.dropped_wake_count += 1;
+        return own(loop, cqe);
+    }
     const slot = submitted_slot(loop, handle);
     const errno = errno_module.errno_of(cqe.res);
     if (should_retry(slot, errno)) {

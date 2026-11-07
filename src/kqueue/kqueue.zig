@@ -89,6 +89,9 @@ pub const Loop = struct {
     /// The read end of this loop's wake pipe in a group, as the `ident` of the readiness that
     /// reports it, or `group_watch_none` (decision 21, point 3).
     group_watch: usize,
+    /// The wakes this loop's posts asked for that the kernel refused since `init`, which
+    /// `dropped_wakes` reads (decision 4, fourth amendment of 2026-11-06).
+    dropped_wake_count: u64,
     /// In a registry of one process, the kqueue `deinit` points the registry's descriptor for this
     /// loop at, and -1 otherwise (`kqueue_wake.zig`).
     wake_stand_in: core.Descriptor,
@@ -248,6 +251,7 @@ pub const Loop = struct {
         loop.wait_timer_deadline_ns = 0;
         loop.kept_error = .none;
         loop.group_watch = group_watch_none;
+        loop.dropped_wake_count = 0;
         loop.wake_stand_in = -1;
         loop.groups = @splat(buffers.Group.none);
         loop.buffer_groups = .empty;
@@ -288,11 +292,12 @@ pub const Loop = struct {
         return loop.tables.now_ns;
     }
 
-    /// Always 0: this backend's `post` and flush wake each target before they return, so `deinit`
-    /// has no noted wake to send or drop (decision 4, amended 2026-11-06).
-    pub fn dropped_wakes(loop: *const Loop) u32 {
-        _ = loop;
-        return 0;
+    /// The wakes the loop dropped since `init`: each one its `post` or a flush asked for and the
+    /// kernel refused. It stays readable after `deinit`, until the next `init`. A target that
+    /// stopped refuses its wake, so a normal shutdown can leave it above 0. Each message is in its
+    /// target's mailbox, and the target reads it when its wait ends (decision 4, fourth amendment).
+    pub fn dropped_wakes(loop: *const Loop) u64 {
+        return loop.dropped_wake_count;
     }
 
     /// The loop's kqueue: what a host that owns the wait sleeps on, in a wait of its own (decision
@@ -327,7 +332,7 @@ pub const Loop = struct {
         const registry = loop.inbox.registry;
         const wake = try core.remote.post_now(registry, loop.tables.id, target, message);
         const descriptor = wake orelse return;
-        if (registry.?.group) group_module.send(descriptor) else queue_module.Queue.wake(descriptor);
+        submit_module.wake_one(loop, registry.?.group, descriptor);
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
@@ -456,4 +461,5 @@ test {
     _ = @import("kqueue_sync_socket_test.zig");
     _ = @import("kqueue_tick_test.zig");
     _ = @import("kqueue_tick_recover.zig");
+    _ = @import("kqueue_loop_test_wakes.zig");
 }

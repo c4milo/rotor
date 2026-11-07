@@ -143,6 +143,10 @@ kqueue and epoll.
 the same name, `dropped_wakes`. It counts the wakes a `Remote` dropped since `init`, on every
 backend.
 
+**Changed on 2026-11-06 by decision 4's fourth amendment of that day:** a loop's
+`dropped_wakes` counts every wake the loop dropped since `init`, on every backend, and returns a
+`u64`, as a `Remote`'s does.
+
 ## Alternatives it beat
 
 **Implement the std.Io table directly.** Cost: 109 functions to write and keep current against

@@ -40,7 +40,9 @@ pub fn flush(loop: *Loop) void {
         tables.take_pending(index);
         flush_one(loop, index, tables.table.at(index), &wakes);
     }
-    if (loop.inbox.registry) |registry| wakes.send(registry, queue_module.Queue.wake);
+    if (loop.inbox.registry) |registry| {
+        wakes.send(registry, queue_module.Queue.wake_sent, &loop.dropped_wake_count);
+    }
     assert(tables.pending.count <= queued);
 }
 

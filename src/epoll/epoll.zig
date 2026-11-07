@@ -100,6 +100,10 @@ pub const Loop = struct {
     /// The kernel error of a tick that had already produced events, which the next tick returns
     /// before it drains anything (decision 5, amendment of 2026-11-06).
     kept_error: core.tick_error.Kept(TickError),
+    /// The wakes this loop's posts asked for that the kernel refused since `init`, which
+    /// `dropped_wakes` reads. Only a refusal writes it (decision 4, fourth amendment of
+    /// 2026-11-06).
+    dropped_wake_count: u64,
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
     inbox: core.inbox.Inbox,
     /// What this loop does with a file operation it cannot perform without blocking (decision 18).
@@ -245,6 +249,7 @@ pub const Loop = struct {
         loop.file_policy = options.file_policy;
         loop.wait_timer_deadline_ns = 0;
         loop.kept_error = .none;
+        loop.dropped_wake_count = 0;
         loop.offload = options.offload;
         loop.tables.init(slots, entries, starts, heartbeat_line, .{
             .id = options.id,
@@ -290,11 +295,13 @@ pub const Loop = struct {
         return loop.tables.now_ns;
     }
 
-    /// Always 0: this backend's `post` and flush wake each target before they return, so `deinit`
-    /// has no noted wake to send or drop (decision 4, amended 2026-11-06).
-    pub fn dropped_wakes(loop: *const Loop) u32 {
-        _ = loop;
-        return 0;
+    /// The wakes the loop dropped since `init`: each one its `post` or a flush asked for and the
+    /// kernel refused. It stays readable after `deinit`, until the next `init`. A target that
+    /// stopped refuses its wake, so a normal shutdown can leave it above 0. Each message is in its
+    /// target's mailbox, and the target reads it when its wait ends (decision 4, fourth amendment
+    /// of 2026-11-06).
+    pub fn dropped_wakes(loop: *const Loop) u64 {
+        return loop.dropped_wake_count;
     }
 
     /// The loop's epoll instance: what a host that owns the wait sleeps on, in a wait of its own
@@ -329,7 +336,8 @@ pub const Loop = struct {
     pub fn post(loop: *Loop, target: core.LoopId, message: core.Message) core.remote.SendError!void {
         loop.tables.assert_owner();
         const wake = try core.remote.post_now(loop.inbox.registry, loop.tables.id, target, message);
-        if (wake) |descriptor| queue_module.Queue.wake(descriptor);
+        const descriptor = wake orelse return;
+        if (!queue_module.Queue.wake_sent(descriptor)) loop.dropped_wake_count += 1;
     }
 
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
@@ -434,6 +442,7 @@ comptime {
 test {
     _ = @import("epoll_file_call.zig");
     _ = @import("epoll_loop_test.zig");
+    _ = @import("epoll_loop_test_wakes.zig");
     _ = constants;
     _ = address;
     _ = buffers;
