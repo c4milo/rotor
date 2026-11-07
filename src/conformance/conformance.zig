@@ -160,9 +160,10 @@ pub const Harness = struct {
 };
 
 /// Ends what a scenario left in flight, so `deinit` does not halt (decision 5, rule 7). A scenario
-/// whose check failed returns before it collects its events, and a halt in `deinit` then ended the
-/// whole run, and the failure did not show as a failed test. The error this logs fails the test, so
-/// a scenario that passed and left an operation in flight still fails.
+/// whose check failed returns before it collects its events. `deinit` then halted on what was still
+/// in flight, so the failure showed as a crash in `tables.zig` and not as the failed check. The
+/// error this logs fails the test, so a scenario that passed and left an operation in flight still
+/// fails.
 ///
 /// It cancels every operation and ticks until each has its final event. A loop that stays in
 /// flight after `drain` gives up halts in `deinit`, as before.

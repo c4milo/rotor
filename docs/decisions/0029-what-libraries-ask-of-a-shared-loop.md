@@ -5,6 +5,10 @@ decision 30 (see "What was built"). Every cost in the sections before "What was 
 a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic. Nothing was
 measured for this record before the ruling.
 
+**Names.** Decision 30 renamed two names of this record: `reserve_group` is `reserve_buffer_group`
+in the code, and `GroupsFull` is `BufferGroupsFull`. The sections before "What was built" keep the
+old names.
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"
@@ -580,6 +584,16 @@ Where the code differs from the proposal:
    ticked once and trusted `wait_limit` then slept, and the error stayed unreturned until a wake.
    The review of 2026-11-07 found it. The check is in `dispatch_calls.zig`, so it holds on the three
    backends. `test-core` holds it with a fabricated kept error (decision 10).
+7. **kqueue's `provided_buffer` checks the group id with `assert_class_a`, and no longer with
+   `assert`.** It moved to `kqueue_buffers.zig` with the other buffer calls, and took the class of
+   io_uring's check. With class A compiled out, an id at or above `buffer_groups_max` reads out of
+   the group table. Only `reserve_buffer_group` makes a `BufferGroup`, so such an id needs a cast.
+8. **A poller's limit ends a spin before it starts, as a timer does** (decision 13, point 2). The
+   pollers run once in a tick, before its spin, so the spin's polls do not call them. The first
+   build gave the spin only the nearest timer. A tick whose poller limit fell inside the spin's
+   window then polled until the window ended, late by up to the budget. Now each backend's
+   `spin_then_wait` reads `Tables.earliest_deadline_ns`, the least of the timer and the limit.
+   The scenario is in `conformance_spin.zig`.
 
 The instruction gate on `mac` on 2026-11-07, section `macos-aarch64-kqueue`, with
 `zig build work-gate`. The column `48cacba` is the tree before this record, measured the same day.

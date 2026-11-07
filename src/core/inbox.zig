@@ -31,9 +31,9 @@ const Visit = struct {
     /// Writes the event of `message` into the next place, and counts it only when it is not a
     /// wake. A wake leaves an event of tag 0 in a place that the next message takes, or that no
     /// caller reads. There is no branch, so the compiler keeps the ring's pop inline in the drain.
-    /// A branch here made it a call: the work gate's `timer` row counted 1,179 instructions against
-    /// 1,158 on `mac` (decision 29, "What was built"). `Event.message` keeps its check of the tag
-    /// of every message that is not a wake.
+    /// A branch here made it a call: the work gate's `timer` row counted 1,179 instructions on
+    /// `mac`, against 1,151 at `48cacba`, the tree before decision 29 ("What was built", item 1).
+    /// `Event.message` keeps its check of the tag of every message that is not a wake.
     fn write(visit: *Visit, message: Message) void {
         const wake = message.tag == constants.message_tag_wake;
         const tag = if (wake) 0 else message.tag;

@@ -100,11 +100,12 @@ ticks without waiting for up to that long, and blocks for the rest of the wait o
 (decision 13). The window runs from the loop's last event, so a loop whose work has stopped spends
 its budget once and then sleeps. A message another loop posts inside the budget arrives without the
 kernel waking this one. In that record's measurement on io_uring, loops with a 50 µs budget, each
-message 20 µs after the last, made a round trip in 2.7 to 4.2 µs against 18 to 32 µs for loops
-that waited (`bench/results/decision-13-spin-budget-github-2026-09-24.md`). The cost is the CPU:
-each message that comes after the budget costs the budget in polling, which at one message every
-100 µs was about half a core (`bench/results/decision-13-idle-github-2026-09-24.md`). A tick given no wait, or a wait no longer than the budget, never polls, and nor
-does one whose next timer is due inside the budget.
+message 20 µs after the last, made a round trip in 2.7 to 4.2 µs against 18 to 32 µs for loops that
+waited (`bench/results/decision-13-spin-budget-github-2026-09-24.md`). The cost is the CPU: each
+message that comes after the budget costs the budget in polling, which at one message every 100 µs
+was about half a core (`bench/results/decision-13-idle-github-2026-09-24.md`). A tick given no wait,
+or a wait no longer than the budget, never polls, and nor does one whose next timer is due inside
+the budget.
 
 On macOS a budget costs time as well as CPU. A message that comes after the budget arrives about
 11 µs later than it would with no budget: 12.5 to 14.5 µs against 1.0 to 3.5 µs, measured on an
@@ -125,9 +126,10 @@ const count = try loop.tick(&events, rotor.constants.ns_per_ms);
 ```
 
 `Operation` has one constructor per kind (`accept`, `connect`, `receive`, `receive_group`, `send`,
-`shutdown`, `close`, `read`, `write`, `fdatasync`, `fsync`, `timer`, `post`, `receive_from`, `send_to`),
-each building the common shape in one call. Set `timeout_ns` or `descriptor_registered` on the
-result when either is wanted, and write the struct out for a receive into a registered buffer.
+`shutdown`, `close`, `read`, `write`, `fdatasync`, `fsync`, `timer`, `post`, `receive_from`,
+`send_to`), each building the common shape in one call. Set `timeout_ns` or `descriptor_registered`
+on the result when either is wanted, and write the struct out for a receive into a registered
+buffer.
 
 - `submit` takes a batch of operations, at most `constants.batch_max` (4,096), and returns how
   many it took. It takes fewer when the table has no room for the rest; the caller submits those
@@ -137,8 +139,9 @@ result when either is wanted, and write the struct out for a receive into a regi
   `wait_ns` of 0 it polls and returns at once; otherwise it blocks until an event is ready, a
   message arrives, or the wait passes, at most `constants.wait_ns_max`, 10 seconds. A longer wait
   halts, as does an `events` that is empty or longer than `batch_max`, on every backend and whether
-  or not the tick would have waited. A tick that already holds events to return does not wait. `tick` fails only when the kernel refuses the call
-  after `interrupt_retries_max` signals, or answers something rotor has no meaning for.
+  or not the tick would have waited. A tick that already holds events to return does not wait.
+  `tick` fails only when the kernel refuses the call after `interrupt_retries_max` signals, or
+  answers something rotor has no meaning for.
 - `now_ns` returns the monotonic clock in nanoseconds as the last `tick` read it, at its start or
   after its wait. Timers expire against that reading. It is 0 until the first tick, and reading it
   makes no system call. A caller that keeps timeouts of its own can read the time here instead of
@@ -269,8 +272,8 @@ Three ways to hand the loop memory for bytes:
   ```
 
   The kqueue backend needs only the alignment of its own free list, so under-aligned memory works
-  there and fails on Linux. That asymmetry is why the assertion on the io_uring side is worth having:
-  it is where a caller who trusted the declaration finds out.
+  there and fails on Linux. That asymmetry is why the assertion on the io_uring side is worth
+  having: it is where a caller who trusted the declaration finds out.
 
   **Size a group to the buffers in flight, not to the memory you can spare.** On io_uring the kernel
   takes buffers from the head of the group's ring and `give_back_buffer` returns them at the tail,
@@ -289,28 +292,27 @@ names an index instead of a descriptor. A `close` always names a descriptor of t
 
 ## Datagrams
 
-A datagram group is a provided-buffer group with room in front of every buffer for the peer
-address and the control messages: `provide_datagram_buffers(&loop, group, memory, count,
-buffer_bytes, .{})`, with a group that `reserve_buffer_group` gave and one block as above. One loop serves one datagram shape: the first
-datagram group fixes it, and a later group with different options halts, because the loop reads
-every datagram at the offset that shape gives. `receive_from` receives into it, one event per datagram, and `loop.datagram(group, event)` is the only reader
-of such a buffer: it returns a `Delivery` with the peer, the local address when the socket was asked
-for it, the ECN
-codepoint, and the bytes.
-`send_to` takes an `Outbound`: the destination, the source address, the codepoint, and whether to
-cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a segmented send with
-`unsupported` (decision 15).
+A datagram group is a provided-buffer group with room in front of every buffer for the peer address
+and the control messages: `provide_datagram_buffers(&loop, group, memory, count, buffer_bytes,
+.{})`, with a group that `reserve_buffer_group` gave and one block as above. One loop serves one
+datagram shape: the first datagram group fixes it, and a later group with different options halts,
+because the loop reads every datagram at the offset that shape gives. `receive_from` receives into
+it, one event per datagram, and `loop.datagram(group, event)` is the only reader of such a buffer:
+it returns a `Delivery` with the peer, the local address when the socket was asked for it, the ECN
+codepoint, and the bytes. `send_to` takes an `Outbound`: the destination, the source address, the
+codepoint, and whether to cut the buffer into segments. GSO, GRO and ECN are Linux; macOS answers a
+segmented send with `unsupported` (decision 15).
 
 On Linux a socket coalesces by default (`DatagramOptions.coalesce`): the kernel takes several
 datagrams from one peer in one receive. The loop splits them again, and each datagram comes as an
 event of its own, so nothing in your code changes. Give back every event's buffer, as for any
 datagram: several events of one coalesced datagram name the same buffer, and it goes back to the
 group at the last. Coalescing needs buffers that hold 65,535 bytes of payload: a `buffer_bytes` of
-at least `datagram.prefix_bytes(.{}) + constants.coalesced_bytes_max`, rounded up to a multiple of 8,
-as every datagram group's buffer size must be. A receive on a group with smaller buffers turns
-coalescing off for its socket, so no datagram is cut short. Set
-`.coalesce = false` to turn it off yourself. One segmented send carries at most 65,507 bytes over
-IPv4, in at most `segments_max` (64) segments.
+at least `datagram.prefix_bytes(.{}) + constants.coalesced_bytes_max`, rounded up to a multiple of
+8, as every datagram group's buffer size must be. A receive on a group with smaller buffers turns
+coalescing off for its socket, so no datagram is cut short. Set `.coalesce = false` to turn it off
+yourself. One segmented send carries at most 65,507 bytes over IPv4, in at most `segments_max` (64)
+segments.
 
 A multishot receive can end with a success. On io_uring the kernel can end it after 32 datagrams,
 and the last datagram is then the final event. Submit the receive again when an event without
@@ -465,12 +467,12 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
 (decision 27). What that needs:
 
 - The program calls `loop.shared()` and hands each library the `*SharedLoop` it returns, which the
-  library keeps. Its address is the loop's, and each call on it is the `Loop` call of the same
-  name: `submit`, `cancel`, `post`, `now_ns`, `schedule`, `is_scheduled`, `task_budget_left`,
-  `add_poller`, `remove_poller`, `reserve_buffer_group`, and the buffer group calls. `tick`, `drain`, `deinit`,
-  `cancel_all` and `discard_tasks` fail to compile on it, with a message that states the rule
-  (decision 28). A library that casts the view back to a `*Loop` and ticks inside a callback still
-  halts.
+  library keeps. Its address is the loop's, and each call on it is the `Loop` call of the same name:
+  `submit`, `cancel`, `post`, `now_ns`, `schedule`, `is_scheduled`, `task_budget_left`,
+  `add_poller`, `remove_poller`, `reserve_buffer_group`, and the buffer group calls. `tick`,
+  `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a message that
+  states the rule (decision 28). A library that casts the view back to a `*Loop` and ticks inside a
+  callback still halts.
 
 - Each operation of the library names a `Completion`, a record inside the library's own struct:
   `Operation.receive_from(0, socket, group).completion(&endpoint.receive)`. The tick calls the
@@ -537,11 +539,11 @@ the loop when the loop has something to deliver (decision 23).
   descriptor among what it waits on: on `.at(t)` for `t -| loop.now_ns()` at most, and on `.none`
   for as long as the host's own wait allows. `wait_limit` reads no clock and changes nothing. It
   answers `.now` while a task is queued, an operation waits to be submitted, a result waits to be
-  handed over, a ring holds a message, or the nearest timer or poller limit is due. A poller that
-  returned `.now`, a wake the last tick took, and a record or a task the last tick called each
-  give `.now` too. It halts inside a tick, and `SharedLoop` does not declare it. The host runs the
-  same ticks after it submits or cancels, before it waits, because an operation reaches the kernel
-  in a tick.
+  handed over, a ring holds a message or a worker's result, the last tick kept a kernel error, or
+  the nearest timer or poller limit is due. A poller that returned `.now`, a wake the last tick
+  took, and a record or a task the last tick called each give `.now` too. It halts inside a tick,
+  and `SharedLoop` does not declare it. The host runs the same ticks after it submits or cancels,
+  before it waits, because an operation reaches the kernel in a tick.
 - **Every tick gets a wait of 0.** A tick that blocks arms the loop's wait timer, which makes the
   descriptor readable later for no operation.
 - **The host does nothing else to the descriptor.** It does not read it, close it, or change what
@@ -683,8 +685,8 @@ backend was on this list until decision 20 brought it in.
 
 ## Where the numbers are
 
-`docs/costs.md` holds the measured costs of the operations the design arguments cite, for the
-`mac`, `orbstack` and `github` machines. `docs/benchmarks.md` holds the current comparison against
-libuv and libxev and the commands that take it, `bench/alternatives/README.md` records every
-experiment behind it, the losing rows included, and `bench/results/` holds every run as printed. The Linux machine rotor is meant to be deployed on is not named yet, so no claim is made
-for it.
+`docs/costs.md` holds the measured costs of the operations the design arguments cite, for the `mac`,
+`orbstack` and `github` machines. `docs/benchmarks.md` holds the current comparison against libuv
+and libxev and the commands that take it, `bench/alternatives/README.md` records every experiment
+behind it, the losing rows included, and `bench/results/` holds every run as printed. The Linux
+machine rotor is meant to be deployed on is not named yet, so no claim is made for it.

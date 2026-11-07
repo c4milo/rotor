@@ -209,8 +209,8 @@ const ns_per_ms = core.constants.ns_per_ms;
 const stall_turn_ns = 5 * ns_per_ms;
 /// How long a scenario holds the loop: four times the threshold, and under the harness's limit.
 const hold_ns = 20 * ns_per_ms;
-/// The wait of a tick that blocks with no work. It is over twice `hold_ns`, so a turn that held the
-/// wait would start long before the stamp after the wait.
+/// The wait of a tick that blocks with no work. A turn that held the wait would start this long
+/// before the stamp after the wait. The comptime block below keeps it over twice `hold_ns`.
 const blocked_wait_ns = 50 * ns_per_ms;
 /// The delay of a timer that a tick blocks for.
 const timer_delay_ns = 2 * ns_per_ms;
