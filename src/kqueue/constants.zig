@@ -31,6 +31,10 @@ pub const group_wake_drain_bytes: usize = 64;
 /// tick adds them (W3, ruled 2026-11-07).
 pub const own_entries_max: u32 = 3;
 
+/// The most places one kernel answer takes in a tick, which caps the kernel's reserve of W3: the
+/// readiness array of one `kevent` call.
+pub const kernel_room_max: u32 = readiness_max;
+
 comptime {
     const assert = std.debug.assert;
     assert(changes_max >= readiness_max);

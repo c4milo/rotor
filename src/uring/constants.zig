@@ -76,6 +76,11 @@ pub const errno_max: i32 = @import("core").constants.errno_max;
 /// place, so the kernel's reserve of a tick adds none (W3, ruled 2026-11-07).
 pub const own_entries_max: u32 = 0;
 
+/// The most places one kernel answer takes in a tick, which caps the kernel's reserve of W3. The
+/// reap has no array of its own and writes into the tick's events, so it is the most events of a
+/// tick.
+pub const kernel_room_max: u32 = @import("core").constants.batch_max;
+
 comptime {
     const assert = std.debug.assert;
     assert(std.math.isPowerOfTwo(entries_max));

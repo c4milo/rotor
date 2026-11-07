@@ -244,6 +244,36 @@ test "a tick with a message to hand over and nothing waiting on a socket polls n
     try testing.expectEqual(@as(u32, 1), try loop.queue.exchange(&.{}, loop.readiness[0..1], 0));
 }
 
+test "a tick that makes no call keeps no place for the kernel, so the mailboxes take every place" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const loops = 2;
+    const receiver: core.LoopId = 1;
+    const sender: core.LoopId = 0;
+    var registry_memory: [kqueue.Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: kqueue.Registry = undefined;
+    registry.init(&registry_memory, loops);
+    // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
+    defer kqueue.wake_module.close_kept(&registry);
+    const sizing: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    defer loop.deinit();
+
+    // More messages than the tick has events. The loop is quiet: no change, no waiter, no trigger.
+    // At 16 events a kernel reserve would keep 16 / 4 + 3 places, and the tick that makes no call
+    // gives its unused places to the lists only (W3).
+    const events_len = 16;
+    for (0..events_len * 2) |payload| {
+        try testing.expect(registry.mailbox(sender, receiver).push(.{ .tag = 7, .payload = payload }));
+    }
+    var events: [events_len]Event = undefined;
+    try testing.expectEqual(@as(u32, events_len), try loop.tick(&events, 0));
+    for (events, 0..) |event, payload| try testing.expectEqual(@as(u64, payload), event.user_data);
+    try testing.expectEqual(@as(u32, events_len), try loop.tick(&events, 0));
+}
+
 test "a loop whose own wake trigger came back skips the poll again" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const loops = 2;

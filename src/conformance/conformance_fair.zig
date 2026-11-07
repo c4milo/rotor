@@ -89,7 +89,8 @@ const Bounds = struct {
 
     fn of() Bounds {
         const own = backend.constants.own_entries_max;
-        const share = core.tick_share.split(constants.fair_events, true, true, own, core.constants.batch_max);
+        const room_max = backend.constants.kernel_room_max;
+        const share = core.tick_share.split(constants.fair_events, true, true, own, room_max);
         const places = share.kernel_min - own;
         const mailbox = constants.fair_events - share.lists_max - share.kernel_min;
         const visits = std.math.divCeil(u32, mailbox, core.constants.messages_per_drain) catch unreachable;
@@ -126,6 +127,18 @@ const Seen = struct {
         return seen.timer != null and seen.receive != null and seen.message != null;
     }
 };
+
+/// Fails, and names `probe`, when its event did not come, or came after `bound` ticks.
+fn expect_within(comptime probe: []const u8, seen: ?u32, bound: u32) !void {
+    const prefix = "the " ++ probe ++ " probe's event ";
+    const tick = seen orelse {
+        std.debug.print(prefix ++ "did not come; its bound is {d} ticks\n", .{bound});
+        return error.TestUnexpectedResult;
+    };
+    if (tick <= bound) return;
+    std.debug.print(prefix ++ "came in tick {d}, past its bound of {d}\n", .{ tick, bound });
+    return error.TestUnexpectedResult;
+}
 
 /// The main scenario: the loop under test, the loop that never ticks, the remotes, and a socket
 /// pair whose one end the loop under test receives on.
@@ -226,9 +239,9 @@ const Scenario = struct {
         const ticks_max = @max(bounds.timer, bounds.receive, bounds.message);
         var number: u32 = 1;
         while (!seen.all() and number <= ticks_max) : (number += 1) try scenario.tick(&seen, number);
-        try testing.expect(seen.timer.? <= bounds.timer);
-        try testing.expect(seen.receive.? <= bounds.receive);
-        try testing.expect(seen.message.? <= bounds.message);
+        try expect_within("timer", seen.timer, bounds.timer);
+        try expect_within("receive", seen.receive, bounds.receive);
+        try expect_within("message", seen.message, bounds.message);
         try scenario.submit_receive();
     }
 };

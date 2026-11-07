@@ -43,7 +43,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         true,
         loop.inbox.registry != null,
         constants.own_entries_max,
-        core.constants.batch_max,
+        constants.kernel_room_max,
     );
     var produced = first.produced;
     produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);

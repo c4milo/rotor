@@ -289,8 +289,9 @@ What the build found, against the design of W3:
   compare, and its cost fell to about 30 a tick. The fast path below moved that loop into
   `drain_from_cursor`, for a cursor above 0.
 - The design said a kqueue that passes `!quiet` as true while it is quiet is an equivalent mutant.
-  It is not: a quiet tick that makes no call then gives the kernel's places back only to the lists,
-  and the conformance suite catches it.
+  It is not: a quiet tick that makes no call then gives the kernel's places back only to the lists.
+  A unit test in `kqueue_tick_test.zig` catches it. The conformance suite does not: measured again
+  on 2026-11-07, at `005cb7c` and with the fast path.
 - The seeded program of `conformance_program.zig` assumed that a send's event comes before the
   event of the receive that read its bytes. Since W3 a send that ended at the flush can wait on
   `finished` past the reap, so its ledger now counts the unread bytes with a saturated subtraction.
@@ -329,7 +330,7 @@ backend, and `conformance_fair_readiness.zig` on kqueue and epoll. The halt scen
 | delete the cursor assertion of `drain_from_cursor` | `halt-check` | CAUGHT |
 | delete the share assertion of `drain_lists` | `halt-check` | CAUGHT |
 | delete the fired part of `assert_empty` | `halt-check` | NOT CAUGHT: the check of the slots in use halts on the same state |
-| kqueue passes `!quiet` as true while quiet | `test-conformance-kqueue` | CAUGHT |
+| kqueue passes `!quiet` as true while quiet | `test-kqueue`; `test-conformance-kqueue` | CAUGHT, after a test was added; NOT CAUGHT |
 | the fast path only below `N / 2 - own`, or up to one entry more | `test-core` | CAUGHT; CAUGHT |
 | the fast path always taken; never taken | `test-core` | CAUGHT; CAUGHT |
 | the fast path leaves out the own entries | `test-core` | CAUGHT |

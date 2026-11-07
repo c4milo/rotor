@@ -43,6 +43,10 @@ pub const receive_batch_max: u32 = 8;
 /// them (W3, ruled 2026-11-07).
 pub const own_entries_max: u32 = 2;
 
+/// The most places one kernel answer takes in a tick, which caps the kernel's reserve of W3: the
+/// readiness array of one `epoll_pwait2` call.
+pub const kernel_room_max: u32 = readiness_max;
+
 comptime {
     const assert = std.debug.assert;
     assert(readiness_max >= 1);
