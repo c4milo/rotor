@@ -212,6 +212,33 @@ test "a wake to a loop with no poller hands no event over, and the next tick blo
     try testing.expect(now_ns() - started_ns >= wait_ns / 2);
 }
 
+test "a tick whose sleep a message refuses after its drain hands that message over" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
+    var harness: Harness = undefined;
+    try harness.init(loop_id, &registry);
+    defer harness.deinit();
+    var remote: Remote = undefined;
+    try remote.init(&registry, remote_id);
+    defer remote.deinit();
+
+    // A wake, then a message. With room for one event, the drain before the wait takes only the
+    // wake, which writes no event. The message is then in the ring when the loop says it sleeps,
+    // so the loop does not sleep. The tick hands the message over from its drain after the wait,
+    // as a tick that woke does. A tick that skipped that drain would return 0 (decision 18).
+    try remote.post(loop_id, core.Message.wake);
+    try remote.post(loop_id, .{ .payload = 7, .tag = 3 });
+    var events: [1]Event = undefined;
+    const started_ns = now_ns();
+    // With a spin budget, the tick's first poll takes the wake, and its wait takes the message.
+    try testing.expectEqual(@as(u32, 1), try harness.loop.tick(&events, long_wait_ns));
+    try testing.expect(events[0].flags.message);
+    try testing.expectEqual(@as(u64, 7), events[0].user_data);
+    try testing.expect(now_ns() - started_ns < short_ns);
+}
+
 /// A record that counts its calls.
 const Counted = struct {
     completion: core.Completion = .init(Counted, "completion", called),
