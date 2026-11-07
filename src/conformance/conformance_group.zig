@@ -242,6 +242,47 @@ test "a post from a Remote in another process wakes a loop that sleeps" {
     try testing.expect(slept < sleep_ns / 2);
 }
 
+/// The child: runs loop 1, waits until loop 0 says it sleeps, posts to it with `Loop.post`, and
+/// calls `deinit` with no tick between. On io_uring the post only notes the wake, and `deinit`
+/// must send it (decision 4, amended 2026-11-06). In a group that wake is a write to loop 0's
+/// eventfd.
+fn post_and_stop(memory: Memory) u8 {
+    var member: Registry = undefined;
+    member.attach(memory) catch return status_attach_failed;
+    var harness: Harness = undefined;
+    harness.init(1, &member) catch return status_loop_failed;
+    var stopped = false;
+    defer if (!stopped) harness.deinit();
+    if (!wait_until_asleep(&harness, &member, 0)) return status_never_slept;
+    const message: core.Message = .{ .payload = payload_ping, .tag = tag_ping };
+    harness.loop.post(0, message) catch return status_post_refused;
+    harness.deinit();
+    stopped = true;
+    return process.status_passed;
+}
+
+test "a loop in another process that posts and stops with no tick between wakes a loop that sleeps" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var group: Group = undefined;
+    try group.init();
+    defer group.deinit();
+    const child = try process.start(Memory, group.memory, post_and_stop);
+    var harness: Harness = undefined;
+    try harness.init(0, &group.registry);
+    defer harness.deinit();
+
+    var events: [1]Event = undefined;
+    const before = backend.testing.monotonic_ns();
+    const produced = try harness.loop.tick(&events, sleep_ns);
+    const slept = backend.testing.monotonic_ns() - before;
+    try testing.expectEqual(process.status_passed, try process.wait(child));
+    try testing.expectEqual(@as(u32, 1), produced);
+    try testing.expect(events[0].flags.message);
+    try testing.expectEqual(@as(u64, payload_ping), events[0].user_data);
+    // A wake that `deinit` did not send ends the wait only at its end.
+    try testing.expect(slept < sleep_ns / 2);
+}
+
 // The sleep handshake between processes (decision 21, "How it is checked", point 2): what
 // `kqueue/kqueue_mailbox_test.zig` checks with two threads and a stand-in for the kernel's wait,
 // here with two loops in two processes and the group's real wake. A lost wake leaves the parent's

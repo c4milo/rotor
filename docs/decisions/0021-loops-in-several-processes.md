@@ -282,7 +282,13 @@ How it is checked, point by point of "How it is checked":
    died, released and taken over by a new process that reads what was left for it; and a post from
    a `Remote` in the other process. They pass on kqueue natively, and on io_uring and epoll in the
    Linux gate, with and without a spin budget, and under ThreadSanitizer in the race gate. They do
-   not use `exec`.
+   not use `exec`. A fifth scenario was added on 2026-11-06: the child's loop posts with
+   `Loop.post` to the parent's loop, which sleeps, and calls `deinit` with no tick between. On
+   io_uring the post only notes the wake, and `deinit` sends it (decision 4, amended 2026-11-06).
+   With that call deleted from `deinit`, the Linux gate stopped earlier, at a test of the `uring`
+   module. The `conformance-uring` executable, run alone in the same image, then failed at this
+   scenario: CAUGHT. On kqueue and epoll `Loop.post` wakes the target before it returns, so there
+   the scenario checks only that `deinit` does not break that wake.
 2. `conformance_group.zig` also runs the lost-wake test across processes, on every backend: a
    child's loop posts 4,000 rounds of one to eight messages at moments drawn from a seed, each
    after the parent's loop took the round before, a quarter of them only once that loop says it
