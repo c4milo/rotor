@@ -74,7 +74,11 @@
 # change took it past. The counts are taken as for `task`. The linux-x86_64 `poller` rows are
 # deleted, because `poller` moved 3.0 percent on arm64 io_uring and 2.6 on epoll. So are the
 # linux-x86_64 rows of each other row raised on arm64: io_uring `post` and `record`, and epoll
-# `post-operation` and `record`, because x86-64 may sit as close to its lines. CI prints them.
+# `post-operation` and `record`, because x86-64 may sit as close to its lines. The ten deleted
+# x86-64 rows are the counts that CI's x86-64 runner printed at `cee1474`, run 42340263503.
+# linux-aarch64-epoll `wait` went from 655 to 677, CI's count at `cee1474`, by Camilo's ruling of
+# 2026-11-07: decision 28's stamps took it to the edge, and the offload's check of its held list
+# before a sleep (e27e526) took it past.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1247
@@ -90,11 +94,21 @@ section linux-x86_64-uring
 post-operation 3030
 timer 1105
 batch 26376
+post 1195
+task 617
+tasks-64 4158
+record 1241
+poller 576
 section linux-x86_64-epoll
 post 1363
 timer 1173
 batch 26194
 wait 744
+post-operation 3361
+task 695
+tasks-64 4236
+record 1317
+poller 660
 section linux-aarch64-uring
 post 1061
 post-operation 2794
@@ -109,7 +123,7 @@ post 1212
 post-operation 3091
 timer 1092
 batch 23845
-wait 655
+wait 677
 task 634
 tasks-64 3985
 record 1215
