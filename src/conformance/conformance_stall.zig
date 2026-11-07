@@ -210,7 +210,7 @@ const stall_turn_ns = 5 * ns_per_ms;
 /// How long a scenario holds the loop: four times the threshold, and under the harness's limit.
 const hold_ns = 20 * ns_per_ms;
 /// The wait of a tick that blocks with no work. It is over twice `hold_ns`, so a turn that held the
-/// wait and the hold after it is longer than a busy machine makes the hold alone.
+/// wait would start long before the stamp after the wait.
 const blocked_wait_ns = 50 * ns_per_ms;
 /// The delay of a timer that a tick blocks for.
 const timer_delay_ns = 2 * ns_per_ms;
@@ -313,16 +313,20 @@ test "a tick that blocks with no work is in no turn, and the next turn starts af
     _ = try fixture.loop.tick(&events, 0);
     const before_ns = clock_ns();
     try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, blocked_wait_ns));
-    try testing.expect(clock_ns() - before_ns >= blocked_wait_ns - ns_per_ms);
+    // A tick that blocked sets `now_ns` to the stamp after its wait (decision 9, rule 4).
+    const woken_ns = fixture.loop.now_ns();
+    try testing.expect(woken_ns - before_ns >= blocked_wait_ns - ns_per_ms);
     // Program code after the wait makes a stall. Its turn starts at the stamp after the wait: a
-    // turn that held the wait too would span it, and a turn with no start would not be a stall.
+    // turn that held the wait too would start before `woken_ns`, and a turn with no start would
+    // not be a stall. The check compares the loop's own stamps, so it holds however long a busy
+    // machine makes the hold.
     hold_for(hold_ns);
     _ = try fixture.loop.tick(&events, 0);
     const last = fixture.loop.statistics().last_stall;
     try testing.expectEqual(fixture.loop.now_ns(), last.end_ns);
     try testing.expectEqual(@as(u32, 0), last.callbacks);
     try testing.expect(last.span_ns >= hold_ns);
-    try testing.expect(last.span_ns < blocked_wait_ns);
+    try testing.expectEqual(last.end_ns - woken_ns, last.span_ns);
 }
 
 test "a null threshold counts no stall" {
