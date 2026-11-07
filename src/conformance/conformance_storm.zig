@@ -2,13 +2,14 @@
 //! one target loop at once: a peer loop through `Loop.post` and through post operations, and
 //! remotes through `Remote.post`. The target meanwhile runs pollers, timers that name a record,
 //! and tasks that schedule themselves again. The race gate runs this file under ThreadSanitizer.
+//! The threads that post are in `conformance_storm_senders.zig`.
 //!
 //! The oracle:
 //!
 //! - each message from one sender arrives exactly once, and in the order of its posts;
 //! - for each sender, the messages received are the posts made less the `mailbox_full` refusals;
-//! - once the pollers are removed and no task is queued, a tick with a wait of 2 s returns soon
-//!   after a post.
+//! - once the pollers are removed, no task is queued and every sender finished, a tick with a
+//!   wait of 2 s returns soon after a post.
 //!
 //! Thread timing is not seeded. Every choice a thread draws comes from `seed`, and a failure
 //! prints it.
@@ -17,37 +18,31 @@ const testing = std.testing;
 const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
+const storm_senders = @import("conformance_storm_senders.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
 const Operation = core.Operation;
 const Random = core.random.Random;
 const LoopId = core.LoopId;
+const Shared = storm_senders.Shared;
+const Sender = storm_senders.Sender;
+const Peer = storm_senders.Peer;
 
 const ms = core.constants.ns_per_ms;
 
 /// The seed of every choice in the scenario. A failure prints it.
 const seed: u64 = 0x7374_6F72_6D5F_3237;
 
-const target_id: LoopId = 0;
-const peer_id: LoopId = 1;
-const first_remote_id: LoopId = 2;
-/// The threads with no loop that post to the target.
-const remotes = 3;
-const ids: u16 = first_remote_id + remotes;
-
-/// The posts of each sender that the target accepts. A sender makes a refused post again, so it
-/// posts more times than this when the target falls behind.
-const messages_per_sender = 2000;
-const senders = remotes + 1;
+const target_id = storm_senders.target_id;
+const peer_id = storm_senders.peer_id;
+const first_remote_id = storm_senders.first_remote_id;
+const remotes = storm_senders.remotes;
+const ids = storm_senders.ids;
+const messages_per_sender = storm_senders.messages_per_sender;
+const senders = storm_senders.senders;
 const messages_total = messages_per_sender * senders;
-
-/// The tag of the peer's last message, which wakes the target once the storm is over. It is
-/// above every sender id, so `accept` never takes it for a storm message.
-const tag_wake = ids;
-
-/// Posts one sender makes, refusals included, before it gives up on a target that never drains.
-const attempts_max: u64 = 1 << 22;
+const tag_wake = storm_senders.tag_wake;
 
 /// The libraries on the target loop. Each one adds a poller, keeps a timer with a record in
 /// flight, and queues a task.
@@ -68,168 +63,11 @@ const quiet_wait_ns = 10 * ms;
 /// The wait of the last tick: a tick that slept all of it fails the bound by far.
 const long_wait_ns = 2 * core.constants.ns_per_s;
 
-/// Pauses of a millisecond the peer makes while it waits for the quiet phase and for the target
-/// to sleep. Generous, because the race gate runs the suite under ThreadSanitizer.
-const peer_pauses_max = 20_000;
-const peer_pause_ns = ms;
-
 /// Room for the messages of every sender's ring in one tick.
 const events_len = senders * core.constants.messages_per_drain;
 
 var registry_memory: [backend.Registry.memory_bytes(ids)]u8 align(core.layout.memory_alignment) =
     undefined;
-
-/// What the threads share: stop on a failure of the target, and the phases of the scenario.
-const Shared = struct {
-    registry: *backend.Registry,
-    /// Set before the target's thread joins the others, so that no sender waits for a loop that
-    /// stopped.
-    stop: std.atomic.Value(bool) = .init(false),
-    /// Senders that finished their storm messages, with or without a failure.
-    finished: std.atomic.Value(u32) = .init(0),
-    /// Set by the target once its pollers are removed and nothing is queued or in flight.
-    quiet: std.atomic.Value(bool) = .init(false),
-};
-
-/// A thread with no loop: posts `messages_per_sender` messages through a `Remote`.
-const Sender = struct {
-    shared: *Shared,
-    id: LoopId,
-    random: Random,
-    attempts: u64 = 0,
-    refusals: u64 = 0,
-    failure: ?anyerror = null,
-
-    fn run(sender: *Sender) void {
-        sender.send() catch |err| {
-            sender.failure = err;
-        };
-        _ = sender.shared.finished.fetchAdd(1, .release);
-    }
-
-    fn send(sender: *Sender) !void {
-        var remote: backend.Remote = undefined;
-        try remote.init(sender.shared.registry, sender.id);
-        defer remote.deinit();
-        for (0..messages_per_sender) |sequence| {
-            try sender.deliver(&remote, .{ .payload = sequence, .tag = sender.id });
-            if (sender.random.chance(1, 16)) std.Thread.yield() catch {};
-        }
-    }
-
-    /// Posts `message` until the target accepts it, and counts each refusal.
-    fn deliver(sender: *Sender, remote: *backend.Remote, message: core.Message) !void {
-        while (sender.attempts < attempts_max) {
-            if (sender.shared.stop.load(.acquire)) return error.Stopped;
-            sender.attempts += 1;
-            remote.post(target_id, message) catch |err| switch (err) {
-                error.MailboxFull => {
-                    sender.refusals += 1;
-                    std.Thread.yield() catch {};
-                    continue;
-                },
-                else => return err,
-            };
-            return;
-        }
-        return error.AttemptsExhausted;
-    }
-};
-
-/// The peer loop's thread: posts its storm messages with `Loop.post` and with post operations, at
-/// seeded choice, then waits for the quiet phase and posts the message that wakes the target.
-const Peer = struct {
-    shared: *Shared,
-    random: Random,
-    attempts: u64 = 0,
-    refusals: u64 = 0,
-    /// The clock when the peer posted `tag_wake`, or 0 when it did not.
-    posted_at_ns: u64 = 0,
-    counted: bool = false,
-    failure: ?anyerror = null,
-
-    fn run(peer: *Peer) void {
-        peer.serve() catch |err| {
-            peer.failure = err;
-        };
-        peer.finish();
-    }
-
-    fn finish(peer: *Peer) void {
-        if (peer.counted) return;
-        peer.counted = true;
-        _ = peer.shared.finished.fetchAdd(1, .release);
-    }
-
-    fn serve(peer: *Peer) !void {
-        var harness: Harness = undefined;
-        try harness.init(peer_id, peer.shared.registry);
-        defer harness.deinit();
-        for (0..messages_per_sender) |sequence| {
-            try peer.deliver(&harness, .{ .payload = sequence, .tag = peer_id });
-        }
-        peer.finish();
-        try peer.wake(&harness);
-    }
-
-    fn deliver(peer: *Peer, harness: *Harness, message: core.Message) !void {
-        while (peer.attempts < attempts_max) {
-            if (peer.shared.stop.load(.acquire)) return error.Stopped;
-            peer.attempts += 1;
-            const refused = if (peer.random.chance(1, 4))
-                try post_operation(harness, message)
-            else
-                try post_call(harness, message);
-            if (!refused) return;
-            peer.refusals += 1;
-            std.Thread.yield() catch {};
-        }
-        return error.AttemptsExhausted;
-    }
-
-    /// Posts through `Loop.post`, and returns true when the target's ring was full.
-    fn post_call(harness: *Harness, message: core.Message) !bool {
-        harness.loop.post(target_id, message) catch |err| switch (err) {
-            error.MailboxFull => return true,
-            else => return err,
-        };
-        return false;
-    }
-
-    /// Posts through a post operation, waits for its event, and returns true on `mailbox_full`.
-    fn post_operation(harness: *Harness, message: core.Message) !bool {
-        try harness.submit(&.{Operation.post(0, target_id, message)}, &.{});
-        var events: [1]Event = undefined;
-        try harness.collect(&events);
-        _ = events[0].outcome() catch |err| switch (err) {
-            error.MailboxFull => return true,
-            else => return err,
-        };
-        return false;
-    }
-
-    /// Waits for the quiet phase and for the target to sleep, then posts `tag_wake`.
-    fn wake(peer: *Peer, harness: *Harness) !void {
-        const shared = peer.shared;
-        var pauses: u32 = 0;
-        while (!shared.quiet.load(.acquire)) : (pauses += 1) {
-            if (shared.stop.load(.acquire)) return error.Stopped;
-            if (pauses == peer_pauses_max) return error.NeverQuiet;
-            try harness.pause(peer_pause_ns);
-        }
-        pauses = 0;
-        while (!shared.registry.must_wake(target_id) and pauses < peer_pauses_max) : (pauses += 1) {
-            try harness.pause(peer_pause_ns);
-        }
-        // A pause after the target sleeps, so the post comes inside the wait and not before it.
-        try harness.pause(peer_pause_ns);
-        peer.posted_at_ns = backend.testing.monotonic_ns();
-        try harness.loop.post(target_id, .{ .payload = 0, .tag = tag_wake });
-        // On io_uring the wake of a `Loop.post` leaves with the poster's next tick.
-        var events: [1]Event = undefined;
-        _ = try harness.loop.tick(&events, 0);
-    }
-};
 
 /// One library on the target loop. Its poller answers true at seeded ticks and queues the task at
 /// others. The task schedules itself again a seeded count of times. Its timer names its record,
@@ -347,6 +185,22 @@ const Target = struct {
         try target.expect_no_failure();
     }
 
+    /// Waits until every sender finished, then takes a wake that is still set. A sender can wake
+    /// the target after the target drained the message the wake announces. Such a wake stays set,
+    /// and the next tick that waits ends at once with no event: the wasted wake of decision 12,
+    /// point 6. A sender finishes after its last wake, so one tick that waits after that takes it.
+    fn settle(target: *Target, shared: *Shared) !void {
+        const loop = &target.harness.loop;
+        var events: [events_len]Event = undefined;
+        var round: u32 = 0;
+        const rounds_max = conformance.collect_rounds_max;
+        while (shared.finished.load(.acquire) < senders and round < rounds_max) : (round += 1) {
+            try testing.expectEqual(@as(u32, 0), try loop.tick(&events, quiet_wait_ns));
+        }
+        try testing.expectEqual(@as(u32, senders), shared.finished.load(.acquire));
+        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, quiet_wait_ns));
+    }
+
     /// One tick with a wait of 2 s, which the peer's post must end early. Returns its length.
     fn wake(target: *Target, shared: *Shared) !u64 {
         var events: [events_len]Event = undefined;
@@ -437,6 +291,7 @@ fn run_target(target: *Target, storm: *Storm) !u64 {
     try target.start();
     try target.storm(&storm.shared);
     try target.quiet();
+    try target.settle(&storm.shared);
     return target.wake(&storm.shared);
 }
 
