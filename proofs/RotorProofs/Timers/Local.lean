@@ -16,6 +16,10 @@ alone:
   replaces that fire with `canceled`, and changes nothing else.
 - `cancel_not_lost`: in the state where such a cancel used to be dropped, the next tick hands over
   the timer's final event, and it says canceled (decision 5, rule 2 and decision 14, rule 5).
+
+`drain` hands over the finished list. Since W3 a due timer waits on the fired list, and
+`drainFired` is `drain` with the two lists exchanged, so each theorem about `drain` has a fired
+form: `drainFired_repeating`, `drainFired_final` and `cancel_not_lost_fired`.
 -/
 
 namespace Rotor.Timers
@@ -32,6 +36,8 @@ theorem set_slots_other (t : Tables) {i j : Nat} (s : Slot) (h : j ≠ i) :
 @[simp] theorem set_finished (t : Tables) (i : Nat) (s : Slot) : (t.set i s).finished = t.finished :=
   rfl
 
+@[simp] theorem set_fired (t : Tables) (i : Nat) (s : Slot) : (t.set i s).fired = t.fired := rfl
+
 @[simp] theorem set_timers (t : Tables) (i : Nat) (s : Slot) : (t.set i s).timers = t.timers := rfl
 
 @[simp] theorem set_now (t : Tables) (i : Nat) (s : Slot) : (t.set i s).now = t.now := rfl
@@ -41,6 +47,24 @@ theorem set_slots_other (t : Tables) {i j : Nat} (s : Slot) (h : j ≠ i) :
 @[simp] theorem rearm_finished (t : Tables) (i : Nat) : (rearm t i).finished = t.finished := rfl
 
 @[simp] theorem release_finished (t : Tables) (i : Nat) : (release t i).finished = t.finished := rfl
+
+@[simp] theorem rearm_fired (t : Tables) (i : Nat) : (rearm t i).fired = t.fired := rfl
+
+@[simp] theorem release_fired (t : Tables) (i : Nat) : (release t i).fired = t.fired := rfl
+
+@[simp] theorem swap_slots (t : Tables) : (swap t).slots = t.slots := rfl
+
+@[simp] theorem swap_timers (t : Tables) : (swap t).timers = t.timers := rfl
+
+@[simp] theorem swap_now (t : Tables) : (swap t).now = t.now := rfl
+
+@[simp] theorem swap_finished (t : Tables) : (swap t).finished = t.fired := rfl
+
+@[simp] theorem swap_fired (t : Tables) : (swap t).fired = t.finished := rfl
+
+@[simp] theorem swap_swap (t : Tables) : swap (swap t) = t := rfl
+
+theorem set_swap (t : Tables) (i : Nat) (s : Slot) : (swap t).set i s = swap (t.set i s) := rfl
 
 theorem rearm_slot (t : Tables) (i : Nat) :
     (rearm t i).slots i =
@@ -117,7 +141,7 @@ theorem cancel_submitted (t : Tables) (h : Handle) (hs : (t.slots h.index).state
 
 /-- A cancel, through a current handle, of a repeating timer whose fire is queued and not yet
 handed over: the slot is marked and its result becomes `canceled`, and nothing else changes. It
-stays `finishing` in its place on the finished list, and the heap does not hold it. -/
+stays `finishing` in its place on its list, and the heap does not hold it. -/
 theorem cancel_finishing (t : Tables) (h : Handle) (hs : (t.slots h.index).state = .finishing)
     (hg : (t.slots h.index).generation = h.generation)
     (hrep : repeats (t.slots h.index) = true) :
@@ -173,5 +197,66 @@ theorem cancel_not_lost (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ 
   simp only [set_slots_same] at this
   simp only [hfirst.2] at this ⊢
   exact this
+
+/-- Handing over a repeating timer's fire from the fired list: `drain_repeating`, with the lists
+exchanged. -/
+theorem drainFired_repeating (t : Tables) (i : Nat) (rest : List Nat) (hfin : t.fired = i :: rest)
+    (hrep : repeats (t.slots i) = true) :
+    let result := drainFired t 1
+    result.2 = [{ handle := ⟨i, (t.slots i).generation⟩, userData := (t.slots i).userData,
+                  result := (t.slots i).result, more := true }] ∧
+      (result.1.slots i).state = .submitted ∧
+      (result.1.slots i).last = (t.slots i).last + (t.slots i).period ∧
+      (result.1.slots i).generation = (t.slots i).generation ∧
+      result.1.timers = arm t.timers i ((t.slots i).last + (t.slots i).period) :=
+  drain_repeating (swap t) i rest hfin hrep
+
+/-- Handing over any other event from the fired list is the operation's final one. -/
+theorem drainFired_final (t : Tables) (i : Nat) (rest : List Nat) (hfin : t.fired = i :: rest)
+    (hrep : repeats (t.slots i) = false) :
+    let result := drainFired t 1
+    result.2 = [{ handle := ⟨i, (t.slots i).generation⟩, userData := (t.slots i).userData,
+                  result := (t.slots i).result, more := false }] ∧
+      (result.1.slots i).state = .free ∧
+      (result.1.slots i).generation = (t.slots i).generation + 1 :=
+  drain_final (swap t) i rest hfin hrep
+
+/-- A cancel of a finishing slot changes no list, so it does not see which list is which. -/
+theorem cancel_swap (t : Tables) (h : Handle) (hs : (t.slots h.index).state = .finishing) :
+    cancel (swap t) h = swap (cancel t h) := by
+  unfold cancel requestCancel cancellable
+  simp only [swap_slots, hs]
+  split
+  · split
+    · rfl
+    · simp only [reduceCtorEq, ↓reduceIte]; rfl
+  · rfl
+
+/-- **`cancel_not_lost` on the fired list.** Since W3 a due timer's fire waits on `fired`. Two fires
+are queued there, and a tick has room to hand over one. A cancel of the second timer between the
+ticks replaces its queued fire with `canceled`, and the next tick hands that event over as the
+timer's final one. -/
+theorem cancel_not_lost_fired (t : Tables) (a b : Nat) (rest : List Nat) (hab : a ≠ b)
+    (hfin : t.fired = a :: b :: rest) (hb : (t.slots b).state = .finishing)
+    (hrep : repeats (t.slots b) = true) :
+    let first := drainFired t 1
+    let h : Handle := ⟨b, (t.slots b).generation⟩
+    let second := drainFired (cancel first.1 h) 1
+    second.2 = [{ handle := h, userData := (t.slots b).userData, result := canceled,
+                  more := false }] ∧
+      (second.1.slots b).state = .free ∧
+      (second.1.slots b).generation = (t.slots b).generation + 1 := by
+  have hba : b ≠ a := Ne.symm hab
+  have key := cancel_not_lost (swap t) a b rest hab hfin hb hrep
+  -- After the first drain, b is still finishing, so the cancel does not see the lists exchanged.
+  have hslot : (drain (swap t) 1).1.slots b = t.slots b := by
+    rw [drain_step (swap t) a (b :: rest) 0 hfin]
+    by_cases ha : repeats (t.slots a) = true
+    · simp only [swap_slots, ha, ↓reduceIte, drain, rearm_other _ hba]
+    · simp only [swap_slots, ha, Bool.false_eq_true, ↓reduceIte, drain, release_other _ hba]
+  have hs : ((drain (swap t) 1).1.slots b).state = .finishing := by rw [hslot]; exact hb
+  simp only [drainFired] at key ⊢
+  rw [cancel_swap _ _ hs, swap_swap]
+  exact key
 
 end Rotor.Timers

@@ -40,6 +40,9 @@ pub const Inbox = struct {
     /// closes that wait for a worker (decision 18, amendment of 2026-11-06). Only the loop thread
     /// touches it. It stays empty unless the loop's file policy is `offload`.
     offload_in_flight: offload.InFlight,
+    /// The sender whose ring the next `drain_mailboxes` visits first (W3, ruled 2026-11-07). It is
+    /// always below `registry.loops()`. Only the loop thread reads or writes it.
+    sender_cursor: LoopId,
 
     /// `out` is the out array a loop with an offload carved from its memory, or null for one with
     /// no offload (`offload.InFlight`).
@@ -50,21 +53,38 @@ pub const Inbox = struct {
             .completions = completions,
             .offload_asleep = .init(false),
             .offload_in_flight = .init(out),
+            .sender_cursor = 0,
         };
     }
 
     /// Moves the messages other loops posted to loop `receiver` into `events`, oldest first per
-    /// sender, until the events run out. A ring that still holds messages then is drained by the
-    /// next tick, which does not wait while one does.
+    /// sender, until the events run out. The drain visits the senders in turn from
+    /// `sender_cursor`, at most `messages_per_drain` from each. When the events run out first, the
+    /// cursor moves to the first sender the drain did not visit, so each sender gets one visit per
+    /// rotation (W3, ruled 2026-11-07). A ring that still holds messages then is drained by a later
+    /// tick, which does not wait while one does.
     pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event) u32 {
         const registry = inbox.registry orelse return 0;
+        const loops = registry.loops();
+        const cursor = inbox.sender_cursor;
+        assert(cursor < loops);
         var produced: u32 = 0;
-        for (0..registry.loops()) |sender| {
-            if (sender == receiver) continue;
-            const room = @min(events.len - produced, constants.messages_per_drain);
-            if (room == 0) break;
-            const ring = registry.mailbox(@intCast(sender), receiver);
-            produced += ring.pop_as(Event, events[produced..][0..room], message_event);
+        var sender: usize = cursor;
+        // Each sender once, from the cursor. At the count of loops the sender wraps to 0: a compare,
+        // and no modulo. A drain that visited every sender keeps the cursor, and skips the store.
+        for (0..loops) |_| {
+            if (sender == loops) sender = 0;
+            if (sender != receiver) {
+                const room = @min(events.len - produced, constants.messages_per_drain);
+                if (room == 0) {
+                    inbox.sender_cursor = @intCast(sender);
+                    break;
+                }
+                // An empty ring costs a visit and no room.
+                const ring = registry.mailbox(@intCast(sender), receiver);
+                produced += ring.pop_as(Event, events[produced..][0..room], message_event);
+            }
+            sender += 1;
         }
         assert(produced <= events.len);
         return produced;

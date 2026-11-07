@@ -37,6 +37,7 @@ pub const sync = @import("sync.zig");
 pub const tables = @import("tables/tables.zig");
 pub const tasks = @import("tasks.zig");
 pub const tick_error = @import("tick_error.zig");
+pub const tick_share = @import("tick_share.zig");
 pub const timer_heap = @import("timer_heap.zig");
 pub const waiters = @import("waiters.zig");
 
@@ -73,6 +74,7 @@ test {
     _ = file_call;
     _ = handle;
     _ = inbox;
+    _ = @import("inbox_test.zig");
     _ = layout;
     _ = mailbox;
     _ = @import("mailbox_registry.zig");
@@ -98,9 +100,12 @@ test {
     _ = sync;
     _ = tables;
     _ = @import("tables/tables_test.zig");
+    _ = @import("tables/tables_finish.zig");
+    _ = @import("tables/tables_deadline.zig");
     _ = tasks;
     _ = @import("tasks_test.zig");
     _ = tick_error;
+    _ = tick_share;
     _ = timer_heap;
     _ = waiters;
     _ = @import("waiters_test.zig");

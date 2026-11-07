@@ -45,16 +45,18 @@ fn start_ns(tables: *const Tables, slot: *const Slot) u64 {
 pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     assert(wait_ns <= constants.wait_ns_max);
     if (wait_ns == 0) return null;
-    if (tables.pending.count != 0 or tables.finished.count != 0) return null;
+    const lists = tables.finished.count + tables.fired.count;
+    if (tables.pending.count != 0 or lists != 0) return null;
     const earliest = tables.timers.earliest_ns() orelse return wait_ns;
     if (earliest <= tables.now_ns) return null;
     return @min(wait_ns, earliest - tables.now_ns);
 }
 
-/// A tick's first expiry, before it asks the kernel anything: finishes the due timers at the head
-/// of the heap, in deadline order, and stops at the first operation's deadline. An operation's
-/// result can be on its way from the kernel, so its deadline waits for `expire_after_reap`
-/// (issue 10). A timer's cannot, so a tick whose only work is a due timer hands it over at once.
+/// A tick's first expiry, before it asks the kernel anything: moves the due timers at the head
+/// of the heap onto `fired`, in deadline order, and stops at the first operation's deadline. An
+/// operation's result can be on its way from the kernel, so its deadline waits for
+/// `expire_after_reap` (issue 10). A timer's cannot, so a tick whose only work is a due timer
+/// hands it over at once.
 pub fn finish_due_timers(tables: *Tables) void {
     const armed = tables.timers.count;
     var finished: u32 = 0;
@@ -65,13 +67,13 @@ pub fn finish_due_timers(tables: *Tables) void {
         if (tables.table.at(head).code != .timer) return;
         const index = tables.timers.pop_due(tables.now_ns).?;
         assert(index == head);
-        tables.finish_local(index, 0);
+        tables.fire(index);
     }
     assert(tables.timers.count <= armed);
 }
 
-/// Finishes every timer that is due, and returns the next operation whose deadline passed,
-/// marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
+/// Moves every timer that is due onto `fired`, and returns the next operation whose deadline
+/// passed, marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
 /// more is due. At most the heap's entries can be due, which bounds the loop.
 ///
 /// An expired slot may be `queued` and not only `submitted`. A backend that resubmits an
@@ -92,7 +94,7 @@ pub fn next_expired(tables: *Tables) ?u32 {
             slot.flags.timed_out = true;
             return index;
         }
-        tables.finish_local(index, 0);
+        tables.fire(index);
     }
     return null;
 }

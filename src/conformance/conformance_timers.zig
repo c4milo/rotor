@@ -343,8 +343,8 @@ test "a tick with an event of its own to hand over still fires the timer that is
     try harness.submit(&.{Operation.timer(8, period_ns, 0)}, handles[1..2]);
     harness.loop.cancel(handles[1]);
     try testing.expectEqual(@as(u32, 2), try harness.loop.tick(&events, 0));
-    try testing.expectEqual(@as(u64, 8), events[0].user_data);
-    try testing.expectError(error.Canceled, events[0].outcome());
-    try testing.expectEqual(@as(u64, 9), events[1].user_data);
+    // The due timer waits on the fired list, so it can come first (W3, ruled 2026-11-07).
+    try testing.expectError(error.Canceled, (try Harness.find(&events, 8)).outcome());
+    try testing.expectEqual(@as(u32, 0), try (try Harness.find(&events, 9)).outcome());
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
 }

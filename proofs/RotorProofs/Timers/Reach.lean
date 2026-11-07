@@ -58,17 +58,17 @@ due, it was for the deadline the schedule names for its count of fires, the even
 and the timer is armed next for the deadline one period later: never a later one, so no period
 is skipped, and never one read from the clock. It holds of every state a tick drains from. -/
 theorem handed_over_on_schedule (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat)
-    (rest : List Nat) (hfin : t.finished = i :: rest) (hrep : repeats (t.slots i) = true) :
+    (rest : List Nat) (hfin : t.fired = i :: rest) (hrep : repeats (t.slots i) = true) :
     let s := t.slots i
     s.last = s.first + s.fired * s.period ∧ s.last ≤ t.now ∧
-      (drain t 1).2.map (·.more) = [true] ∧
-      ((drain t 1).1.slots i).last = s.first + (s.fired + 1) * s.period ∧
-      ((drain t 1).1.slots i).state = .submitted := by
-  have hs : (t.slots i).state = .finishing := g.finished i (by rw [hfin]; simp)
+      (drainFired t 1).2.map (·.more) = [true] ∧
+      ((drainFired t 1).1.slots i).last = s.first + (s.fired + 1) * s.period ∧
+      ((drainFired t 1).1.slots i).state = .submitted := by
+  have hs : (t.slots i).state = .finishing := g.fired i (by rw [hfin]; simp)
   have hc : (t.slots i).cancelRequested = false := by
     simp only [repeats, Bool.and_eq_true, Bool.not_eq_true'] at hrep; exact hrep.2
   have hr := g.fired_result i hs hc
-  have hd := drain_repeating t i rest hfin hrep
+  have hd := drainFired_repeating t i rest hfin hrep
   simp only at hd ⊢
   refine ⟨g.schedule i, g.due i hs hr, by rw [hd.1]; rfl, ?_, hd.2.1⟩
   rw [hd.2.2.1, g.schedule i, Nat.add_mul, Nat.one_mul, Nat.add_assoc]
@@ -77,21 +77,21 @@ theorem handed_over_on_schedule (t : Tables) (m : Nat → Option Entry) (g : Goo
 drain above is each of them. -/
 theorem tick_drains_good {t : Tables} (r : Reachable t) (now room : Nat) (hnow : t.now ≤ now) :
     (∃ m, Good (expire (flush { t with now := now })) m) ∧
-      ∃ m, Good (expire (drain (expire (flush { t with now := now })) room).1) m := by
+      ∃ m, Good (expire (drainLists (expire (flush { t with now := now })) room).1) m := by
   obtain ⟨m, g⟩ := r.good
   have g0 : Good { t with now := now } m :=
     { g with due := fun s hs hr => Nat.le_trans (g.due s hs hr) hnow }
   obtain ⟨m1, g1, _⟩ := flush_good _ m g0
   obtain ⟨m2, g2, _⟩ := expire_good _ m1 g1
-  obtain ⟨m3, g3, _⟩ := drain_good room _ m2 g2
+  obtain ⟨m3, g3, _⟩ := drainLists_good room _ m2 g2
   obtain ⟨m4, g4, _⟩ := expire_good _ m3 g3
   exact ⟨⟨m2, g2⟩, ⟨m4, g4⟩⟩
 
 /-- **Decision 14, rule 4.** A tick queues a fire for every timer that is due when it reads the
-clock: after expiry no armed timer is due, and each that was is on the finished list. -/
+clock: after expiry no armed timer is due, and each that was is on the fired list. -/
 theorem expire_queues_every_due (t : Tables) (m : Nat → Option Entry) (g : Good t m) :
     ∃ m', Good (expire t) m' ∧ (∀ s x, m' s = some x → t.now < x.deadline) ∧
-      (∀ s x, m s = some x → x.deadline ≤ t.now → s ∈ (expire t).finished) :=
+      (∀ s x, m s = some x → x.deadline ≤ t.now → s ∈ (expire t).fired) :=
   let ⟨m', g', _, hnone, hall⟩ := expire_good t m g
   ⟨m', g', hnone, hall⟩
 
@@ -113,21 +113,21 @@ theorem cancel_stops {t : Tables} (r : Reachable t) (h : Handle)
 
 /-- **Decision 5, rule 2 and decision 14, rule 5.** A cancel, through its current handle, of a
 repeating timer whose fire is queued and not yet handed over makes that queued event its final one:
-the slot stays on the finished list and out of the heap, its event will not say `more`, and it says
+the slot stays on the fired list and out of the heap, its event will not say `more`, and it says
 canceled. Camilo ruled on 2026-09-23 that the cancel replaces the queued fire. -/
 theorem cancel_ends_queued {t : Tables} (r : Reachable t) (h : Handle)
-    (hfin : h.index ∈ t.finished) (hrep : repeats (t.slots h.index) = true)
+    (hfin : h.index ∈ t.fired) (hrep : repeats (t.slots h.index) = true)
     (hg : (t.slots h.index).generation = h.generation) :
-    ∃ m', Good (cancel t h) m' ∧ m' h.index = none ∧ h.index ∈ (cancel t h).finished ∧
+    ∃ m', Good (cancel t h) m' ∧ m' h.index = none ∧ h.index ∈ (cancel t h).fired ∧
       ((cancel t h).slots h.index).result = canceled ∧
       repeats ((cancel t h).slots h.index) = false := by
   obtain ⟨m, g⟩ := r.good
   obtain ⟨m', g', _⟩ := cancel_good t m g h
-  have hs : (t.slots h.index).state = .finishing := g.finished _ hfin
+  have hs : (t.slots h.index).state = .finishing := g.fired _ hfin
   have hcf := cancel_finishing t h hs hg hrep
   refine ⟨m', g', g'.unarmed ?_, ?_, ?_, ?_⟩
   · rw [hcf, set_slots_same]; simp [hs]
-  · rw [hcf, set_finished]; exact hfin
+  · rw [hcf, set_fired]; exact hfin
   · rw [hcf, set_slots_same]
   · rw [hcf, set_slots_same]; simp [repeats]
 
@@ -157,11 +157,11 @@ theorem tick_events (t : Tables) (now room : Nat) :
   simp only [tick, List.mem_append] at he ⊢
   rcases he with he | he
   · -- Handed over by the first drain: what follows it only raises generations.
-    have := drain_events room (expire (flush { t with now := now })) e he
+    have := drainLists_events room (expire (flush { t with now := now })) e he
     have hg := tick_before_first_genLe t now e.handle.index
     refine ⟨Nat.le_trans hg this.1, fun hmore => Nat.lt_of_lt_of_le (this.2 hmore) ?_⟩
-    exact ((expireSteps_genLe _ _).trans (drain_genLe _ _)) e.handle.index
-  · have := drain_events _ (expire (drain (expire (flush { t with now := now })) room).1) e he
+    exact ((expireSteps_genLe _ _).trans (drainLists_genLe _ _)) e.handle.index
+  · have := drainLists_events _ (expire (drainLists (expire (flush { t with now := now })) room).1) e he
     have hg := tick_before_second_genLe t now room e.handle.index
     exact ⟨Nat.le_trans hg this.1, this.2⟩
 

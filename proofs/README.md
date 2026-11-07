@@ -26,7 +26,7 @@ Every theorem rests only on Lean's three standard axioms (`propext`, `Classical.
 | a fire is handed over only once it is due, flagged `more`, and the next deadline is exactly one period later | decision 14, rules 2 to 4 | `handed_over_on_schedule` |
 | a tick queues a fire for every timer that is due, so none is skipped | decision 14, rule 4 | `expire_queues_every_due` |
 | a cancel of an armed timer disarms it at once, and its next event is final and says canceled | decision 5, rules 2 and 5 | `cancel_stops` |
-| a cancel of a repeating timer whose fire is queued and not yet handed over makes that queued event its final one, and it says canceled | decision 5, rule 2; decision 14, rule 5 | `cancel_ends_queued`, `cancel_not_lost` |
+| a cancel of a repeating timer whose fire is queued and not yet handed over makes that queued event its final one, and it says canceled | decision 5, rule 2; decision 14, rule 5 | `cancel_ends_queued`, `cancel_not_lost`, `cancel_not_lost_fired` |
 | after an operation's final event, no later event carries its handle | decision 5, rule 1 | `final_is_last` |
 
 ## What the proofs found
@@ -56,11 +56,11 @@ tick hands over the final event.
 | model | Zig | what the model leaves out |
 |---|---|---|
 | `Heap.Defs` | `TimerHeap` | The capacity: the Zig `arm` asserts room, and the model has room everywhere. The array is a function from positions to entries. `sequence` does not wrap; `zigBefore_eq` covers the wrap. |
-| `Timers.Defs`: `submit`, `armTimer`, `finishLocal`, `rearm`, `release`, `drain`, `requestCancel`, `cancellable` | `Tables.submit`, `arm`, `finish_local`, `rearm`, `SlotTable.release`, `drain_finished`, `request_cancel`, `cancellable` and `reachable` | Every slot holds a timer. A deadline on another kind of operation shares the heap, but its expiry goes to the backend's cancel. The slot table's free list is left out: `submit` takes the index a claim returns. The model's `Event` has no `dispatched` flag. Since decision 26, `drain_finished` copies that flag from the slot to the event. No theorem depends on it. |
-| `Timers.Defs`: `flushOne`, `flush`, `expire`, `tick` | a backend's `flush_one`, `flush`, `expire` and `tick` | A tick is `flush`, `expire`, `drain_finished`, `expire` again, then `drain_finished` into the room that is left. The Zig tick's first expiry is `finish_due_timers`, which stops at the first deadline that is not a timer's, and its second comes after its reap (issue 10). Every slot here holds a timer, so the first is `expire`. The Zig tick also drains mailboxes and the offload, and waits and reaps before its second expiry. None of that reaches a timer's slot. |
+| `Timers.Defs`: `submit`, `armTimer`, `finishLocal`, `fireLocal`, `rearm`, `release`, `drain`, `drainFired`, `drainLists`, `requestCancel`, `cancellable` | `Tables.submit`, `arm`, `finish_local`, `fire`, `rearm`, `SlotTable.release`, the two loops of `drain_lists`, `drain_lists`, `request_cancel`, `cancellable` and `reachable` | Every slot holds a timer. A deadline on another kind of operation shares the heap, but its expiry goes to the backend's cancel. The slot table's free list is left out: `submit` takes the index a claim returns. The model's `Event` has no `dispatched` flag. Since decision 26, `drain_lists` copies that flag from the slot to the event. No theorem depends on it. Due timers wait on `fired` and the slots a cancel ends on `finished` (W3, ruled 2026-11-07). `drainFired` is `drain` with the two lists exchanged, so one proof covers both loops. |
+| `Timers.Defs`: `flushOne`, `flush`, `expire`, `tick` | a backend's `flush_one`, `flush`, `expire` and `tick` | A tick is `flush`, `expire`, `drain_lists`, `expire` again, then `drain_lists` into the room that is left. The share `core.tick_share` gives the lists only bounds that room, so the model drains into any room. The Zig tick's first expiry is `finish_due_timers`, which stops at the first deadline that is not a timer's, and its second comes after its reap (issue 10). Every slot here holds a timer, so the first is `expire`. The Zig tick also drains mailboxes and the offload, and waits and reaps before its second expiry. None of that reaches a timer's slot. |
 
 Two fields of the model's slot are not in the Zig slot: `first`, the first deadline, and `fired`,
-the fires handed over. Nothing the model computes reads them. They exist so a theorem can say
+the fires handed over. The model's `Tables.fired` is the list of due timers, as in the Zig tables. Nothing the model computes reads them. They exist so a theorem can say
 which deadline the k-th fire was for.
 
 ## Keeping them true
@@ -79,8 +79,8 @@ fails to check, and names the theorem.
 | `RotorProofs/Heap/Sift.lean` | `sift_up` and `sift_down` keep the heap |
 | `RotorProofs/Heap/Spec.lean` | what `arm`, `disarm` and `pop_due` do to the model |
 | `RotorProofs/Timers/Defs.lean` | the timer lifecycle model |
-| `RotorProofs/Timers/Local.lean` | what one step does, and `cancel_not_lost` |
+| `RotorProofs/Timers/Local.lean` | what one step does, `cancel_not_lost` and its form on the fired list |
 | `RotorProofs/Timers/Good.lean` | the invariant every reachable state satisfies, and its primitives |
 | `RotorProofs/Timers/Expire.lean` | expiry keeps the invariant and queues every due timer |
-| `RotorProofs/Timers/Ops.lean` | flush, drain, cancel and tick keep it, and generations only grow |
+| `RotorProofs/Timers/Ops.lean` | flush, both drains, cancel and tick keep it, and generations only grow |
 | `RotorProofs/Timers/Reach.lean` | the theorems about every reachable state |

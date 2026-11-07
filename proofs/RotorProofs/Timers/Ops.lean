@@ -3,7 +3,7 @@ import RotorProofs.Timers.Expire
 /-!
 # Timers: the operations keep the invariant
 
-`flush`, `drain`, `cancel` and a whole `tick` keep `Good`, and no operation lowers a slot's
+`flush`, `drain`, `drainFired`, `drainLists`, `cancel` and a whole `tick` keep `Good`, and no operation lowers a slot's
 generation. An event carries its slot's generation at the moment it is handed over, and a final
 event leaves the slot at a higher one, so no event after it can carry its handle.
 -/
@@ -76,16 +76,30 @@ theorem drain_good : ∀ (room : Nat) (t : Tables) (m : Nat → Option Entry), G
       have g1 := dropHead_good t m g i rest hfin
       have hs : (t.slots i).state = .finishing := g.finished i (by rw [hfin]; simp)
       have hnf : i ∉ rest := (List.nodup_cons.mp (hfin ▸ g.finished_nodup)).1
+      have hnr : i ∉ t.fired := fun h => g.disjoint i h (by rw [hfin]; simp)
       by_cases hrep : repeats (t.slots i) = true
       · simp only [hrep, ↓reduceIte]
         obtain ⟨m', g', hnow⟩ :=
-          drain_good room _ _ (rearm_good { t with finished := rest } m g1 i hs hnf (by
+          drain_good room _ _ (rearm_good { t with finished := rest } m g1 i hs hnf hnr (by
             simp only [repeats, Bool.and_eq_true, Bool.not_eq_true'] at hrep; exact hrep.2))
         exact ⟨m', g', by rw [hnow]; rfl⟩
       · simp only [hrep, Bool.false_eq_true, ↓reduceIte]
         obtain ⟨m', g', hnow⟩ :=
-          drain_good room _ _ (release_good { t with finished := rest } m g1 i hs hnf)
+          drain_good room _ _ (release_good { t with finished := rest } m g1 i hs hnf hnr)
         exact ⟨m', g', by rw [hnow]; rfl⟩
+
+theorem drainFired_good (room : Nat) (t : Tables) (m : Nat → Option Entry) (g : Good t m) :
+    ∃ m', Good (drainFired t room).1 m' ∧ (drainFired t room).1.now = t.now :=
+  let ⟨m', g', hnow⟩ := drain_good room (swap t) m g.swapped
+  ⟨m', g'.swapped, hnow⟩
+
+theorem drainLists_good (room : Nat) (t : Tables) (m : Nat → Option Entry) (g : Good t m) :
+    ∃ m', Good (drainLists t room).1 m' ∧ (drainLists t room).1.now = t.now := by
+  unfold drainLists
+  obtain ⟨m1, g1, hn1⟩ := drainFired_good (room - min t.finished.length (room / 2)) t m g
+  obtain ⟨m2, g2, hn2⟩ := drain_good
+    (room - (drainFired t (room - min t.finished.length (room / 2))).2.length) _ m1 g1
+  exact ⟨m2, g2, by rw [hn2, hn1]⟩
 
 /-! ## cancel -/
 
@@ -116,16 +130,31 @@ theorem cancel_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (h : 
 
 /-! ## tick -/
 
+/-- The state a tick leaves, written out, so a proof names each drain's room. -/
+theorem tick_fst (t : Tables) (now room : Nat) :
+    (tick t now room).1 =
+      (drainLists (expire (drainLists (expire (flush { t with now := now })) room).1)
+        (room - (drainLists (expire (flush { t with now := now })) room).2.length)).1 := rfl
+
+/-- The events a tick hands over, written out. -/
+theorem tick_snd (t : Tables) (now room : Nat) :
+    (tick t now room).2 =
+      (drainLists (expire (flush { t with now := now })) room).2 ++
+        (drainLists (expire (drainLists (expire (flush { t with now := now })) room).1)
+          (room - (drainLists (expire (flush { t with now := now })) room).2.length)).2 := rfl
+
 theorem tick_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (now room : Nat)
     (hnow : t.now ≤ now) : ∃ m', Good (tick t now room).1 m' ∧ (tick t now room).1.now = now := by
   have g0 : Good { t with now := now } m :=
     { g with due := fun s hs hr => Nat.le_trans (g.due s hs hr) hnow }
   obtain ⟨m1, g1, hn1⟩ := flush_good _ m g0
   obtain ⟨m2, g2, hn2, _, _⟩ := expire_good _ m1 g1
-  obtain ⟨m3, g3, hn3⟩ := drain_good room _ m2 g2
+  obtain ⟨m3, g3, hn3⟩ := drainLists_good room _ m2 g2
   obtain ⟨m4, g4, hn4, _, _⟩ := expire_good _ m3 g3
-  obtain ⟨m5, g5, hn5⟩ := drain_good _ _ m4 g4
-  exact ⟨m5, g5, by unfold tick; simp only; rw [hn5, hn4, hn3, hn2, hn1]⟩
+  obtain ⟨m5, g5, hn5⟩ := drainLists_good
+    (room - (drainLists (expire (flush { t with now := now })) room).2.length) _ m4 g4
+  rw [tick_fst]
+  exact ⟨m5, g5, by rw [hn5, hn4, hn3, hn2, hn1]⟩
 
 /-! ## Generations only grow -/
 
@@ -150,6 +179,9 @@ theorem submit_genLe (t : Tables) (i after period userData : Nat) :
   · simp [submit, set_slots_other _ _ hj]
 
 theorem finishLocal_genLe (t : Tables) (i : Nat) (r : Int) : GenLe t (finishLocal t i r) :=
+  set_genLe t i _ (Nat.le_refl _)
+
+theorem fireLocal_genLe (t : Tables) (i : Nat) : GenLe t (fireLocal t i) :=
   set_genLe t i _ (Nat.le_refl _)
 
 theorem flushOne_genLe (t : Tables) (i : Nat) : GenLe t (flushOne t i) := by
@@ -177,7 +209,7 @@ theorem expireSteps_genLe : ∀ (fuel : Nat) (t : Tables), GenLe t (expireSteps 
       cases answer with
       | none => exact GenLe.refl t
       | some i =>
-        exact (finishLocal_genLe { t with timers := heap } i 0).trans (expireSteps_genLe fuel _)
+        exact (fireLocal_genLe { t with timers := heap } i).trans (expireSteps_genLe fuel _)
 
 theorem rearm_genLe (t : Tables) (i : Nat) : GenLe t (rearm t i) := by
   intro j; by_cases hj : j = i
@@ -202,6 +234,13 @@ theorem drain_genLe : ∀ (room : Nat) (t : Tables), GenLe t (drain t room).1
       · simp only [hrep, Bool.false_eq_true, ↓reduceIte]
         exact (release_genLe { t with finished := rest } i).trans (drain_genLe room _)
 
+theorem drainFired_genLe (room : Nat) (t : Tables) : GenLe t (drainFired t room).1 :=
+  drain_genLe room (swap t)
+
+theorem drainLists_genLe (room : Nat) (t : Tables) : GenLe t (drainLists t room).1 := by
+  unfold drainLists
+  exact (drainFired_genLe _ t).trans (drain_genLe _ _)
+
 theorem cancel_genLe (t : Tables) (h : Handle) : GenLe t (cancel t h) := by
   unfold cancel requestCancel
   dsimp only
@@ -224,11 +263,12 @@ theorem tick_before_first_genLe (t : Tables) (now : Nat) :
 
 /-- What a tick does before its second drain: flush, expire, drain, expire. -/
 theorem tick_before_second_genLe (t : Tables) (now room : Nat) :
-    GenLe t (expire (drain (expire (flush { t with now := now })) room).1) :=
-  ((tick_before_first_genLe t now).trans (drain_genLe room _)).trans (expireSteps_genLe _ _)
+    GenLe t (expire (drainLists (expire (flush { t with now := now })) room).1) :=
+  ((tick_before_first_genLe t now).trans (drainLists_genLe room _)).trans (expireSteps_genLe _ _)
 
-theorem tick_genLe (t : Tables) (now room : Nat) : GenLe t (tick t now room).1 :=
-  (tick_before_second_genLe t now room).trans (drain_genLe _ _)
+theorem tick_genLe (t : Tables) (now room : Nat) : GenLe t (tick t now room).1 := by
+  rw [tick_fst]
+  exact (tick_before_second_genLe t now room).trans (drainLists_genLe _ _)
 
 /-- Every event `drain` hands over carries its slot's generation, at or above the generation the
 slot had when the drain began; a final one leaves its slot at a higher generation than it
@@ -263,5 +303,28 @@ theorem drain_events : ∀ (room : Nat) (t : Tables), ∀ e ∈ (drain t room).2
         · have := drain_events room (release { t with finished := rest } i) e he
           have hg := release_genLe { t with finished := rest } i e.handle.index
           exact ⟨Nat.le_trans hg this.1, this.2⟩
+
+/-- `drain_events` for the fired list. -/
+theorem drainFired_events (room : Nat) (t : Tables) : ∀ e ∈ (drainFired t room).2,
+    (t.slots e.handle.index).generation ≤ e.handle.generation ∧
+      (e.more = false →
+        e.handle.generation < ((drainFired t room).1.slots e.handle.index).generation) :=
+  drain_events room (swap t)
+
+/-- `drain_events` for both lists: an event of the fired list, and one of the finished list after
+it, carry generations the drain only raises. -/
+theorem drainLists_events (room : Nat) (t : Tables) : ∀ e ∈ (drainLists t room).2,
+    (t.slots e.handle.index).generation ≤ e.handle.generation ∧
+      (e.more = false →
+        e.handle.generation < ((drainLists t room).1.slots e.handle.index).generation) := by
+  intro e he
+  simp only [drainLists, List.mem_append] at he ⊢
+  rcases he with he | he
+  · have := drainFired_events _ t e he
+    refine ⟨this.1, fun hmore => Nat.lt_of_lt_of_le (this.2 hmore) ?_⟩
+    exact drain_genLe _ _ e.handle.index
+  · have := drain_events _ _ e he
+    have hg := drainFired_genLe (room - min t.finished.length (room / 2)) t e.handle.index
+    exact ⟨Nat.le_trans hg this.1, this.2⟩
 
 end Rotor.Timers

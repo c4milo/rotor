@@ -65,6 +65,10 @@ pub const Tables = struct {
     /// event the next `drain_finished` hands over. That event is final, except for a repeating
     /// timer that was not cancelled, whose event is one fire flagged `more`.
     finished: SlotList,
+    /// Due timers, oldest first, in the order they came due: each slot is `finishing` and holds its
+    /// fire in `Slot.result`. A list of its own, so a long `finished` list cannot hold a due timer
+    /// off, and a stream of due timers cannot hold `finished` off (W3, ruled 2026-11-07).
+    fired: SlotList,
     /// The monotonic clock as the backend's tick last read it.
     now_ns: u64,
     /// The loop's heartbeat, on a line of its own in the caller's memory (decision 28). A watch on
@@ -120,6 +124,7 @@ pub const Tables = struct {
         tables.statistics.init(options.sampling, starts);
         tables.pending = SlotList.empty;
         tables.finished = SlotList.empty;
+        tables.fired = SlotList.empty;
         tables.now_ns = 0;
         heartbeat.* = .init(options.stall_turn_ns);
         tables.heartbeat = heartbeat;
@@ -200,7 +205,7 @@ pub const Tables = struct {
         assert(tables.in_flight() == 0);
         // A slot on a list is a slot in use, so no caller's mistake reaches this line alone: it
         // holds the lists to the table.
-        assert(tables.pending.count == 0 and tables.finished.count == 0);
+        assert(tables.pending.count == 0 and tables.finished.count == 0 and tables.fired.count == 0);
         tables.dispatch.assert_empty();
     }
 
@@ -333,7 +338,7 @@ pub const Tables = struct {
     ///
     /// A finishing slot reaches here only as a repeating timer whose fire is queued and not yet
     /// handed over. The cancel replaces that fire with `canceled`, so the event already waiting
-    /// on `finished` is the timer's final one. That is what a cancel of a timer whose deadline
+    /// on `fired` is the timer's final one. That is what a cancel of a timer whose deadline
     /// passed before the loop expired it already hands over, and Camilo chose it on
     /// 2026-09-23 (decision 14, rule 5).
     pub fn request_cancel(tables: *Tables, index: u32, slot: *Slot) CancelAction {
@@ -398,7 +403,11 @@ pub const Tables = struct {
     pub const finish_local = finish_module.finish_local;
     /// `finish_local` for a receive from a group, whose event names a buffer: `tables_finish.zig`.
     pub const finish_local_buffer = finish_module.finish_local_buffer;
-    /// Hands over the final events the loop produced itself: `tables_finish.zig`.
+    /// A due timer's fire, onto the fired list: `tables_finish.zig`.
+    pub const fire = finish_module.fire;
+    /// Hands over the events of both lists, into at most a given count of places: `tables_finish.zig`.
+    pub const drain_lists = finish_module.drain_lists;
+    /// Hands over the events of both lists, into every place of `events`: `tables_finish.zig`.
     pub const drain_finished = finish_module.drain_finished;
     /// Arms an operation's deadline or a timer's delay: `tables_deadline.zig`.
     pub const arm = deadline.arm;

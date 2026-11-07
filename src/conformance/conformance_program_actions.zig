@@ -72,8 +72,11 @@ pub const Stream = struct {
     send_buffer: [stream_bytes_max]u8 = @splat(0),
     receive_buffer: [stream_bytes_max]u8 = @splat(0),
 
+    /// The bytes sent and not yet received. A send that ended at the flush waits on the finished
+    /// list, and since W3 the receive of its bytes can reach the caller first (decision 11, point
+    /// 4, amended 2026-11-07). The send is then still in flight, and none of its bytes is unread.
     fn unread(stream: *const Stream) u64 {
-        return stream.sent - stream.received;
+        return stream.sent -| stream.received;
     }
 };
 

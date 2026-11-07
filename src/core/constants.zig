@@ -38,6 +38,39 @@ pub const mailbox_messages: u32 = 256;
 /// does not wait while one does.
 pub const messages_per_drain: u32 = 32;
 
+/// The divisor of a tick's events that gives the kernel's reserve for operations (W3, ruled
+/// 2026-11-07). Of `N` events, a tick keeps at least `max(1, N / kernel_share_divisor)` for the
+/// operations of the kernel's answer, while the kernel can answer. It is a power of two, so the
+/// division is a shift.
+pub const kernel_share_divisor: u32 = 4;
+
+/// The divisor of a tick's events that gives the reserve of the mailboxes (W3, ruled 2026-11-07).
+/// Of `N` events, a tick keeps at least `max(1, N / mailbox_share_divisor)` for the messages of
+/// other loops, while the loop has a registry. It is a power of two, so the division is a shift.
+pub const mailbox_share_divisor: u32 = 4;
+
+/// The most entries that name no operation in one kernel call of any backend (W3): on kqueue the
+/// wake trigger, the wait timer and the group watch. Each one takes a readiness place and writes no
+/// event, so the kernel's reserve adds them. Each backend asserts that its own count is at most
+/// this.
+pub const kernel_own_max: u32 = 3;
+
+/// The fewest events for which a tick keeps the reserves of W3. At this count, the kernel's reserve
+/// with `kernel_own_max` own entries and the reserve of the mailboxes leave 2 places to the fired
+/// and finished lists, one each. A tick with fewer events serves its sources in the order of
+/// decision 12, and makes no promise that each one gets a place.
+pub const fair_events_min: u32 = 10;
+
+comptime {
+    std.debug.assert(std.math.isPowerOfTwo(kernel_share_divisor));
+    std.debug.assert(std.math.isPowerOfTwo(mailbox_share_divisor));
+    // The two reserves together leave the two lists at least N / 2 - kernel_own_max (W3, 3.3).
+    std.debug.assert(kernel_share_divisor >= 4 and mailbox_share_divisor >= 4);
+    // N / 2 + kernel_own_max <= N - 2 holds for every N from this count up.
+    std.debug.assert(fair_events_min >= 2 * kernel_own_max + 4);
+    std.debug.assert(fair_events_min <= batch_max);
+}
+
 /// The alignment that keeps a mailbox's producer index and consumer index on separate cache
 /// lines: Apple silicon reports 128-byte lines, and 128 also clears the 64-byte lines of x86-64.
 pub const mailbox_index_alignment = 128;

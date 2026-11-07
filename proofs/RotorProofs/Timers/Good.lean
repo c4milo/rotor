@@ -7,7 +7,8 @@ import RotorProofs.Timers.Local
 
 - the heap is valid for `m`, and `m` arms exactly the submitted timers, each for the deadline its
   `buffer` holds;
-- the pending list holds distinct queued slots, and the finished list distinct finishing slots;
+- the pending list holds distinct queued slots, and the finished and fired lists distinct
+  finishing slots, no slot on both;
 - no submitted timer is marked cancelled: marking one finishes it at once;
 - every slot's deadline is its first deadline plus its fires times its period, and a queued slot
   has fired none;
@@ -30,6 +31,9 @@ structure Good (t : Tables) (m : Nat → Option Entry) : Prop where
   pending_nodup : t.pending.Nodup
   finished : ∀ s, s ∈ t.finished → (t.slots s).state = .finishing
   finished_nodup : t.finished.Nodup
+  fired : ∀ s, s ∈ t.fired → (t.slots s).state = .finishing
+  fired_nodup : t.fired.Nodup
+  disjoint : ∀ s, s ∈ t.fired → s ∉ t.finished
   schedule : ∀ s, (t.slots s).last = (t.slots s).first + (t.slots s).fired * (t.slots s).period
   queued_fresh : ∀ s, (t.slots s).state = .queued → (t.slots s).fired = 0
   fired_result : ∀ s, (t.slots s).state = .finishing → (t.slots s).cancelRequested = false →
@@ -58,10 +62,10 @@ def freshSlot : Slot :=
   { state := .free, generation := 1, userData := 0, repeating := false, cancelRequested := false,
     period := 0, after := 0, last := 0, result := 0, first := 0, fired := 0 }
 
-/-- The tables `init` makes: every slot fresh, the heap empty, both lists empty. -/
+/-- The tables `init` makes: every slot fresh, the heap empty, every list empty. -/
 def initial (entries : Nat → Entry) : Tables :=
   { slots := fun _ => freshSlot, timers := empty entries (fun _ => none), pending := [],
-    finished := [], now := 0 }
+    finished := [], fired := [], now := 0 }
 
 theorem initial_good (entries : Nat → Entry) : Good (initial entries) (fun _ => none) where
   valid := empty_valid entries
@@ -72,6 +76,9 @@ theorem initial_good (entries : Nat → Entry) : Good (initial entries) (fun _ =
   pending_nodup := List.nodup_nil
   finished := by intro s h; simp [initial] at h
   finished_nodup := List.nodup_nil
+  fired := by intro s h; simp [initial] at h
+  fired_nodup := List.nodup_nil
+  disjoint := by intro s h; simp [initial] at h
   schedule := by intro s; simp [initial, freshSlot]
   queued_fresh := by intro s h; simp [initial, freshSlot] at h
   fired_result := by intro s h; simp [initial, freshSlot] at h
@@ -110,6 +117,12 @@ theorem submit_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i af
       intro e; subst e; have := g.finished s hs; rw [hfree] at this; cases this
     simp only [submit, set_slots_other _ _ hsi]; exact g.finished s hs
   · exact g.finished_nodup
+  · intro s hs
+    have hsi : s ≠ i := by
+      intro e; subst e; have := g.fired s hs; rw [hfree] at this; cases this
+    simp only [submit, set_slots_other _ _ hsi]; exact g.fired s hs
+  · exact g.fired_nodup
+  · exact g.disjoint
   · intro s
     by_cases hsi : s = i
     · subst hsi; simp [submit]
@@ -140,6 +153,8 @@ theorem finishLocal_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) 
     Good (finishLocal t i r) (update m i none) := by
   have hnf : i ∉ t.finished := by
     intro h; have := g.finished i h; rcases hstate with hs | hs <;> rw [hs] at this <;> cases this
+  have hnr : i ∉ t.fired := by
+    intro h; have := g.fired i h; rcases hstate with hs | hs <;> rw [hs] at this <;> cases this
   have hvalid : Valid (disarm t.timers i) (update m i none) := by
     cases hmi : m i with
     | none =>
@@ -176,6 +191,13 @@ theorem finishLocal_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) 
   · simp only [finishLocal]
     exact List.nodup_append.mpr ⟨g.finished_nodup, by simp,
       by intro a ha b hb; simp at hb; subst hb; exact fun e => hnf (e ▸ ha)⟩
+  · intro s hs
+    have hsi : s ≠ i := fun e => hnr (e ▸ hs)
+    rw [other s hsi]; exact g.fired s hs
+  · exact g.fired_nodup
+  · intro s hs
+    simp only [finishLocal, List.mem_append, List.mem_singleton, not_or]
+    exact ⟨g.disjoint s hs, fun e => hnr (e ▸ hs)⟩
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; exact g.schedule s
@@ -205,6 +227,7 @@ theorem flushArm_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i 
   have hmi : m i = none := g.unarmed (by rw [hq]; decide)
   have hfresh := g.queued_fresh i hq
   have hnf : i ∉ t.finished := by intro h; have := g.finished i h; rw [hq] at this; cases this
+  have hnr : i ∉ t.fired := by intro h; have := g.fired i h; rw [hq] at this; cases this
   have ha := arm_valid t.timers m g.valid i (t.now + (t.slots i).after) hmi
   have other : ∀ s, s ≠ i →
       (armTimer (t.set i { t.slots i with state := .submitted }) i).slots s = t.slots s :=
@@ -239,6 +262,11 @@ theorem flushArm_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i 
     have hsi : s ≠ i := fun e => hnf (e ▸ hs)
     rw [other s hsi]; exact g.finished s hs
   · exact g.finished_nodup
+  · intro s hs
+    have hsi : s ≠ i := fun e => hnr (e ▸ hs)
+    rw [other s hsi]; exact g.fired s hs
+  · exact g.fired_nodup
+  · exact g.disjoint
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; simp [hfresh]
@@ -264,6 +292,9 @@ theorem dropHead_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i 
   pending_nodup := g.pending_nodup
   finished s hs := g.finished s (by rw [hfin]; exact List.mem_cons_of_mem i hs)
   finished_nodup := by have := g.finished_nodup; rw [hfin] at this; exact this.of_cons
+  fired := g.fired
+  fired_nodup := g.fired_nodup
+  disjoint s hs h := g.disjoint s hs (by rw [hfin]; exact List.mem_cons_of_mem i h)
   schedule := g.schedule
   queued_fresh := g.queued_fresh
   fired_result := g.fired_result
@@ -272,7 +303,7 @@ theorem dropHead_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i 
 /-- `rearm` of a finishing slot that is on neither list: the next deadline is the last plus the
 period, and the schedule stays true one fire later. -/
 theorem rearm_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat)
-    (hs : (t.slots i).state = .finishing) (hnf : i ∉ t.finished)
+    (hs : (t.slots i).state = .finishing) (hnf : i ∉ t.finished) (hnr : i ∉ t.fired)
     (hnc : (t.slots i).cancelRequested = false) :
     Good (rearm t i)
       (update m i (some { deadline := (t.slots i).last + (t.slots i).period,
@@ -306,6 +337,11 @@ theorem rearm_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : N
     have hsi : s ≠ i := fun e => hnf (e ▸ hsf)
     rw [other s hsi]; exact g.finished s hsf
   · exact g.finished_nodup
+  · intro s hsf
+    have hsi : s ≠ i := fun e => hnr (e ▸ hsf)
+    rw [other s hsi]; exact g.fired s hsf
+  · exact g.fired_nodup
+  · exact g.disjoint
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; simp only
@@ -323,7 +359,8 @@ theorem rearm_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : N
 
 /-- `release` of a finishing slot that is on neither list. -/
 theorem release_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat)
-    (hs : (t.slots i).state = .finishing) (hnf : i ∉ t.finished) : Good (release t i) m := by
+    (hs : (t.slots i).state = .finishing) (hnf : i ∉ t.finished) (hnr : i ∉ t.fired) :
+    Good (release t i) m := by
   have hmi : m i = none := g.unarmed (by rw [hs]; decide)
   have hnp : i ∉ t.pending := by intro h; have := g.pending i h; rw [hs] at this; cases this
   have other : ∀ s, s ≠ i → (release t i).slots s = t.slots s := fun s h => release_other t h
@@ -347,6 +384,11 @@ theorem release_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i :
     have hsi : s ≠ i := fun e => hnf (e ▸ hsf)
     rw [other s hsi]; exact g.finished s hsf
   · exact g.finished_nodup
+  · intro s hsf
+    have hsi : s ≠ i := fun e => hnr (e ▸ hsf)
+    rw [other s hsi]; exact g.fired s hsf
+  · exact g.fired_nodup
+  · exact g.disjoint
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; exact g.schedule s
@@ -396,6 +438,12 @@ theorem mark_good (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Na
     · subst hsi; rw [self]; exact g.finished s hsf
     · rw [other s hsi]; exact g.finished s hsf
   · exact g.finished_nodup
+  · intro s hsf
+    by_cases hsi : s = i
+    · subst hsi; rw [self]; exact g.fired s hsf
+    · rw [other s hsi]; exact g.fired s hsf
+  · exact g.fired_nodup
+  · exact g.disjoint
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; exact g.schedule s
@@ -426,6 +474,7 @@ theorem cancelSubmitted_good (t : Tables) (m : Nat → Option Entry) (g : Good t
   obtain ⟨x, hx⟩ := g.submitted i hs
   have hnp : i ∉ t.pending := by intro h; have := g.pending i h; rw [hs] at this; cases this
   have hnf : i ∉ t.finished := by intro h; have := g.finished i h; rw [hs] at this; cases this
+  have hnr : i ∉ t.fired := by intro h; have := g.fired i h; rw [hs] at this; cases this
   have hd := disarm_valid t.timers m g.valid i x hx
   let t' := finishLocal (t.set i { t.slots i with cancelRequested := true }) i canceled
   have other : ∀ s, s ≠ i → t'.slots s = t.slots s :=
@@ -461,6 +510,13 @@ theorem cancelSubmitted_good (t : Tables) (m : Nat → Option Entry) (g : Good t
   · simp only [t', finishLocal, set_finished]
     exact List.nodup_append.mpr ⟨g.finished_nodup, by simp,
       by intro a ha b hb; simp at hb; subst hb; exact fun e => hnf (e ▸ ha)⟩
+  · intro s hsf
+    have hsi : s ≠ i := fun e => hnr (e ▸ hsf)
+    rw [other s hsi]; exact g.fired s hsf
+  · exact g.fired_nodup
+  · intro s hsf
+    simp only [t', finishLocal, List.mem_append, List.mem_singleton, set_finished, not_or]
+    exact ⟨g.disjoint s hsf, fun e => hnr (e ▸ hsf)⟩
   · intro s
     by_cases hsi : s = i
     · subst hsi; rw [self]; exact g.schedule s
@@ -476,5 +532,24 @@ theorem cancelSubmitted_good (t : Tables) (m : Nat → Option Entry) (g : Good t
     by_cases hsi : s = i
     · subst hsi; rw [self] at hr; exact absurd hr hcan
     · rw [other s hsi] at hf hr ⊢; exact g.due s hf hr
+
+/-- Exchanging the two lists keeps the invariant: it names the lists alike, and `disjoint` holds
+both ways. So a proof about `drain` of `finished` is a proof about the drain of `fired`. -/
+theorem Good.swapped {t : Tables} {m : Nat → Option Entry} (g : Good t m) : Good (swap t) m where
+  valid := g.valid
+  armed := g.armed
+  submitted := g.submitted
+  submitted_unmarked := g.submitted_unmarked
+  pending := g.pending
+  pending_nodup := g.pending_nodup
+  finished := g.fired
+  finished_nodup := g.fired_nodup
+  fired := g.finished
+  fired_nodup := g.finished_nodup
+  disjoint s hs h := g.disjoint s h hs
+  schedule := g.schedule
+  queued_fresh := g.queued_fresh
+  fired_result := g.fired_result
+  due := g.due
 
 end Rotor.Timers

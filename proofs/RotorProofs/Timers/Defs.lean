@@ -13,11 +13,14 @@ What it leaves out, and why the omission changes nothing proved here:
   the operation to the backend's cancel, which is not a timer's path.
 - The slot table's free list is left out: `submit` takes the index a claim would return, which
   must be a free slot.
-- A tick is `flush`, `expire`, `drain_finished`, `expire` again, then `drain_finished` into the
-  room that is left. The Zig tick's first expiry is `finish_due_timers`, which stops at the first
+- A tick is `flush`, `expire`, `drain_lists`, `expire` again, then `drain_lists` into the room
+  that is left. The Zig tick's first expiry is `finish_due_timers`, which stops at the first
   deadline that is not a timer's; here every slot holds a timer, so it is `expire`. The Zig tick
   also drains mailboxes and the offload, and waits and reaps before its second expiry; none of that
-  reaches a timer's slot.
+  reaches a timer's slot. The share the Zig tick gives its lists, `lists_max` of
+  `core.tick_share`, is a count that only bounds the room here, so the model drains into any room.
+- Due timers wait on `fired` and the slots a cancel ends on `finished`, both first in, first out
+  (W3, ruled 2026-11-07). `drainLists` hands over `fired` first, up to its share, then `finished`.
 
 Two fields are the proof's and not the Zig slot's: `first`, the first deadline a timer was armed
 for, and `fired`, how many of its fires have been handed over. Nothing the model computes reads
@@ -81,8 +84,10 @@ structure Tables where
   timers : Heap
   /-- `pending`: queued slots, oldest first. -/
   pending : List Nat
-  /-- `finished`: finishing slots, oldest first. -/
+  /-- `finished`: finishing slots the loop ended itself, oldest first. -/
   finished : List Nat
+  /-- `fired`: due timers, oldest first, in the order they came due (W3). -/
+  fired : List Nat
   /-- `now_ns`, as the last tick read it. -/
   now : Nat
 
@@ -116,6 +121,13 @@ def finishLocal (t : Tables) (i : Nat) (result : Int) : Tables :=
   let t1 := t.set i { s with state := .finishing, result := result }
   { t1 with timers := disarm t.timers i, finished := t.finished ++ [i] }
 
+/-- `Tables.fire`: a due timer's fire, 0. It disarms the slot if it is armed, and appends the slot to
+`fired`, as `finishLocal` appends to `finished`: both lists stay first in, first out. -/
+def fireLocal (t : Tables) (i : Nat) : Tables :=
+  let s := t.slots i
+  let t1 := t.set i { s with state := .finishing, result := 0 }
+  { t1 with timers := disarm t.timers i, fired := t.fired ++ [i] }
+
 /-- A backend's `flush_one` for a timer: a queued timer already marked cancelled finishes there,
 and any other is submitted and armed. -/
 def flushOne (t : Tables) (i : Nat) : Tables :=
@@ -127,14 +139,14 @@ def flushOne (t : Tables) (i : Nat) : Tables :=
 def flush (t : Tables) : Tables :=
   t.pending.foldl flushOne { t with pending := [] }
 
-/-- The loop of `expire` and `Tables.next_expired`: pops a due timer and finishes it with 0, at
+/-- The loop of `expire` and `Tables.next_expired`: pops a due timer and moves it to `fired`, at
 most `fuel` times, which the Zig loop bounds by the heap's count. -/
 def expireSteps (t : Tables) : Nat → Tables
   | 0 => t
   | fuel + 1 =>
     match popDue t.timers t.now with
     | (none, _) => t
-    | (some i, heap) => expireSteps (finishLocal { t with timers := heap } i 0) fuel
+    | (some i, heap) => expireSteps (fireLocal { t with timers := heap } i) fuel
 
 def expire (t : Tables) : Tables := expireSteps t t.timers.count
 
@@ -154,7 +166,7 @@ def release (t : Tables) (i : Nat) : Tables :=
   let s := t.slots i
   t.set i { s with state := .free, generation := s.generation + 1 }
 
-/-- `Tables.drain_finished` into room for `room` events. -/
+/-- One loop of `Tables.drain_lists`: the finished list, into room for `room` events. -/
 def drain (t : Tables) : Nat → Tables × List Event
   | 0 => (t, [])
   | room + 1 =>
@@ -170,9 +182,26 @@ def drain (t : Tables) : Nat → Tables × List Event
       let next := drain (if again then rearm t1 i else release t1 i) room
       (next.1, event :: next.2)
 
+/-- The two lists exchanged: what lets `drain`, written for `finished`, drain `fired`. -/
+def swap (t : Tables) : Tables := { t with fired := t.finished, finished := t.fired }
+
+/-- The other loop of `Tables.drain_lists`: the fired list, into room for `room` events. -/
+def drainFired (t : Tables) (room : Nat) : Tables × List Event :=
+  let r := drain (swap t) room
+  (swap r.1, r.2)
+
+/-- `Tables.drain_lists` into room for `room` events: `fired` takes up to
+`room - min |finished| (room / 2)` places, and `finished` the rest (W3, ruled 2026-11-07). It is
+irreducible, so a proof unfolds it by name and the elaborator does not compute the room of its
+second loop from the first loop's events. -/
+@[irreducible] def drainLists (t : Tables) (room : Nat) : Tables × List Event :=
+  let first := drainFired t (room - min t.finished.length (room / 2))
+  let second := drain first.1 (room - first.2.length)
+  (second.1, first.2 ++ second.2)
+
 /-- `Tables.request_cancel` for a timer: once. A queued timer is left for the flush to end. A
 repeating timer whose fire is queued and not yet handed over has that fire replaced with
-`canceled`, so the event already on the finished list is its final one: Camilo's ruling of
+`canceled`, so the event already on the fired list is its final one: Camilo's ruling of
 2026-09-23 (decision 14, rule 5). Any other timer finishes at once, because it lives in the heap
 and its cancel has no race (decision 5, rule 5). -/
 def requestCancel (t : Tables) (i : Nat) : Tables :=
@@ -199,8 +228,8 @@ def cancel (t : Tables) (h : Handle) : Tables :=
 finished, then expires again, after the place where the Zig tick reaps, and hands over what that
 finished into the room that is left (issue 10). -/
 def tick (t : Tables) (now room : Nat) : Tables × List Event :=
-  let first := drain (expire (flush { t with now := now })) room
-  let second := drain (expire first.1) (room - first.2.length)
+  let first := drainLists (expire (flush { t with now := now })) room
+  let second := drainLists (expire first.1) (room - first.2.length)
   (second.1, first.2 ++ second.2)
 
 end Rotor.Timers
