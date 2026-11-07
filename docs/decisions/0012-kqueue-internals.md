@@ -341,6 +341,7 @@ backend, and `conformance_fair_readiness.zig` on kqueue and epoll. The halt scen
 | the mailbox drain never takes the plain loop | `test-core`; `work-gate` | NOT CAUGHT, it changes no event; CAUGHT |
 | the plain loop does not store the cursor when the events run out | `test-core` | CAUGHT |
 | `drain_lists` gives `fired` the share of `finished` too | `test-core` | CAUGHT |
+| epoll leaves a pending split out of the kernel's flag | `epoll`, Linux | CAUGHT, after a test was added |
 
 ### The fast path of the first drain
 

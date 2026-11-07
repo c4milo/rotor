@@ -49,11 +49,13 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     if (offloads) _ = offload_module.drain(loop);
     // The lists stop short of the reserves of the mailboxes and of the kernel, so neither waits
     // behind a long list (W3, ruled 2026-11-07). The kernel can report an operation only while one
-    // waits for readiness.
+    // waits for readiness. A pending split counts as the kernel's answer too: the reap serves it
+    // first, in the kernel's places, and a single-shot receive that began it waits no more
+    // (decision 15, amendment of 2026-11-07).
     const first = core.tick_share.drain_first(
         tables,
         events,
-        loop.waiters.used != 0,
+        loop.waiters.used != 0 or loop.split.pending(),
         loop.inbox.registry != null,
         constants.own_entries_max,
         constants.readiness_max,
@@ -400,4 +402,34 @@ test "a tick whose call fails after it produced events returns them, and the nex
     try testing.expectEqual(@as(u32, 1), try loop.tick(&events, core.constants.ns_per_s));
     try testing.expectEqual(@as(u64, 1), events[0].user_data);
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
+}
+
+test "a pending split keeps the kernel's places while no operation waits for readiness" {
+    if (!epoll.supported) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 32 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    // At 16 events with no registry, K is 16 / 4 + 2 own entries, and the lists may take 10.
+    const events_len = 16;
+    const kernel_min = 6;
+    const timers = [_]core.Operation{core.Operation.timer(1, 0, 0)} ** events_len;
+    try testing.expectEqual(@as(u32, events_len), loop.submit(&timers, &.{}));
+    // A split of a coalesced datagram that a single-shot receive began: no operation waits for
+    // readiness, and the split's events are the kernel's answer.
+    const segments = 8;
+    var whole: Event = .{ .user_data = 2, .result = segments, .flags = .{} };
+    whole.flags.buffer = true;
+    loop.split = .{ .whole = whole, .segment_bytes = 1, .segments = segments, .next = 0 };
+    try testing.expectEqual(@as(u32, 0), loop.waiters.used);
+    var events: [events_len]Event = undefined;
+    try testing.expectEqual(@as(u32, events_len), try loop.tick(&events, 0));
+    var split_events: u32 = 0;
+    for (events) |event| split_events += @intFromBool(event.user_data == whole.user_data);
+    try testing.expectEqual(@as(u32, kernel_min), split_events);
+    try testing.expect(loop.split.pending());
+    loop.split = .idle;
+    // The timers that did not fit come in the next tick.
+    try testing.expectEqual(@as(u32, kernel_min), try loop.tick(&events, 0));
 }

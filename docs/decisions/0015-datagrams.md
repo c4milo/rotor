@@ -522,3 +522,9 @@ kernel's answer (decision 11, point 4, amended). The events of a pending split a
 those places. A split of `S` events, at most `coalesced_segments_max`, delays the completions
 behind it by at most `ceil(S / K)` ticks. W3 does not cap the split's serve at `K`, because the
 split already gets only the kernel's places.
+
+That bound needs `K` above 0 while a split is pending. io_uring keeps `K` in every tick, and kqueue
+does not split. epoll kept `K` only while an operation waited for readiness, and a single-shot
+receive that began a split waits no more. A tick with a long finished list then gave the split no
+place. So epoll's tick counts a pending split as the kernel's answer, as the reap serves it first.
+A review of W3 found the gap on 2026-11-07, and a test of `epoll_tick.zig` holds it.

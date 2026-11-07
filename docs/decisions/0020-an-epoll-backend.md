@@ -226,7 +226,8 @@ ping-pong, made two waits per message, one of them this poll. Counted with
 events as kqueue's does (decision 11, point 4, and decision 12, point 6, both amended). A tick with
 a waiter keeps `K` places for `epoll_pwait2`, two of them for the wake eventfd and the wait timer
 (`own_entries_max`). So its room is never 0 while a descriptor can be ready. A tick with no waiter
-keeps no place for the kernel, and still makes no call.
+and no pending split keeps no place for the kernel, and still makes no call. A pending split keeps
+`K` places, because the reap serves it first (decision 15, amendment of 2026-11-07).
 
 ## A readiness serves one operation per direction
 
