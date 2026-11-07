@@ -99,6 +99,7 @@ pub const Harness = struct {
     }
 
     pub fn deinit(harness: *Harness) void {
+        end_in_flight(&harness.loop);
         harness.loop.deinit();
     }
 
@@ -157,6 +158,22 @@ pub const Harness = struct {
         return error.EventNotFound;
     }
 };
+
+/// Ends what a scenario left in flight, so `deinit` does not halt (decision 5, rule 7). A scenario
+/// whose check failed returns before it collects its events, and a halt in `deinit` then ended the
+/// whole run, and the failure did not show as a failed test. The error this logs fails the test, so
+/// a scenario that passed and left an operation in flight still fails.
+///
+/// It cancels every operation and ticks until each has its final event. A loop that stays in
+/// flight after `drain` gives up halts in `deinit`, as before.
+pub fn end_in_flight(loop: *Loop) void {
+    const left = loop.in_flight();
+    if (left == 0) return;
+    std.log.err("{d} operations were in flight at deinit; the scenario cancels them", .{left});
+    loop.cancel_all();
+    var scratch: [8]Event = undefined;
+    loop.drain(&scratch) catch |failure| std.log.err("the drain failed: {t}", .{failure});
+}
 
 /// True when the backend cannot run on this host, and the scenario must skip.
 pub fn unsupported() bool {

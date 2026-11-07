@@ -154,9 +154,22 @@ pub const Fixture = struct {
     }
 
     pub fn deinit(fixture: *Fixture) void {
+        conformance.end_in_flight(&fixture.loop);
         fixture.loop.deinit();
         sync.close_now(fixture.file);
         backend.testing.remove_file(fixture.path);
+    }
+
+    /// Ends a scenario that runs `pool`: what the scenario left in flight, then the worker, then the
+    /// loop. The worker runs while the loop ends its operations, so a check that failed with an
+    /// operation out still gets that operation's final event. The pool stops before the loop: a
+    /// worker still inside `run` reads the loop after its result is visible, so the loop must
+    /// outlive it (decision 18).
+    fn stop(fixture: *Fixture, pool: *Pool) void {
+        pool.holding.store(false, .release);
+        conformance.end_in_flight(&fixture.loop);
+        pool.stop();
+        fixture.deinit();
     }
 
     /// Submits one read of block 0 into `into` and returns its one event.
@@ -227,12 +240,7 @@ test "the offload policy completes a file read on the caller's own thread" {
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        // The pool stops first: a worker still inside `run` reads the loop after its result is
-        // visible, so the loop must outlive it (decision 18).
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     var into: [block_bytes]u8 align(block_bytes) = @splat(0xaa);
     const event = try loop_fixture.read_block(&into);
@@ -253,10 +261,7 @@ test "the offload policy completes an fdatasync and an fsync on the caller's own
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     // A sync carries no buffer, so the hand-off copies none out of its slot.
     const data = try loop_fixture.one_event(Operation.fdatasync(8, loop_fixture.file));
@@ -275,12 +280,7 @@ test "an offloaded read of every block completes, so the ring is drained and reu
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        // The pool stops first: a worker still inside `run` reads the loop after its result is
-        // visible, so the loop must outlive it (decision 18).
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     // Several operations in turn, so the ring's head and tail both advance. A ring that held only
     // one message would pass the scenario above and fail here.
@@ -303,12 +303,7 @@ test "an offloaded result lands in the tick that waited for it, not the one afte
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        // The pool stops first: a worker still inside `run` reads the loop after its result is
-        // visible, so the loop must outlive it (decision 18).
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     var into: [block_bytes]u8 align(block_bytes) = undefined;
     const read = Operation.read(9, loop_fixture.file, &into, 0);
@@ -333,12 +328,7 @@ test "an offloaded read that is cancelled still ends with exactly one final even
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        // The pool stops first: a worker still inside `run` reads the loop after its result is
-        // visible, so the loop must outlive it (decision 18).
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     // Hold the worker, so the operation is out on a thread when the cancel arrives. A `pread`
     // already running cannot be stopped, so a cancel means "end it when it returns" (decision 18's
@@ -376,10 +366,7 @@ test "a due timer behind an offloaded read's deadline fires in a tick with an ev
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
     worker_pool.holding.store(true, .release);
 
     // The held read's deadline comes first in the heap, so the tick's first expiry, of timers
@@ -423,12 +410,7 @@ test "the offload policy leaves a socket operation's cancel alone" {
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
     try loop_fixture.init(.offload, &worker_pool);
-    defer {
-        // The pool stops first: a worker still inside `run` reads the loop after its result is
-        // visible, so the loop must outlive it (decision 18).
-        worker_pool.stop();
-        loop_fixture.deinit();
-    }
+    defer loop_fixture.stop(&worker_pool);
 
     // A socket is never handed to an offload, because kqueue reports its readiness and it does not
     // block the loop. Its cancel stays synchronous and ends with `canceled` at once. A loop that
