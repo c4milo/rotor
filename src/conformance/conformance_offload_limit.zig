@@ -37,6 +37,19 @@ pub const events_per_tick = 64;
 /// operation, so a loop that broke the limit reaches the worker's push and not this pool's check.
 const pool_works = 512;
 
+const path_format = "{s}/rotor_offload_limit_{d}";
+
+/// The path of the fixture's file, with a file a killed run left there removed.
+fn scratch(buffer: []u8) anyerror![:0]const u8 {
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    return conformance.scratch_path(buffer, path_format, arguments);
+}
+
+test "a file a killed run left at the fixture's path does not stop the fixture" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    try conformance.expect_stale_file_removed(path_format, scratch);
+}
+
 /// Idle turns the worker, or the scenario as it waits for the worker, takes before it gives up.
 /// Zig 0.16 offers a thread `yield` and no sleep, so the bound is large, because a yield is cheap.
 const idle_turns_max: u32 = 1 << 22;
@@ -155,9 +168,7 @@ pub const Fixture = struct {
     const ring_bytes = if (backend.files_block) backend.offload_module.memory_bytes(workers) else 1;
 
     pub fn init(fixture: *Fixture) !void {
-        fixture.path = try std.fmt.bufPrintZ(&fixture.path_buffer, "{s}/rotor_offload_limit_{d}", .{
-            backend.testing.directory, backend.testing.process_id(),
-        });
+        fixture.path = try scratch(&fixture.path_buffer);
         fixture.file = try sync.open_file(fixture.path, .{ .create = true, .direct = false });
         errdefer {
             sync.close_now(fixture.file);

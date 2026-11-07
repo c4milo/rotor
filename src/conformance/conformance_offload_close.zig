@@ -37,6 +37,19 @@ const tick_wait_ns = 10 * core.constants.ns_per_ms;
 // places a static without it unless the static declares it.
 var close_fixture: Fixture align(@alignOf(Fixture)) = undefined;
 
+const path_format = "{s}/rotor_offload_close_{d}";
+
+/// The path of the decoy's file, with a file a killed run left there removed.
+fn scratch(buffer: []u8) anyerror![:0]const u8 {
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    return conformance.scratch_path(buffer, path_format, arguments);
+}
+
+test "a file a killed run left at the decoy's path does not stop the decoy" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    try conformance.expect_stale_file_removed(path_format, scratch);
+}
+
 /// An empty file, opened while the close waits. A read of it answers 0 bytes, and a write to it
 /// makes it longer, so a worker's call that reached it shows in its event or in the file's size.
 const Decoy = struct {
@@ -45,9 +58,7 @@ const Decoy = struct {
     descriptor: core.Descriptor,
 
     fn open(decoy: *Decoy) !void {
-        decoy.path = try std.fmt.bufPrintZ(&decoy.path_buffer, "{s}/rotor_offload_close_{d}", .{
-            backend.testing.directory, backend.testing.process_id(),
-        });
+        decoy.path = try scratch(&decoy.path_buffer);
         decoy.descriptor = try sync.open_file(decoy.path, .{ .create = true, .direct = false });
     }
 

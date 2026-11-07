@@ -26,6 +26,8 @@ const sync = backend.sync;
 /// O_DIRECT transfers in whole blocks, so every buffer, offset and length is a multiple of this.
 pub const block_bytes = 4096;
 const file_blocks = 2;
+/// The fixture's file: the directory, this process's id, and the policy.
+const path_format = "{s}/rotor_offload_{d}_{s}";
 
 const operations = 16;
 const entries = 16;
@@ -133,7 +135,7 @@ pub const Fixture = struct {
         1;
 
     pub fn init(fixture: *Fixture, policy: core.offload.FilePolicy, pool: ?*Pool) !void {
-        fixture.path = try std.fmt.bufPrintZ(&fixture.path_buffer, "{s}/rotor_offload_{d}_{s}", .{
+        fixture.path = try conformance.scratch_path(&fixture.path_buffer, path_format, .{
             backend.testing.directory, backend.testing.process_id(), @tagName(policy),
         });
         fixture.file = try sync.open_file(fixture.path, .{ .create = true, .direct = true });
@@ -220,6 +222,19 @@ test "the refuse policy ends a file read with unsupported, where a file blocks t
         // The kernel did it without a thread, so there was nothing to refuse.
         try testing.expectEqual(@as(u32, block_bytes), try event.outcome());
     }
+}
+
+test "a file left at the fixture's path by a killed run does not stop the fixture" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var path_buffer: [96]u8 = undefined;
+    const path = try conformance.plant_stale_file(&path_buffer, path_format, .{
+        backend.testing.directory, backend.testing.process_id(), @tagName(core.offload.FilePolicy.blocking),
+    });
+    // A fixture that failed to start leaves the planted file, so the scenario removes it.
+    defer backend.testing.remove_file(path);
+    try loop_fixture.init(.blocking, null);
+    defer loop_fixture.deinit();
+    try testing.expectEqualStrings(path, loop_fixture.path);
 }
 
 test "the blocking policy performs a file read inline, on both backends" {

@@ -176,6 +176,42 @@ pub fn end_in_flight(loop: *Loop) void {
     loop.drain(&scratch) catch |failure| std.log.err("the drain failed: {t}", .{failure});
 }
 
+/// Writes the path of a scenario's file into `buffer`, and removes a file already at that path.
+/// The path names this process by its id, and `sync.open_file` creates with O_EXCL. A run that
+/// was killed before its `defer` leaves its file. A later run with the same process id then failed
+/// every scenario of that file with `PathAlreadyExists`.
+pub fn scratch_path(buffer: []u8, comptime format: []const u8, arguments: anytype) ![:0]const u8 {
+    const path = try std.fmt.bufPrintZ(buffer, format, arguments);
+    backend.testing.remove_file(path);
+    return path;
+}
+
+/// Creates an empty file at the path `format` names, as a run killed before its `defer` leaves
+/// one, and returns that path. A scenario that calls this removes the file in its own `defer`.
+pub fn plant_stale_file(buffer: []u8, comptime format: []const u8, arguments: anytype) ![:0]const u8 {
+    const path = try std.fmt.bufPrintZ(buffer, format, arguments);
+    const file = try backend.sync.open_file(path, .{ .create = true, .direct = false });
+    backend.sync.close_now(file);
+    return path;
+}
+
+/// Plants a stale file at the path `format` names for this process, and requires `scratch` to
+/// return that path and a create there to succeed. A scenario file whose path is a function of its
+/// own calls this from a test, so a path made without `scratch_path` fails.
+pub fn expect_stale_file_removed(
+    comptime format: []const u8,
+    scratch: *const fn (buffer: []u8) anyerror![:0]const u8,
+) !void {
+    var buffers: [2][96]u8 = undefined;
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    const stale = try plant_stale_file(&buffers[0], format, arguments);
+    defer backend.testing.remove_file(stale);
+    const path = try scratch(&buffers[1]);
+    try std.testing.expectEqualStrings(stale, path);
+    const file = try backend.sync.open_file(path, .{ .create = true, .direct = false });
+    backend.sync.close_now(file);
+}
+
 /// True when the backend cannot run on this host, and the scenario must skip.
 pub fn unsupported() bool {
     return !backend.supported;

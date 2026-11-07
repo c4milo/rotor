@@ -18,6 +18,19 @@ const sync = backend.sync;
 
 const block_bytes = 4096;
 
+const path_format = "{s}/rotor_conformance_registered_{d}";
+
+/// The path of the file scenario's file, with a file a killed run left there removed.
+fn scratch(buffer: []u8) anyerror![:0]const u8 {
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    return conformance.scratch_path(buffer, path_format, arguments);
+}
+
+test "a file a killed run left at the file scenario's path does not stop the scenario" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    try conformance.expect_stale_file_removed(path_format, scratch);
+}
+
 /// `operation`, naming index `index` of the registered descriptors where it named a descriptor.
 fn registered(operation: Operation, index: core.Descriptor) Operation {
     var named = operation;
@@ -52,9 +65,7 @@ test "a file named by its registered index is written, synced and read as by its
     defer sync.close_now(listener.descriptor);
 
     var path_buffer: [96]u8 = undefined;
-    const path = try std.fmt.bufPrintZ(&path_buffer, "{s}/rotor_conformance_registered_{d}", .{
-        backend.testing.directory, backend.testing.process_id(),
-    });
+    const path = try scratch(&path_buffer);
     const file = try sync.open_file(path, .{ .create = true, .direct = true });
     defer sync.close_now(file);
     defer backend.testing.remove_file(path);

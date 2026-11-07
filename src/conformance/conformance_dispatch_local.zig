@@ -17,6 +17,19 @@ const sync = backend.sync;
 const block_bytes = offload.block_bytes;
 const wait_ns = 10 * core.constants.ns_per_ms;
 
+const path_format = "{s}/rotor_conformance_dispatch_{d}";
+
+/// The path of the write scenario's file, with a file a killed run left there removed.
+fn scratch(buffer: []u8) anyerror![:0]const u8 {
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    return conformance.scratch_path(buffer, path_format, arguments);
+}
+
+test "a file a killed run left at the write scenario's path does not stop the scenario" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    try conformance.expect_stale_file_removed(path_format, scratch);
+}
+
 /// One library's record: the last event it received, and how many of them were final.
 const Library = struct {
     completion: core.Completion = .init(Library, "completion", called),
@@ -92,9 +105,7 @@ test "a write on a registered descriptor from a registered buffer reaches its re
     try harness.init_blocking(0, null);
     defer harness.deinit();
     var path_buffer: [96]u8 = undefined;
-    const path = try std.fmt.bufPrintZ(&path_buffer, "{s}/rotor_conformance_dispatch_{d}", .{
-        backend.testing.directory, backend.testing.process_id(),
-    });
+    const path = try scratch(&path_buffer);
     const file = try sync.open_file(path, .{ .create = true, .direct = true });
     defer sync.close_now(file);
     defer backend.testing.remove_file(path);

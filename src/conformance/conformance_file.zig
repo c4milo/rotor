@@ -14,6 +14,19 @@ const sync = backend.sync;
 const block_bytes = 4096;
 const file_blocks = 4;
 
+const path_format = "{s}/rotor_conformance_file_{d}";
+
+/// The path of the scenario's file, with a file a killed run left there removed.
+fn scratch(buffer: []u8) anyerror![:0]const u8 {
+    const arguments = .{ backend.testing.directory, backend.testing.process_id() };
+    return conformance.scratch_path(buffer, path_format, arguments);
+}
+
+test "a file a killed run left at the scenario's path does not stop the scenario" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    try conformance.expect_stale_file_removed(path_format, scratch);
+}
+
 test "a block written and synced reads back, and a read past the end returns 0" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
@@ -21,9 +34,7 @@ test "a block written and synced reads back, and a read past the end returns 0" 
     defer harness.deinit();
 
     var path_buffer: [96]u8 = undefined;
-    const path = try std.fmt.bufPrintZ(&path_buffer, "{s}/rotor_conformance_file_{d}", .{
-        backend.testing.directory, backend.testing.process_id(),
-    });
+    const path = try scratch(&path_buffer);
     const file = try sync.open_file(path, .{ .create = true, .direct = true });
     defer sync.close_now(file);
     defer backend.testing.remove_file(path);
