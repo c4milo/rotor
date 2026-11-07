@@ -145,6 +145,9 @@ messages of other loops and the kernel's answer out of the tick.
   rest. When both lists are full, each takes about half.
 - The places that a reserve does not use go back in the same tick: to the mailboxes, then to the
   lists. The rest of the lists wait for the next tick.
+- When the lists hold `c` entries and `c + own_entries_max <= N / 2`, the tick drains them all and
+  computes only `K`. They fit in `N - K - M`, so the tick writes the same events as with the share
+  (decision 12, point 6, has the arithmetic).
 - A tick of fewer than `fair_events_min` events, 10, keeps no reserve and the order of before.
 
 What changes for the caller:

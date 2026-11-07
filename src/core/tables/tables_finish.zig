@@ -67,35 +67,26 @@ fn finish_onto(tables: *Tables, list: *SlotList, index: u32, result: i32) void {
 /// `events`, and releases their slots: the moment decision 5, rule 1 names. Of `F = lists_max`
 /// places, `fired` takes up to `F - min(finished.count, F / 2)`, and `finished` takes what is left.
 /// So when both lists hold `F` or more, each takes about half, and no place stays empty while
-/// either list holds an entry (W3, ruled 2026-11-07). Each loop writes one place at a time and
-/// slices nothing, so a share past the events halts only where a loop writes.
+/// either list holds an entry (W3, ruled 2026-11-07). Each pop writes one place and slices
+/// nothing, so a share past the events halts only where a pop writes.
 pub fn drain_lists(tables: *Tables, events: []Event, lists_max: u32) u32 {
     assert(lists_max <= events.len);
     const fired_max = lists_max - @min(tables.finished.count, lists_max / lists_count);
-    // One loop over the two lists, so the body that hands an event over is written once.
-    const shares = [lists_count]Share{
-        .{ .list = &tables.fired, .end = fired_max },
-        .{ .list = &tables.finished, .end = lists_max },
-    };
+    // One loop pops both lists, so `hand_over` has one call, which the compiler inlines. With a
+    // loop for each list it did not, and a drain of one timer cost 29 instructions more
+    // (cachegrind, arm64 Linux, 2026-11-07).
     var produced: u32 = 0;
-    // A drain with no fired timer starts at the finished list, and pops nothing from an empty one.
-    for (shares[@intFromBool(tables.fired.count == 0)..]) |share| {
-        while (produced < share.end) : (produced += 1) {
-            const index = share.list.pop(tables.table.slots) orelse break;
-            hand_over(tables, index, &events[produced]);
-        }
+    while (produced < lists_max) : (produced += 1) {
+        const fired = if (produced < fired_max) tables.fired.pop(tables.table.slots) else null;
+        const index = fired orelse tables.finished.pop(tables.table.slots) orelse break;
+        hand_over(tables, index, &events[produced]);
     }
     assert(produced <= lists_max);
     return produced;
 }
 
-/// One list of a drain, and the place before which it stops.
-const Share = struct {
-    list: *SlotList,
-    end: u32,
-};
-
-/// `drain_lists` into every place of `events`: for the callers that drain everything.
+/// `drain_lists` into every place of `events`: for the callers that drain everything, and for a
+/// tick whose lists cannot reach the reserves (`core.tick_share.drain_first`).
 pub fn drain_finished(tables: *Tables, events: []Event) u32 {
     return drain_lists(tables, events, @intCast(events.len));
 }

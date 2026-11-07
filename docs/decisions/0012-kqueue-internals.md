@@ -286,7 +286,8 @@ What the build found, against the design of W3:
 
 - The design wrote the drain as two ranges over one helper. Its first build cost each tick about
   160 more instructions in cachegrind. The drain is one loop, which wraps the sender with a
-  compare, and its cost fell to about 30 a tick.
+  compare, and its cost fell to about 30 a tick. The fast path below moved that loop into
+  `drain_from_cursor`, for a cursor above 0.
 - The design said a kqueue that passes `!quiet` as true while it is quiet is an equivalent mutant.
   It is not: a quiet tick that makes no call then gives the kernel's places back only to the lists,
   and the conformance suite catches it.
@@ -323,53 +324,101 @@ backend, and `conformance_fair_readiness.zig` on kqueue and epoll. The halt scen
 | `fired` takes only its half when `finished` is short | `test-core` | CAUGHT |
 | `finished` takes only its share when `fired` is short | `test-core` | CAUGHT |
 | `wait_bound` does not read `fired` | `test-core` | CAUGHT |
-| delete the room assertion of `split` | `halt-check` | CAUGHT |
-| delete the own-entries assertion of `split` | `halt-check` | CAUGHT |
-| delete the cursor assertion of `drain_mailboxes` | `halt-check` | CAUGHT |
+| delete the room assertion of `kernel_reserve` | `halt-check` | CAUGHT |
+| delete the own-entries assertion of `kernel_reserve` | `halt-check` | CAUGHT |
+| delete the cursor assertion of `drain_from_cursor` | `halt-check` | CAUGHT |
 | delete the share assertion of `drain_lists` | `halt-check` | CAUGHT |
 | delete the fired part of `assert_empty` | `halt-check` | NOT CAUGHT: the check of the slots in use halts on the same state |
 | kqueue passes `!quiet` as true while quiet | `test-conformance-kqueue` | CAUGHT |
+| the fast path only below `N / 2 - own`, or up to one entry more | `test-core` | CAUGHT; CAUGHT |
+| the fast path always taken; never taken | `test-core` | CAUGHT; CAUGHT |
+| the fast path leaves out the own entries | `test-core` | CAUGHT |
+| the fast path says the lists are capped | `test-core` | CAUGHT |
+| the fast path calls the drain for empty lists | `test-core`; `work-gate` | NOT CAUGHT, it changes no event; CAUGHT |
+| `kernel_reserve` keeps a reserve below `fair_events_min` | `test-core` | CAUGHT |
+| `kernel_reserve` keeps a reserve for a kernel that cannot answer | `test-core` | CAUGHT |
+| the mailbox drain takes the plain loop for any cursor | `test-core` | CAUGHT |
+| the mailbox drain never takes the plain loop | `test-core`; `work-gate` | NOT CAUGHT, it changes no event; CAUGHT |
+| the plain loop does not store the cursor when the events run out | `test-core` | CAUGHT |
+| `drain_lists` gives `fired` the share of `finished` too | `test-core` | CAUGHT |
 
-### What W3 costs
+### The fast path of the first drain
 
-The instruction gate, rotor's own instructions per iteration of each workload of
-`bench/work/work.zig`, on 2026-11-07. `mac` is an Apple M1 Pro on macOS 26.6.2, counted with
-`/usr/bin/time -l`. The Linux rows are cachegrind in an arm64 container on `mac`, where the tree
-before W3 counted within 1.2 percent of each baseline row. The baseline is not changed. Each row over 2 percent waits
-for Camilo's ruling.
+The first build of W3 cost each tick about 80 instructions, and seven rows of each section moved
+past the tolerance of the instruction gate. Camilo ruled on 2026-11-07: add a fast path, measure
+again, and ask him about each row still over 2 percent. Cachegrind attributed the 80, per tick of
+the `task` workload, on arm64 Linux with io_uring:
 
-| section | row | baseline | measured | percent |
-|---|---|---:|---:|---:|
-| macos-aarch64-kqueue | `post` | 1217 | 1377 | +13.1 |
-| macos-aarch64-kqueue | `post-operation` | 3051 | 3317 | +8.7 |
-| macos-aarch64-kqueue | `timer` | 1111 | 1186 | +6.8 |
-| macos-aarch64-kqueue | `batch` | 24624 | 24523 | -0.4 |
-| macos-aarch64-kqueue | `wait` | 5296 | 5394 | +1.9 |
-| macos-aarch64-kqueue | `task` | 615 | 694 | +12.8 |
-| macos-aarch64-kqueue | `tasks-64` | 4558 | 4627 | +1.5 |
-| macos-aarch64-kqueue | `record` | 1222 | 1319 | +7.9 |
-| macos-aarch64-kqueue | `poller` | 573 | 653 | +14.0 |
-| linux-aarch64-uring | `post` | 1061 | 1223 | +15.3 |
-| linux-aarch64-uring | `post-operation` | 2794 | 3136 | +12.2 |
-| linux-aarch64-uring | `timer` | 1025 | 1128 | +10.0 |
-| linux-aarch64-uring | `batch` | 23757 | 23770 | +0.1 |
-| linux-aarch64-uring | `task` | 559 | 638 | +14.1 |
-| linux-aarch64-uring | `tasks-64` | 3910 | 3989 | +2.0 |
-| linux-aarch64-uring | `record` | 1153 | 1245 | +8.0 |
-| linux-aarch64-uring | `poller` | 516 | 598 | +15.9 |
-| linux-aarch64-epoll | `post` | 1150 | 1312 | +14.1 |
-| linux-aarch64-epoll | `post-operation` | 2931 | 3240 | +10.5 |
-| linux-aarch64-epoll | `timer` | 1051 | 1143 | +8.8 |
-| linux-aarch64-epoll | `batch` | 23845 | 23785 | -0.3 |
-| linux-aarch64-epoll | `wait` | 632 | 717 | +13.4 |
-| linux-aarch64-epoll | `task` | 593 | 675 | +13.8 |
-| linux-aarch64-epoll | `tasks-64` | 3985 | 4026 | +1.0 |
-| linux-aarch64-epoll | `record` | 1175 | 1267 | +7.8 |
-| linux-aarch64-epoll | `poller` | 557 | 639 | +14.7 |
+| where | what it cost | instructions |
+|---|---|---:|
+| `drain_lists` against the old `drain_finished` | an array of the two lists' shares, built on the stack, and a loop over it | +35 |
+| the two mailbox drains | the cursor's load and check, the wrap compare and the second index of each visit | +32 |
+| the tick | `split`, the slice to `N - K`, and `capped` | +14 |
 
-A tick costs about 80 more instructions, where the design estimated 25 to 40. Cachegrind puts
-about 30 in the two drains of the mailboxes, about 40 in the drain of the two lists, and the rest
-in `split` and the tick's own bookkeeping. The x86-64 rows are not measured: they come from CI.
+The fast path is in `core.tick_share.drain_first`. When the lists hold `c` entries and
+`c + own_entries_max <= N / 2`, the share cannot cut them. The tick then drains them whole and
+computes only `K`. The arithmetic, for `N >= fair_events_min`, with both divisors at least 4:
+
+- `K <= N / 4 + own` and `M <= N / 4`, so `K + M <= 2 * (N / 4) + own <= N / 2 + own`.
+- So `lists_max = N - K - M >= N / 2 - own >= c`, and `drain_lists` would also take every entry, in
+  the same order. Both paths write the same events.
+- The mailboxes then get `N - K - c >= M`, and the kernel keeps `K`. Every bound of W3's section
+  3.6 holds as with the share.
+
+Below `fair_events_min`, `lists_max` is `N`, so the lists are never cut there either. The fast path
+says the lists are not capped, because its drain emptied them. The other changes:
+
+- Empty lists skip the call to `drain_finished`. Most ticks find both lists empty.
+- `drain_lists` pops both lists in one loop, so `hand_over` has one call, which the compiler
+  inlines. With a loop for each list, a drain of one timer cost 29 instructions more.
+- `drain_mailboxes` runs the plain loop of before W3 while the cursor is 0. The cursor stays at 0
+  until a drain runs out of events, so a loop that is not loaded pays only the cursor's load. Any
+  other cursor takes `drain_from_cursor`, the wrapping loop.
+- Two forms that the build tried cost more: the two ranges of the design's drain, as a helper
+  that the compiler did not inline, and a loop for each list, whose `hand_over` it did not inline.
+
+The instruction gate on 2026-11-07, rotor's own instructions per iteration. `mac` is an Apple M1
+Pro on macOS 26.6.2, counted with `/usr/bin/time -l`, the median of 3 runs. The Linux rows are
+cachegrind in an arm64 container on `mac`. "Before W3" is `0c1fcf7`, and "first build" is
+`005cb7c`. The baseline is not changed.
+
+| section | row | baseline | before W3 | first build | with the fast path | percent |
+|---|---|---:|---:|---:|---:|---:|
+| macos-aarch64-kqueue | `post` | 1217 | 1217 | 1379 | 1199 | -1.5 |
+| macos-aarch64-kqueue | `post-operation` | 3051 | 3004 | 3317 | 3114 | +2.1 |
+| macos-aarch64-kqueue | `timer` | 1111 | 1094 | 1185 | 1151 | +3.6 |
+| macos-aarch64-kqueue | `batch` | 24624 | 24567 | 24516 | 24772 | +0.6 |
+| macos-aarch64-kqueue | `wait` | 5296 | 5293 | 5388 | 5290 | -0.1 |
+| macos-aarch64-kqueue | `task` | 615 | 615 | 696 | 606 | -1.5 |
+| macos-aarch64-kqueue | `tasks-64` | 4558 | 4544 | 4624 | 4534 | -0.5 |
+| macos-aarch64-kqueue | `record` | 1222 | 1226 | 1317 | 1283 | +5.0 |
+| macos-aarch64-kqueue | `poller` | 573 | 573 | 654 | 564 | -1.6 |
+| linux-aarch64-uring | `post` | 1061 | 1063 | 1223 | 1039 | -2.1 |
+| linux-aarch64-uring | `post-operation` | 2794 | 2827 | 3136 | 2905 | +4.0 |
+| linux-aarch64-uring | `timer` | 1025 | 1037 | 1128 | 1082 | +5.6 |
+| linux-aarch64-uring | `batch` | 23757 | 23761 | 23770 | 24012 | +1.1 |
+| linux-aarch64-uring | `task` | 559 | 557 | 638 | 545 | -2.5 |
+| linux-aarch64-uring | `tasks-64` | 3910 | 3908 | 3989 | 3896 | -0.4 |
+| linux-aarch64-uring | `record` | 1153 | 1154 | 1245 | 1199 | +4.0 |
+| linux-aarch64-uring | `poller` | 516 | 517 | 598 | 505 | -2.1 |
+| linux-aarch64-epoll | `post` | 1150 | 1150 | 1312 | 1142 | -0.7 |
+| linux-aarch64-epoll | `post-operation` | 2931 | 2931 | 3240 | 3039 | +3.7 |
+| linux-aarch64-epoll | `timer` | 1051 | 1051 | 1143 | 1104 | +5.0 |
+| linux-aarch64-epoll | `batch` | 23845 | 23773 | 23785 | 24038 | +0.8 |
+| linux-aarch64-epoll | `wait` | 632 | 632 | 717 | 629 | -0.5 |
+| linux-aarch64-epoll | `task` | 593 | 593 | 675 | 589 | -0.7 |
+| linux-aarch64-epoll | `tasks-64` | 3985 | 3944 | 4026 | 3940 | -1.1 |
+| linux-aarch64-epoll | `record` | 1175 | 1175 | 1267 | 1228 | +4.5 |
+| linux-aarch64-epoll | `poller` | 557 | 557 | 639 | 553 | -0.7 |
+
+Nine rows stay over 2 percent: `post-operation`, `timer` and `record` in each section. Each of them
+hands over an event from the lists in each tick. Against the tree before W3, cachegrind puts the
+rest of `timer` on io_uring in three places: the drain of one fired timer, 21 more, because the
+loop computes the share and pops both lists once more before it stops; the tick, 23 more, for
+`drain_first`, the slice to `N - K` and `capped`; and the two mailbox drains, 10 more. A due timer's
+push onto `fired` costs 9 fewer than its push onto `finished` did. These rows wait for Camilo's
+ruling. Three io_uring rows, `post`, `task` and `poller`, sit more than 2 percent under the
+baseline, and the gate asks for a lower line. The x86-64 rows are not measured: they come from CI.
 
 ## 7. Timers, deadlines, cancellation
 

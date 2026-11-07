@@ -53,16 +53,16 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
     // The lists stop short of the reserves of the mailboxes and of the kernel, so neither waits
     // behind a long list (W3, ruled 2026-11-07).
-    const share = core.tick_share.split(
-        @intCast(events.len),
+    const first = core.tick_share.drain_first(
+        tables,
+        events,
         !quiet,
         loop.inbox.registry != null,
         constants.own_entries_max,
         constants.readiness_max,
     );
-    var produced = tables.drain_lists(events, share.lists_max);
-    const capped = produced == share.lists_max;
-    produced += loop.drain_mailboxes(events[produced .. events.len - share.kernel_min]);
+    var produced = first.produced;
+    produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
@@ -86,7 +86,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A tick that made no call has nothing to reap. What arrived since the drains above waits for
     // the next tick, which does not block while a ring holds it. It still expires, so a stream of
     // messages cannot hold a due timer off.
-    if (idle) return produced + after_idle(loop, events[produced..], capped);
+    if (idle) return produced + after_idle(loop, events[produced..], first.capped);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27). A wait that failed reads it too, before
@@ -97,7 +97,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
-    return after_kernel(loop, events, produced, ready_count, offloads, capped);
+    return after_kernel(loop, events, produced, ready_count, offloads, first.capped);
 }
 
 /// The last steps of a tick that made no call: the places the reserves kept and nothing used go

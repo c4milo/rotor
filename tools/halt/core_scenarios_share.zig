@@ -38,9 +38,10 @@ var registry_memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_a
 var registry: Registry align(@alignOf(Registry)) = undefined;
 var events: [4]Event align(@alignOf(Event)) = undefined;
 
-/// A cursor at the count of loops, one past the last sender. With the check deleted, the first range
-/// of the drain is empty, the second visits every ring, all empty, and the drain returns 0. A larger
-/// cursor would index past the registry and halt on the bounds check, which would prove nothing.
+/// A cursor at the count of loops, one past the last sender. A cursor above 0 takes the drain's one
+/// wrapping loop. With the check deleted, that loop wraps to sender 0 before its first visit, visits
+/// every ring, all empty, and the drain returns 0. A larger cursor would index past the registry and
+/// halt on the bounds check, which would prove nothing.
 fn drain_from_a_cursor_past_the_last_loop() void {
     registry.init(&registry_memory, loops);
     var inbox = core.inbox.Inbox.init(&registry, &.{}, null);

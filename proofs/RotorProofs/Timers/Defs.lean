@@ -166,7 +166,7 @@ def release (t : Tables) (i : Nat) : Tables :=
   let s := t.slots i
   t.set i { s with state := .free, generation := s.generation + 1 }
 
-/-- One loop of `Tables.drain_lists`: the finished list, into room for `room` events. -/
+/-- The pops of `Tables.drain_lists` from the finished list, into room for `room` events. -/
 def drain (t : Tables) : Nat → Tables × List Event
   | 0 => (t, [])
   | room + 1 =>
@@ -185,7 +185,7 @@ def drain (t : Tables) : Nat → Tables × List Event
 /-- The two lists exchanged: what lets `drain`, written for `finished`, drain `fired`. -/
 def swap (t : Tables) : Tables := { t with fired := t.finished, finished := t.fired }
 
-/-- The other loop of `Tables.drain_lists`: the fired list, into room for `room` events. -/
+/-- The pops of `Tables.drain_lists` from the fired list, into room for `room` events. -/
 def drainFired (t : Tables) (room : Nat) : Tables × List Event :=
   let r := drain (swap t) room
   (swap r.1, r.2)

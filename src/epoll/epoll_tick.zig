@@ -50,16 +50,16 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // The lists stop short of the reserves of the mailboxes and of the kernel, so neither waits
     // behind a long list (W3, ruled 2026-11-07). The kernel can report an operation only while one
     // waits for readiness.
-    const share = core.tick_share.split(
-        @intCast(events.len),
+    const first = core.tick_share.drain_first(
+        tables,
+        events,
         loop.waiters.used != 0,
         loop.inbox.registry != null,
         constants.own_entries_max,
         constants.readiness_max,
     );
-    var produced = tables.drain_lists(events, share.lists_max);
-    const capped = produced == share.lists_max;
-    produced += loop.drain_mailboxes(events[produced .. events.len - share.kernel_min]);
+    var produced = first.produced;
+    produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
@@ -86,7 +86,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
-    return after_kernel(loop, events, produced, ready_count, offloads, capped);
+    return after_kernel(loop, events, produced, ready_count, offloads, first.capped);
 }
 
 /// The tick's last steps, after a kernel call that succeeded or a tick that made none: the reap,
