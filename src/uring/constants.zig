@@ -71,9 +71,15 @@ pub const deinit_wake_passes_max: u32 = @import("core").constants.loops_max + 1;
 /// completion's result in [-errno_max, -1] is an operation that failed.
 pub const errno_max: i32 = @import("core").constants.errno_max;
 
+/// The completions of one reap that name no operation and take an event place. A completion that
+/// names no operation, such as the group wake or the wait timer, writes no event and takes no
+/// place, so the kernel's reserve of a tick adds none (W3, ruled 2026-11-07).
+pub const own_entries_max: u32 = 0;
+
 comptime {
     const assert = std.debug.assert;
     assert(std.math.isPowerOfTwo(entries_max));
+    assert(own_entries_max <= @import("core").constants.kernel_own_max);
     assert(remote_entries >= 1);
     assert(remote_entries <= entries_max);
     assert(std.math.isPowerOfTwo(remote_entries));

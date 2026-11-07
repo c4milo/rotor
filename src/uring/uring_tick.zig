@@ -34,8 +34,19 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     submit_module.flush(loop);
     tables.finish_due_timers();
     cancel_module.flush(loop);
-    var produced = tables.drain_finished(events);
-    produced += loop.drain_mailboxes(events[produced..]);
+    // The lists stop short of the reserves of the mailboxes and of the kernel, so neither waits
+    // behind a long list (W3, ruled 2026-11-07). A completion that names no operation takes no
+    // place, so the kernel's reserve adds no own entry.
+    const share = core.tick_share.split(
+        @intCast(events.len),
+        true,
+        loop.inbox.registry != null,
+        constants.own_entries_max,
+        core.constants.batch_max,
+    );
+    var produced = tables.drain_lists(events, share.lists_max);
+    const capped = produced == share.lists_max;
+    produced += loop.drain_mailboxes(events[produced .. events.len - share.kernel_min]);
     // The loop says it sleeps before it waits, and reads its mailboxes once more, so a post that
     // came before the flag was set is not slept on (decision 12, point 6). It says it is awake
     // again before an error can leave the tick.
@@ -66,7 +77,10 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
     if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
     produced += reaped;
+    // The places the kernel's reserve kept and the reap did not use go back to the mailboxes, and
+    // then to the lists when the lists filled their share (W3).
     produced += loop.drain_mailboxes(events[produced..]);
+    if (capped) produced += tables.drain_finished(events[produced..]);
     // After the reap, so a completion the kernel had ready wins over the deadline (issue 10). With
     // `DEFER_TASKRUN` a completion is posted only inside an enter, so the deadline's cancel entry
     // goes to the kernel in the next tick, and that tick does not block while it waits.
