@@ -81,6 +81,17 @@ No file in the six hot files of `0007-hot-path-ugliness.md` names `std.log` or `
 A backend reports a condition by returning an error or by counting it. The lint enforces this
 from milestone 2 with the same confinement rule.
 
+### Rule 7: a stall is counted exactly
+
+Added on 2026-11-06 by `0028-correct-use-and-stalls.md`, by Camilo's ruling of that day.
+
+A stall is a count of turns at or above a threshold. It is exact, because its cost is one compare
+in each tick and a write only when a stall occurs. It is a statistic: no control flow reads it
+(rule 1), and no trace holds it. A sampled count would miss the rare stall that an operator needs.
+
+A turn runs from one of rule 4's stamps to the next tick's first stamp, so the count reads no clock
+of its own. The stamp after a wait that blocked starts a turn, so a wait is never in one.
+
 ## What a statistic costs
 
 Unsampled, a latency record per operation is two clock reads, `2 × C20`, about 40 ns, which is

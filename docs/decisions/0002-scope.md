@@ -24,6 +24,8 @@ Accept the proposal, with four additions, two exclusions it did not name, and on
 | cross-core | post one message into another loop (`0004-threading.md`), in the same process or, since 2026-09-25, in another process of the same group (`0021-loops-in-several-processes.md`) |
 | registration | buffers and descriptors, once, before use (`0003-speed-sources.md`) |
 | tasks | since 2026-11-06, a library's task, which the loop runs once in the `end` of a tick, a FIFO with a budget in tasks (`0027-a-task-queue.md`) |
+| shared loop | since 2026-11-06, `SharedLoop`, the view of a loop that the program hands each library. The calls that only the program makes fail to compile on it (`0028-correct-use-and-stalls.md`) |
+| stalls | since 2026-11-06, an exact count of the loop's turns at or above a threshold, and a heartbeat that a thread of the program reads to name the callback that holds the loop (`0028-correct-use-and-stalls.md`) |
 
 The four additions:
 
@@ -73,6 +75,10 @@ TLS, DNS, Windows and process spawning, as proposed, and also:
   wrong: there is nothing to simulate since decision 10, and epoll is kqueue's shape rather than a
   third design. What the row got right stands: epoll has none of decision 3's speed sources, and no
   speed claim is made for that backend.
+- **A stall hook, and a watch thread that rotor starts** (`0028-correct-use-and-stalls.md`, added
+  on 2026-11-06). A hook would run the program's code on the loop's thread because of a clock
+  value, which breaks non-negotiable 2, and a stalled loop cannot call it. A thread of rotor's own
+  breaks non-negotiable 4. The program reads the count, and starts its own watch thread.
 - **Buffered file I/O.** The brief lists O_DIRECT, and stompy uses nothing else. A buffered
   operation that has to wait can also be handed to a kernel worker thread, depending on the
   kernel and the filesystem (recalled), and that is a hidden thread by another name.

@@ -303,3 +303,12 @@ a requirement.
    for a ring, because a kernel that refuses one is common. A kernel at decision 2's floor has
    everything the epoll backend needs, and `Loop.init` answers `Unsupported` on one that does not.
    *Proposed: no.*
+
+## Amendment of 2026-11-06: the stall count of decision 28
+
+A loop counts a turn at or above `Options.stall_turn_ns` as a stall. A turn runs from one clock
+stamp of a tick to the next tick's first stamp. A host that sleeps in its own wait sleeps between two ticks,
+so its sleep reads as one long turn, and every sleep would count as a stall. Such a host sets
+`stall_turn_ns = null`, and watches no heartbeat: a watch would report its sleep as a stuck turn
+with no callback. No record gives a host a call that marks its sleep. Decision 29's open question
+3 holds the reason it stays so for now.

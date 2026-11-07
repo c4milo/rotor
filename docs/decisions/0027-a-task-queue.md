@@ -692,3 +692,11 @@ Mutations, 23, each CAUGHT. Against `zig build test-core`:
 Against `zig build halt-check`: the checks of a task queued twice, of a head before the pop, of a
 tail beside the head, of the walk, of `discard_tasks` in a tick, of the owner, and of a task left at
 `deinit`. Against the kqueue conformance suite: a `Loop.schedule` that skips the count.
+
+### Amendment of 2026-11-06: decision 28
+
+A task holds `call: *const Call`, a static entry with the task's name and its function, as a
+record does (decision 26, amendment of 2026-11-06). `Task` stays 16 B. `Tasks.run` stores each
+task's name in the loop's heartbeat before it calls the task, so a watch on another thread can name
+a task that never returns. Ruling 2 of decision 28 raised the `task` and `tasks-64` rows of
+`bench/baseline/work.txt` to the counts that store costs.

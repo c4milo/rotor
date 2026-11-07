@@ -250,3 +250,15 @@ called the record. Inside the callback of the last record outstanding, `idle()` 
 `tick` there took the fast path and did not halt. The count now drops after the call. The halt
 scenario "dispatch: tick inside the last record" proves it: with the old order it does not halt.
 The change adds no instruction to the fast path.
+
+### Amendment of 2026-11-06: decision 28
+
+- **A record and a poller hold a static `Call`.** `Completion.call` and `Poller.call` point to a
+  `Call`, which holds the callback's name and its function. `init` builds it at comptime and names
+  it `@typeName(Parent) ++ "." ++ field`, so no call site changes. A record and a poller stay
+  8 B. A `Call` written by hand is a container-level `const` with a literal name, because another
+  thread may read the name after a library frees its record.
+- **`deinit` inside a callback halts.** `Dispatch.assert_empty` checks `ticking` first (class C),
+  so the program's own record that ends its loop halts at once.
+- **A library holds a `*SharedLoop`, not a `*Loop`.** It declares only the calls a library may
+  make, and `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it.

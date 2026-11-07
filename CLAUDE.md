@@ -78,6 +78,8 @@ Zig and to this tree.
   properties once at registration, not per operation. Nothing is computed inside a loop that
   could be computed outside it.
 - **Statistics are sampled, never unconditional, and nothing logs on a hot path** (decision 9).
+  The one exception is the stall count of decision 9, rule 7: it is exact, because a sampled count
+  misses the rare stall (decision 28, accepted by Camilo on 2026-11-06).
 - **Ugly code needs a ledger row.** Unrolling, raw pointers, forced inlining and disabled safety
   checks live only in the files decision 7 names, each use with a row in
   `docs/hot-path-ledger.md`. The first version of a hot file is the plain version.
@@ -320,10 +322,16 @@ was about to push.
   timer lifecycle. It needs the Lean toolchain `proofs/lean-toolchain` names, which `elan`
   installs, so it is a step of its own and not part of `zig build test`. A change to a function a
   model mirrors changes the model in the same commit; `proofs/README.md` lists the models.
+- Compile-fail check: `zig build test-compile-fail` builds each program of `tools/compile_fail/`,
+  and each must fail to compile with the message decision 28 states: a library that calls `tick`,
+  `drain`, `deinit`, `cancel_all` or `discard_tasks` through a `SharedLoop`. `zig build test` runs
+  it.
 - Models: `zig build tla` — TLC over every configuration under `spec/tla/`, through pepegrillo's
   `tla` tool. `spec/tla/wake/` models the sleep handshake of decision 12, point 6, and decision 18:
   its configurations must hold, and each mutant, which breaks one step of the handshake, must fail.
-  It needs Java 11 or newer, and fetches the TLC release `tools/tla.zig` pins, checked against its
+  `spec/tla/heartbeat/` models the order of the heartbeat's stores and loads of decision 28, and its
+  three mutants must fail. It is the only proof of the watch's second load of the stamp, by
+  Camilo's ruling of 2026-11-07. It needs Java 11 or newer, and fetches the TLC release `tools/tla.zig` pins, checked against its
   SHA-256, so it is a step of its own and not part of `zig build test`, which only compiles the
   tool. A change to the handshake changes the model in the same commit.
 - Continuous integration: `.github/workflows/ci.yml` runs on every push to `main` and every pull

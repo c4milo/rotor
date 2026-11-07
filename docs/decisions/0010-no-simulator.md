@@ -95,6 +95,18 @@ consumer needs it, and the one consumer in sight already owns its twin.
 - Decision 9: rules 1, 2, 5 and 6 stand. The rules about the simulator's streams and the
   three-trace replay gate have nothing to apply to.
 
+## Amendment of 2026-11-06: a twin's surface gains the view and the heartbeat
+
+Decision 28 adds three names to the surface that a twin carries in place of the public module:
+
+- `Loop.shared`, which returns the view that the program hands each library;
+- `SharedLoop`, that view. `core.shared_loop.check` holds a view to its declarations: each call a
+  library may make, and each call it refuses with a compile error;
+- `Loop.heartbeat`, which returns what a thread of the program reads to see a stuck loop.
+
+`core/surface.zig` lists `shared` and `heartbeat`. A twin that runs no callback for longer than
+its threshold still reports no stall, because a twin's turns are what it says they are.
+
 ## Amendment of 2026-11-06: the seeded shuffle of each reaped batch
 
 "What this costs" named a seeded shuffle of completions as the next step. Camilo ruled on
