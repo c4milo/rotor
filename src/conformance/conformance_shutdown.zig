@@ -200,8 +200,8 @@ test "drain reports an operation in flight before it reports a queued task" {
     try expect_empty(&harness);
 }
 
-fn all_finished(records: *const [2]Record) bool {
-    return records[0].finished() and records[1].finished();
+fn all_finished(records: *const [3]Record) bool {
+    return records[0].finished() and records[1].finished() and records[2].finished();
 }
 
 test "discard_tasks with records in flight leaves the records owed, and later ticks end them" {
@@ -214,11 +214,14 @@ test "discard_tasks with records in flight leaves the records owed, and later ti
     const pair = try tcp.connected_pair(&harness, &listener);
     defer for (pair) |descriptor| sync.close_now(descriptor);
 
-    var records: [2]Record = @splat(.{});
+    // No record can end before the discard. The timer ends only at its cancel, and the receive
+    // ends only when the send after the discard gives it data. A short timer could expire during
+    // the first tick when the host preempts the thread, and the loop then owes one record.
+    var records: [3]Record = @splat(.{});
     var bytes: [8]u8 = undefined;
     var handles: [2]core.Handle = undefined;
     try harness.submit(&.{
-        Operation.timer(0, 5 * ms, 0).completion(&records[0].completion),
+        Operation.timer(0, never_ns, 0).completion(&records[0].completion),
         Operation.receive(0, pair[1], &bytes).completion(&records[1].completion),
     }, &handles);
     var scratch: [8]Event = undefined;
@@ -231,10 +234,12 @@ test "discard_tasks with records in flight leaves the records owed, and later ti
     // The loop still owes the two records their final events, and nothing for the tasks.
     try testing.expectEqual(@as(u32, 2), harness.loop.tables.dispatch.callbacks_outstanding);
 
-    harness.loop.cancel(handles[1]);
+    harness.loop.cancel(handles[0]);
+    try harness.submit(&.{Operation.send(0, pair[0], "discard").completion(&records[2].completion)}, &.{});
     try testing.expectEqual(@as(u32, 0), try tick_until(&harness, &records, all_finished));
     try expect_one_final(&records);
-    try testing.expectError(error.Canceled, records[1].final.?.outcome());
+    try testing.expectError(error.Canceled, records[0].final.?.outcome());
+    try testing.expectEqual(@as(u32, 7), try records[1].final.?.outcome());
     for (&tasks) |*counted| try testing.expectEqual(@as(u32, 0), counted.runs);
     try expect_empty(&harness);
     // The deferred `deinit` checks the same: it halts while an operation or a task is left.
