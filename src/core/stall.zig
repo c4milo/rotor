@@ -5,8 +5,8 @@
 //!
 //! The loop counts each turn at or above its threshold as a stall, in `Statistics` (decision 9,
 //! rule 7). A callback that never returns never ends its turn, so the loop also writes a heartbeat
-//! on a cache line of its own. A thread that the program starts reads it through a `Watch`, and
-//! names the callback that holds the loop.
+//! on a cache line of its own. A thread that the program starts reads it through a `Watch` of
+//! `stall_watch.zig`, and names the callback that holds the loop.
 //!
 //! Nothing here reads a clock: the backend hands each stamp in (non-negotiable 2). The loop writes
 //! the count and the heartbeat, and never reads them for a choice of what runs.
@@ -215,73 +215,16 @@ pub const Heartbeat = struct {
         };
     }
 
-    /// A watch of this heartbeat. Any thread may call it. Call `Watch.end` before the loop's
-    /// `deinit`.
-    pub fn watch(heartbeat: *Heartbeat) Watch {
-        const before = heartbeat.watchers.fetchAdd(1, .acq_rel);
-        assert(before < std.math.maxInt(u32));
-        return .{ .heartbeat = heartbeat, .beat_ns = asleep, .checks = 0 };
-    }
-
     /// Halts while a watch reads this heartbeat: what the loop's `deinit` checks, because a watch
     /// would read memory that the program frees once the loop has ended (decision 8, class C).
     pub fn assert_unwatched(heartbeat: *const Heartbeat) void {
         assert(heartbeat.watchers.load(.acquire) == 0);
     }
-
-    /// What another thread holds to read one loop's heartbeat. It reads no clock: the program calls
-    /// `check` once in each period that it chooses.
-    pub const Watch = struct {
-        heartbeat: *Heartbeat,
-        /// The stamp that the last check saw, or `asleep`.
-        beat_ns: u64,
-        /// The checks in a row that saw that stamp, after the first one.
-        checks: u32,
-
-        /// Reads the heartbeat once. Returns the open turn when the last check saw the same turn
-        /// open, and null when the loop moved, sleeps, or this is the first check of a turn.
-        ///
-        /// The order of the loads: `beat_ns` with acquire order, `running` with acquire order, and
-        /// `beat_ns` again. The loop stores each with release order. So when the two loads of
-        /// `beat_ns` are equal, the name belongs to that turn (`spec/tla/heartbeat/`).
-        pub fn check(watcher: *Watch) ?Stuck {
-            const heartbeat = watcher.heartbeat;
-            const first_ns = heartbeat.beat_ns.load(.acquire);
-            const name = heartbeat.running.load(.acquire);
-            const second_ns = heartbeat.beat_ns.load(.monotonic);
-            if (first_ns != second_ns or first_ns == asleep) return null;
-            if (first_ns != watcher.beat_ns) {
-                watcher.beat_ns = first_ns;
-                watcher.checks = 0;
-                return null;
-            }
-            watcher.checks +|= 1;
-            return .{ .name = text_of(name), .since_ns = first_ns, .checks = watcher.checks };
-        }
-
-        /// Subtracts 1 from the heartbeat's watchers. Call it before the loop's `deinit`.
-        pub fn end(watcher: *Watch) void {
-            const before = watcher.heartbeat.watchers.fetchSub(1, .acq_rel);
-            assert(before >= 1);
-        }
-    };
-
-    /// A turn that stayed open for at least one period of the watch.
-    pub const Stuck = struct {
-        /// The callback that runs now, or null for code outside a callback: the program's own code
-        /// between ticks, or the loop's work before a wait. Static data, as `Stall.name` is.
-        name: ?[*:0]const u8,
-        /// The stamp that started the open turn.
-        since_ns: u64,
-        /// The checks in a row, after the first one, that saw this turn open. A turn of `n` periods
-        /// or more is reported with `checks` of `n - 1` or more.
-        checks: u32,
-    };
 };
 
 /// The text of a name the heartbeat holds, or null. A name is static data, so this reads no memory
 /// that a library may free.
-fn text_of(name: ?*const Name) ?[*:0]const u8 {
+pub fn text_of(name: ?*const Name) ?[*:0]const u8 {
     const held = name orelse return null;
     return held.*.ptr;
 }
@@ -304,7 +247,6 @@ const testing = std.testing;
 
 /// Names of callbacks in the tests, static as a `Call`'s are.
 const receive_name: Name = "library.Client.receive";
-const run_name: Name = "library.Task.run";
 
 /// A library's poller, for the tests of a stall of one poller.
 const Server = struct {
@@ -409,49 +351,4 @@ test "a stall names its callback only when the turn called one" {
     try testing.expectEqual(@as(u32, 0), counted.statistics.last_stall.callbacks);
     try testing.expectEqual(@as(?[*:0]const u8, null), counted.statistics.last_stall.name);
     try testing.expectEqual(@as(u64, 4), counted.statistics.stalls);
-}
-
-test "a watch reports a turn that stays open, with the callback that runs, and counts the checks" {
-    var heartbeat: Heartbeat = .init(null);
-    var watch = heartbeat.watch();
-    defer watch.end();
-    // Before the first tick the loop is asleep for a watch.
-    try testing.expectEqual(@as(?Heartbeat.Stuck, null), watch.check());
-
-    var counted: Counted = .{};
-    counted.init();
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 700);
-    heartbeat.enter(&run_name);
-    // The first check of a turn keeps its stamp and reports nothing.
-    try testing.expectEqual(@as(?Heartbeat.Stuck, null), watch.check());
-    const stuck = watch.check().?;
-    try testing.expectEqualStrings("library.Task.run", std.mem.span(stuck.name.?));
-    try testing.expectEqual(@as(u64, 700), stuck.since_ns);
-    try testing.expectEqual(@as(u32, 1), stuck.checks);
-    try testing.expectEqual(@as(u32, 2), watch.check().?.checks);
-
-    // The callback returned, and the program's own code holds the turn: no name.
-    heartbeat.leave(1);
-    try testing.expectEqual(@as(?[*:0]const u8, null), watch.check().?.name);
-
-    // A loop that moved starts the count again.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 800);
-    try testing.expectEqual(@as(?Heartbeat.Stuck, null), watch.check());
-    try testing.expectEqual(@as(u32, 1), watch.check().?.checks);
-
-    // A loop asleep in a kernel wait is never stuck.
-    heartbeat.note_asleep();
-    try testing.expectEqual(@as(?Heartbeat.Stuck, null), watch.check());
-    try testing.expectEqual(@as(?Heartbeat.Stuck, null), watch.check());
-}
-
-test "the watchers count the watches, so a loop can halt while one reads it" {
-    var heartbeat: Heartbeat = .init(null);
-    heartbeat.assert_unwatched();
-    var first = heartbeat.watch();
-    var second = heartbeat.watch();
-    try testing.expectEqual(@as(u32, 2), heartbeat.watchers.load(.acquire));
-    first.end();
-    second.end();
-    heartbeat.assert_unwatched();
 }

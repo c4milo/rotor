@@ -2,7 +2,8 @@
 //! pollers, the tasks, the view a library holds, and the heartbeat. Split from `dispatch.zig` for
 //! the 500-line limit.
 const dispatch_module = @import("dispatch.zig");
-const Heartbeat = @import("../stall.zig").Heartbeat;
+const stall_watch = @import("../stall_watch.zig");
+const HeartbeatView = stall_watch.HeartbeatView;
 const SharedLoop = @import("../shared_loop.zig").SharedLoop;
 const tasks_module = @import("../tasks.zig");
 
@@ -91,9 +92,9 @@ pub fn Calls(comptime Loop: type) type {
 
         /// The loop's heartbeat, for a thread that the program starts (decision 28). It is valid
         /// until `deinit`, which halts while a watch reads it. Program only.
-        pub fn heartbeat(loop: *Loop) *Heartbeat {
+        pub fn heartbeat(loop: *Loop) *HeartbeatView {
             loop.tables.assert_owner();
-            return loop.tables.heartbeat;
+            return stall_watch.view_of(loop.tables.heartbeat);
         }
     };
 }

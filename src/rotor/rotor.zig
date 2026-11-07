@@ -39,7 +39,6 @@ pub const WaitLimit = core.WaitLimit;
 pub const BufferGroup = core.BufferGroup;
 pub const Task = core.Task;
 pub const Handle = core.Handle;
-pub const Heartbeat = core.Heartbeat;
 pub const LoopId = core.LoopId;
 pub const Message = core.Message;
 pub const Operation = core.Operation;
@@ -216,6 +215,11 @@ pub const Remote = loop_module.Remote;
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
 pub const Loop = loop_module.Loop;
 
+/// The loop's heartbeat as the program hands it to a thread it starts (decision 28):
+/// `Loop.heartbeat` returns it. It declares only `watch`, and the types `Watch` and `Stuck`. `core`
+/// names it `HeartbeatView`, because `core.Heartbeat` is what the loop writes.
+pub const Heartbeat = core.HeartbeatView;
+
 /// The loop as the program hands it to a library (decision 28). `Loop.shared` returns it. A library
 /// keeps it, and may submit, cancel, post, schedule tasks, add pollers and use buffer groups on it.
 /// `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a
@@ -233,8 +237,8 @@ const testing = std.testing;
 
 /// The declarations of `Loop` beyond the surface: its error sets, and nothing else.
 const loop_error_sets = [_][]const u8{
-    "InitError",    "TickError",      "DrainError",    "RegisterError",
-    "ProvideError", "PostError",      "AddPollerError", "ScheduleError",
+    "InitError",    "TickError", "DrainError",     "RegisterError",
+    "ProvideError", "PostError", "AddPollerError", "ScheduleError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{
@@ -369,7 +373,7 @@ test "every public function compiles for this host, not only the ones something 
     // Zig analyses a function only when something names it. `register_descriptors` and
     // `register_buffers` did not compile for Linux until 2026-09-22, and no gate said so, because
     // nothing on Linux called them. Naming every function of every public type here closes that.
-    inline for (.{ Loop, Registry, Remote, sync, Heartbeat, Heartbeat.Watch }) |T| {
+    inline for (.{ Loop, Registry, Remote, sync, Heartbeat.Watch }) |T| {
         inline for (@typeInfo(T).@"struct".decls) |declaration| {
             const value = @field(T, declaration.name);
             if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
@@ -382,6 +386,7 @@ test "every public function compiles for this host, not only the ones something 
         const value = @field(SharedLoop, declaration.name);
         if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
     }
+    _ = &Heartbeat.watch;
     _ = &backend;
     _ = &require_backend;
     _ = &Offload.memory_bytes;

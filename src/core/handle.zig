@@ -32,14 +32,16 @@ pub const Handle = packed struct(u64) {
         assert_class_a(handle.index == @as(u32, @truncate(bits)));
         return handle;
     }
-
-    /// The generation that follows `generation`, skipping 0 when 32 bits wrap.
-    pub fn next_generation(generation: u32) u32 {
-        assert_class_a(generation >= constants.generation_first);
-        const next = generation +% 1;
-        return if (next == 0) constants.generation_first else next;
-    }
 };
+
+/// The generation that follows `generation`, skipping 0 when 32 bits wrap. The slot table calls it,
+/// and a caller has no use for it, so it is not a declaration of `Handle` (decision 1, amendment of
+/// 2026-11-07).
+pub fn next_generation(generation: u32) u32 {
+    assert_class_a(generation >= constants.generation_first);
+    const next = generation +% 1;
+    return if (next == 0) constants.generation_first else next;
+}
 
 comptime {
     assert(@sizeOf(Handle) == @sizeOf(u64));
@@ -58,7 +60,7 @@ test "the none handle is all zero bits and no generation reaches it" {
     try testing.expect(Handle.none.is_none());
     try testing.expectEqual(@as(u64, 0), @as(u64, @bitCast(Handle.none)));
     try testing.expect(!(Handle{ .index = 0, .generation = constants.generation_first }).is_none());
-    try testing.expectEqual(@as(u32, 8), Handle.next_generation(7));
-    const wrapped = Handle.next_generation(std.math.maxInt(u32));
+    try testing.expectEqual(@as(u32, 8), next_generation(7));
+    const wrapped = next_generation(std.math.maxInt(u32));
     try testing.expectEqual(constants.generation_first, wrapped);
 }

@@ -35,6 +35,14 @@ pub const cases = [_]Case{
     },
     // Decision 1, amendment of 2026-11-07: the public calls that changed their shape.
     .{ .file = "accept_flag", .message = "expected 2 argument(s), found 3" },
+    .{
+        .file = "heartbeat_writer",
+        .message = "no field or member function named 'note_asleep' in 'stall_watch.HeartbeatView'",
+    },
+    .{
+        .file = "next_generation",
+        .message = "struct 'handle.Handle' has no member named 'next_generation'",
+    },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.

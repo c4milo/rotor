@@ -386,7 +386,7 @@ pub const Loop = struct {
     /// calls `watch` on it, then `check` once in each period it chooses, and `Watch.end` before
     /// this loop's `deinit`, which halts while a watch reads it. Only the program calls this, on
     /// the loop's thread.
-    pub fn heartbeat(loop: *Loop) *core.Heartbeat {
+    pub fn heartbeat(loop: *Loop) *core.HeartbeatView {
         return switch (loop.inner) {
             inline else => |*inner| inner.heartbeat(),
         };

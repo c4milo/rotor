@@ -169,7 +169,7 @@ var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = .init(null);
 /// check returns.
 fn end_a_loop_that_a_watch_reads() void {
     heartbeat = .init(null);
-    _ = heartbeat.watch();
+    _ = core.stall_watch.view_of(&heartbeat).watch();
     scenario.reached_violation();
     heartbeat.assert_unwatched();
 }
@@ -178,7 +178,7 @@ fn end_a_loop_that_a_watch_reads() void {
 /// first watch still reads. With the check deleted, the count wraps and the call returns.
 fn end_one_watch_twice() void {
     heartbeat = .init(null);
-    var watch = heartbeat.watch();
+    var watch = core.stall_watch.view_of(&heartbeat).watch();
     watch.end();
     scenario.reached_violation();
     watch.end();
@@ -205,7 +205,7 @@ fn watch_a_heartbeat_whose_count_is_full() void {
     heartbeat = .init(null);
     heartbeat.watchers.store(std.math.maxInt(u32), .release);
     scenario.reached_violation();
-    _ = heartbeat.watch();
+    _ = core.stall_watch.view_of(&heartbeat).watch();
 }
 
 pub const scenarios = [_]scenario.Scenario{

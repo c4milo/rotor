@@ -47,7 +47,7 @@ pub const Slot = extern struct {
     len: u32,
     /// The descriptor. For `post`, the target `LoopId`.
     descriptor: i32,
-    /// Rises by one each time the slot is released; never 0 (`Handle.next_generation`).
+    /// Rises by one each time the slot is released; never 0 (`handle.next_generation`).
     generation: u32,
     /// The next slot of the list this slot is on, or `next_none`: the free list while `free`, a
     /// backend's pending list otherwise.

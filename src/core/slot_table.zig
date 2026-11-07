@@ -84,7 +84,7 @@ pub const SlotTable = struct {
         assert_class_a(slot.state != .free);
         assert_class_a(slot.heap_position == heap_position_none);
         assert_class_a(table.free_count < table.slots.len);
-        slot.generation = Handle.next_generation(slot.generation);
+        slot.generation = handle_module.next_generation(slot.generation);
         slot.state = .free;
         slot.next = table.free_head;
         table.free_head = index;

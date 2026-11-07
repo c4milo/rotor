@@ -370,7 +370,7 @@ const Spinning = struct {
 
 /// What the watch thread saw, and the record it releases.
 const Watcher = struct {
-    heartbeat: *core.Heartbeat,
+    heartbeat: *core.HeartbeatView,
     spinning: *Spinning,
     name: ?[*:0]const u8 = null,
     checks: u32 = 0,
@@ -430,7 +430,7 @@ test "a watch on another thread names the callback that holds the loop" {
 /// A watch that checks while its loop waits in the kernel, and keeps the most checks in a row that
 /// it saw of one open turn.
 const Sleeper = struct {
-    heartbeat: *core.Heartbeat,
+    heartbeat: *core.HeartbeatView,
     done: std.atomic.Value(bool) = .init(false),
     checks_most: u32 = 0,
 
