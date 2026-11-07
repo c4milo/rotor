@@ -6,6 +6,9 @@ day. Camilo ruled on the open items of the build that day too (see "Ruling on th
 Every other cost here is a prior: a row of `docs/costs.md` at the `mac` median, or an instruction
 count from arithmetic. Nothing was measured for this record before the ruling.
 
+Amended on 2026-11-07 by Camilo's ruling: the suite's check of each callback reads the thread's CPU
+clock (see "Amendment of 2026-11-07" at the end).
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"
@@ -855,9 +858,11 @@ Camilo's ruling 2, and the rows that "After the rulings of 2026-11-06" names. On
 - `conformance_stall.zig`, on every backend and again with the spin budget: a record that holds the
   loop after a wait makes a stall that names it; program code between ticks makes a stall of no
   callback; a tick that blocks is in no turn, and program code after its wait makes a stall that
-  starts at the stamp after the wait; a null threshold counts none; a watch reports nothing while
-  the loop waits; and a watch on another thread names a record that spins until the watch releases
-  it. The race gate runs the last two under ThreadSanitizer.
+  starts at the stamp after the wait; a null threshold counts none; and, since 2026-11-07, a record
+  that waits in the kernel past `callback_stall_ns_max` passes the harness check.
+- `conformance_stall_watch.zig`, split from `conformance_stall.zig` on 2026-11-07: a watch reports
+  nothing while the loop waits; and a watch on another thread names a record that spins until the
+  watch releases it. The race gate runs these two under ThreadSanitizer.
 - The tick tests of each backend: a wait that fails leaves a turn open.
 - `zig build test-compile-fail`: each of the five refused calls fails with its message.
 - `spec/tla/heartbeat/`: the configuration holds, and three mutants fail.
@@ -959,3 +964,43 @@ model, and not a test of the code, proves load 3 (ruling 4 of that day).
 1. **The linux-x86_64 rows.** No container on `mac` counts them. CI's x86-64 runner may fail
    `post` and `record`, which fail on arm64 only by their distance from the line at `c05913b`.
 2. **The cost of a moved cache line.** The cross-core and timer comparison waits for a quiet `mac`.
+
+## Amendment of 2026-11-07: the suite's callback check reads CPU time
+
+Camilo ruled on 2026-11-07, option A: the conformance suite times each callback with the thread's
+CPU clock (`CLOCK_THREAD_CPUTIME_ID`), and not with the wall clock. This amends the harness check of
+"What the code does today", and nothing of the loop. The stall count and the heartbeat still read
+the loop's own clock stamps.
+
+**Why.** The check failed scenarios on a loaded `mac`. The kernel took the thread off the processor
+inside a small callback, and the wall clock counted that time:
+
+- One callback measured 60.6 ms of wall time and 8 µs of CPU time, against the limit of 50 ms.
+- At a load of 19 to 104, the time off the processor had a mean of 125 ms and a maximum of 844 ms.
+
+So the old claim of `callback_stall_ns_max`, that other work on the machine does not trip the limit,
+was false.
+
+**What changed.** All of it is test code:
+
+- `conformance_stall.zig` reads `backend.testing.thread_cpu_ns` before and after each handler. Each
+  backend's testing module already exported it for decision 13: `kqueue_testing.zig` for kqueue,
+  and `linux_shared_testing.zig` for io_uring and epoll. No production path calls it.
+- `hold_past_limit` spins until the thread used more CPU time than the limit. A spin timed by the
+  wall clock could end under the limit on a loaded machine.
+- A new scenario holds the gap below: a record whose handler waits in the kernel past the limit
+  passes the check.
+- The scenarios of the heartbeat moved to `conformance_stall_watch.zig`, so that each file stays
+  under 500 lines.
+
+**The gap.** The check does not catch a callback that blocks in a wait, because a wait uses no CPU
+time. A callback that sleeps, or that blocks on a lock or on a system call, passes. The check still
+catches a callback with too much work. The loop's stall count still counts a callback that blocks,
+in every program, because it reads the wall clock.
+
+**What the loaded runs showed.** On `mac` on 2026-11-07, 384 copies of the kqueue conformance
+executable ran 16 at a time beside 24 loops that only spin, at a load of 40 to 61. Neither the
+build before the change nor the build after it failed with `error.CallbackStalled`. So this run did
+not reproduce the failure, and it shows no gain. The measurements above are the evidence for the
+change. A 60 ms sleep in a small callback fails the check before the change and passes it after,
+with no load.

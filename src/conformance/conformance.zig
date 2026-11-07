@@ -211,6 +211,7 @@ test {
     _ = @import("conformance_dispatch_local.zig");
     _ = @import("conformance_tasks.zig");
     _ = @import("conformance_stall.zig");
+    _ = @import("conformance_stall_watch.zig");
     _ = @import("conformance_shutdown.zig");
     _ = @import("conformance_shutdown_cancel.zig");
     _ = @import("conformance_limits.zig");

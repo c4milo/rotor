@@ -4,9 +4,14 @@
 //! each loop, from the stamps its backend reads, and the scenarios at the end of this file hold it.
 //!
 //! A scenario makes its records, pollers and tasks with `completion`, `poller` and `task`. Each
-//! one reads the clock before and after its handler. A run longer than
-//! `constants.callback_stall_ns_max` is kept, and the next `Harness.tick` or `Harness.drain`
+//! one reads the thread's CPU clock before and after its handler. A run that used more CPU time
+//! than `constants.callback_stall_ns_max` is kept, and the next `Harness.tick` or `Harness.drain`
 //! returns `error.CallbackStalled`. A callback returns nothing, so it cannot fail the test itself.
+//!
+//! The check reads CPU time and not the wall clock, by Camilo's ruling of 2026-11-07 (decision 28,
+//! its amendment of that day). The kernel can take the thread off the processor inside a small
+//! callback on a loaded machine, and the wall clock counts that time. The CPU clock does not. So
+//! the check does not catch a callback that blocks in a wait: the scenario below shows that gap.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
@@ -15,6 +20,8 @@ const constants = @import("constants.zig");
 
 const Event = core.Event;
 const clock_ns = backend.testing.monotonic_ns;
+/// The clock of the check: the CPU time that the calling thread used.
+const cpu_ns = backend.testing.thread_cpu_ns;
 
 /// The longest callback run over the limit since the last `check`, in nanoseconds, or 0. The
 /// callbacks of a loop run on the thread that ticks it, so each thread keeps its own.
@@ -30,9 +37,10 @@ pub fn check() error{CallbackStalled}!void {
     return error.CallbackStalled;
 }
 
-/// Keeps the run that began at `started_ns` when it took longer than the limit.
+/// Keeps the run that began at `started_ns`, a reading of `cpu_ns`, when it used more CPU time
+/// than the limit.
 fn measure(started_ns: u64) void {
-    const elapsed_ns = clock_ns() - started_ns;
+    const elapsed_ns = cpu_ns() - started_ns;
     if (elapsed_ns > constants.callback_stall_ns_max) stalled_ns = @max(stalled_ns, elapsed_ns);
 }
 
@@ -44,7 +52,7 @@ pub fn completion(
 ) core.Completion {
     return .init(Parent, field, struct {
         fn timed(parent: *Parent, event: Event) void {
-            const started_ns = clock_ns();
+            const started_ns = cpu_ns();
             handler(parent, event);
             measure(started_ns);
         }
@@ -59,7 +67,7 @@ pub fn poller(
 ) core.Poller {
     return .init(Parent, field, struct {
         fn timed(parent: *Parent) core.WaitLimit {
-            const started_ns = clock_ns();
+            const started_ns = cpu_ns();
             const limit = handler(parent);
             measure(started_ns);
             return limit;
@@ -75,7 +83,7 @@ pub fn task(
 ) core.Task {
     return .init(Parent, field, struct {
         fn timed(parent: *Parent) void {
-            const started_ns = clock_ns();
+            const started_ns = cpu_ns();
             handler(parent);
             measure(started_ns);
         }
@@ -85,11 +93,12 @@ pub fn task(
 const conformance = @import("conformance.zig");
 const Harness = conformance.Harness;
 
-/// Holds the thread past the limit. A spin and not a sleep, so that the thread keeps the loop the
-/// whole time, as a callback with too much work would.
+/// Holds the thread until it used more CPU time than the limit, as a callback with too much work
+/// would. It reads the CPU clock and not the wall clock: on a loaded machine the kernel takes the
+/// thread away during the spin, and a spin timed by the wall clock could end under the limit.
 fn hold_past_limit() void {
-    const started_ns = clock_ns();
-    while (clock_ns() - started_ns <= constants.callback_stall_ns_max) {
+    const started_ns = cpu_ns();
+    while (cpu_ns() - started_ns <= constants.callback_stall_ns_max) {
         std.atomic.spinLoopHint();
     }
 }
@@ -196,17 +205,60 @@ test "callbacks under the limit pass" {
     try testing.expectEqual(round + 2, quick.calls);
 }
 
+/// A record whose handler waits in the kernel past the limit and uses almost no CPU time: it ticks
+/// a second loop that has no work, as a callback that blocks in a wait would.
+const Waiting = struct {
+    completion: core.Completion = completion(Waiting, "completion", completed),
+    other: *Loop,
+    /// The wall time the handler waited, in nanoseconds.
+    waited_ns: u64 = 0,
+
+    fn completed(waiting: *Waiting, event: Event) void {
+        _ = event;
+        var events: [1]Event = undefined;
+        const started_ns = clock_ns();
+        var round: u32 = 0;
+        while (waiting.waited_ns <= constants.callback_stall_ns_max and
+            round < conformance.collect_rounds_max) : (round += 1)
+        {
+            _ = waiting.other.tick(&events, constants.callback_stall_ns_max) catch return;
+            waiting.waited_ns = clock_ns() - started_ns;
+        }
+    }
+};
+
+test "a record that waits in the kernel past the limit passes, because the check reads CPU time" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    var other: Fixture = undefined;
+    try other.init(stall_turn_ns);
+    defer other.loop.deinit();
+    var waiting: Waiting = .{ .other = &other.loop };
+    const timer = core.Operation.timer(0, 0, 0);
+    try harness.submit(&.{timer.completion(&waiting.completion)}, &.{});
+    var events: [8]Event = undefined;
+    var round: u32 = 0;
+    while (waiting.waited_ns == 0 and round < conformance.collect_rounds_max) : (round += 1) {
+        _ = try harness.tick(&events, ns_per_ms);
+    }
+    // The handler held the loop past the limit by the wall clock, and the check let it pass.
+    try testing.expect(waiting.waited_ns > constants.callback_stall_ns_max);
+}
+
 // The stall count and the heartbeat of decision 28, on every backend. A turn runs from one tick's
 // first clock stamp to the next tick's, and holds no kernel wait. The loop counts a turn at or
 // above `Options.stall_turn_ns` in `statistics()`, and a watch on another thread names the callback
-// that holds the loop. Each hold stays under `constants.callback_stall_ns_max`, so the check above
-// passes. A busy machine adds stalls, so each check asks for at least the stall the scenario made.
+// that holds the loop: `conformance_stall_watch.zig` holds those scenarios. Each hold stays under
+// `constants.callback_stall_ns_max`, so the check above passes. A busy machine adds stalls, so each
+// check asks for at least the stall the scenario made.
 
 const Loop = backend.Loop;
 const ns_per_ms = core.constants.ns_per_ms;
 
 /// The threshold of the scenarios that make a stall.
-const stall_turn_ns = 5 * ns_per_ms;
+pub const stall_turn_ns = 5 * ns_per_ms;
 /// How long a scenario holds the loop: four times the threshold, and under the harness's limit.
 const hold_ns = 20 * ns_per_ms;
 /// The wait of a tick that blocks with no work. A turn that held the wait would start this long
@@ -224,11 +276,11 @@ comptime {
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
 /// One loop with a stall threshold of its own.
-const Fixture = struct {
+pub const Fixture = struct {
     memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment),
     loop: Loop,
 
-    fn init(fixture: *Fixture, turn_ns: u64) !void {
+    pub fn init(fixture: *Fixture, turn_ns: u64) !void {
         var with_threshold = options;
         with_threshold.stall_turn_ns = turn_ns;
         with_threshold.spin_budget_ns = conformance.spin_budget_ns();
@@ -244,9 +296,8 @@ fn hold_for(span_ns: u64) void {
 }
 
 /// A record that holds the loop for `hold_ns` when its event comes. Its hold is the stall the
-/// scenario counts, so it is made with `core.Completion.init` and not timed by the harness: a busy
-/// machine stretches the hold, and the harness's limit would then fail the scenario for the stall it
-/// makes on purpose.
+/// scenario counts, so it is made with `core.Completion.init` and not timed by the harness. The
+/// scenario tests the loop's count, and the harness's check stays out of it.
 const Holding = struct {
     completion: core.Completion = .init(Holding, "completion", completed),
     events: u32 = 0,
@@ -341,142 +392,4 @@ test "a null threshold counts no stall" {
     hold_for(hold_ns);
     _ = try fixture.loop.tick(&events, 0);
     try testing.expectEqual(@as(u64, 0), fixture.loop.statistics().stalls);
-}
-
-/// The period of the watch, and the most checks it makes before it gives up.
-const watch_period_ns = 10 * ns_per_ms;
-const watch_checks_max = 500;
-/// The most a record that spins holds the loop when no watch releases it: past the watch's checks.
-const spin_ns_max = 10 * core.constants.ns_per_s;
-
-/// A record that holds the loop until another thread sets `release`.
-const Spinning = struct {
-    completion: core.Completion = .init(Spinning, "completion", completed),
-    release: std.atomic.Value(bool) = .init(false),
-    released: bool = false,
-
-    fn completed(spinning: *Spinning, event: Event) void {
-        _ = event;
-        const started_ns = clock_ns();
-        while (clock_ns() - started_ns < spin_ns_max) {
-            if (spinning.release.load(.acquire)) {
-                spinning.released = true;
-                return;
-            }
-            std.atomic.spinLoopHint();
-        }
-    }
-};
-
-/// What the watch thread saw, and the record it releases.
-const Watcher = struct {
-    heartbeat: *core.HeartbeatView,
-    spinning: *Spinning,
-    name: ?[*:0]const u8 = null,
-    checks: u32 = 0,
-
-    /// Checks once in each period until a check names a callback, then releases the record.
-    fn run(watcher: *Watcher) void {
-        var watch = watcher.heartbeat.watch();
-        defer watch.end();
-        for (0..watch_checks_max) |_| {
-            pause(watch_period_ns);
-            const stuck = watch.check() orelse continue;
-            watcher.checks = stuck.checks;
-            watcher.name = stuck.name orelse continue;
-            break;
-        }
-        watcher.spinning.release.store(true, .release);
-    }
-};
-
-/// Gives the processor away until `span_ns` passed, as a program's watch thread sleeps one period.
-fn pause(span_ns: u64) void {
-    const started_ns = clock_ns();
-    for (0..pause_rounds_max) |_| {
-        if (clock_ns() - started_ns >= span_ns) return;
-        std.Thread.yield() catch {};
-    }
-}
-
-/// The most yields of one `pause`.
-const pause_rounds_max = 1_000_000;
-
-test "a watch on another thread names the callback that holds the loop" {
-    if (conformance.unsupported()) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(stall_turn_ns);
-    defer fixture.loop.deinit();
-    var spinning: Spinning = .{};
-    var watcher: Watcher = .{ .heartbeat = fixture.loop.heartbeat(), .spinning = &spinning };
-    const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
-    const timer = core.Operation.timer(0, 0, 0).completion(&spinning.completion);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.submit(&.{timer}, &.{}));
-    var events: [4]Event = undefined;
-    var round: u32 = 0;
-    while (!spinning.released and round < conformance.collect_rounds_max) : (round += 1) {
-        _ = try fixture.loop.tick(&events, ns_per_ms);
-    }
-    thread.join();
-    try testing.expect(spinning.released);
-    const expected = @typeName(Spinning) ++ ".completion";
-    try testing.expectEqualStrings(expected, std.mem.span(watcher.name.?));
-    try testing.expect(watcher.checks >= 1);
-    // The turn the record held is a stall of that record.
-    _ = try fixture.loop.tick(&events, 0);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.statistics().last_stall.callbacks);
-}
-
-/// A watch that checks while its loop waits in the kernel, and keeps each report: the turn it named
-/// and the clock before the check that named it.
-const Sleeper = struct {
-    heartbeat: *core.HeartbeatView,
-    done: std.atomic.Value(bool) = .init(false),
-    reports: [watch_checks_max]Report = undefined,
-    reports_len: u32 = 0,
-
-    const Report = struct { since_ns: u64, checked_ns: u64 };
-
-    fn run(sleeper: *Sleeper) void {
-        var watch = sleeper.heartbeat.watch();
-        defer watch.end();
-        for (0..watch_checks_max) |_| {
-            if (sleeper.done.load(.acquire)) return;
-            pause(watch_period_ns);
-            const checked_ns = clock_ns();
-            const stuck = watch.check() orelse continue;
-            const report: Report = .{ .since_ns = stuck.since_ns, .checked_ns = checked_ns };
-            sleeper.reports[sleeper.reports_len] = report;
-            sleeper.reports_len += 1;
-        }
-    }
-};
-
-/// The wait of a tick that a watch checks: many periods of the watch.
-const watched_wait_ns = 200 * ns_per_ms;
-
-test "a watch reports nothing while the loop waits in the kernel" {
-    if (conformance.unsupported()) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
-    try fixture.init(stall_turn_ns);
-    defer fixture.loop.deinit();
-    var sleeper: Sleeper = .{ .heartbeat = fixture.loop.heartbeat() };
-    const thread = try std.Thread.spawn(.{}, Sleeper.run, .{&sleeper});
-    var events: [4]Event = undefined;
-    const waited = fixture.loop.tick(&events, watched_wait_ns);
-    sleeper.done.store(true, .release);
-    thread.join();
-    try testing.expectEqual(@as(u32, 0), try waited);
-    // The turn after the wait starts at the stamp after the wait. The test's code holds it until
-    // `done`, for as long as a busy machine makes, and a watch reports it, so the check skips it.
-    // The turn before the wait ends when the loop says it sleeps. kqueue and epoll arm the wait's
-    // bound after that, so that turn ends at least one wait before the stamp after the wait.
-    // io_uring arms the bound from the tick's first stamp. There that turn ends half a wait before
-    // the stamp, unless the thread loses its core for half a wait. A turn held through the wait is
-    // reported until the stamp after the wait.
-    const woken_ns = fixture.loop.now_ns();
-    for (sleeper.reports[0..sleeper.reports_len]) |report| {
-        if (report.since_ns == woken_ns) continue;
-        try testing.expect(report.checked_ns < woken_ns - watched_wait_ns / 2);
-    }
 }

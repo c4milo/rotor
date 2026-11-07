@@ -2,16 +2,19 @@
 const std = @import("std");
 const core = @import("core");
 
-/// The longest that one record, poller or task callback of a scenario may run, in nanoseconds.
-/// A callback that runs longer holds the loop, and `conformance_stall.zig` fails the scenario.
-/// Seastar reports such a task as a reactor stall. rotor's bound on a run of tasks is in tasks and
-/// not in time (decision 27), and `core` reads no clock, so this check lives in the harness.
+/// The most CPU time that one record, poller or task callback of a scenario may use, in
+/// nanoseconds. A callback that uses more holds the loop, and `conformance_stall.zig` fails the
+/// scenario. Seastar reports such a task as a reactor stall. rotor's bound on a run of tasks is in
+/// tasks and not in time (decision 27), and `core` reads no clock, so the harness holds this check.
 ///
 /// The callbacks of the scenarios count events, submit one operation or queue one task. Each of
-/// these costs microseconds in Debug, and some tens of microseconds under ThreadSanitizer. A loaded
-/// runner can take the thread away for a scheduler quantum or more: about 10 ms on macOS and a few
-/// milliseconds on Linux (recalled, not measured). 50 ms is several quanta, so other work on the
-/// machine does not trip the limit. A callback that blocks on a wait or on a large job trips it.
+/// these costs microseconds in Debug, and some tens of microseconds under ThreadSanitizer. The
+/// check reads the thread's CPU clock, by Camilo's ruling of 2026-11-07 (decision 28, its amendment
+/// of that day). It read the wall clock before, and other work on the machine then tripped it: on
+/// `mac` at a load of 19 to 104, the kernel took a thread off the processor for a mean of 125 ms
+/// and at most 844 ms. One callback measured 60.6 ms of wall time and 8 µs of CPU time. A callback
+/// with a large job trips the limit. A callback that blocks in a wait does not trip it, because a
+/// wait uses no CPU time: this check does not catch such a callback.
 pub const callback_stall_ns_max: u64 = 50 * core.constants.ns_per_ms;
 
 comptime {
