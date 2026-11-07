@@ -281,10 +281,38 @@ test "now_ns is 0 before the first tick, and the tick that fires a timer has rea
 /// How long the caller holds the loop off before it submits, in the scenario of a timer's start.
 const held_ns = 50 * ms;
 
-/// That scenario's delay: twice the hold, so a timer that started at the submit, or at the tick
-/// after it, cannot fire within one delay of the submit.
+/// That scenario's delay: twice the hold.
 const delay_ns = 2 * held_ns;
 
+/// The delay of that scenario's second timer, which the caller arms after the tick that arms the
+/// first. That tick reads the clock at least a hold after the first timer's start. If the first
+/// timer starts at the reading the caller saw, the second is due a half hold after it. If the first
+/// starts at the tick that armed it, the second is due a half hold before it.
+const second_delay_ns = delay_ns - held_ns / 2;
+
+/// The fires of the scenario of a timer's start, in the order the loop hands them over. Each fire
+/// keeps `now_ns` of the tick that handed it over.
+const Fires = struct {
+    user_data: [2]u64 = .{ 0, 0 },
+    fired_ns: [2]u64 = .{ 0, 0 },
+    count: u32 = 0,
+
+    fn tick(fires: *Fires, harness: *Harness, wait_ns: u64) !void {
+        var events: [2]Event = undefined;
+        const count = try harness.loop.tick(&events, wait_ns);
+        try testing.expect(fires.count + count <= fires.user_data.len);
+        for (events[0..count]) |event| {
+            try testing.expectEqual(@as(u32, 0), try event.outcome());
+            fires.user_data[fires.count] = event.user_data;
+            fires.fired_ns[fires.count] = harness.loop.now_ns();
+            fires.count += 1;
+        }
+    }
+};
+
+// Until 2026-11-07 this scenario also required the fire within one delay of the submit, by the
+// host clock. Under load the process ran late: a fire came 136 ms and 184 ms after the submit,
+// against 100 ms. The order of two timers checks the same start and needs no bound on lateness.
 test "a timer's delay runs from now_ns as the caller saw it, not from the tick after the submit" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var harness: Harness = undefined;
@@ -294,19 +322,23 @@ test "a timer's delay runs from now_ns as the caller saw it, not from the tick a
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
     const seen_ns = harness.loop.now_ns();
 
-    // The caller works for a while after the tick, then arms a timer. Its delay started at the
-    // reading it saw, so it is due half a delay after the submit (decision 14, rule 6).
+    // The caller works for a while after the tick, then arms a timer. Its delay starts at the
+    // reading the caller saw (decision 14, rule 6).
     hold_off(held_ns);
-    const submitted_ns = now_ns();
     try harness.submit(&.{Operation.timer(12, delay_ns, 0)}, &.{});
-    var count: u32 = 0;
-    while (count == 0) count = try harness.loop.tick(&events, core.constants.ns_per_s);
-    const fired_ns = now_ns();
-    try testing.expectEqual(@as(u64, 12), events[0].user_data);
+    var fires: Fires = .{};
+    try fires.tick(&harness, 0);
+    const armed_ns = harness.loop.now_ns();
+    try testing.expect(armed_ns >= seen_ns + held_ns);
+
+    // The loop hands over due timers in deadline order. So the order of the two fires shows where
+    // the first delay started, and a late tick does not change the order.
+    try harness.submit(&.{Operation.timer(13, second_delay_ns, 0)}, &.{});
+    while (fires.count < 2) try fires.tick(&harness, core.constants.ns_per_s);
+    try testing.expectEqual([2]u64{ 12, 13 }, fires.user_data);
     // Never earlier than the reading plus the delay, which is the promise.
-    try testing.expect(harness.loop.now_ns() >= seen_ns + delay_ns);
-    // And sooner than a whole delay after the submit, which a start at the next tick cannot be.
-    try testing.expect(fired_ns - submitted_ns < delay_ns);
+    try testing.expect(fires.fired_ns[0] >= seen_ns + delay_ns);
+    try testing.expect(fires.fired_ns[1] >= armed_ns + second_delay_ns);
 }
 
 test "a timer submitted before any tick runs its delay from the first tick's reading" {
