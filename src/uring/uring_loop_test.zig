@@ -385,3 +385,14 @@ test "a datagram group the kernel refuses leaves the loop's datagram shape as it
     try std.testing.expectEqual(prefix_before, loop.datagram_prefix);
     try std.testing.expectEqual(core.datagram.Shape{}, loop.datagram_shape);
 }
+
+// Moved here from `uring.zig` on 2026-11-06 for the 500-line limit. It enters no kernel.
+test "entries default to the operations rounded up to a power of two, capped at the ring's most" {
+    try std.testing.expectEqual(@as(u16, 1), Loop.entries_of(.{ .operations = 1 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1000 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1024 }));
+    const most = uring.constants.entries_max;
+    try std.testing.expectEqual(most, Loop.entries_of(.{ .operations = 1 << 20 }));
+    // A caller that names a count keeps it.
+    try std.testing.expectEqual(@as(u16, 8), Loop.entries_of(.{ .operations = 1000, .entries = 8 }));
+}

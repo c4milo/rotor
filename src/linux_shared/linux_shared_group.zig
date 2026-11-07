@@ -50,6 +50,18 @@ pub fn make(wakes: []Wake) MakeError!void {
     }
 }
 
+/// An eventfd of this process alone: non-blocking, and closed on exec. A registry of one process
+/// keeps one as the wake of each epoll loop, and an io_uring loop holds one as the stand-in of its
+/// wake (decision 4, amendment of 2026-11-06).
+pub fn make_private() MakeError!Descriptor {
+    const rc = linux.eventfd(0, linux.EFD.NONBLOCK | linux.EFD.CLOEXEC);
+    return switch (linux.errno(rc)) {
+        .SUCCESS => @intCast(rc),
+        .MFILE, .NFILE, .NOMEM => error.SystemResources,
+        else => error.Unexpected,
+    };
+}
+
 /// Closes this process's copies of `wakes`. Every process of a group holds its own copies, and each
 /// closes them when it is done with the group; the other processes keep theirs.
 pub fn close(wakes: []const Wake) void {
@@ -126,4 +138,17 @@ test "a wake to an eventfd whose count is at its most is held, and one to a pipe
         _ = linux.close(end);
     };
     try testing.expect(!wake_sent(ends[0]));
+}
+
+test "a private eventfd does not block, closes on exec, and counts a wake" {
+    if (@import("builtin").os.tag != .linux) return error.SkipZigTest;
+    const descriptor = try make_private();
+    defer _ = linux.close(descriptor);
+    const flags = linux.fcntl(descriptor, linux.F.GETFD, 0);
+    try testing.expect(flags & linux.FD_CLOEXEC != 0);
+    var counter: u64 = 0;
+    try testing.expectEqual(linux.E.AGAIN, linux.errno(linux.read(descriptor, std.mem.asBytes(&counter), 8)));
+    try testing.expect(wake_sent(descriptor));
+    try testing.expectEqual(@as(usize, 8), linux.read(descriptor, std.mem.asBytes(&counter), 8));
+    try testing.expectEqual(@as(u64, 1), counter);
 }

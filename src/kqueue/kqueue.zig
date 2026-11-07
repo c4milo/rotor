@@ -29,6 +29,7 @@ pub const submit_module = @import("kqueue_submit.zig");
 pub const sync = @import("kqueue_sync.zig");
 pub const testing = @import("kqueue_testing.zig");
 pub const tick_module = @import("kqueue_tick.zig");
+pub const wake_module = @import("kqueue_wake.zig");
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. kqueue reports readiness and never
 /// completes a file operation, so this backend makes the `pread`, `pwrite` and `fsync` calls
@@ -88,6 +89,9 @@ pub const Loop = struct {
     /// The read end of this loop's wake pipe in a group, as the `ident` of the readiness that
     /// reports it, or `group_watch_none` (decision 21, point 3).
     group_watch: usize,
+    /// In a registry of one process, the kqueue `deinit` points the registry's descriptor for this
+    /// loop at, and -1 otherwise (`kqueue_wake.zig`).
+    wake_stand_in: core.Descriptor,
     /// Where the `kevent` call writes the descriptors that became ready.
     readiness: [constants.readiness_max]Kevent,
     /// What other threads send this loop, and the sleep handshake that wakes it for them.
@@ -178,7 +182,14 @@ pub const Loop = struct {
         errdefer loop.queue.deinit();
         const registry = loop.inbox.registry orelse return;
         const id = loop.tables.id;
-        const wake = registry.wake(id) orelse return registry.set(id, loop.queue.descriptor);
+        if (!registry.group) {
+            // Senders wake the loop through a descriptor the registry keeps, which refers to this
+            // kqueue until `deinit` (decision 4, amendment of 2026-11-06).
+            const claimed = try wake_module.claim(registry, id, loop.queue.descriptor);
+            loop.wake_stand_in = claimed.stand_in;
+            return registry.set(id, claimed.send);
+        }
+        const wake = registry.wake(id).?;
         // In a group the loop is woken through the pipe its group's creator made for it, and every
         // sender writes there (decision 21, point 3).
         const watch = [1]Kevent{group_module.watch_event(wake.watch)};
@@ -225,6 +236,7 @@ pub const Loop = struct {
         loop.wait_timer_deadline_ns = 0;
         loop.kept_error = .none;
         loop.group_watch = group_watch_none;
+        loop.wake_stand_in = -1;
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_shape = .{};
     }
@@ -234,7 +246,10 @@ pub const Loop = struct {
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
         loop.tables.assert_ended();
-        if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
+        if (loop.inbox.registry) |registry| {
+            if (!registry.group) wake_module.release(registry, loop.tables.id, loop.wake_stand_in);
+            registry.clear(loop.tables.id);
+        }
         loop.queue.deinit();
     }
 
@@ -451,6 +466,7 @@ test {
     _ = testing;
     _ = tick_module;
     _ = offload_module;
+    _ = wake_module;
     _ = @import("kqueue_file_call.zig");
     _ = @import("kqueue_mailbox_test.zig");
     _ = @import("kqueue_offload_test.zig");

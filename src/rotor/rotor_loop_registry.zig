@@ -14,7 +14,9 @@ const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 
 /// The registry a group of loops shares, for `post` between them (decision 4). The application
-/// owns its memory and hands it to every loop and remote of the group.
+/// owns its memory and hands it to every loop and remote of the group. It keeps the descriptor that
+/// wakes each loop for its whole life, so the application calls `close_wakes` once every loop and
+/// remote of it ended (decision 4, amendment of 2026-11-06).
 pub const Registry = struct {
     inner: Inner,
 
@@ -33,6 +35,8 @@ pub const Registry = struct {
         return most;
     }
 
+    /// A registry for loops of one process. It makes no descriptor: the first loop of each id
+    /// makes the one that wakes it, and the registry keeps it until `close_wakes`.
     pub fn init(
         registry: *Registry,
         memory: []align(core.layout.memory_alignment) u8,
@@ -99,12 +103,19 @@ pub const Registry = struct {
         }
     }
 
-    /// Closes this process's copies of a group's wakes, when it is done with the group. Every
-    /// process closes its own; nothing for a registry of one process.
+    /// Closes the descriptors that wake the registry's loops, once every loop and remote of it
+    /// ended and every thread that posts to them stopped. In one process, a loop or a remote that
+    /// still holds an id halts it, and the call closes the descriptor each id's first loop made
+    /// (decision 4, amendment of 2026-11-06). In a group it closes this process's copies of the
+    /// wakes, and every process closes its own.
     pub fn close_wakes(registry: *Registry) void {
         switch (registry.inner) {
             inline else => |*inner, tag| {
-                if (inner.group) module(tag).group_module.close(inner.wakes);
+                if (inner.group) {
+                    module(tag).group_module.close(inner.wakes);
+                } else {
+                    module(tag).wake_module.close_kept(inner);
+                }
             },
         }
     }
@@ -188,4 +199,38 @@ test "a remote counts the wakes the kernel refused, and its deinit keeps the cou
             inner.clear(0);
         },
     }
+}
+
+/// True when `descriptor` is open in this process.
+fn is_open(descriptor: core.Descriptor) bool {
+    if (linux) {
+        const rc = std.os.linux.fcntl(descriptor, std.os.linux.F.GETFD, 0);
+        return std.os.linux.errno(rc) == .SUCCESS;
+    }
+    return std.c.fcntl(descriptor, std.c.F.GETFD) >= 0;
+}
+
+test "a registry of one process keeps the descriptor that wakes a loop until close_wakes" {
+    if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
+        return error.SkipZigTest;
+    }
+    const loop_count = 2;
+    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var registry: Registry = undefined;
+    registry.init(&memory, loop_count);
+    const sizing: loop_module.Loop.Options = .{ .operations = 1 };
+    var loop_memory: [loop_module.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) =
+        undefined;
+    var loop: loop_module.Loop = undefined;
+    try loop.init(&loop_memory, .{ .operations = 1, .registry = &registry });
+    const number = switch (registry.inner) {
+        inline else => |*inner| inner.get(0),
+    };
+    try testing.expect(number >= 0);
+    // A sender may still hold the number after the loop ended, so the loop leaves it open.
+    loop.deinit();
+    try testing.expect(is_open(number));
+    registry.close_wakes();
+    try testing.expect(!is_open(number));
 }

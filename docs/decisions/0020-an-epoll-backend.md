@@ -406,6 +406,22 @@ gate, and against the Linux gate's halt check for the two bounds of `Queue.arm_w
 | a timer of 0 ns allowed | the Linux gate's halt check | CAUGHT |
 | a timer above `wait_ns_max` allowed | the Linux gate's halt check | CAUGHT |
 
+## The registry keeps the wake eventfd
+
+**Amended on 2026-11-06, by Camilo's ruling of that day.** An epoll loop with a registry does not
+make its own eventfd any more. It waits on the eventfd the registry keeps for its id, and never
+closes it. The first loop of an id makes the eventfd and hands it to the registry. The application
+closes it with `Registry.close_wakes`, after every loop and remote of the registry ended.
+
+Until this day a loop closed its eventfd at `deinit`. A sender that had read the number before then
+could write its 8 bytes after it, into whatever the next open got that number: a socket, a pipe or a
+file. The write succeeded, so nothing counted it. Decision 4's amendment of the same day says what
+was built on every backend, and why kqueue and io_uring needed a copy of their descriptor instead.
+
+`Queue.init_group` is now `Queue.init_borrowed`, because a loop of one process borrows its eventfd
+too, as a loop of a group always did (decision 21, point 3). A loop with no registry still makes its
+own eventfd and closes it: no other thread holds that number.
+
 ## Open questions
 
 Each has a proposed answer, and the implementation follows it until Camilo rules otherwise.

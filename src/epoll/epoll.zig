@@ -44,6 +44,7 @@ pub const submit_module = @import("epoll_submit.zig");
 pub const sync = @import("epoll_sync.zig");
 pub const testing = @import("linux_shared").testing;
 pub const tick_module = @import("epoll_tick.zig");
+pub const wake_module = @import("epoll_wake.zig");
 
 /// Whether this backend's file operations block the loop thread, which is what decides whether
 /// `Options.file_policy` and an offload mean anything here. epoll reports readiness and never
@@ -189,17 +190,19 @@ pub const Loop = struct {
         options: Options,
     ) InitError!void {
         loop.init_tables(memory, options);
-        // In a group the loop is woken through the eventfd its group's creator made for it, which
-        // every process of the group holds (decision 21, point 3).
-        const group_wake = if (loop.inbox.registry) |registry| registry.wake(loop.tables.id) else null;
-        loop.queue = if (group_wake) |wake|
-            try queue_module.Queue.init_group(wake.watch)
-        else
-            try queue_module.Queue.init();
+        const registry = loop.inbox.registry orelse {
+            loop.queue = try queue_module.Queue.init();
+            return;
+        };
+        // The loop waits on the eventfd the registry keeps for its id: in a group, the one the
+        // creator made (decision 21, point 3); in one process, the one the first loop of the id
+        // made. No loop closes it, so a sender never writes to a number reused by another open
+        // (decision 4, amendment of 2026-11-06).
+        const wake = try wake_module.claim(registry, loop.tables.id);
+        loop.queue = try queue_module.Queue.init_borrowed(wake.watch);
         // The eventfd and not the epoll instance: a post wakes a loop by writing to the descriptor
         // the registry holds, and an epoll descriptor cannot be written to.
-        const registry = loop.inbox.registry orelse return;
-        registry.set(loop.tables.id, loop.queue.wake_descriptor);
+        registry.set(loop.tables.id, wake.send);
     }
 
     /// Everything but the epoll instance: what the paths that enter no kernel run on.
@@ -465,4 +468,5 @@ test {
     _ = sync;
     _ = testing;
     _ = tick_module;
+    _ = wake_module;
 }

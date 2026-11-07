@@ -387,6 +387,12 @@ may do to it is post a message:
   still readable after `deinit`. On io_uring it is a lower bound: an answer the kernel posts after
   the remote's last enter is not read. A `Remote` belongs to one thread as a loop does.
 - The offload's workers answer through rings of their own, not through a `Remote`.
+- The registry keeps the descriptor that wakes each loop until `registry.close_wakes()`, so a
+  sender that read it never wakes a descriptor that a later open got. The first loop of each id
+  makes it. Call `close_wakes` once every loop and remote of the registry ended and every thread
+  that posts to them stopped: an id still held halts it. Until then each id a loop held keeps one
+  descriptor open, and a kqueue or io_uring loop holds two more while it runs (decision 4,
+  amendment of 2026-11-06).
 
 At most `loops_max` (256) loops and remotes share one registry.
 

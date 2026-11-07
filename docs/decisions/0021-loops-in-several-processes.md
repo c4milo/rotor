@@ -94,6 +94,12 @@ Every place in the region is an offset computed from the loop count. Nothing in 
 
 A registry of one process keeps working as it does today, and creates no wake of this kind.
 
+**Amended on 2026-11-06, by decision 4's amendment of that day.** A registry of one process now
+keeps a wake for each id too, in the same table, so that no loop closes a descriptor a sender may
+still hold. The first loop of an id makes it, and `close_wakes` closes it, as it closes a group's
+copies. The layout does not change, and `header_version` stays 1: `attach` refuses a registry of
+one process, so no other build reads its table.
+
 ### 2. A loop owns one core and its own region
 
 Each loop runs on one thread pinned to one core, and its memory is its own region, which the caller

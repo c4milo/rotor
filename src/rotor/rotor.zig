@@ -314,6 +314,7 @@ test "a registry and a remote work through the public module" {
     var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&registry_memory, 3);
+    defer registry.close_wakes();
     try testing.expectEqual(3, registry.loops());
     var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
@@ -340,6 +341,7 @@ test "a loop posts to another loop through the public module, with no event of i
     var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&registry_memory, 3);
+    defer registry.close_wakes();
     var options = test_options;
     options.registry = &registry;
     var sender_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;

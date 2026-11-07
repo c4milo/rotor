@@ -19,9 +19,10 @@
 //! waits on it, which is what keeps a level-triggered registration from reporting for ever.
 //!
 //! **The wake is an eventfd.** kqueue triggers an `EVFILT_USER` it registered at init; epoll has no
-//! user event, so the loop owns an eventfd registered for read readiness, and another thread wakes
-//! it with one 8-byte write. The counter is drained when the wake is reaped, so a loop that was
-//! woken many times waits again rather than spinning.
+//! user event, so the loop waits on an eventfd registered for read readiness, and another thread
+//! wakes it with one 8-byte write. A loop with a registry borrows the eventfd the registry keeps
+//! for its id, and never closes it (decision 4, amendment of 2026-11-06). The counter is drained
+//! when the wake is reaped, so a loop that was woken many times waits again rather than spinning.
 //!
 //! **The wait timer is a timerfd.** A call that waits with a timeout costs the kernel an hrtimer
 //! armed and cancelled per call, whatever the timeout, so a call that blocks carries none and a
@@ -92,38 +93,40 @@ pub const Queue = struct {
     /// The eventfd another thread writes to wake this loop. Registered for read readiness at init
     /// and never removed, so a wake is one write and needs no registration of its own.
     wake_descriptor: core.Descriptor,
-    /// False in a group, whose creator made the eventfd and keeps it (decision 21, point 3).
+    /// False when the loop has a registry, which keeps the eventfd for its whole life: a sender may
+    /// write to the number after this loop ended (decision 4, amendment of 2026-11-06).
     owns_wake: bool,
     /// The timerfd that bounds a wait (decision 20, "The wait timer"). Registered at init, edge
     /// triggered, and never removed.
     wait_timer_descriptor: core.Descriptor,
 
-    /// Opens the epoll instance and the eventfd that wakes it.
+    /// Opens the epoll instance and the eventfd that wakes it, for a loop with no registry.
     pub fn init() InitError!Queue {
         return open(null);
     }
 
-    /// Opens the epoll instance, woken through `group_wake`, the eventfd the creator of the loop's
-    /// group made for it (decision 21, point 3). `deinit` leaves it open.
-    pub fn init_group(group_wake: core.Descriptor) InitError!Queue {
-        assert(group_wake >= 0);
-        return open(group_wake);
+    /// Opens the epoll instance, woken through `borrowed`, the eventfd the loop's registry keeps for
+    /// its id: one the creator of a group made (decision 21, point 3), or one the first loop of the
+    /// id made in one process (decision 4, amendment of 2026-11-06). `deinit` leaves it open.
+    pub fn init_borrowed(borrowed: core.Descriptor) InitError!Queue {
+        assert(borrowed >= 0);
+        return open(borrowed);
     }
 
-    fn open(group_wake: ?core.Descriptor) InitError!Queue {
+    fn open(borrowed: ?core.Descriptor) InitError!Queue {
         if (comptime !supported) return error.Unsupported;
         const opened = linux.epoll_create1(linux.EPOLL.CLOEXEC);
         const descriptor = try descriptor_of(opened);
         var queue: Queue = .{
             .descriptor = descriptor,
             .wake_descriptor = -1,
-            .owns_wake = group_wake == null,
+            .owns_wake = borrowed == null,
             .wait_timer_descriptor = -1,
         };
         errdefer queue.deinit();
 
         const flags = linux.EFD.CLOEXEC | linux.EFD.NONBLOCK;
-        queue.wake_descriptor = group_wake orelse try descriptor_of(linux.eventfd(0, flags));
+        queue.wake_descriptor = borrowed orelse try descriptor_of(linux.eventfd(0, flags));
         var wake_event: Event = .{
             .events = linux.EPOLL.IN,
             .data = .{ .u64 = constants.wake_user_data },
@@ -348,18 +351,18 @@ test "a poll of an idle epoll returns nothing, and a wake ends a wait long befor
     try testing.expectEqual(@as(u32, 0), try queue.wait(&readiness, 0));
 }
 
-test "a queue woken through its group's eventfd waits on it and leaves it open" {
+test "a queue woken through a borrowed eventfd waits on it and leaves it open" {
     if (!supported) return error.SkipZigTest;
     const shared: core.Descriptor = @intCast(linux.eventfd(0, linux.EFD.NONBLOCK));
     defer _ = linux.close(shared);
-    var queue = try Queue.init_group(shared);
+    var queue = try Queue.init_borrowed(shared);
     try testing.expectEqual(shared, queue.wake_descriptor);
     Queue.wake(shared);
     var readiness: [1]Event = undefined;
     try testing.expectEqual(@as(u32, 1), try queue.wait(&readiness, core.constants.wait_ns_max));
     try testing.expectEqual(constants.wake_user_data, readiness[0].data.u64);
     queue.deinit();
-    // The group's creator owns the eventfd, so the loop's end leaves it open.
+    // The registry keeps the eventfd, so the loop's end leaves it open.
     try testing.expectEqual(linux.E.SUCCESS, linux.errno(linux.fcntl(shared, linux.F.GETFD, 0)));
 }
 

@@ -10,9 +10,16 @@
 //! memory holds, from its first address aligned to 128:
 //!
 //! 1. `Header`, 128 bytes.
-//! 2. One `Wake` per loop, in whole 128-byte lines. Every wake is absent in a registry `init` made.
+//! 2. One `Wake` per loop, in whole 128-byte lines. In a registry `init` made, a wake is absent
+//!    until the first loop of its id makes one.
 //! 3. One `Entry` per loop.
 //! 4. One `Mailbox` per ordered pair of loops.
+//!
+//! The registry keeps each loop's wake descriptor for its whole life, in one process as in a group
+//! (decision 4, amendment of 2026-11-06). A sender reads the descriptor of a loop and writes to it
+//! later. If the loop closed it between the two, the kernel could give the number to another
+//! open, and the wake would reach an unrelated file or socket. So no loop closes its wake: the
+//! application closes every wake with the backend's teardown, after every loop and remote ended.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
@@ -53,13 +60,18 @@ const Header = extern struct {
     group: u8,
 };
 
-/// The wake the creator of a group made for one loop (decision 21, point 3). Every process of the
-/// group inherited both descriptors at these numbers. 8 bytes aligned to 4.
+/// The wake of one loop, which the registry keeps until the application closes it. In a group the
+/// creator made it, and every process of the group inherited both descriptors at these numbers
+/// (decision 21, point 3). In a registry of one process the first loop of the id made it, and
+/// `send` and `watch` are one descriptor (decision 4, amendment of 2026-11-06). 8 bytes aligned
+/// to 4.
 pub const Wake = extern struct {
-    /// What a sender writes one byte or one count to: a pipe's write end on kqueue, an eventfd on
-    /// Linux.
+    /// What a sender wakes the loop through. In a group: a pipe's write end on kqueue, an eventfd
+    /// on Linux. In one process: an eventfd on epoll. On kqueue and io_uring it is a copy of the
+    /// loop's kqueue or ring while the loop runs, and of a stand-in while no loop holds the id.
     send: Descriptor,
-    /// What the loop waits on: the pipe's read end on kqueue, the same eventfd on Linux.
+    /// What the loop waits on: the pipe's read end on kqueue in a group, and `send` everywhere
+    /// else.
     watch: Descriptor,
 
     pub const none: Wake = .{ .send = descriptor_none, .watch = descriptor_none };
@@ -69,9 +81,9 @@ pub const Wake = extern struct {
 /// flag around every blocking tick, and that store never dirties the line of another loop's
 /// entry.
 const Entry = extern struct {
-    /// The descriptor that wakes the loop, or a negative value: its kqueue on kqueue, its eventfd
-    /// on epoll, its ring on io_uring, and its `Wake.send` in a group. Written by the loop, at init
-    /// and at deinit. Read by the loops that post to it.
+    /// The descriptor that wakes the loop, or a negative value: its `Wake.send`. Written by the
+    /// loop, at init and at deinit. Read by the loops that post to it. A test may point it at
+    /// another descriptor with `set`.
     queue: std.atomic.Value(Descriptor) align(constants.mailbox_index_alignment),
     /// True from `begin_sleep` to `end_sleep`. Written by the loop. Read by the loops that post
     /// to it.
@@ -119,7 +131,8 @@ pub const Registry = struct {
     /// ring from a loop to itself is there and unused, which keeps the index one multiply and
     /// one add.
     mailboxes: []Mailbox,
-    /// One per loop, by id. Every wake is `Wake.none` unless `group` is set.
+    /// One per loop, by id. In a registry of one process, `Wake.none` until the first loop of the
+    /// id hands its wake over with `keep_wake`.
     wakes: []Wake,
     /// True when `init_group` made the registry, and its loops may run in several processes.
     group: bool,
@@ -137,7 +150,8 @@ pub const Registry = struct {
 
     /// A registry for loops of one process. `loop_count` is in [2, constants.loops_max] and
     /// `memory.len` is at least `memory_bytes(loop_count)`. Afterwards every mailbox is empty,
-    /// every descriptor is absent, no loop sleeps, and there are no wakes.
+    /// every descriptor is absent, no loop sleeps, and there are no wakes. The first loop of each
+    /// id makes its wake, and the registry keeps it.
     ///
     /// `memory` is aligned to `layout.memory_alignment`, 64, and a `Mailbox` and an `Entry` need
     /// 128. So `memory_bytes` asks for `alignment_slack_bytes` more than the tables take, and `init`
@@ -251,13 +265,49 @@ pub const Registry = struct {
         return @intCast(registry.entries.len);
     }
 
-    /// The wake the creator of a group made for loop `id`, or null in a registry of one process.
+    /// The wake of loop `id`: the one the creator of a group made, or the one an earlier loop of
+    /// `id` handed a registry of one process with `keep_wake`. Null in a registry of one process
+    /// before the first loop of `id`. Only a loop about to claim `id` reads it, and an id that is
+    /// claimed halts. `.acquire`: it pairs with the `.release` of the last holder's `clear`, so a
+    /// wake that holder kept, on another thread, is seen here.
     pub fn wake(registry: *const Registry, id: LoopId) ?Wake {
         assert(id < registry.entries.len);
-        if (!registry.group) return null;
+        const holder = registry.entries[id].queue.load(.acquire);
+        assert(holder == descriptor_none);
         const found = registry.wakes[id];
-        assert(found.send >= 0 and found.watch >= 0);
+        if (found.send < 0) {
+            assert(!registry.group);
+            return null;
+        }
+        assert(found.watch >= 0);
         return found;
+    }
+
+    /// The first loop of `id` in a registry of one process hands over the wake it made, before it
+    /// claims `id` with `set`, which publishes this store to the next loop of `id`. The registry
+    /// keeps it until `close_kept_wakes`, so a sender that read it never writes to a number the
+    /// kernel gave to another open (decision 4, amendment of 2026-11-06). A group holds a wake for
+    /// every id from `init_group` on, so the check for an id with no wake refuses a group too.
+    pub fn keep_wake(registry: *Registry, id: LoopId, kept: Wake) void {
+        assert(registry.wakes[id].send == descriptor_none);
+        assert(kept.send >= 0 and kept.send == kept.watch);
+        registry.wakes[id] = kept;
+    }
+
+    /// Closes every wake a registry of one process keeps, through `close`, the backend's close of
+    /// one descriptor, and forgets each. The application calls it through its backend after every
+    /// loop and remote of the registry ended, and after every thread that posts to them stopped.
+    /// An id still claimed halts: a sender may still hold its number. A group's wakes are its
+    /// creator's, and each process closes its own copies with `group_module.close`.
+    pub fn close_kept_wakes(registry: *Registry, comptime close: fn (Descriptor) void) void {
+        assert(!registry.group);
+        for (registry.entries, registry.wakes) |*entry, *kept| {
+            const holder = entry.queue.load(.acquire);
+            assert(holder == descriptor_none);
+            if (kept.send < 0) continue;
+            close(kept.send);
+            kept.* = Wake.none;
+        }
     }
 
     /// A loop publishes the descriptor that wakes it at init. The id must be free: two loops with
@@ -387,20 +437,6 @@ test "the rings one loop reads are adjacent, aligned, and inside the memory, at 
             try testing.expect(address + @sizeOf(Mailbox) <= end);
         }
     }
-}
-
-test "a registry for one process has no wakes, and one for a group has the creator's" {
-    var memory: [pair_bytes]u8 align(@alignOf(Mailbox)) = undefined;
-    var registry: Registry = undefined;
-    registry.init(&memory, pair_loops);
-    try testing.expect(!registry.group);
-    for (0..pair_loops) |id| try testing.expectEqual(@as(?Wake, null), registry.wake(@intCast(id)));
-
-    const wakes = made_up_wakes();
-    registry.init_group(&memory, pair_loops, &wakes);
-    try testing.expect(registry.group);
-    for (wakes, 0..) |made, id| try testing.expectEqual(made, registry.wake(@intCast(id)).?);
-    for (0..pair_loops) |id| try testing.expectEqual(descriptor_none, registry.get(@intCast(id)));
 }
 
 test "a process that attaches sees the rings, the entries and the wakes the creator made" {

@@ -26,6 +26,7 @@ pub const submit_module = @import("uring_submit.zig");
 pub const sync = @import("uring_sync.zig");
 pub const testing = @import("linux_shared").testing;
 pub const tick_module = @import("uring_tick.zig");
+pub const wake_module = @import("uring_wake.zig");
 
 /// Where loops find each other's mailbox rings: `core.mailbox`'s, the one kqueue and epoll use.
 /// Since 2026-09-25 a post on io_uring goes through these rings too, and `IORING_OP_MSG_RING`
@@ -53,24 +54,8 @@ pub const InitError = ring_module.InitError;
 pub const TickError = tick_module.TickError;
 pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
 
-/// True when this kernel refuses the ring this backend needs, which is when a process should run
-/// the epoll backend instead (decision 20, open question 5). It asks the way `Loop.init` asks, with
-/// the same flags, features and opcodes, on a ring of one entry that it closes again, so its answer
-/// is the one a loop would get.
-///
-/// Refused means `PermissionDenied`, which is a seccomp profile or `io_uring_disabled`, or
-/// `Unsupported`, which is a kernel without io_uring or without something this backend requires.
-/// Any other failure is not a refusal: a process short of descriptors or memory is short of them
-/// on either backend, and `Loop.init` reports it.
-pub fn refused() bool {
-    const probe_entries = 1;
-    var ring = ring_module.Ring.init(probe_entries) catch |err| return switch (err) {
-        error.PermissionDenied, error.Unsupported => true,
-        error.SystemResources, error.Unexpected => false,
-    };
-    ring.deinit();
-    return false;
-}
+/// True when this kernel refuses the ring this backend needs: `uring_ring.zig` says how it asks.
+pub const refused = ring_module.refused;
 
 const Event = core.Event;
 const Handle = core.Handle;
@@ -129,6 +114,9 @@ pub const Loop = struct {
     group_wake: core.Descriptor,
     /// True while the poll of it is in the ring. A tick does not block while it is not.
     group_wake_armed: bool,
+    /// In a registry of one process, the eventfd `deinit` points the registry's descriptor for
+    /// this loop at, and -1 otherwise (`uring_wake.zig`).
+    wake_stand_in: core.Descriptor,
     /// The provided-buffer groups `provide_buffers` named, by group id.
     groups: [core.constants.buffer_groups_max]buffers.Group,
     /// What is left of a coalesced datagram the reap is splitting (decision 15, amendment of
@@ -206,11 +194,19 @@ pub const Loop = struct {
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.ring = try ring_module.Ring.init(entries_of(options));
+        errdefer loop.ring.deinit();
         const registry = loop.inbox.registry orelse return;
         const id = loop.tables.id;
-        const wake = registry.wake(id) orelse return registry.set(id, loop.ring.descriptor());
+        if (!registry.group) {
+            // Senders wake the loop through a descriptor the registry keeps, which refers to this
+            // ring until `deinit` (decision 4, amendment of 2026-11-06).
+            const claimed = try wake_module.claim(registry, id, loop.ring.descriptor());
+            loop.wake_stand_in = claimed.stand_in;
+            return registry.set(id, claimed.send);
+        }
         // In a group the loop is woken through the eventfd its group's creator made for it, and
         // every sender writes there (decision 21, point 3). The first flush queues its poll.
+        const wake = registry.wake(id).?;
         loop.group_wake = wake.watch;
         registry.set(id, wake.send);
     }
@@ -255,6 +251,7 @@ pub const Loop = struct {
         loop.deinit_dropped_wakes = 0;
         loop.group_wake = -1;
         loop.group_wake_armed = false;
+        loop.wake_stand_in = -1;
         loop.groups = @splat(buffers.Group.none);
     }
 
@@ -272,7 +269,10 @@ pub const Loop = struct {
         loop.tables.assert_owner();
         loop.tables.assert_ended();
         loop.deinit_dropped_wakes = submit_module.send_noted_wakes(loop, enters);
-        if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
+        if (loop.inbox.registry) |registry| {
+            if (!registry.group) wake_module.release(registry, loop.tables.id, loop.wake_stand_in);
+            registry.clear(loop.tables.id);
+        }
         loop.ring.deinit();
     }
 
@@ -455,18 +455,10 @@ test {
     _ = submit_module;
     _ = sync;
     _ = tick_module;
+    _ = wake_module;
     _ = @import("uring_group.zig");
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
     _ = @import("uring_loop_test_wakes.zig");
-}
-
-test "entries default to the operations rounded up to a power of two, capped at the ring's most" {
-    try std.testing.expectEqual(@as(u16, 1), Loop.entries_of(.{ .operations = 1 }));
-    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1000 }));
-    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1024 }));
-    try std.testing.expectEqual(constants.entries_max, Loop.entries_of(.{ .operations = 1 << 20 }));
-    // A caller that names a count keeps it.
-    try std.testing.expectEqual(@as(u16, 8), Loop.entries_of(.{ .operations = 1000, .entries = 8 }));
 }

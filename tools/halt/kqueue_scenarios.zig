@@ -1,11 +1,13 @@
 //! Halt scenarios for the `kqueue` module: the assertions a caller's mistake can reach. Each runs
 //! on a loop with tables and no kqueue, because every one of them halts before the loop would
 //! enter the kernel, so the check runs on every host. The owner checks, one per entry point, are in
-//! `kqueue_scenarios_owner.zig`.
+//! `kqueue_scenarios_owner.zig`, and the checks of the descriptor a registry keeps for a loop are in
+//! `kqueue_scenarios_wake.zig`.
 const std = @import("std");
 const core = @import("core");
 const kqueue = @import("kqueue");
 const owner = @import("kqueue_scenarios_owner.zig");
+const wake = @import("kqueue_scenarios_wake.zig");
 const scenario = @import("scenario.zig");
 
 const Loop = kqueue.Loop;
@@ -481,7 +483,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "buffers: give back a buffer the group does not hold",
         .run = give_back_a_buffer_the_group_does_not_hold,
     },
-} ++ owner.scenarios;
+} ++ owner.scenarios ++ wake.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

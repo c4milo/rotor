@@ -1,8 +1,11 @@
 //! Halt scenarios for a registry of loops in several processes (decision 21): what a caller hands
 //! `init_group`, `attach` and `release`. Split from `core_scenarios.zig` for the 500-line limit.
+//! Since 2026-11-06 also the wakes a registry keeps (decision 4, amendment of that day): what a
+//! backend hands `wake`, `keep_wake` and `close_kept_wakes`.
 //!
 //! With its assertion deleted, each scenario returns: `init_group` stores what it was handed,
-//! `attach` finds no header where it looks and answers an error, and `release` clears the entry.
+//! `attach` finds no header where it looks and answers an error, `release` clears the entry,
+//! `wake` and `keep_wake` read or write the table, and `close_kept_wakes` closes nothing real.
 const std = @import("std");
 const core = @import("core");
 const scenario = @import("scenario.zig");
@@ -61,6 +64,46 @@ fn release_a_loop_nobody_claimed() void {
     registry.release(1);
 }
 
+/// A close that closes nothing: the scenarios hand the registry made-up descriptors.
+fn close_nothing(descriptor: core.Descriptor) void {
+    _ = descriptor;
+}
+
+fn read_the_wake_of_an_id_a_loop_holds() void {
+    registry.init(memory[0..registry_bytes], loops);
+    registry.keep_wake(1, .{ .send = wakes[1].send, .watch = wakes[1].send });
+    registry.set(1, wakes[1].send);
+    scenario.reached_violation();
+    _ = registry.wake(1);
+}
+
+fn keep_a_second_wake_for_one_id() void {
+    registry.init(memory[0..registry_bytes], loops);
+    registry.keep_wake(1, .{ .send = wakes[1].send, .watch = wakes[1].send });
+    scenario.reached_violation();
+    registry.keep_wake(1, .{ .send = wakes[2].send, .watch = wakes[2].send });
+}
+
+fn keep_a_wake_whose_ends_differ() void {
+    registry.init(memory[0..registry_bytes], loops);
+    scenario.reached_violation();
+    registry.keep_wake(1, wakes[1]);
+}
+
+fn close_the_kept_wakes_of_a_group() void {
+    registry.init_group(memory[0..registry_bytes], loops, wakes[0..loops]);
+    scenario.reached_violation();
+    registry.close_kept_wakes(close_nothing);
+}
+
+fn close_the_kept_wakes_while_a_loop_holds_an_id() void {
+    registry.init(memory[0..registry_bytes], loops);
+    registry.keep_wake(1, .{ .send = wakes[1].send, .watch = wakes[1].send });
+    registry.set(1, wakes[1].send);
+    scenario.reached_violation();
+    registry.close_kept_wakes(close_nothing);
+}
+
 pub const scenarios = [_]scenario.Scenario{
     .{
         .name = "registry: make a group in memory aligned to 64 only",
@@ -77,4 +120,15 @@ pub const scenarios = [_]scenario.Scenario{
         .run = release_a_loop_of_a_registry_of_one_process,
     },
     .{ .name = "registry: release a loop nobody claimed", .run = release_a_loop_nobody_claimed },
+    .{
+        .name = "registry: read the wake of an id a loop holds",
+        .run = read_the_wake_of_an_id_a_loop_holds,
+    },
+    .{ .name = "registry: keep a second wake for one id", .run = keep_a_second_wake_for_one_id },
+    .{ .name = "registry: keep a wake whose ends differ", .run = keep_a_wake_whose_ends_differ },
+    .{ .name = "registry: close the kept wakes of a group", .run = close_the_kept_wakes_of_a_group },
+    .{
+        .name = "registry: close the kept wakes while a loop holds an id",
+        .run = close_the_kept_wakes_while_a_loop_holds_an_id,
+    },
 };

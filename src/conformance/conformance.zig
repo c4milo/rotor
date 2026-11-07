@@ -184,4 +184,5 @@ test {
     _ = @import("conformance_program.zig");
     _ = @import("conformance_storm.zig");
     _ = @import("conformance_wait_descriptor.zig");
+    _ = @import("conformance_wake_reuse.zig");
 }

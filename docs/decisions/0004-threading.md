@@ -313,6 +313,96 @@ Mutations, each measured against the target named:
 The new assertion of `drop_answers`, that the answers ready fit the completion ring, checks what the
 kernel returned. No parameter reaches it, so it has no halt scenario (decision 8).
 
+**Amended on 2026-11-06, by Camilo's ruling of that day: the registry keeps the descriptor that
+wakes each loop for the registry's whole life.** A sender reads that descriptor from the registry,
+pushes its message, and then wakes the loop through it. Until this day each loop made its own wake
+and closed it at `deinit`. A loop that ended between the read and the wake freed the number, and
+the next open on any thread could get it. The wake then reached that new file:
+
+- On epoll, the sender wrote 8 bytes into a file or a socket. The write succeeded, so nothing
+  counted it.
+- On io_uring, when the number became some other ring, the kernel posted a completion into it with
+  rotor's `user_data`. The owner of that ring never submitted it.
+- On kqueue, when the number became some other kqueue that held a user event of the same `ident`,
+  the trigger fired that event. A trigger to a descriptor that is no kqueue is refused, so on
+  kqueue no byte reaches a file or a socket.
+
+The robustness audit of 2026-11-06 found it (finding F2). Camilo chose the first of two answers: the
+registry keeps each wake, as the registry of a group already did (decision 21, point 3). The other
+answer was a count of senders in each entry, which `deinit` would wait on.
+
+What was built:
+
+- `Registry.wake` gives the wake the registry keeps for an id. In a registry of one process, the
+  first loop of an id makes it and hands it over with `Registry.keep_wake`, before `set` claims the
+  id. No loop closes it.
+- On epoll the wake is an eventfd, and every loop of the id waits on it (`epoll_wake.zig`). A write
+  that reaches it after its loop ended adds to its count, and the next loop of the id reads that
+  count once, as a wake with no message.
+- On kqueue and io_uring the loop waits on its own kqueue or ring, which the registry cannot make
+  in advance. So the registry keeps a copy of that descriptor, which the first loop of the id makes
+  with `dup`. A later loop of the id points the same number at its own kqueue or ring with `dup2`
+  or `dup3`. At `deinit` the loop points the number at a stand-in it made at `init`, and closes its
+  own descriptor of the stand-in. The stand-in is a kqueue that holds no event, or an eventfd. The
+  kernel refuses a wake to it, and a `Remote` counts that as a drop (`kqueue_wake.zig`,
+  `uring_wake.zig`).
+- `dup2` and `dup3` replace the file behind a number in one step, so the number is never free while
+  the registry lives. A loop points the number at its stand-in before `clear`, so a loop of the same
+  id on another thread cannot claim it in between.
+- The application closes the wakes with `Registry.close_wakes`, once every loop and remote of the
+  registry ended and every thread that posts to them stopped. Until this day the call closed only a
+  group's wakes. An id that a loop or a remote still holds halts it.
+
+The registry's layout does not change. The table of wakes that decision 21 added holds them, and
+`header_version` stays 1, because `attach` refuses a registry of one process.
+
+The cost is outside the tick. On kqueue and io_uring a loop's `init` makes two more system calls,
+and its `deinit` two more. On epoll neither makes more. A running kqueue or io_uring loop
+holds two more descriptors, the copy and the stand-in. An id that no loop holds keeps one
+descriptor until `close_wakes`. The work gate's rows did not move past their tolerance on `mac`, or
+on arm64 Linux under cachegrind.
+
+The scenario of `conformance_wake_reuse.zig` stops and starts a loop 32 times while a `Remote` on
+another thread posts to it, and opens a trap after each stop: pipes on epoll, kqueues with the user
+event on kqueue, rings on io_uring. No trap may take the number senders held for the loop, and no
+trap may receive anything. It runs on every backend and under the race gate. The window of the race
+is narrow, so a wake seldom lands in a trap even when the number is reused, and each backend's own
+test also holds a number across a `deinit` and makes the wake by hand.
+
+Mutations, each measured against the target named:
+
+| mutation | caught by | result |
+|---|---|---|
+| epoll's `deinit` closes the eventfd it borrowed | `epoll`, the Linux gate | CAUGHT |
+| the same, against the scenario that stops a loop while a thread posts | `conformance-epoll`, the Linux gate | CAUGHT |
+| epoll's first loop of an id does not hand its eventfd over | `epoll`, the Linux gate | CAUGHT |
+| io_uring's `deinit` closes the number instead of pointing it at the stand-in | `uring`, the Linux gate | CAUGHT |
+| the same, against the scenario that stops a loop while a thread posts | `conformance-uring`, the Linux gate | CAUGHT |
+| io_uring's later loop of an id does not point the number at its ring | `uring`, the Linux gate | CAUGHT |
+| io_uring's `deinit` does not point the number at the stand-in | `uring`, the Linux gate | CAUGHT |
+| kqueue's `deinit` closes the number instead of pointing it at the stand-in | `test-kqueue` | CAUGHT |
+| the same, against the scenario that stops a loop while a thread posts | `test-conformance-kqueue` | CAUGHT |
+| kqueue's later loop of an id does not point the number at its kqueue | `test-kqueue` | CAUGHT |
+| kqueue's `deinit` does not point the number at the stand-in | `test-kqueue` | CAUGHT |
+| `close_kept_wakes` does not forget what it closed | `test-core` | CAUGHT |
+| `Registry.wake` ignores a kept wake | `test-core` | CAUGHT |
+| the public module's `close_wakes` closes nothing in one process | `test-rotor` | CAUGHT |
+| the private eventfd does not close on exec | `linux-shared`, the Linux gate | CAUGHT |
+| `Registry.wake` of an id a loop holds allowed | `halt-check` | CAUGHT |
+| `keep_wake` for an id that has a wake allowed | `halt-check` | CAUGHT |
+| `keep_wake` of a wake whose two descriptors differ allowed | `halt-check` | CAUGHT |
+| `close_kept_wakes` of a group allowed | `halt-check` | CAUGHT |
+| `close_kept_wakes` while an id is held allowed | `halt-check` | CAUGHT |
+| kqueue's `claim` in a group allowed | `halt-check` | CAUGHT |
+| kqueue's `release` in a group allowed | `halt-check` | CAUGHT |
+| kqueue's `release` that could not point the number allowed | `halt-check` | CAUGHT |
+| io_uring's `claim` in a group allowed | the Linux gate's halt check | CAUGHT |
+| io_uring's `release` in a group allowed | the Linux gate's halt check | CAUGHT |
+| io_uring's `release` that could not point the number allowed | the Linux gate's halt check | CAUGHT |
+
+`keep_wake` does not check for a group: a group holds a wake for every id, so the check for an id
+with no wake refuses a group too, and no scenario could prove a second check.
+
 ### When one core is hot
 
 The loop accepts the imbalance. It never migrates anything on its own, because a loop that

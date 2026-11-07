@@ -288,6 +288,63 @@ fn read_an_entry_the_ring_does_not_hold() void {
     _ = loop.ring.sqe_at(0);
 }
 
+// The descriptor a registry of one process keeps for a loop (`uring_wake.zig`; decision 4,
+// amendment of 2026-11-06). With its assertion deleted, each scenario returns. `claim` in a group
+// is handed a ring no process has open, so `dup3` answers EBADF and `claim` returns the error.
+// `release` in a group points a pipe's read end at an eventfd, which the kernel allows. `release`
+// with a stand-in that is not open closes that number, which the kernel refuses, and returns.
+
+const wake_module = uring.wake_module;
+const wake_loops = 2;
+const wake_registry_bytes = uring.Registry.memory_bytes(wake_loops);
+/// A group's memory is aligned to 128, as a mapping is.
+var wake_registry_memory: [wake_registry_bytes]u8 align(128) = undefined;
+var wake_registry: uring.Registry align(@alignOf(uring.Registry)) = undefined;
+
+/// A descriptor no process has open. It is high rather than 0 so that a call made with it answers
+/// EBADF at once.
+const closed_descriptor: core.Descriptor = 4096;
+
+/// The read end of a new pipe, or null when the kernel refused one. A scenario that cannot make it
+/// returns without the marker, and the check counts that as a failure.
+fn pipe_read_end() ?core.Descriptor {
+    const linux = std.os.linux;
+    var ends: [2]i32 = undefined;
+    if (linux.errno(linux.pipe2(&ends, .{ .CLOEXEC = true })) != .SUCCESS) return null;
+    return ends[0];
+}
+
+/// A group whose wakes are the read end of one real pipe, so a `dup3` onto them succeeds.
+fn a_group_of_one_pipe() ?core.mailbox.Wake {
+    const end = pipe_read_end() orelse return null;
+    const wake: core.mailbox.Wake = .{ .send = end, .watch = end };
+    const wakes = [wake_loops]core.mailbox.Wake{ wake, wake };
+    wake_registry.init_group(&wake_registry_memory, wake_loops, &wakes);
+    return wake;
+}
+
+fn claim_a_wake_in_a_group() void {
+    _ = a_group_of_one_pipe() orelse return;
+    scenario.reached_violation();
+    _ = wake_module.claim(&wake_registry, 0, closed_descriptor) catch return;
+}
+
+fn release_a_wake_in_a_group() void {
+    const wake = a_group_of_one_pipe() orelse return;
+    wake_registry.set(0, wake.send);
+    const stand_in = uring.group_module.make_private() catch return;
+    scenario.reached_violation();
+    wake_module.release(&wake_registry, 0, stand_in);
+}
+
+fn release_a_wake_to_a_stand_in_that_is_not_open() void {
+    const end = pipe_read_end() orelse return;
+    wake_registry.init(&wake_registry_memory, wake_loops);
+    wake_registry.set(0, end);
+    scenario.reached_violation();
+    wake_module.release(&wake_registry, 0, closed_descriptor);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
@@ -335,6 +392,12 @@ const scenarios = [_]scenario.Scenario{
         .run = read_an_entry_the_ring_does_not_hold,
     },
     .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
+    .{ .name = "wake: claim a wake in a group", .run = claim_a_wake_in_a_group },
+    .{ .name = "wake: release a wake in a group", .run = release_a_wake_in_a_group },
+    .{
+        .name = "wake: release a wake to a stand-in that is not open",
+        .run = release_a_wake_to_a_stand_in_that_is_not_open,
+    },
 };
 
 pub fn main(init: std.process.Init) !void {
