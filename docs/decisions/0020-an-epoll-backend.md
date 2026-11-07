@@ -222,6 +222,12 @@ ping-pong, made two waits per message, one of them this poll. Counted with
 | the poll made | 4.05 to 4.17 | 2.05 to 2.09 |
 | the poll skipped | 3.147 to 3.150 | 1.049 to 1.050 |
 
+**Amended on 2026-11-07, by Camilo's ruling on W3, the fair tick order.** epoll's tick shares its
+events as kqueue's does (decision 11, point 4, and decision 12, point 6, both amended). A tick with
+a waiter keeps `K` places for `epoll_pwait2`, two of them for the wake eventfd and the wait timer
+(`own_entries_max`). So its room is never 0 while a descriptor can be ready. A tick with no waiter
+keeps no place for the kernel, and still makes no call.
+
 ## A readiness serves one operation per direction
 
 Since 2026-09-23 kqueue's reap serves a readiness until the amount in its `data` is used: the

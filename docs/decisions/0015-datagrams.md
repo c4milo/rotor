@@ -514,3 +514,11 @@ The scenario is `conformance_buffer_release.zig`. It receives a datagram into a 
 group and fills its memory, provides the same id from other memory, and receives a datagram there.
 The halt scenarios are in `tools/halt/buffer_release.zig`: a release while a receive names the group,
 and a release of a group that was never provided.
+
+## Amendment, 2026-11-07: a split takes the kernel's places
+
+By Camilo's ruling of 2026-11-07 on W3, the fair tick order, a tick keeps `K` places for the
+kernel's answer (decision 11, point 4, amended). The events of a pending split are the first of
+those places. A split of `S` events, at most `coalesced_segments_max`, delays the completions
+behind it by at most `ceil(S / K)` ticks. W3 does not cap the split's serve at `K`, because the
+split already gets only the kernel's places.

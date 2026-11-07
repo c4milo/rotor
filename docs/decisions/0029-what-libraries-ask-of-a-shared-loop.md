@@ -113,9 +113,15 @@ What follows from the rule:
   removed its poller finds nothing. So decision 27, open question 14 keeps its reason.
 - **Wakes coalesce in the flag.** A sender that posts only when `swap` changes the flag sends one
   wake for each change.
-- **`MailboxFull` on a wake is safe to drop.** The ring from this sender then holds messages, and
-  by decision 12, point 6, the loop's tick does not block while it does. So a later tick calls the
-  poller, and the poller sees the flag.
+- **`MailboxFull` on a wake is safe to drop.** The ring from this sender then holds messages. By
+  decision 12, point 6, the loop's tick does not block while it does. Since W3 (amended on
+  2026-11-07, by Camilo's ruling) the sender cursor visits this sender within
+  `ceil((L - 2) / ceil(M / 32)) + 1` ticks, so the ring empties and the loop can sleep again. A
+  later tick calls the poller, and the poller sees the flag. Before W3 the drain started at sender
+  0 at each tick, and a sender above the busy ones was never visited.
+- **A wake counts in the mailboxes' share.** A wake writes no event, but the drain counts it as one
+  message of its visit. So a ring of wakes cannot keep the drain longer than `messages_per_drain`
+  per visit.
 - **A hosted loop is as today.** A wake is a post, so it does not make the wait descriptor readable
   (decision 23, open question 2).
 

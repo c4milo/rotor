@@ -122,9 +122,12 @@ Decision 4 settled the shape. The details:
   receiver's kqueue. That is one `kevent` call for a burst, made in the sender's tick.
 - The post's own final event is 0, or `mailbox_full` when the ring has no room, or
   `loop_not_found`. It is produced by the sender's `flush` with no wait.
-- The receiver drains every ring that names it at each tick, after the `kevent` call, straight
-  into the caller's events. A ring that still holds messages when the events run out is drained
-  at the next tick, which does not wait while any ring is non-empty.
+- The receiver drains the rings that name it twice in each tick, straight into the caller's
+  events: before the `kevent` call, inside the places that the kernel's reserve leaves, and after
+  it, into what is left (W3, amended 2026-11-07). Each drain starts at `Inbox.sender_cursor` and
+  visits the senders in turn, at most `messages_per_drain` from each. When the events run out, the
+  cursor moves to the first sender the drain did not visit. A ring that still holds messages is
+  drained by a later tick, which does not wait while any ring is non-empty.
 
 These rings are the one place in rotor where two threads touch the same memory. They are tested
 with two real threads under load, not only by the conformance suite's single message.
@@ -245,6 +248,128 @@ none, but on those runners removing it from rotor, or giving it to libuv, moved 
 
 Deleting the clock read's one assertion is **NOT CAUGHT** by `zig build halt-check`: no parameter
 reaches it, as none reached the checks on the return code it replaces (decision 8).
+
+### Amendment of 2026-11-07: the sender cursor and the shares of a tick (W3)
+
+Camilo ruled on 2026-11-07 for W3, the fair tick order, with the recommended answer to each of its
+questions. Two defects led to it. The drain started at sender 0 in every call, so when senders 0
+to 2 filled the room, the senders above them were never visited. And the finished list took every
+place first, so a long list kept the messages and the `kevent` call out of a tick.
+
+The sender cursor:
+
+- `Inbox.sender_cursor`, a `LoopId`, is the sender the next drain visits first. Only the loop
+  thread reads or writes it, and it is always below `registry.loops()`.
+- A drain visits each sender once, from the cursor, and wraps to 0 at the count of loops. When the
+  events run out, the cursor moves to the first sender not visited. A drain that visited every
+  sender keeps the cursor and makes no store.
+- With `L` loops and a mailbox reserve of `M`, a sender with messages is visited within
+  `ceil((L - 2) / ceil(M / 32)) + 1` ticks: 4 ticks at `L = 5` and `N = 64`, 63 ticks at `L = 64`.
+- The cursor is a function of the count of drains and the counts each pop found. It reads no clock
+  and no random value (non-negotiable 2).
+
+The shares of a tick, `core.tick_share.split`:
+
+| limit | value | what it is |
+|---|---:|---|
+| `kernel_share_divisor` | 4 | the kernel keeps `max(1, N / 4)` places for operations, plus its own entries |
+| `mailbox_share_divisor` | 4 | the mailboxes keep `M = max(1, N / 4)` places |
+| `kernel_own_max` | 3 | the most entries of a kernel answer that name no operation |
+| `fair_events_min` | 10 | below this many events a tick keeps no reserve |
+
+Each backend names its own entries in `own_entries_max`: 3 on kqueue (the wake trigger, the wait
+timer and the group watch), 2 on epoll (the wake eventfd and the wait timer), and 0 on io_uring. A
+place that a reserve does not use goes back in the same tick: to the mailboxes, then to the lists
+when they filled their share. On kqueue the tick that makes no call gives the places back too.
+
+What the build found, against the design of W3:
+
+- The design wrote the drain as two ranges over one helper. Its first build cost each tick about
+  160 more instructions in cachegrind. The drain is one loop, which wraps the sender with a
+  compare, and its cost fell to about 30 a tick.
+- The design said a kqueue that passes `!quiet` as true while it is quiet is an equivalent mutant.
+  It is not: a quiet tick that makes no call then gives the kernel's places back only to the lists,
+  and the conformance suite catches it.
+- The seeded program of `conformance_program.zig` assumed that a send's event comes before the
+  event of the receive that read its bytes. Since W3 a send that ended at the flush can wait on
+  `finished` past the reap, so its ledger now counts the unread bytes with a saturated subtraction.
+
+### How W3 is checked
+
+The unit tests are in `inbox_test.zig`, `tick_share.zig` and `tables_finish.zig`, with a seeded
+property test of the cursor's bound. The conformance scenarios are `conformance_fair.zig` on every
+backend, and `conformance_fair_readiness.zig` on kqueue and epoll. The halt scenarios are in
+`tools/halt/core_scenarios_share.zig`. Mutations, each measured against its narrowest target:
+
+| mutation | target | result |
+|---|---|---|
+| the cursor resets to 0 at each drain | `test-core` | CAUGHT |
+| the cursor is not stored | `test-core` | CAUGHT |
+| the cursor moves to start + 1 | `test-core` | CAUGHT |
+| the cursor stays at the sender the room cut | `test-core` | CAUGHT |
+| the drain does not skip the receiver after the wrap | `test-core` | CAUGHT, after a test was added; NOT CAUGHT before |
+| `split` keeps `K = 0` | `test-core`; `test-conformance-kqueue` | CAUGHT; CAUGHT |
+| `split` leaves out the own entries | `test-core` | CAUGHT |
+| `split` keeps `M = 0` | `test-core`; `test-conformance-kqueue` | CAUGHT; CAUGHT |
+| `split` keeps reserves below `fair_events_min` | `test-core` | CAUGHT |
+| the kqueue tick that makes no call loses its give-back | `test-conformance-kqueue`; `work-gate` (`batch` fails) | CAUGHT; CAUGHT |
+| kqueue `after_kernel` loses its give-back | `test-conformance-kqueue` | CAUGHT |
+| epoll `after_kernel` loses its give-back | `conformance-epoll`, Linux | CAUGHT |
+| io_uring loses its give-back | `conformance-uring`, Linux | CAUGHT |
+| `finish_due_timers` puts timers on `finished` | `test-core` | CAUGHT |
+| `next_expired` puts timers on `finished` | `test-core` | CAUGHT |
+| `drain_lists` gives `fired` all of `F` | `test-core` | CAUGHT |
+| `drain_lists` gives `finished` all of `F` | `test-core` | CAUGHT |
+| `fired` takes only its half when `finished` is short | `test-core` | CAUGHT |
+| `finished` takes only its share when `fired` is short | `test-core` | CAUGHT |
+| `wait_bound` does not read `fired` | `test-core` | CAUGHT |
+| delete the room assertion of `split` | `halt-check` | CAUGHT |
+| delete the own-entries assertion of `split` | `halt-check` | CAUGHT |
+| delete the cursor assertion of `drain_mailboxes` | `halt-check` | CAUGHT |
+| delete the share assertion of `drain_lists` | `halt-check` | CAUGHT |
+| delete the fired part of `assert_empty` | `halt-check` | NOT CAUGHT: the check of the slots in use halts on the same state |
+| kqueue passes `!quiet` as true while quiet | `test-conformance-kqueue` | CAUGHT |
+
+### What W3 costs
+
+The instruction gate, rotor's own instructions per iteration of each workload of
+`bench/work/work.zig`, on 2026-11-07. `mac` is an Apple M1 Pro on macOS 26.6.2, counted with
+`/usr/bin/time -l`. The Linux rows are cachegrind in an arm64 container on `mac`, where the tree
+before W3 counted within 1.2 percent of each baseline row. The baseline is not changed. Each row over 2 percent waits
+for Camilo's ruling.
+
+| section | row | baseline | measured | percent |
+|---|---|---:|---:|---:|
+| macos-aarch64-kqueue | `post` | 1217 | 1377 | +13.1 |
+| macos-aarch64-kqueue | `post-operation` | 3051 | 3317 | +8.7 |
+| macos-aarch64-kqueue | `timer` | 1111 | 1186 | +6.8 |
+| macos-aarch64-kqueue | `batch` | 24624 | 24523 | -0.4 |
+| macos-aarch64-kqueue | `wait` | 5296 | 5394 | +1.9 |
+| macos-aarch64-kqueue | `task` | 615 | 694 | +12.8 |
+| macos-aarch64-kqueue | `tasks-64` | 4558 | 4627 | +1.5 |
+| macos-aarch64-kqueue | `record` | 1222 | 1319 | +7.9 |
+| macos-aarch64-kqueue | `poller` | 573 | 653 | +14.0 |
+| linux-aarch64-uring | `post` | 1061 | 1223 | +15.3 |
+| linux-aarch64-uring | `post-operation` | 2794 | 3136 | +12.2 |
+| linux-aarch64-uring | `timer` | 1025 | 1128 | +10.0 |
+| linux-aarch64-uring | `batch` | 23757 | 23770 | +0.1 |
+| linux-aarch64-uring | `task` | 559 | 638 | +14.1 |
+| linux-aarch64-uring | `tasks-64` | 3910 | 3989 | +2.0 |
+| linux-aarch64-uring | `record` | 1153 | 1245 | +8.0 |
+| linux-aarch64-uring | `poller` | 516 | 598 | +15.9 |
+| linux-aarch64-epoll | `post` | 1150 | 1312 | +14.1 |
+| linux-aarch64-epoll | `post-operation` | 2931 | 3240 | +10.5 |
+| linux-aarch64-epoll | `timer` | 1051 | 1143 | +8.8 |
+| linux-aarch64-epoll | `batch` | 23845 | 23785 | -0.3 |
+| linux-aarch64-epoll | `wait` | 632 | 717 | +13.4 |
+| linux-aarch64-epoll | `task` | 593 | 675 | +13.8 |
+| linux-aarch64-epoll | `tasks-64` | 3985 | 4026 | +1.0 |
+| linux-aarch64-epoll | `record` | 1175 | 1267 | +7.8 |
+| linux-aarch64-epoll | `poller` | 557 | 639 | +14.7 |
+
+A tick costs about 80 more instructions, where the design estimated 25 to 40. Cachegrind puts
+about 30 in the two drains of the mailboxes, about 40 in the drain of the two lists, and the rest
+in `split` and the tick's own bookkeeping. The x86-64 rows are not measured: they come from CI.
 
 ## 7. Timers, deadlines, cancellation
 

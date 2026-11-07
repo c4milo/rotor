@@ -130,6 +130,38 @@ and waits on a list linked through the slots (`Loop.finished`). `tick` hands the
 releases the slot in one step, which is the moment decision 5's rule 1 names. The list is
 bounded by the table, so it needs no capacity of its own and cannot overflow.
 
+### Amendment of 2026-11-07: two lists, and a share of the events (W3)
+
+Camilo ruled on 2026-11-07 for W3, the fair tick order, with the recommended answer to each of its
+questions. Before W3 the finished list took every place of a tick first. A long list then kept the
+messages of other loops and the kernel's answer out of the tick.
+
+- Due timers wait on a list of their own, `Tables.fired`. The other results wait on `finished`.
+  Both lists are first in, first out.
+- A tick of `N` events keeps a reserve `K` for the kernel and a reserve `M` for the mailboxes.
+  `core.tick_share.split` computes both from counts only. Before the tick enters the kernel, the
+  two lists take at most `N - K - M` events.
+- Of `F` places, `fired` takes up to `F - min(finished.count, F / 2)`, and `finished` takes the
+  rest. When both lists are full, each takes about half.
+- The places that a reserve does not use go back in the same tick: to the mailboxes, then to the
+  lists. The rest of the lists wait for the next tick.
+- A tick of fewer than `fair_events_min` events, 10, keeps no reserve and the order of before.
+
+What changes for the caller:
+
+- A timer's event can come before the event of an operation that finished earlier in the same
+  tick. rotor promises no order between two operations (point 8). Due timers keep their order.
+- A queued operation that a close ends can reach the caller after the close's completion. Point 5
+  already tells the caller not to treat the close's event as the last event of the connection.
+- On kqueue and epoll, an operation whose deadline passed ends through `cancel_module.request` and
+  `finish_local`, at the back of `finished`. Its delay stays bounded. Under the share the list gets
+  about half of `N`, so the delay is about twice that of before W3. When `fired` is also full, the
+  list gets about a quarter of `N`, and the delay is about four times that of before W3.
+- On io_uring the kernel's cancel ends such an operation, and its event comes in the kernel's
+  places.
+
+Decision 12, point 6 holds the sender cursor, the checks and the measured cost.
+
 ## 5. What `close` guarantees about order
 
 Amends decision 5, rule 6, which promised the caller the cancelled operations' final events
