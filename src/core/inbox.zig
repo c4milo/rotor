@@ -20,10 +20,11 @@ const Mailbox = mailbox.Mailbox;
 const Message = operation.Message;
 const Registry = mailbox.Registry;
 
-/// What one visit of a ring writes: an event for each message, and none for a `Message.wake`
-/// (decision 29). The drain counts the wakes as the messages the ring gave less the events written.
-/// A wake still counts as one message of the visit, so a ring of wakes cannot keep the drain longer
-/// than `messages_per_drain` for each visit.
+/// What the visits of one drain write: an event for each message, and none for a `Message.wake`
+/// (decision 29). One `Visit` serves every ring of the drain, so a visit costs no new `Visit` and
+/// no sum of its own. The drain takes a wake when the rings gave more messages than events written.
+/// A wake still counts as one message of its ring's visit, so a ring of wakes cannot keep the drain
+/// longer than `messages_per_drain` for each visit.
 const Visit = struct {
     out: []Event,
     written: u32 = 0,
@@ -92,25 +93,21 @@ pub const Inbox = struct {
     pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, dispatch: *Dispatch) u32 {
         const registry = inbox.registry orelse return 0;
         if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, dispatch);
-        var produced: u32 = 0;
-        var wakes: u32 = 0;
+        var visit: Visit = .{ .out = events };
+        var popped: u32 = 0;
         for (0..registry.loops()) |sender| {
             if (sender == receiver) continue;
-            const room = @min(events.len - produced, constants.messages_per_drain);
+            const room = @min(events.len - visit.written, constants.messages_per_drain);
             if (room == 0) {
                 inbox.sender_cursor = @intCast(sender);
                 break;
             }
             // An empty ring costs a visit and no room.
-            const ring = registry.mailbox(@intCast(sender), receiver);
-            var visit: Visit = .{ .out = events[produced..][0..room] };
-            const popped = ring.pop_each(room, &visit, Visit.write);
-            produced += visit.written;
-            wakes += popped - visit.written;
+            popped += registry.mailbox(@intCast(sender), receiver).pop_each(room, &visit, Visit.write);
         }
-        assert(produced <= events.len);
-        if (wakes != 0) dispatch.note_wake();
-        return produced;
+        assert(visit.written <= events.len);
+        if (popped != visit.written) dispatch.note_wake();
+        return visit.written;
     }
 
     /// `drain_mailboxes` from a cursor above 0: each sender once, from the cursor, in one loop
@@ -126,28 +123,24 @@ pub const Inbox = struct {
         const loops = registry.loops();
         const cursor = inbox.sender_cursor;
         assert(cursor < loops);
-        var produced: u32 = 0;
-        var wakes: u32 = 0;
+        var visit: Visit = .{ .out = events };
+        var popped: u32 = 0;
         var sender: usize = cursor;
         for (0..loops) |_| {
             if (sender == loops) sender = 0;
             if (sender != receiver) {
-                const room = @min(events.len - produced, constants.messages_per_drain);
+                const room = @min(events.len - visit.written, constants.messages_per_drain);
                 if (room == 0) {
                     inbox.sender_cursor = @intCast(sender);
                     break;
                 }
-                const ring = registry.mailbox(@intCast(sender), receiver);
-                var visit: Visit = .{ .out = events[produced..][0..room] };
-                const popped = ring.pop_each(room, &visit, Visit.write);
-                produced += visit.written;
-                wakes += popped - visit.written;
+                popped += registry.mailbox(@intCast(sender), receiver).pop_each(room, &visit, Visit.write);
             }
             sender += 1;
         }
-        assert(produced <= events.len);
-        if (wakes != 0) dispatch.note_wake();
-        return produced;
+        assert(visit.written <= events.len);
+        if (popped != visit.written) dispatch.note_wake();
+        return visit.written;
     }
 
     /// True while a ring to loop `receiver` holds a message: another loop's mailbox or an offload

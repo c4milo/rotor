@@ -158,6 +158,23 @@ test "a wake writes no event, counts in its ring's visit, and stores now only wi
     try testing.expect(!fixture.inbox.holds_messages(0));
 }
 
+test "a drain from a cursor stores now for a wake in a ring before the last one it visits" {
+    var fixture: TestInbox = undefined;
+    fixture.init();
+    var idle: Idle = .{};
+    try fixture.dispatch.add_poller(&idle.poller);
+    // From cursor 3 the drain visits 3, 4, 1 and 2. The wake is in the first ring, and the one
+    // message in the last, so the drain must sum what every visit took.
+    try testing.expect(fixture.registry.mailbox(3, 0).push(Message.wake));
+    try fixture.fill(2, 0, 1);
+    fixture.inbox.sender_cursor = 3;
+    var events: [4]Event = undefined;
+    var senders: [4]u8 = undefined;
+    try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
+    try testing.expectEqual(@as(u8, '2'), senders[0]);
+    try testing.expectEqual(WaitLimit.now, fixture.dispatch.until_ns);
+}
+
 test "holds_messages reads every ring to the receiver, and not the ring from itself" {
     var fixture: TestInbox = undefined;
     fixture.init();
