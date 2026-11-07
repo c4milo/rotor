@@ -113,6 +113,9 @@ test "a failed call keeps the registration it carried, and the receive ends when
 
     // A tick that waits fails. The registration stays, without a receipt, and the timer goes.
     try testing.expectError(error.Unexpected, loop.tick(&events, core.constants.ns_per_s));
+    // The tick read the clock after the failed wait, so a turn is open: the time until the next
+    // tick can be a stall, and a watch can see it (decision 28).
+    try testing.expect(loop.tables.heartbeat.beat_ns.load(.monotonic) != core.stall.asleep);
     try testing.expectEqual(@as(u32, 1), loop.changes_used);
     try testing.expectEqual(@as(u16, 0), loop.changes[0].flags & std.c.EV.RECEIPT);
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);

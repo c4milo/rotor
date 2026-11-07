@@ -43,14 +43,16 @@ pub fn add(
     const check = check_executable(b, b.graph.host);
     const step = b.step("halt-check", "Require every halt scenario to die by a signal");
 
-    // Each scenario file and the backend it proves, beside `core`, which all of them import. The
+    // Each scenario file and the module it proves, beside `core`, which all of them import. The
     // kqueue scenarios build only for a Mac: that backend names libc's kevent types, which Linux
-    // does not have, where the uring and epoll backends compile on a Mac and refuse at init.
+    // does not have, where the uring and epoll backends compile on a Mac and refuse at init. The
+    // public module's scenarios run the host's backend.
     const files = [_]struct { name: []const u8, backend: ?[]const u8, darwin_only: bool = false }{
         .{ .name = "core_scenarios", .backend = null },
         .{ .name = "uring_scenarios", .backend = "uring" },
         .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true },
         .{ .name = "epoll_scenarios", .backend = "epoll" },
+        .{ .name = "rotor_scenarios", .backend = "rotor" },
     };
     const darwin = target.result.os.tag.isDarwin();
     inline for (files) |file| {
@@ -89,6 +91,7 @@ fn run_check(
 fn module_named(graph: modules.Modules, name: []const u8) *std.Build.Module {
     if (std.mem.eql(u8, name, "uring")) return graph.uring;
     if (std.mem.eql(u8, name, "kqueue")) return graph.kqueue;
+    if (std.mem.eql(u8, name, "rotor")) return graph.rotor;
     std.debug.assert(std.mem.eql(u8, name, "epoll"));
     return graph.epoll;
 }

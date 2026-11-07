@@ -352,12 +352,15 @@ fn ignore(completion: *core.Completion, event: Event) void {
     _ = event;
 }
 
+/// The static entry of a record written by hand (decision 28).
+const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+
 test "a readiness marks the event of an operation that names a record, and no other" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     var fixture: Fixture = undefined;
     try fixture.init();
     defer fixture.deinit();
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     var own: [2][Fixture.buffer_bytes]u8 = undefined;
     try fixture.wait(&.{
         Operation.receive(0, fixture.pair[0], &own[0]).completion(&record),

@@ -1,6 +1,7 @@
-//! The stall check of the scenarios. A callback that runs too long holds the loop, and Seastar
-//! reports such a task as a reactor stall. `core` reads no clock (non-negotiable 2), so the check
-//! lives here, in the harness, and not in the loop.
+//! The stall check of the scenarios, and the scenarios of the loop's own stall count. A callback
+//! that runs too long holds the loop, and Seastar reports such a task as a reactor stall. The check
+//! here times one handler, in this suite only. The loop's count of decision 28 times a turn, in
+//! each loop, from the stamps its backend reads, and the scenarios at the end of this file hold it.
 //!
 //! A scenario makes its records, pollers and tasks with `completion`, `poller` and `task`. Each
 //! one reads the clock before and after its handler. A run longer than
@@ -193,4 +194,269 @@ test "callbacks under the limit pass" {
     try testing.expectEqual(@as(u32, 1), quick.events);
     // A poller call in each tick, the task and the record.
     try testing.expectEqual(round + 2, quick.calls);
+}
+
+// The stall count and the heartbeat of decision 28, on every backend. A turn runs from one tick's
+// first clock stamp to the next tick's, and holds no kernel wait. The loop counts a turn at or
+// above `Options.stall_turn_ns` in `statistics()`, and a watch on another thread names the callback
+// that holds the loop. Each hold stays under `constants.callback_stall_ns_max`, so the check above
+// passes. A busy machine adds stalls, so each check asks for at least the stall the scenario made.
+
+const Loop = backend.Loop;
+const ns_per_ms = core.constants.ns_per_ms;
+
+/// The threshold of the scenarios that make a stall.
+const stall_turn_ns = 5 * ns_per_ms;
+/// How long a scenario holds the loop: four times the threshold, and under the harness's limit.
+const hold_ns = 20 * ns_per_ms;
+/// The wait of a tick that blocks with no work. It is over twice `hold_ns`, so a turn that held the
+/// wait and the hold after it is longer than a busy machine makes the hold alone.
+const blocked_wait_ns = 50 * ns_per_ms;
+/// The delay of a timer that a tick blocks for.
+const timer_delay_ns = 2 * ns_per_ms;
+
+comptime {
+    std.debug.assert(hold_ns >= 2 * stall_turn_ns);
+    std.debug.assert(hold_ns < constants.callback_stall_ns_max);
+    std.debug.assert(blocked_wait_ns > 2 * hold_ns);
+}
+
+const options: Loop.Options = .{ .operations = 4, .entries = 4 };
+
+/// One loop with a stall threshold of its own.
+const Fixture = struct {
+    memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment),
+    loop: Loop,
+
+    fn init(fixture: *Fixture, turn_ns: u64) !void {
+        var with_threshold = options;
+        with_threshold.stall_turn_ns = turn_ns;
+        with_threshold.spin_budget_ns = conformance.spin_budget_ns();
+        try fixture.loop.init(&fixture.memory, with_threshold);
+    }
+};
+
+/// Holds the thread for `span_ns`. A spin and not a sleep, so the thread keeps the loop the whole
+/// time, as a callback with too much work would.
+fn hold_for(span_ns: u64) void {
+    const started_ns = clock_ns();
+    while (clock_ns() - started_ns < span_ns) std.atomic.spinLoopHint();
+}
+
+/// A record that holds the loop for `hold_ns` when its event comes.
+const Holding = struct {
+    completion: core.Completion = completion(Holding, "completion", completed),
+    events: u32 = 0,
+
+    fn completed(holding: *Holding, event: Event) void {
+        _ = event;
+        holding.events += 1;
+        hold_for(hold_ns);
+    }
+};
+
+test "a record that holds the loop past the threshold makes a stall that names it" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.loop.deinit();
+    var holding: Holding = .{};
+    // A timer that the tick waits for, so the record runs in the turn that the stamp after the
+    // wait starts.
+    const timer = core.Operation.timer(0, timer_delay_ns, 0).completion(&holding.completion);
+    try testing.expectEqual(@as(u32, 1), fixture.loop.submit(&.{timer}, &.{}));
+    var events: [4]Event = undefined;
+    var round: u32 = 0;
+    while (holding.events == 0 and round < conformance.collect_rounds_max) : (round += 1) {
+        _ = try fixture.loop.tick(&events, blocked_wait_ns);
+    }
+    try testing.expectEqual(@as(u32, 1), holding.events);
+    // The next tick's first clock stamp ends the turn that held the record.
+    _ = try fixture.loop.tick(&events, 0);
+    const statistics = fixture.loop.statistics();
+    try testing.expect(statistics.stalls >= 1);
+    try testing.expect(statistics.stall_ns_max >= hold_ns);
+    const last = statistics.last_stall;
+    try testing.expectEqual(@as(u32, 1), last.callbacks);
+    try testing.expect(last.span_ns >= hold_ns);
+    try testing.expect(last.end_ns == fixture.loop.now_ns());
+    try testing.expectEqualStrings(@typeName(Holding) ++ ".completion", std.mem.span(last.name.?));
+    try check();
+}
+
+test "program code that holds the loop between ticks makes a stall of no callback" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.loop.deinit();
+    var events: [4]Event = undefined;
+    _ = try fixture.loop.tick(&events, 0);
+    hold_for(hold_ns);
+    _ = try fixture.loop.tick(&events, 0);
+    const statistics = fixture.loop.statistics();
+    try testing.expect(statistics.stalls >= 1);
+    const last = statistics.last_stall;
+    try testing.expectEqual(@as(u32, 0), last.callbacks);
+    try testing.expectEqual(@as(?[*:0]const u8, null), last.name);
+    try testing.expect(last.span_ns >= hold_ns);
+}
+
+test "a tick that blocks with no work is in no turn, and the next turn starts after its wait" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.loop.deinit();
+    var events: [4]Event = undefined;
+    _ = try fixture.loop.tick(&events, 0);
+    const before_ns = clock_ns();
+    try testing.expectEqual(@as(u32, 0), try fixture.loop.tick(&events, blocked_wait_ns));
+    try testing.expect(clock_ns() - before_ns >= blocked_wait_ns - ns_per_ms);
+    // Program code after the wait makes a stall. Its turn starts at the stamp after the wait: a
+    // turn that held the wait too would span it, and a turn with no start would not be a stall.
+    hold_for(hold_ns);
+    _ = try fixture.loop.tick(&events, 0);
+    const last = fixture.loop.statistics().last_stall;
+    try testing.expectEqual(fixture.loop.now_ns(), last.end_ns);
+    try testing.expectEqual(@as(u32, 0), last.callbacks);
+    try testing.expect(last.span_ns >= hold_ns);
+    try testing.expect(last.span_ns < blocked_wait_ns);
+}
+
+test "a null threshold counts no stall" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    var without = options;
+    without.stall_turn_ns = null;
+    try fixture.loop.init(&fixture.memory, without);
+    defer fixture.loop.deinit();
+    var events: [4]Event = undefined;
+    _ = try fixture.loop.tick(&events, 0);
+    hold_for(hold_ns);
+    _ = try fixture.loop.tick(&events, 0);
+    try testing.expectEqual(@as(u64, 0), fixture.loop.statistics().stalls);
+}
+
+/// The period of the watch, and the most checks it makes before it gives up.
+const watch_period_ns = 10 * ns_per_ms;
+const watch_checks_max = 500;
+/// The most a record that spins holds the loop when no watch releases it: past the watch's checks.
+const spin_ns_max = 10 * core.constants.ns_per_s;
+
+/// A record that holds the loop until another thread sets `release`.
+const Spinning = struct {
+    completion: core.Completion = .init(Spinning, "completion", completed),
+    release: std.atomic.Value(bool) = .init(false),
+    released: bool = false,
+
+    fn completed(spinning: *Spinning, event: Event) void {
+        _ = event;
+        const started_ns = clock_ns();
+        while (clock_ns() - started_ns < spin_ns_max) {
+            if (spinning.release.load(.acquire)) {
+                spinning.released = true;
+                return;
+            }
+            std.atomic.spinLoopHint();
+        }
+    }
+};
+
+/// What the watch thread saw, and the record it releases.
+const Watcher = struct {
+    heartbeat: *core.Heartbeat,
+    spinning: *Spinning,
+    name: ?[*:0]const u8 = null,
+    checks: u32 = 0,
+
+    /// Checks once in each period until a check names a callback, then releases the record.
+    fn run(watcher: *Watcher) void {
+        var watch = watcher.heartbeat.watch();
+        defer watch.end();
+        for (0..watch_checks_max) |_| {
+            pause(watch_period_ns);
+            const stuck = watch.check() orelse continue;
+            watcher.checks = stuck.checks;
+            watcher.name = stuck.name orelse continue;
+            break;
+        }
+        watcher.spinning.release.store(true, .release);
+    }
+};
+
+/// Gives the processor away until `span_ns` passed, as a program's watch thread sleeps one period.
+fn pause(span_ns: u64) void {
+    const started_ns = clock_ns();
+    for (0..pause_rounds_max) |_| {
+        if (clock_ns() - started_ns >= span_ns) return;
+        std.Thread.yield() catch {};
+    }
+}
+
+/// The most yields of one `pause`.
+const pause_rounds_max = 1_000_000;
+
+test "a watch on another thread names the callback that holds the loop" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.loop.deinit();
+    var spinning: Spinning = .{};
+    var watcher: Watcher = .{ .heartbeat = fixture.loop.heartbeat(), .spinning = &spinning };
+    const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
+    const timer = core.Operation.timer(0, 0, 0).completion(&spinning.completion);
+    try testing.expectEqual(@as(u32, 1), fixture.loop.submit(&.{timer}, &.{}));
+    var events: [4]Event = undefined;
+    var round: u32 = 0;
+    while (!spinning.released and round < conformance.collect_rounds_max) : (round += 1) {
+        _ = try fixture.loop.tick(&events, ns_per_ms);
+    }
+    thread.join();
+    try testing.expect(spinning.released);
+    const expected = @typeName(Spinning) ++ ".completion";
+    try testing.expectEqualStrings(expected, std.mem.span(watcher.name.?));
+    try testing.expect(watcher.checks >= 1);
+    // The turn the record held is a stall of that record.
+    _ = try fixture.loop.tick(&events, 0);
+    try testing.expectEqual(@as(u32, 1), fixture.loop.statistics().last_stall.callbacks);
+}
+
+/// A watch that checks while its loop waits in the kernel, and keeps the most checks in a row that
+/// it saw of one open turn.
+const Sleeper = struct {
+    heartbeat: *core.Heartbeat,
+    done: std.atomic.Value(bool) = .init(false),
+    checks_most: u32 = 0,
+
+    fn run(sleeper: *Sleeper) void {
+        var watch = sleeper.heartbeat.watch();
+        defer watch.end();
+        for (0..watch_checks_max) |_| {
+            if (sleeper.done.load(.acquire)) return;
+            pause(watch_period_ns);
+            const stuck = watch.check() orelse continue;
+            sleeper.checks_most = @max(sleeper.checks_most, stuck.checks);
+        }
+    }
+};
+
+/// The wait of a tick that a watch checks: many periods of the watch.
+const watched_wait_ns = 200 * ns_per_ms;
+/// The most checks in a row of one turn that a watch may see while its loop waits. A thread that
+/// loses its core for a period or two between the clock stamp and the wait can make one or two.
+const watched_checks_max = 3;
+
+test "a watch reports nothing while the loop waits in the kernel" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: Fixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.loop.deinit();
+    var sleeper: Sleeper = .{ .heartbeat = fixture.loop.heartbeat() };
+    const thread = try std.Thread.spawn(.{}, Sleeper.run, .{&sleeper});
+    var events: [4]Event = undefined;
+    const waited = fixture.loop.tick(&events, watched_wait_ns);
+    sleeper.done.store(true, .release);
+    thread.join();
+    try testing.expectEqual(@as(u32, 0), try waited);
+    // A turn held for the whole wait would make a check in each period.
+    try testing.expect(sleeper.checks_most < watched_checks_max);
 }

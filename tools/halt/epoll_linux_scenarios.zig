@@ -105,7 +105,18 @@ fn arm_a_wait_timer_above_the_wait_limit() void {
     _ = loop.queue.arm_wait_timer(core.constants.wait_ns_max + 1);
 }
 
+/// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
+/// deleted, `deinit` closes the loop's epoll instance and returns.
+fn end_a_loop_that_a_watch_reads() void {
+    loop.init(&memory, options) catch return;
+    var watch = loop.heartbeat().watch();
+    _ = &watch;
+    scenario.reached_violation();
+    loop.deinit();
+}
+
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
     .{ .name = "tick: arm a wait timer of 0 ns", .run = arm_a_wait_timer_of_nothing },
     .{
         .name = "tick: arm a wait timer above the wait limit",

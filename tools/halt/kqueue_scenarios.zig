@@ -30,6 +30,16 @@ fn end_a_loop_with_an_operation_in_flight() void {
     loop.assert_empty();
 }
 
+/// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
+/// deleted, `deinit` closes the loop's kqueue and returns.
+fn end_a_loop_that_a_watch_reads() void {
+    loop.init(&memory, options) catch return;
+    var watch = loop.heartbeat().watch();
+    _ = &watch;
+    scenario.reached_violation();
+    loop.deinit();
+}
+
 fn post_to_the_loop_itself() void {
     loop.init_tables(&memory, options);
     const post = [_]core.Operation{.{ .user_data = 1, .kind = .{ .post = .{
@@ -389,6 +399,7 @@ fn apply_an_empty_list_with_receipts() void {
 }
 
 const scenarios = [_]scenario.Scenario{
+    .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
     .{

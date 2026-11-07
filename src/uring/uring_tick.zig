@@ -29,7 +29,8 @@ pub const TickError = ring_module.EnterError;
 pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const tables = &loop.tables;
     tables.begin_tick(events.len, wait_ns);
-    tables.now_ns = clock_ns();
+    // The first stamp of the tick ends the open turn, and counts it if it is a stall (decision 28).
+    tables.note_clock(clock_ns());
     submit_module.flush(loop);
     tables.finish_due_timers();
     cancel_module.flush(loop);
@@ -39,16 +40,20 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // came before the flag was set is not slept on (decision 12, point 6). It says it is awake
     // again before an error can leave the tick.
     const wait = if (produced == 0) loop.settle_to_sleep(wait_for(loop, wait_ns)) else null;
+    // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
+    if (wait != null) tables.note_asleep();
     const entering = enter_bounded(loop, wait);
     loop.wake_up();
+    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
+    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
+    // ended it (decision 9, rule 4, amended 2026-09-27). A wait that failed reads it too, before
+    // the tick returns. So the turn after the failure starts, and a stall or a watch can see it
+    // (decision 28).
+    if (wait != null) tables.note_woken(clock_ns());
     // A failed enter after events were produced returns those events, whose slots are released
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const entered = entering catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
-    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
-    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
-    // ended it (decision 9, rule 4, amended 2026-09-27).
-    if (wait != null) tables.now_ns = clock_ns();
     // The kernel has read every address of this flush's connects, and every message header of
     // its datagram operations, unless it took no entry. Both scratches are one per entry and are
     // reused from the start each tick; a counter that only rose would stop the loop after
@@ -407,6 +412,10 @@ test "a tick whose enter fails after it produced events returns them, and the ne
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
     try testing.expect(loop.tables.dispatch.idle());
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
+    // A tick that waits and fails reads the clock after the failure, so a turn is open: the time
+    // until the next tick can be a stall, and a watch can see it (decision 28).
+    try testing.expectError(error.Unexpected, loop.tick(&events, core.constants.ns_per_s));
+    try testing.expect(loop.tables.heartbeat.beat_ns.load(.monotonic) != core.stall.asleep);
 
     _ = linux.dup3(saved, ring, 0);
     _ = linux.close(saved);

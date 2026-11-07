@@ -1,15 +1,16 @@
 //! The `core` module: what every backend shares (decision 1). The types the caller sees
 //! (`Operation`, `Event`, `Handle`), the record of an in-flight operation (`Slot`) with its table
 //! and its lists, the timer heap, the table of what waits for a descriptor, the layout of a loop's
-//! memory, the list of declarations every backend carries, the drain of a loop that is shutting
-//! down, the seeded generator the property tests draw from, and the named limits. It imports std
+//! memory, the list of declarations every backend carries, the view a library holds of a shared
+//! loop, the stall count and the heartbeat, the drain of a loop that is shutting down, the seeded
+//! generator the property tests draw from, and the named limits. It imports std
 //! and the switch of decision 8's class A assertions, and reads no clock.
 pub const assertion_class = @import("assertion_class.zig");
 pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
-pub const dispatch = @import("dispatch.zig");
+pub const dispatch = @import("dispatch/dispatch.zig");
 pub const datagram_split = @import("datagram_split.zig");
 pub const errno = @import("errno.zig");
 pub const event = @import("event.zig");
@@ -23,11 +24,13 @@ pub const operation = @import("operation.zig");
 pub const random = @import("random.zig");
 pub const remote = @import("remote.zig");
 pub const shutdown = @import("shutdown.zig");
+pub const shared_loop = @import("shared_loop.zig");
 pub const shuffle = @import("shuffle.zig");
 pub const slot = @import("slot.zig");
 pub const slot_list = @import("slot_list.zig");
 pub const slot_table = @import("slot_table.zig");
 pub const spin = @import("spin.zig");
+pub const stall = @import("stall.zig");
 pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
 pub const sync = @import("sync.zig");
@@ -48,6 +51,7 @@ pub const Delivery = datagram.Delivery;
 pub const Error = event.Error;
 pub const Event = event.Event;
 pub const Handle = handle.Handle;
+pub const Heartbeat = stall.Heartbeat;
 pub const LoopId = operation.LoopId;
 pub const Message = operation.Message;
 pub const Operation = operation.Operation;
@@ -62,7 +66,8 @@ test {
     _ = datagram;
     _ = datagram_split;
     _ = dispatch;
-    _ = @import("dispatch_test.zig");
+    _ = @import("dispatch/dispatch_calls.zig");
+    _ = @import("dispatch/dispatch_test.zig");
     _ = errno;
     _ = event;
     _ = file_call;
@@ -78,11 +83,13 @@ test {
     _ = random;
     _ = remote;
     _ = shutdown;
+    _ = shared_loop;
     _ = shuffle;
     _ = slot;
     _ = slot_list;
     _ = slot_table;
     _ = spin;
+    _ = stall;
     _ = statistics;
     _ = @import("statistics_test.zig");
     _ = surface;

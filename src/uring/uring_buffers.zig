@@ -8,6 +8,10 @@
 //!   bytes. The caller reads the bytes and gives the buffer back with `give_back`, which writes
 //!   one ring entry and makes no system call.
 //!
+//! `provide_datagram_buffers` provides a group for datagrams (decision 15), and `datagram` and
+//! `provided_buffer` read what an event of a group names. Each is a call of `Loop`, split from
+//! `uring.zig` for the 500-line limit.
+//!
 //! All memory is the caller's. The ring of a group sits in memory aligned to
 //! `core.constants.buffer_ring_alignment`. The errors and the layout of a group are
 //! `core/buffer_group.zig`'s, so a caller sizes one block for any backend.
@@ -19,6 +23,7 @@ const IoUring = linux.IoUring;
 const core = @import("core");
 const constants = @import("constants.zig");
 const uring = @import("uring.zig");
+const datagram_module = @import("uring_datagram.zig");
 
 const Loop = uring.Loop;
 
@@ -166,6 +171,51 @@ pub fn give_back(loop: *Loop, group_id: u16, buffer_id: u16) void {
     const mask = IoUring.buf_ring_mask(group.count);
     IoUring.buf_ring_add(ring, group.bytes_of(buffer_id), buffer_id, mask, 0);
     IoUring.buf_ring_advance(ring, 1);
+}
+
+/// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
+/// chosen here, once, so a reap subtracts a constant the loop already holds and a fourth
+/// control message later costs no caller a layout change. `provide_buffers` is untouched, so
+/// no stream caller gains a precondition.
+///
+/// One loop serves one datagram shape: a second group with a different reserve would make
+/// the prefix a per-completion lookup, which is what the constant exists to avoid. The first
+/// call fixes the shape, and a later call with a different one halts (`core.datagram.Shape`).
+///
+/// The shape is checked and recorded after `provide` returns, so a call from another thread
+/// halts on `provide`'s owner check before it writes anything, and a group the kernel refused
+/// leaves the shape as it was.
+pub fn provide_datagram_buffers(
+    loop: *Loop,
+    group_id: u16,
+    memory: []align(group_alignment) u8,
+    count: u16,
+    buffer_bytes: u32,
+    group: core.datagram.GroupOptions,
+) ProvideError!void {
+    core.datagram.check_buffer_bytes(buffer_bytes, group);
+    try provide(loop, group_id, memory, count, buffer_bytes);
+    loop.datagram_shape.fix(group);
+    loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
+}
+
+/// The datagram an event of group `group_id` names: the only supported reader of that
+/// buffer, because a datagram's bytes do not start at its front. The buffer stays the
+/// caller's until `give_back_buffer`.
+pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
+    assert(!event.flags.message);
+    assert(event.flags.buffer);
+    const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
+    const bytes: u32 = @intCast(event.result);
+    const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
+    const capacity = buffer.len - @as(usize, @intCast(loop.datagram_prefix));
+    return core.datagram_split.view(whole, capacity, event);
+}
+
+/// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
+pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
+    assert_class_a(group_id < core.constants.buffer_groups_max);
+    return loop.groups[group_id].bytes_of(buffer_id);
 }
 
 const testing = std.testing;

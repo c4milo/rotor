@@ -9,6 +9,7 @@ const tasks_module = @import("tasks.zig");
 
 const Task = tasks_module.Task;
 const Tasks = tasks_module.Tasks;
+const Heartbeat = @import("stall.zig").Heartbeat;
 
 /// Records in one run. A task that would make a record past this makes none, in the queue and in
 /// the model alike.
@@ -36,6 +37,8 @@ const Behaviour = struct {
 const Run = struct {
     seed: u64,
     tasks: Tasks = .empty,
+    /// What the run stores each task's name in, as a loop's `Dispatch` does.
+    heartbeat: Heartbeat = .init(null),
     records: *[records_max]Record,
     /// The order of record ids in `records`: identity, or reversed, so the same seed runs with
     /// every task at another address.
@@ -72,7 +75,7 @@ const Run = struct {
     fn step(run: *Run) !void {
         const before = run.tasks.count;
         const ran_before = run.trace.items.len;
-        const started = run.tasks.run();
+        const started = run.tasks.run(&run.heartbeat);
         // P1: the run bound.
         try testing.expectEqual(@min(before, constants.tasks_per_tick_max), started);
         try testing.expectEqual(@as(usize, started), run.trace.items.len - ran_before);

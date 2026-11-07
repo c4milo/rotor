@@ -32,7 +32,8 @@ pub const TickError = queue_module.ExchangeError;
 pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     const tables = &loop.tables;
     tables.begin_tick(events.len, wait_ns);
-    tables.now_ns = clock_ns();
+    // The first stamp of the tick ends the open turn, and counts it if it is a stall (decision 28).
+    tables.note_clock(clock_ns());
     submit_module.flush(loop);
     tables.finish_due_timers();
     // Before the finished list is drained, so a result a worker pushed becomes its operation's
@@ -42,6 +43,8 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     produced += loop.drain_mailboxes(events[produced..]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
+    // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
+    if (wait != null) tables.note_asleep();
     const room = @min(events.len - produced, constants.readiness_max);
     // Only a poll with room to take the trigger's event arms it. A trigger the call applies and
     // cannot deliver stays set, because `EV_CLEAR` clears an event as it is delivered, and it ends
@@ -71,14 +74,16 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     if (idle) {
         return produced + tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     }
+    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
+    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
+    // ended it (decision 9, rule 4, amended 2026-09-27). A wait that failed reads it too, before
+    // the tick returns. So the turn after the failure starts, and a stall or a watch can see it
+    // (decision 28).
+    if (wait != null) tables.note_woken(clock_ns());
     // A failed call after events were produced returns those events, whose slots are released
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
-    // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
-    // reap's stamps on sampled operations and the spin window all start after the wait, whatever
-    // ended it (decision 9, rule 4, amended 2026-09-27).
-    if (wait != null) tables.now_ns = clock_ns();
 
     const reaped = reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
     // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).

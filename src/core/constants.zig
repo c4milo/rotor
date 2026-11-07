@@ -137,6 +137,24 @@ comptime {
     std.debug.assert(tasks_per_tick_max <= tasks_queued_max);
 }
 
+/// The default length of a turn that the loop counts as a stall (decision 28). A turn is the span
+/// from one clock stamp of a tick to the next tick's first stamp, with no kernel wait in it. A
+/// prior and not a measurement: 10 ms is over 15 times one full run of 64 tasks of 10 µs each
+/// (decision 27). A program may set another value in `Options.stall_turn_ns`, or null for none.
+pub const stall_turn_ns_default: u64 = 10 * ns_per_ms;
+
+/// The alignment of a loop's heartbeat, which another thread reads (decision 28). Apple silicon
+/// reports 128-byte cache lines, as `mailbox_index_alignment` says, so the heartbeat takes a line
+/// of its own there and on every 64-byte machine.
+pub const heartbeat_alignment = 128;
+
+comptime {
+    std.debug.assert(stall_turn_ns_default >= 1);
+    std.debug.assert(stall_turn_ns_default < wait_ns_max);
+    std.debug.assert(std.math.isPowerOfTwo(heartbeat_alignment));
+    std.debug.assert(heartbeat_alignment >= mailbox_index_alignment);
+}
+
 /// The most provided-buffer groups one loop may hold, and the most buffers in one group. 32768 is
 /// the most entries an io_uring buffer ring takes (recalled).
 pub const buffer_groups_max: u16 = 16;

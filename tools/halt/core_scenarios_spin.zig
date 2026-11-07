@@ -15,11 +15,12 @@ const slots_count = 4;
 var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
 var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
+var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
 
 fn give_a_loop_a_spin_budget_over_the_most() void {
     var tables: core.Tables = undefined;
     scenario.reached_violation();
-    tables.init(&slots, &entries, &starts, .{
+    tables.init(&slots, &entries, &starts, &heartbeat, .{
         .spin_budget_ns = core.constants.spin_budget_ns_max + 1,
     });
 }

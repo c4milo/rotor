@@ -141,6 +141,10 @@ pub const Loop = struct {
         /// with a budget answers a message that comes inside it without being woken, and spends
         /// the budget in CPU on every wait that outlasts it.
         spin_budget_ns: u64 = 0,
+        /// A turn of the loop at or above this, in nanoseconds, counts as a stall in
+        /// `statistics()`, and null counts none (decision 28). A host that sleeps in its own wait
+        /// sets null, because its sleep reads as one long turn (decision 23).
+        stall_turn_ns: ?u64 = core.constants.stall_turn_ns_default,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         registry: ?*Registry = null,
@@ -167,10 +171,12 @@ pub const Loop = struct {
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
         _ = layout.add(u64, options.operations);
+        // The heartbeat's line, which a watch on another thread reads (decision 28).
+        _ = layout.add(core.Heartbeat, 1);
         _ = layout.add(core.waiters.Entry, Waiters.capacity_for(options.operations));
         // Nothing for an offload the options did not ask for, so a caller that wants none pays no
-        // byte for one. The rings are not here: they are 128-byte aligned, which `Layout` does not
-        // carve, and the caller's threads write them. `core.offload.memory_bytes` sizes those.
+        // byte for one. The rings are not here: the caller's threads write them, so the caller
+        // owns their memory. `core.offload.memory_bytes` sizes those.
         // `Layout.add` takes at least one entry, so a loop with no offload adds nothing at all.
         if (workers_of(options) != 0) _ = layout.add(core.offload.Work, options.operations);
         return layout.bytes;
@@ -210,6 +216,7 @@ pub const Loop = struct {
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
+        const heartbeat_line = &layout.take(memory, core.Heartbeat, 1)[0];
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, core.waiters.Entry, waiting));
         const workers = workers_of(options);
@@ -224,10 +231,11 @@ pub const Loop = struct {
         loop.wait_timer_deadline_ns = 0;
         loop.kept_error = .none;
         loop.offload = options.offload;
-        loop.tables.init(slots, entries, starts, .{
+        loop.tables.init(slots, entries, starts, heartbeat_line, .{
             .id = options.id,
             .sampling = options.sampling,
             .spin_budget_ns = options.spin_budget_ns,
+            .stall_turn_ns = options.stall_turn_ns,
         });
         loop.groups = @splat(buffers.Group.none);
         loop.datagram_shape = .{};
@@ -235,10 +243,11 @@ pub const Loop = struct {
         loop.reaps = 0;
     }
 
-    /// Every operation must have had its final event (decision 5, rule 7).
+    /// Every operation must have had its final event (decision 5, rule 7), no tick may run, and no
+    /// watch may read the heartbeat (decision 28).
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
-        loop.tables.assert_empty();
+        loop.tables.assert_ended();
         if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.queue.deinit();
     }
@@ -324,10 +333,11 @@ pub const Loop = struct {
         // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
         // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
         try loop.kept_error.take(dispatch);
-        const wait = dispatch.begin(wait_ns);
+        const heartbeat_line = loop.tables.heartbeat;
+        const wait = dispatch.begin(heartbeat_line, wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);
-        return dispatch.end(events[0..produced]);
+        return dispatch.end(heartbeat_line, events[0..produced]);
     }
 
     fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
@@ -348,6 +358,9 @@ pub const Loop = struct {
     pub const tasks_queued = dispatch_calls.tasks_queued;
     pub const task_budget_left = dispatch_calls.task_budget_left;
     pub const discard_tasks = dispatch_calls.discard_tasks;
+    // The view a library holds and the heartbeat of decision 28.
+    pub const shared = dispatch_calls.shared;
+    pub const heartbeat = dispatch_calls.heartbeat;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.

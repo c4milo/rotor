@@ -53,52 +53,64 @@
 # became a function of its own, because the two new loops inside `main` made epoll's `tasks-64`
 # count 63 more instructions. With that change every older row counted within 3 instructions of the
 # tree before it.
+#
+# `task` and `tasks-64` were raised on 2026-11-07 for decision 28, by Camilo's ruling 2 of that
+# record: the loop stores the name of each callback before it calls it, so a watch can name the
+# one that holds the loop. Each tick also compares its turn with the stall threshold. The counts
+# are from the tree after the optimisation of 2026-11-07, before the `noinline` turn check of
+# ledger row H5, which counts 3 fewer on arm64 Linux and the same on `mac`. On `mac` they are the
+# median of three runs that agreed within 2 instructions, and on arm64 Linux, cachegrind in an
+# arm64 container on `mac`. The linux-x86_64 `task` and `tasks-64` rows are deleted, so CI prints
+# them.
+#
+# The rows that decision 28 moved past the tolerance were raised on 2026-11-07 to the counts of
+# the final tree, with H5, by Camilo's ruling 2 of that day. For each row, the list gives the count
+# at c05913b, the tree before decision 28, and the line before: macos `post` 1231 and 1218, `poller`
+# 573 and 570; linux-aarch64-uring `post` 1043 and 1029, `record` 1134 and 1128, `poller` 501 and
+# 497; linux-aarch64-epoll `post-operation` 3059 and 3019, `record` 1196 and 1191, `poller` 580
+# and 574. The cause is the stamp and the turn check of each tick, and the name that the loop
+# stores before each callback: +1.0 to +3.0 percent on these rows. Each `poller` row moved past
+# the tolerance by itself. Each other row sat 0.4 to 1.4 percent over its line at c05913b, and the
+# change took it past. The counts are taken as for `task`. The linux-x86_64 `poller` rows are
+# deleted, because `poller` moved 3.0 percent on arm64 io_uring and 2.6 on epoll. So are the
+# linux-x86_64 rows of each other row raised on arm64: io_uring `post` and `record`, and epoll
+# `post-operation` and `record`, because x86-64 may sit as close to its lines. CI prints them.
 tolerance_percent 2
 section macos-aarch64-kqueue
-post 1218
+post 1247
 post-operation 3051
 timer 1111
 batch 24624
 wait 5408
-task 610
-tasks-64 4407
+task 630
+tasks-64 4558
 record 1222
-poller 570
+poller 588
 section linux-x86_64-uring
-post 1176
 post-operation 3030
 timer 1105
 batch 26376
-task 591
-tasks-64 4001
-record 1221
-poller 559
 section linux-x86_64-epoll
 post 1363
-post-operation 3305
 timer 1173
 batch 26194
 wait 744
-task 678
-tasks-64 4088
-record 1281
-poller 641
 section linux-aarch64-uring
-post 1029
+post 1061
 post-operation 2794
 timer 1025
 batch 23757
-task 531
-tasks-64 3692
-record 1128
-poller 497
+task 559
+tasks-64 3910
+record 1153
+poller 516
 section linux-aarch64-epoll
 post 1212
-post-operation 3019
+post-operation 3091
 timer 1092
 batch 23845
 wait 655
-task 607
-tasks-64 3768
-record 1191
-poller 574
+task 634
+tasks-64 3985
+record 1215
+poller 595

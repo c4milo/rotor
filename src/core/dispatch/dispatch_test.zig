@@ -17,12 +17,15 @@
 //! - P5 and P8: the same seed gives the same trace twice, and with every record elsewhere.
 const std = @import("std");
 const testing = std.testing;
-const constants = @import("constants.zig");
+const constants = @import("../constants.zig");
 const dispatch_module = @import("dispatch.zig");
-const Event = @import("event.zig").Event;
-const Random = @import("random.zig").Random;
-const Task = @import("tasks.zig").Task;
+const Event = @import("../event.zig").Event;
+const Random = @import("../random.zig").Random;
+const Task = @import("../tasks.zig").Task;
 const model_module = @import("dispatch_test_model.zig");
+const stall = @import("../stall.zig");
+const Heartbeat = stall.Heartbeat;
+const Name = stall.Name;
 
 const Completion = dispatch_module.Completion;
 const Dispatch = dispatch_module.Dispatch;
@@ -77,6 +80,8 @@ const TaskRecord = struct {
 /// and never reads the model.
 const Fixture = struct {
     dispatch: Dispatch,
+    /// The loop's heartbeat, which `begin` and `end` write (decision 28).
+    heartbeat: Heartbeat,
     seed: u64,
     /// The pools in reverse order of id, so the same seed runs with every record elsewhere.
     reversed: bool,
@@ -92,6 +97,7 @@ const Fixture = struct {
     fn init(fixture: *Fixture, seed: u64, reversed: bool) void {
         fixture.* = .{
             .dispatch = .empty,
+            .heartbeat = .init(null),
             .seed = seed,
             .reversed = reversed,
             .records = undefined,
@@ -257,7 +263,7 @@ const Run = struct {
         const runs_before = run.fixture.runs;
         // The wait that `begin` returns.
         const expected_wait = run.model.begin(&plans, wait_ns);
-        try testing.expectEqual(expected_wait, run.fixture.dispatch.begin(wait_ns));
+        try testing.expectEqual(expected_wait, run.fixture.dispatch.begin(&run.fixture.heartbeat, wait_ns));
         if (run.random.chance(1, 8)) {
             run.model.abandon();
             run.fixture.dispatch.abandon();
@@ -267,7 +273,7 @@ const Run = struct {
         var operations: [batch_max]u32 = undefined;
         const len = run.build_batch(&events, &operations);
         run.model.end(events[0..len], operations[0..len]);
-        const kept = run.fixture.dispatch.end(events[0..len]);
+        const kept = run.fixture.dispatch.end(&run.fixture.heartbeat, events[0..len]);
         try run.check_kept(events[0..kept]);
         // P9: each task a poller queued inside the budget ran once in this `end`.
         for (run.model.poller_tasks[0..run.model.poller_tasks_len]) |id| {
@@ -407,4 +413,57 @@ test "dispatch calls what the model calls, owes what it owes, and keeps plain ev
         try testing.expectEqual(first, try property_run(seed, false));
         try testing.expectEqual(first, try property_run(seed, true));
     }
+}
+
+/// A record, a poller and a task that each keep the name the heartbeat holds while they run
+/// (decision 28).
+const Naming = struct {
+    completion: Completion = .init(Naming, "completion", completed),
+    poller: Poller = .init(Naming, "poller", polled),
+    task: Task = .init(Naming, "task", ran),
+    heartbeat: *const Heartbeat,
+    /// The names seen by the record, the poller and the task.
+    seen: [3]?*const Name = @splat(null),
+
+    fn completed(naming: *Naming, event: Event) void {
+        _ = event;
+        naming.seen[0] = naming.heartbeat.running.load(.monotonic);
+    }
+
+    fn polled(naming: *Naming) bool {
+        naming.seen[1] = naming.heartbeat.running.load(.monotonic);
+        return false;
+    }
+
+    fn ran(naming: *Naming) void {
+        naming.seen[2] = naming.heartbeat.running.load(.monotonic);
+    }
+};
+
+test "the heartbeat names each callback while it runs, and counts the callbacks of a turn" {
+    var dispatch: Dispatch = .empty;
+    var heartbeat: Heartbeat = .init(null);
+    var naming: Naming = .{ .heartbeat = &heartbeat };
+    try dispatch.add_poller(&naming.poller);
+    try dispatch.schedule(&naming.task);
+    dispatch.note_submitted(1);
+    var events = [_]Event{
+        .{ .user_data = 7, .result = 0, .flags = .{} },
+        .{ .user_data = @intFromPtr(&naming.completion), .result = 0, .flags = .{ .dispatched = true } },
+    };
+    _ = dispatch.begin(&heartbeat, 5);
+    // No callback runs between `begin` and `end`, so the heartbeat names none there.
+    try testing.expectEqual(@as(?*const Name, null), heartbeat.running.load(.monotonic));
+    try testing.expectEqual(Heartbeat.Turn{ .ended = 0, .polled = 1 }, heartbeat.turn);
+    try testing.expectEqual(@as(u32, 1), dispatch.end(&heartbeat, &events));
+    try testing.expectEqual(@as(?*const Name, null), heartbeat.running.load(.monotonic));
+    // The poller, the record and the task, in one turn: no clock stamp came between them.
+    try testing.expectEqual(Heartbeat.Turn{ .ended = 2, .polled = 1 }, heartbeat.turn);
+    const prefix = @typeName(Naming) ++ ".";
+    try testing.expectEqualStrings(prefix ++ "completion", naming.seen[0].?.*);
+    try testing.expectEqualStrings(prefix ++ "poller", naming.seen[1].?.*);
+    try testing.expectEqualStrings(prefix ++ "task", naming.seen[2].?.*);
+    // The last callback of the turn is the task, which a stall of one callback would name.
+    try testing.expectEqualStrings(prefix ++ "task", heartbeat.turn_name.?.*);
+    dispatch.remove_poller(&naming.poller);
 }

@@ -1,0 +1,84 @@
+//! The calls of decisions 26, 27 and 28 that every backend's `Loop` exports, written once: the
+//! pollers, the tasks, the view a library holds, and the heartbeat. Split from `dispatch.zig` for
+//! the 500-line limit.
+const dispatch_module = @import("dispatch.zig");
+const Heartbeat = @import("../stall.zig").Heartbeat;
+const SharedLoop = @import("../shared_loop.zig").SharedLoop;
+const tasks_module = @import("../tasks.zig");
+
+const AddPollerError = dispatch_module.AddPollerError;
+const Poller = dispatch_module.Poller;
+const ScheduleError = tasks_module.ScheduleError;
+const Task = tasks_module.Task;
+
+/// The calls of decisions 26, 27 and 28 that every backend's `Loop` exports, written once. `Loop`
+/// has a `tables: Tables` field. Each call checks that the loop's own thread makes it (decision 8,
+/// class B).
+pub fn Calls(comptime Loop: type) type {
+    return struct {
+        /// Adds `poller`, which the loop calls once in each tick (decision 26).
+        pub fn add_poller(loop: *Loop, poller: *Poller) AddPollerError!void {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.add_poller(poller);
+        }
+
+        /// Removes `poller`, which must have been added.
+        pub fn remove_poller(loop: *Loop, poller: *Poller) void {
+            loop.tables.assert_owner();
+            loop.tables.dispatch.remove_poller(poller);
+        }
+
+        /// Asks the loop to call `task.run` once, later (decision 27). The order is the order of
+        /// the calls. A task queued by the program between ticks, by a poller or by a record runs
+        /// in the `end` of the next tick to reach it; a task queued by a task runs one tick later.
+        /// A task belongs to this loop while it is queued: do not schedule it on another loop.
+        pub fn schedule(loop: *Loop, task: *Task) ScheduleError!void {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.schedule(task);
+        }
+
+        /// True while `task` is queued on this loop.
+        pub fn is_scheduled(loop: *const Loop, task: *const Task) bool {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.tasks.holds(task);
+        }
+
+        /// The tasks queued now. A host that sleeps in its own wait reads it before it sleeps
+        /// (decision 23), and a program reads it before `deinit`.
+        pub fn tasks_queued(loop: *const Loop) u32 {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.tasks.count;
+        }
+
+        /// `tasks_per_tick_max` less the tasks the current run started, the task that reads it
+        /// included, and 0 outside a run. A long task that splits its work does at most this many
+        /// slices plus one in one call, then schedules itself again. It counts, and never reads the
+        /// clock.
+        pub fn task_budget_left(loop: *const Loop) u32 {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.tasks.left;
+        }
+
+        /// Unlinks every queued task without a call, and returns the count (decision 27,
+        /// "Shutdown"). Only the program calls it, between ticks, after `drain` returned
+        /// `TasksStillQueued`. Halts inside a tick.
+        pub fn discard_tasks(loop: *Loop) u32 {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.discard_tasks();
+        }
+
+        /// The view that the program hands to each library (decision 28). Its address is the
+        /// loop's, and it declares only the calls a library may make. Program only.
+        pub fn shared(loop: *Loop) *SharedLoop(Loop) {
+            loop.tables.assert_owner();
+            return @ptrCast(loop);
+        }
+
+        /// The loop's heartbeat, for a thread that the program starts (decision 28). It is valid
+        /// until `deinit`, which halts while a watch reads it. Program only.
+        pub fn heartbeat(loop: *Loop) *Heartbeat {
+            loop.tables.assert_owner();
+            return loop.tables.heartbeat;
+        }
+    };
+}

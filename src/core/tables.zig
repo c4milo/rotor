@@ -21,7 +21,8 @@ const spin_module = @import("spin.zig");
 const timer_heap_module = @import("timer_heap.zig");
 const waiters_module = @import("waiters.zig");
 const deadline = @import("tables_deadline.zig");
-const Dispatch = @import("dispatch.zig").Dispatch;
+const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
+const Heartbeat = @import("stall.zig").Heartbeat;
 const Shuffle = @import("shuffle.zig").Shuffle;
 
 const Code = event_module.Code;
@@ -65,6 +66,10 @@ pub const Tables = struct {
     finished: SlotList,
     /// The monotonic clock as the backend's tick last read it.
     now_ns: u64,
+    /// The loop's heartbeat, on a line of its own in the caller's memory (decision 28). A watch on
+    /// another thread reads that line, so the words of `Tables`, which every tick reads, stay on
+    /// lines that a watch never moves. Each clock stamp writes it, next to `now_ns`.
+    heartbeat: *Heartbeat,
     /// Operations accepted since init: what a sampling decision is a function of (decision 9).
     operation_sequence: u64,
     /// What the loop counts about itself, sampled (decision 9). The loop writes here and never
@@ -79,7 +84,8 @@ pub const Tables = struct {
     id: LoopId,
     /// The spin budget from the options, and when the loop last handed over an event (decision 13).
     spin: spin_module.Window,
-    /// The pollers, and the count of operations that named a record (decision 26).
+    /// The pollers, the count of operations that named a record (decision 26), and the task queue
+    /// (decision 27).
     dispatch: Dispatch,
     /// The generator of the seeded shuffle of each reaped batch, which only a test build carries
     /// (decision 10, amendment of 2026-11-06). Off, it has no bytes.
@@ -89,15 +95,19 @@ pub const Tables = struct {
         id: LoopId = 0,
         sampling: statistics_module.Options = .{},
         spin_budget_ns: u64 = 0,
+        /// A turn at or above this is a stall, and null counts none (decision 28).
+        stall_turn_ns: ?u64 = constants.stall_turn_ns_default,
     };
 
     /// Must run on the thread that will own the loop. `starts` holds one nanosecond stamp per
-    /// slot, for the sampled operations in flight.
+    /// slot, for the sampled operations in flight. `heartbeat` is the loop's line for a watch
+    /// (decision 28), which a backend carves with `Layout.take`; `init` writes it.
     pub fn init(
         tables: *Tables,
         slots: []Slot,
         entries: []TimerHeap.Entry,
         starts: []u64,
+        heartbeat: *Heartbeat,
         options: Options,
     ) void {
         assert(options.id < constants.loops_max);
@@ -110,6 +120,8 @@ pub const Tables = struct {
         tables.pending = SlotList.empty;
         tables.finished = SlotList.empty;
         tables.now_ns = 0;
+        heartbeat.* = .init(options.stall_turn_ns);
+        tables.heartbeat = heartbeat;
         tables.operation_sequence = 0;
         tables.owner = thread_identity();
         tables.descriptors_registered = 0;
@@ -154,6 +166,32 @@ pub const Tables = struct {
         assert(events_len >= 1);
         assert(events_len <= constants.batch_max);
         assert(wait_ns <= constants.wait_ns_max);
+    }
+
+    /// A tick's first clock stamp (R1): it becomes `now_ns`, and ends the open turn, which the
+    /// heartbeat counts when it is a stall (decision 28).
+    pub fn note_clock(tables: *Tables, now_ns: u64) void {
+        tables.now_ns = now_ns;
+        tables.heartbeat.note_clock(&tables.statistics, &tables.dispatch.pollers, now_ns);
+    }
+
+    /// The tick is about to block in a kernel wait, which is in no turn (decision 28).
+    pub fn note_asleep(tables: *Tables) void {
+        tables.heartbeat.note_asleep();
+    }
+
+    /// The clock stamp after a wait that blocked (R2, decision 9, rule 4): it becomes `now_ns`, and
+    /// starts a turn, which it does not count (decision 28).
+    pub fn note_woken(tables: *Tables, now_ns: u64) void {
+        tables.now_ns = now_ns;
+        tables.heartbeat.note_woken(now_ns);
+    }
+
+    /// What every backend's `deinit` checks: the loop is empty, no tick runs, and no watch reads
+    /// its heartbeat (decisions 5, 26, 27 and 28).
+    pub fn assert_ended(tables: *const Tables) void {
+        tables.assert_empty();
+        tables.heartbeat.assert_unwatched();
     }
 
     /// Halts when an operation has not had its final event (decision 5, rule 7).
@@ -338,7 +376,7 @@ pub const Tables = struct {
                 events[produced].flags.buffer = true;
                 events[produced].flags.buffer_id = @intCast(slot.len);
             }
-            if (again) rearm(tables, index, slot) else tables.table.release(index);
+            if (again) deadline.rearm(tables, index, slot) else tables.table.release(index);
         }
         assert(produced <= events.len);
         return produced;
@@ -355,18 +393,6 @@ pub const Tables = struct {
     fn repeats(slot: *const Slot) bool {
         if (slot.code != .timer or !slot.flags.multishot) return false;
         return !slot.flags.cancel_requested;
-    }
-
-    /// Schedules a repeating timer's next fire from the deadline it just fired for, never from
-    /// the clock, so a loop that was late does not make the period late (decision 14, rule 3).
-    /// A deadline already past is armed anyway and fires at the next tick: rule 4 hands the
-    /// caller an event per missed period rather than swallowing them.
-    fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
-        assert(slot.code == .timer and slot.flags.multishot);
-        assert(slot.timeout_ns >= 1);
-        slot.buffer +%= slot.timeout_ns;
-        slot.state = .submitted;
-        tables.timers.arm(index, slot.buffer);
     }
 
     /// Marks `slot` for cancellation, once, and ends it when the tables can: a timer lives in
@@ -423,51 +449,6 @@ pub const Tables = struct {
         };
     }
 
-    /// Finishes every timer that is due, and returns the next operation whose deadline passed,
-    /// marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
-    /// more is due. At most the heap's entries can be due, which bounds the loop.
-    ///
-    /// An expired slot may be `queued` and not only `submitted`. A backend that resubmits an
-    /// operation the kernel refused transiently puts it back on the pending list and leaves its
-    /// deadline armed, because the deadline belongs to the operation and not to one attempt of
-    /// it (`uring_reap.zig`, `should_retry`). Its deadline can pass before the flush that would
-    /// resubmit it, and a tick reaches exactly that: it reaps, the retry produces no event, and
-    /// it expires again against a clock it has just read. Requiring `submitted` here halted such
-    /// a loop, with assertions on in production, and no test covered it.
-    pub fn next_expired(tables: *Tables) ?u32 {
-        const armed = tables.timers.count;
-        var popped: u32 = 0;
-        while (popped < armed) : (popped += 1) {
-            const index = tables.timers.pop_due(tables.now_ns) orelse return null;
-            const slot = tables.table.at(index);
-            assert(slot.state == .queued or slot.state == .submitted);
-            if (slot.code != .timer) {
-                slot.flags.timed_out = true;
-                return index;
-            }
-            tables.finish_local(index, 0);
-        }
-        return null;
-    }
-
-    /// Finishes every timer that is due, and hands `request` every operation whose deadline passed,
-    /// marked `timed_out`, to cancel (decision 5, rule 4). Every backend's tick runs it, with its
-    /// own cancel as `request` and its loop as `backend`. At most the heap's entries can be due,
-    /// which bounds the loop.
-    pub fn expire(
-        tables: *Tables,
-        backend: anytype,
-        comptime request: fn (@TypeOf(backend), u32, *Slot) void,
-    ) void {
-        const armed = tables.timers.count;
-        var expired: u32 = 0;
-        while (expired < armed) : (expired += 1) {
-            const index = tables.next_expired() orelse break;
-            request(backend, index, tables.table.at(index));
-        }
-        assert(tables.timers.count <= armed);
-    }
-
     /// Hands `request` every operation a cancel can still reach, to cancel: what every backend's
     /// `cancel_all` does, with its own cancel as `request` and its loop as `backend`.
     pub fn cancel_all(
@@ -490,7 +471,20 @@ pub const Tables = struct {
     pub const finish_due_timers = deadline.finish_due_timers;
     /// A tick's last step, after its reap: `tables_deadline.zig`.
     pub const expire_after_reap = deadline.expire_after_reap;
+    /// Every due timer finished, and every operation whose deadline passed handed to the
+    /// backend's cancel: `tables_deadline.zig`.
+    pub const expire = deadline.expire;
+    /// The next operation whose deadline passed: `tables_deadline.zig`.
+    pub const next_expired = deadline.next_expired;
 };
+
+comptime {
+    // The heartbeat is a pointer to a line in the caller's memory and not a field, so `Tables`,
+    // and each `Loop` that holds it, keep an alignment of 8 (decision 28). Its size depends on
+    // the build, because only a test build carries the shuffle.
+    assert(@alignOf(Tables) == 8);
+    assert(@sizeOf(*Heartbeat) == 8);
+}
 
 /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its
 /// deadline, `canceled` when the caller did (decision 5, rule 4).

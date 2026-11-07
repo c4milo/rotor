@@ -358,6 +358,9 @@ fn ignore(completion: *core.Completion, event: Event) void {
     _ = event;
 }
 
+/// The static entry of a record written by hand (decision 28).
+const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+
 /// A receive into the fixture's buffer, which a test may name a record in.
 fn receive_operation(fixture: *Fixture) Operation {
     return .{ .user_data = 0, .kind = .{ .receive = .{
@@ -369,7 +372,7 @@ fn receive_operation(fixture: *Fixture) Operation {
 test "an event of an operation that names a record carries the flag, and one without does not" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     const named = fixture.start(receive_operation(&fixture).completion(&record));
     const plain = fixture.receive(3);
     const event = fixture.complete(named.to_bits(), 17, 0).?;
@@ -382,7 +385,7 @@ test "an event of an operation that names a record carries the flag, and one wit
 test "a failure, and a cancel the loop issued for a deadline, reach the record as final events" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     const loop = &fixture.loop;
     const failed = fixture.start(receive_operation(&fixture).completion(&record));
     const reset = fixture.fail(failed, .CONNRESET).?;
@@ -406,7 +409,7 @@ test "a failure, and a cancel the loop issued for a deadline, reach the record a
 test "an operation on a registered descriptor and a registered buffer keeps its record" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     const tables = &fixture.loop.tables;
     tables.note_descriptors(2);
     tables.note_buffers(1);

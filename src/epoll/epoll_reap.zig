@@ -359,6 +359,9 @@ fn ignore(completion: *core.Completion, event: Event) void {
     _ = event;
 }
 
+/// The static entry of a record written by hand (decision 28).
+const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+
 /// Hands the queued slot at the head of the list to `descriptor`'s readers, as a flush does.
 fn wait_to_read(loop: *Loop, descriptor: core.Descriptor) u32 {
     const index = loop.tables.next_pending().?;
@@ -374,7 +377,7 @@ test "an attempt that is done marks the events of an operation that names a reco
     var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
     loop.init_tables(&memory, options);
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const descriptor = 5;
     try testing.expectEqual(@as(u32, 2), loop.submit(&.{
@@ -432,7 +435,7 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     const sender = try epoll.sync.open_datagram(.ipv4, &loopback, .{});
     defer epoll.sync.close_now(sender);
 
-    var record: core.Completion = .{ .callback = &ignore };
+    var record: core.Completion = .{ .call = &ignore_call };
     const receive = core.Operation.receive_from(0, socket, batch_group_id).completion(&record);
     var handles: [1]core.Handle = undefined;
     try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &handles));

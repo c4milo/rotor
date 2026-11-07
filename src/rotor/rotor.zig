@@ -39,6 +39,7 @@ pub const AddPollerError = core.dispatch.AddPollerError;
 pub const Task = core.Task;
 pub const ScheduleError = core.ScheduleError;
 pub const Handle = core.Handle;
+pub const Heartbeat = core.Heartbeat;
 pub const LoopId = core.LoopId;
 pub const Message = core.Message;
 pub const Operation = core.Operation;
@@ -68,10 +69,12 @@ pub const offload = struct {
     pub const Work = core.offload.Work;
 };
 
-/// What a loop counts about itself, sampled (decision 9).
+/// What a loop counts about itself: sampled latencies (decision 9), and exact stalls (decision 9,
+/// rule 7, and decision 28).
 pub const statistics = struct {
     pub const Options = core.statistics.Options;
     pub const Statistics = core.statistics.Statistics;
+    pub const Stall = core.statistics.Stall;
 };
 
 /// Which backend a process runs, as `backend()` reports it.
@@ -212,6 +215,12 @@ pub const Remote = loop_module.Remote;
 
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
 pub const Loop = loop_module.Loop;
+
+/// The loop as the program hands it to a library (decision 28). `Loop.shared` returns it. A library
+/// keeps it, and may submit, cancel, post, schedule tasks, add pollers and use buffer groups on it.
+/// `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a
+/// message that states the rule: only the program ticks a shared loop (decision 27, ruling 1).
+pub const SharedLoop = loop_module.SharedLoop;
 
 comptime {
     // The wrapped types carry the surface every backend must (decision 1). The backends check
@@ -357,11 +366,18 @@ test "every public function compiles for this host, not only the ones something 
     // Zig analyses a function only when something names it. `register_descriptors` and
     // `register_buffers` did not compile for Linux until 2026-09-22, and no gate said so, because
     // nothing on Linux called them. Naming every function of every public type here closes that.
-    inline for (.{ Loop, Registry, Remote, sync }) |T| {
+    inline for (.{ Loop, Registry, Remote, sync, Heartbeat, Heartbeat.Watch }) |T| {
         inline for (@typeInfo(T).@"struct".decls) |declaration| {
             const value = @field(T, declaration.name);
             if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
         }
+    }
+    // The view's refused calls are declarations that fail to compile when named, so the walk skips
+    // them; `zig build test-compile-fail` names each one.
+    inline for (@typeInfo(SharedLoop).@"opaque".decls) |declaration| {
+        if (comptime core.shared_loop.is_refused(declaration.name)) continue;
+        const value = @field(SharedLoop, declaration.name);
+        if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
     }
     _ = &backend;
     _ = &require_backend;
@@ -419,34 +435,6 @@ test "the public module requires a backend: the one that runs is granted, anothe
     }
 }
 
-test "a loop names a descriptor a host can wait on, on every backend but io_uring" {
-    if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
-    defer loop.deinit();
-    // The conformance suite holds each backend to what a host sees on this descriptor. This holds
-    // the public `Loop` to its backend's answer (decision 23).
-    try testing.expectEqual(backend() == .uring, loop.wait_descriptor() == null);
-}
-
-test "a loop reads the wakes its backend's deinit dropped" {
-    if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
-    loop.deinit();
-    try testing.expectEqual(0, loop.dropped_wakes());
-    // Only an EBUSY on every pass makes io_uring's count above 0, and uring's own tests make one
-    // (decision 4, amended 2026-11-06). This holds the public `Loop` to its backend's count.
-    switch (loop.inner) {
-        inline else => |*inner, tag| if (comptime std.mem.eql(u8, @tagName(tag), "uring")) {
-            inner.deinit_dropped_wakes = 3;
-            try testing.expectEqual(3, loop.dropped_wakes());
-        },
-    }
-}
-
 test "a socket from sync suits the backend: it does not block exactly when epoll runs" {
     if (!supported or !linux) return error.SkipZigTest;
     const os = std.os.linux;
@@ -471,4 +459,5 @@ test {
     _ = loop_module;
     _ = @import("rotor_loop_backend.zig");
     _ = @import("rotor_loop_registry.zig");
+    _ = @import("rotor_loop_test.zig");
 }

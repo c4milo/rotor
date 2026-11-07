@@ -1,6 +1,7 @@
 //! The surface every backend carries (decision 1): `uring`, `kqueue` and `epoll` each export a
-//! `Loop` with the declarations named here, so a consumer's build swaps one for another, or for a
-//! deterministic twin of its own (decision 10), without a changed line. `check` runs at comptime
+//! `Loop` with the declarations named here, `shared` and `heartbeat` among them (decision 28), so
+//! a consumer's build swaps one for another, or for a deterministic twin of its own (decision 10),
+//! without a changed line. `check` runs at comptime
 //! in each backend's root, so a backend that drops or misspells a declaration fails to compile on
 //! every host, whichever kernel it needs.
 //!
@@ -27,6 +28,8 @@ pub const loop_declarations = [_][]const u8{
     "tasks_queued",
     "task_budget_left",
     "discard_tasks",
+    "shared",
+    "heartbeat",
     "in_flight",
     "now_ns",
     "wait_descriptor",
@@ -91,6 +94,8 @@ const Complete = struct {
     pub fn tasks_queued() void {}
     pub fn task_budget_left() void {}
     pub fn discard_tasks() void {}
+    pub fn shared() void {}
+    pub fn heartbeat() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}
     pub fn wait_descriptor() void {}

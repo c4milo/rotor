@@ -12,6 +12,8 @@ const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 const backend_module = @import("rotor_loop_backend.zig");
 
+const constants = core.constants;
+
 const linux = builtin.os.tag == .linux;
 
 // The choice of backend, which every file of this module reaches through this one.
@@ -70,6 +72,9 @@ pub const Remote = struct {
     }
 };
 
+/// The loop as the program hands it to a library (decision 28): `core/shared_loop.zig`.
+pub const SharedLoop = core.shared_loop.SharedLoop(Loop);
+
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
 /// `docs/using.md` says what it promises and what it needs.
 pub const Loop = struct {
@@ -112,6 +117,11 @@ pub const Loop = struct {
         /// also arrives about 11 µs later than with no budget: 12.5 to 14.5 µs against 1.0 to 3.5,
         /// measured on 2026-09-25 (decision 13, "kqueue").
         spin_budget_ns: u64 = 0,
+        /// A turn of the loop at or above this, in nanoseconds, counts as a stall in
+        /// `statistics()`, and null counts none (decision 28). A turn runs from one tick's first
+        /// clock stamp to the next tick's, and holds no kernel wait. A host that sleeps in its
+        /// own wait sets null, because its sleep reads as one long turn (decision 23).
+        stall_turn_ns: ?u64 = constants.stall_turn_ns_default,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         /// Where loops find each other, for `post`. Null for a loop that posts to none and that
@@ -143,6 +153,7 @@ pub const Loop = struct {
                 .entries = options.entries,
                 .sampling = options.sampling,
                 .spin_budget_ns = options.spin_budget_ns,
+                .stall_turn_ns = options.stall_turn_ns,
                 .id = options.id,
                 .registry = null,
                 .file_policy = options.file_policy,
@@ -339,6 +350,27 @@ pub const Loop = struct {
         };
     }
 
+    /// The view that the program hands to each library at init (decision 28). Its address is this
+    /// loop's, and it declares only the calls a library may make: `tick`, `drain`, `deinit`,
+    /// `cancel_all` and `discard_tasks` fail to compile on it. Only the program calls this, on the
+    /// loop's thread.
+    pub fn shared(loop: *Loop) *SharedLoop {
+        switch (loop.inner) {
+            inline else => |*inner| inner.assert_owner(),
+        }
+        return @ptrCast(loop);
+    }
+
+    /// The loop's heartbeat, for a thread that the program starts (decision 28). That thread
+    /// calls `watch` on it, then `check` once in each period it chooses, and `Watch.end` before
+    /// this loop's `deinit`, which halts while a watch reads it. Only the program calls this, on
+    /// the loop's thread.
+    pub fn heartbeat(loop: *Loop) *core.Heartbeat {
+        return switch (loop.inner) {
+            inline else => |*inner| inner.heartbeat(),
+        };
+    }
+
     /// Asks every operation in flight to end.
     pub fn cancel_all(loop: *Loop) void {
         switch (loop.inner) {
@@ -353,7 +385,7 @@ pub const Loop = struct {
         };
     }
 
-    /// Halts when an operation is still in flight (decision 5, rule 7).
+    /// Halts when an operation is still in flight (decision 5, rule 7), or inside a tick.
     pub fn assert_empty(loop: *const Loop) void {
         switch (loop.inner) {
             inline else => |*inner| inner.assert_empty(),

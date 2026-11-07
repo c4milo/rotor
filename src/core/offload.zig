@@ -323,8 +323,9 @@ test "memory_bytes counts the slack a 64 aligned base can cost, and none for no 
     try testing.expectEqual(slack + test_workers * @sizeOf(Mailbox), memory_bytes(test_workers));
 }
 
-const dispatch = @import("dispatch.zig");
+const dispatch = @import("dispatch/dispatch.zig");
 const Event = @import("event.zig").Event;
+const Heartbeat = @import("stall.zig").Heartbeat;
 const TimerHeap = @import("timer_heap.zig").TimerHeap;
 const Slot = @import("slot.zig").Slot;
 
@@ -334,6 +335,9 @@ fn ignore(completion: *dispatch.Completion, event: Event) void {
     _ = event;
 }
 
+/// The static entry of a record written by hand (decision 28).
+const ignore_call: dispatch.Completion.Call = .{ .name = "ignore", .function = &ignore };
+
 /// Slots of the test below: one operation that names a record, and one that does not.
 const test_slots = 2;
 
@@ -341,11 +345,12 @@ test "a result a worker hands back reaches the record of its operation, and no o
     var slots: [test_slots]Slot = undefined;
     var entries: [test_slots]TimerHeap.Entry = undefined;
     var starts: [test_slots]u64 = undefined;
+    var heartbeat: Heartbeat = undefined;
     var tables: Tables = undefined;
-    tables.init(&slots, &entries, &starts, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     var memory: [memory_bytes(1)]u8 align(layout.memory_alignment) = undefined;
     const rings = init_rings(&memory, 1);
-    var record: dispatch.Completion = .{ .callback = &ignore };
+    var record: dispatch.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const plain_user_data = 9;
     const reads = [_]operation.Operation{

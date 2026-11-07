@@ -185,7 +185,9 @@ const task_count = core.constants.tasks_per_tick_max;
 
 fn task_ran(_: *core.Task) void {}
 
-var cost_tasks: [task_count]core.Task align(@alignOf(core.Task)) = @splat(.{ .run = task_ran });
+const task_ran_call: core.Task.Call = .{ .name = "task_ran", .function = task_ran };
+var cost_tasks: [task_count]core.Task align(@alignOf(core.Task)) =
+    @splat(.{ .call = &task_ran_call });
 
 /// One task, scheduled and then run in the `end` of a tick, spread over a full run: `schedule`'s
 /// owner check and push, the pop and the call. Measured on `mac` on 2026-11-06: 31 ns in Debug.

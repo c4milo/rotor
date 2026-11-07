@@ -13,29 +13,41 @@ const std = @import("std");
 const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
+const stall = @import("stall.zig");
+
+const Heartbeat = stall.Heartbeat;
 
 /// Work that a library asks the loop to do once, later. The library owns the record and puts it
 /// inside its own struct, as it does with a `Completion`. Only the loop writes `next`.
 /// Size 16 B, alignment 8.
 pub const Task = struct {
-    run: *const fn (task: *Task) void,
+    call: *const Call,
     /// The task after this one in the queue, or null at the tail and while the task is not queued.
     next: ?*Task = null,
 
+    /// A static entry, as `Completion.Call` is (decision 28).
+    pub const Call = struct {
+        name: [:0]const u8,
+        function: *const fn (task: *Task) void,
+    };
+
     /// A task at `field` of `Parent` that calls `handler` with its parent. The compiler checks the
-    /// field, the parent and the handler, and the call costs the same as one written by hand.
+    /// field, the parent and the handler, and the call costs the same as one written by hand, after
+    /// one load of the static `Call`.
     pub fn init(
         comptime Parent: type,
         comptime field: []const u8,
         comptime handler: fn (parent: *Parent) void,
     ) Task {
         comptime assert(@FieldType(Parent, field) == Task);
-        return .{ .run = struct {
-            fn call(task: *Task) void {
+        const Static = struct {
+            fn function(task: *Task) void {
                 const parent: *Parent = @alignCast(@fieldParentPtr(field, task));
                 handler(parent);
             }
-        }.call };
+            const call: Call = .{ .name = stall.name_of(Parent, field), .function = function };
+        };
+        return .{ .call = &Static.call };
     }
 };
 
@@ -77,8 +89,10 @@ pub const Tasks = struct {
 
     /// Runs at most `tasks_per_tick_max` tasks, and only those queued when it began. Returns the
     /// count it ran. The pop clears the task's link before the call, so the loop never writes the
-    /// task after `run` returns: a handler may free its parent, or schedule the task again.
-    pub fn run(tasks: *Tasks) u32 {
+    /// task after `run` returns: a handler may free its parent, or schedule the task again. Before
+    /// each call it stores the task's name in `heartbeat`, and after the last one it counts the
+    /// tasks it ran there and clears the name (decision 28).
+    pub fn run(tasks: *Tasks, heartbeat: *Heartbeat) u32 {
         tasks.assert_shape();
         const started = @min(tasks.count, constants.tasks_per_tick_max);
         tasks.left = constants.tasks_per_tick_max;
@@ -92,8 +106,10 @@ pub const Tasks = struct {
             if (tasks.head == null) tasks.tail = null;
             tasks.count -= 1;
             tasks.left -= 1;
-            task.run(task);
+            heartbeat.enter(&task.call.name);
+            task.call.function(task);
         }
+        if (started != 0) heartbeat.leave_tasks(started);
         return started;
     }
 
@@ -180,15 +196,16 @@ test "tasks run in the order of their pushes, each once, and the queue empties" 
     var trace: Trace = .{};
     var works: [3]Work = undefined;
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     for (&works, 0..) |*work, id| {
         work.* = .{ .id = @intCast(id), .trace = &trace };
         try tasks.push(&work.task, constants.tasks_queued_max);
         tasks.assert_queue();
     }
-    try testing.expectEqual(@as(u32, 3), tasks.run());
+    try testing.expectEqual(@as(u32, 3), tasks.run(&heartbeat));
     tasks.assert_queue();
     try testing.expectEqualSlices(u32, &.{ 0, 1, 2 }, trace.ids[0..trace.len]);
-    try testing.expectEqual(@as(u32, 0), tasks.run());
+    try testing.expectEqual(@as(u32, 0), tasks.run(&heartbeat));
     try testing.expectEqual(@as(u32, 3), trace.len);
     try testing.expect(tasks.head == null and tasks.tail == null);
 }
@@ -198,32 +215,34 @@ test "one run starts at most tasks_per_tick_max tasks, and the rest wait for the
     const queued = constants.tasks_per_tick_max + 5;
     var works: [queued]Work = undefined;
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     for (&works, 0..) |*work, id| {
         work.* = .{ .id = @intCast(id), .trace = &trace };
         try tasks.push(&work.task, constants.tasks_queued_max);
     }
-    try testing.expectEqual(constants.tasks_per_tick_max, tasks.run());
+    try testing.expectEqual(constants.tasks_per_tick_max, tasks.run(&heartbeat));
     try testing.expectEqual(@as(u32, 5), tasks.count);
     tasks.assert_queue();
-    try testing.expectEqual(@as(u32, 5), tasks.run());
+    try testing.expectEqual(@as(u32, 5), tasks.run(&heartbeat));
     for (trace.ids[0..trace.len], 0..) |id, order| try testing.expectEqual(@as(u32, @intCast(order)), id);
 }
 
 test "a task that schedules itself runs once in each run, after the tasks queued before it" {
     var trace: Trace = .{};
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     var looping: Work = .{ .id = 7, .trace = &trace, .again = 3, .queue = &tasks };
     var other: Work = .{ .id = 8, .trace = &trace };
     try tasks.push(&looping.task, constants.tasks_queued_max);
     try tasks.push(&other.task, constants.tasks_queued_max);
-    try testing.expectEqual(@as(u32, 2), tasks.run());
+    try testing.expectEqual(@as(u32, 2), tasks.run(&heartbeat));
     try testing.expectEqualSlices(u32, &.{ 7, 8 }, trace.ids[0..trace.len]);
     // The task pushed itself again from its own run, which the run's snapshot does not start.
     try testing.expectEqual(@as(u32, 1), tasks.count);
-    try testing.expectEqual(@as(u32, 1), tasks.run());
-    try testing.expectEqual(@as(u32, 1), tasks.run());
-    try testing.expectEqual(@as(u32, 1), tasks.run());
-    try testing.expectEqual(@as(u32, 0), tasks.run());
+    try testing.expectEqual(@as(u32, 1), tasks.run(&heartbeat));
+    try testing.expectEqual(@as(u32, 1), tasks.run(&heartbeat));
+    try testing.expectEqual(@as(u32, 1), tasks.run(&heartbeat));
+    try testing.expectEqual(@as(u32, 0), tasks.run(&heartbeat));
     try testing.expectEqualSlices(u32, &.{ 7, 8, 7, 7, 7 }, trace.ids[0..trace.len]);
 }
 
@@ -262,12 +281,13 @@ const Freed = struct {
 
 test "the queue never writes or reads a task after its run returns" {
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     var freed: Freed = .{};
     var trace: Trace = .{};
     var after: Work = .{ .id = 1, .trace = &trace };
     try tasks.push(&freed.task, constants.tasks_queued_max);
     try tasks.push(&after.task, constants.tasks_queued_max);
-    try testing.expectEqual(@as(u32, 2), tasks.run());
+    try testing.expectEqual(@as(u32, 2), tasks.run(&heartbeat));
     try testing.expectEqual(@as(u32, 1), freed.runs);
     try testing.expectEqualSlices(u32, &.{1}, trace.ids[0..trace.len]);
     for (std.mem.asBytes(&freed.task)) |byte| try testing.expectEqual(freed_pattern, byte);
@@ -286,35 +306,37 @@ const Budget = struct {
 
 test "left counts the run's starts down from the budget, and is 0 outside a run" {
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     try testing.expectEqual(@as(u32, 0), tasks.left);
     var alone: Budget = .{ .tasks = &tasks };
     try tasks.push(&alone.task, constants.tasks_queued_max);
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
     try testing.expectEqual(constants.tasks_per_tick_max - 1, alone.seen);
     try testing.expectEqual(@as(u32, 0), tasks.left);
 
     var three: [3]Budget = @splat(.{ .tasks = &tasks });
     for (&three) |*budget| try tasks.push(&budget.task, constants.tasks_queued_max);
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
     try testing.expectEqual(constants.tasks_per_tick_max - 1, three[0].seen);
     try testing.expectEqual(constants.tasks_per_tick_max - 3, three[2].seen);
 
     var full: [constants.tasks_per_tick_max]Budget = @splat(.{ .tasks = &tasks });
     for (&full) |*budget| try tasks.push(&budget.task, constants.tasks_queued_max);
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
     try testing.expectEqual(@as(u32, 0), full[constants.tasks_per_tick_max - 1].seen);
 }
 
 test "the head that schedules itself again runs once in this run and once in the next" {
     var trace: Trace = .{};
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     var head: Work = .{ .id = 3, .trace = &trace, .again = 1, .queue = &tasks };
     var second: Work = .{ .id = 4, .trace = &trace };
     try tasks.push(&head.task, constants.tasks_queued_max);
     try tasks.push(&second.task, constants.tasks_queued_max);
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
     tasks.assert_queue();
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
     try testing.expectEqualSlices(u32, &.{ 3, 4, 3 }, trace.ids[0..trace.len]);
 }
 
@@ -322,6 +344,7 @@ test "discard unlinks every task without a call, and each may be pushed again" {
     var trace: Trace = .{};
     var works: [3]Work = undefined;
     var tasks: Tasks = .empty;
+    var heartbeat: Heartbeat = .init(null);
     for (&works, 0..) |*work, id| {
         work.* = .{ .id = @intCast(id), .trace = &trace };
         try tasks.push(&work.task, constants.tasks_queued_max);
@@ -330,6 +353,6 @@ test "discard unlinks every task without a call, and each may be pushed again" {
     try testing.expectEqual(@as(u32, 0), trace.len);
     for (&works) |*work| try testing.expect(work.task.next == null and !tasks.holds(&work.task));
     try tasks.push(&works[1].task, constants.tasks_queued_max);
-    try testing.expectEqual(@as(u32, 1), tasks.run());
+    try testing.expectEqual(@as(u32, 1), tasks.run(&heartbeat));
     try testing.expectEqualSlices(u32, &.{1}, trace.ids[0..trace.len]);
 }

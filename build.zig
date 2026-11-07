@@ -10,6 +10,9 @@
 //! `zig build test` also runs each conformance suite this host runs with each reaped batch shuffled
 //! from the seed `-Dshuffle-seed=N` names (build/shuffle.zig).
 //!
+//! `zig build test-compile-fail` requires each refused call of `rotor.SharedLoop` to fail to
+//! compile with the message that states the rule (build/compile_fail.zig).
+//!
 //! `zig build test-linux` builds the test executables, the io_uring probe and the halt check with
 //! the scenarios only Linux can prove, for Linux under zig-out/linux/, and runs none of them;
 //! tools/linux_test.sh runs them in Docker (build/linux.zig).
@@ -37,6 +40,7 @@ const tla = @import("build/tla.zig");
 const guide = @import("build/guide.zig");
 const examples = @import("build/examples.zig");
 const shuffle = @import("build/shuffle.zig");
+const compile_fail = @import("build/compile_fail.zig");
 
 /// Every directory `zig build lint` scores and `zig build fmt` checks, beside build.zig itself.
 const source_directories = [_][]const u8{ "bench", "build", "src", "tools" };
@@ -164,6 +168,8 @@ pub fn build(b: *std.Build) void {
     }
 
     test_step.dependOn(halt.add(b, graph, target, optimize));
+    // A library's refused calls on a shared loop fail to compile, with the rule (decision 28).
+    test_step.dependOn(compile_fail.add(b, graph, target, optimize));
     if (target.result.os.tag.isDarwin()) test_step.dependOn(add_macos_probe(b, pepegrillo));
 
     const bench_steps = bench.add(b, target);

@@ -97,9 +97,11 @@ var batch: [batch_operations]Operation align(@alignOf(Operation)) = undefined;
 
 fn ran_nothing(_: *core.Task) void {}
 
+const ran_nothing_call: core.Task.Call = .{ .name = "ran_nothing", .function = ran_nothing };
+
 /// The tasks of `task` and `tasks-64`, each run once in each iteration.
 var tasks: [core.constants.tasks_per_tick_max]core.Task align(@alignOf(core.Task)) =
-    @splat(.{ .run = ran_nothing });
+    @splat(.{ .call = &ran_nothing_call });
 
 /// What `record` and `poller` count: each call of the record or the poller adds one, and an
 /// iteration fails unless its tick made exactly one call.

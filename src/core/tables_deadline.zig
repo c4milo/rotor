@@ -1,7 +1,8 @@
-//! When the tables' deadlines run: arming an operation's deadline or a timer's delay, where each
-//! starts, how long a tick may block before the nearest one, and where in a tick each kind of
-//! deadline expires. Split from `tables.zig` for the
-//! 500-line limit; `Tables` declares each of these, so a caller writes `tables.arm(...)`.
+//! When the tables' deadlines run: how the loop arms an operation's deadline or a timer's delay,
+//! where each starts, how long a tick may block before the nearest one, where in a tick each kind
+//! of deadline expires, how the loop finds an operation whose deadline passed, and when a repeating
+//! timer fires next. Split from `tables.zig` for the 500-line limit. `Tables` declares the public
+//! ones, so a caller writes `tables.arm(...)`.
 const std = @import("std");
 const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
@@ -69,6 +70,51 @@ pub fn finish_due_timers(tables: *Tables) void {
     assert(tables.timers.count <= armed);
 }
 
+/// Finishes every timer that is due, and returns the next operation whose deadline passed,
+/// marked `timed_out`, for the backend to cancel (decision 5, rule 4). Null when nothing
+/// more is due. At most the heap's entries can be due, which bounds the loop.
+///
+/// An expired slot may be `queued` and not only `submitted`. A backend that resubmits an
+/// operation the kernel refused transiently puts it back on the pending list and leaves its
+/// deadline armed, because the deadline belongs to the operation and not to one attempt of
+/// it (`uring_reap.zig`, `should_retry`). Its deadline can pass before the flush that would
+/// resubmit it, and a tick reaches exactly that: it reaps, the retry produces no event, and
+/// it expires again against a clock it has just read. Requiring `submitted` here halted such
+/// a loop, with assertions on in production, and no test covered it.
+pub fn next_expired(tables: *Tables) ?u32 {
+    const armed = tables.timers.count;
+    var popped: u32 = 0;
+    while (popped < armed) : (popped += 1) {
+        const index = tables.timers.pop_due(tables.now_ns) orelse return null;
+        const slot = tables.table.at(index);
+        assert(slot.state == .queued or slot.state == .submitted);
+        if (slot.code != .timer) {
+            slot.flags.timed_out = true;
+            return index;
+        }
+        tables.finish_local(index, 0);
+    }
+    return null;
+}
+
+/// Finishes every timer that is due, and hands `request` every operation whose deadline passed,
+/// marked `timed_out`, to cancel (decision 5, rule 4). Every backend's tick runs it, with its
+/// own cancel as `request` and its loop as `backend`. At most the heap's entries can be due,
+/// which bounds the loop.
+pub fn expire(
+    tables: *Tables,
+    backend: anytype,
+    comptime request: fn (@TypeOf(backend), u32, *Slot) void,
+) void {
+    const armed = tables.timers.count;
+    var expired: u32 = 0;
+    while (expired < armed) : (expired += 1) {
+        const index = next_expired(tables) orelse break;
+        request(backend, index, tables.table.at(index));
+    }
+    assert(tables.timers.count <= armed);
+}
+
 /// A tick's last step, after its reap: `Tables.expire`, then hand over what is finished into
 /// `events`. The reap comes first, so an operation whose result was ready when the tick began ends
 /// with that result and not with `timeout`: the loop's own cancel loses that race, as decision 5,
@@ -87,9 +133,22 @@ pub fn expire_after_reap(
     return tables.drain_finished(events);
 }
 
+/// Schedules a repeating timer's next fire from the deadline it just fired for, never from
+/// the clock, so a loop that was late does not make the period late (decision 14, rule 3).
+/// A deadline already past is armed anyway and fires at the next tick: rule 4 hands the
+/// caller an event per missed period rather than swallowing them.
+pub fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
+    assert(slot.code == .timer and slot.flags.multishot);
+    assert(slot.timeout_ns >= 1);
+    slot.buffer +%= slot.timeout_ns;
+    slot.state = .submitted;
+    tables.timers.arm(index, slot.buffer);
+}
+
 const testing = std.testing;
-const Completion = @import("dispatch.zig").Completion;
+const Completion = @import("dispatch/dispatch.zig").Completion;
 const Handle = @import("handle.zig").Handle;
+const Heartbeat = @import("stall.zig").Heartbeat;
 const Operation = @import("operation.zig").Operation;
 const TimerHeap = @import("timer_heap.zig").TimerHeap;
 
@@ -104,10 +163,12 @@ const TestTables = struct {
     slots: [test_slots]Slot,
     entries: [test_slots]TimerHeap.Entry,
     starts: [test_slots]u64,
+    heartbeat: Heartbeat,
     tables: Tables,
 
     fn init(fixture: *TestTables) void {
-        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, .{});
+        const tables = &fixture.tables;
+        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
     }
 };
 
@@ -116,6 +177,9 @@ fn ignore(completion: *Completion, event: Event) void {
     _ = completion;
     _ = event;
 }
+
+/// The static entry of a record written by hand (decision 28).
+const ignore_call: Completion.Call = .{ .name = "ignore", .function = &ignore };
 
 /// What a readiness backend's cancel does to an operation whose deadline passed: it ends it.
 fn end_now(tables: *Tables, index: u32, slot: *Slot) void {
@@ -128,7 +192,7 @@ test "a timer the loop fires hands its final event and its repeats to the record
     var fixture: TestTables = undefined;
     fixture.init();
     const tables = &fixture.tables;
-    var record: Completion = .{ .callback = &ignore };
+    var record: Completion = .{ .call = &ignore_call };
     const timers = [_]Operation{
         Operation.timer(0, 1, 0).completion(&record),
         Operation.timer(0, 1, 5).completion(&record),
@@ -153,7 +217,7 @@ test "a deadline and a cancel in the queue end the operation with an event for i
     var fixture: TestTables = undefined;
     fixture.init();
     const tables = &fixture.tables;
-    var record: Completion = .{ .callback = &ignore };
+    var record: Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     var timed = Operation.receive(0, 3, &bytes);
     timed.timeout_ns = 1;

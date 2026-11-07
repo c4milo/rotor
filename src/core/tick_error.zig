@@ -10,7 +10,7 @@
 //! error kept pays nothing for it: `idle()` reads the same two words as before.
 const std = @import("std");
 const assert = std.debug.assert;
-const Dispatch = @import("dispatch.zig").Dispatch;
+const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
 
 /// The kept error of a loop whose tick fails with `TickError`.
 pub fn Kept(comptime TickError: type) type {

@@ -49,6 +49,16 @@ fn on_another_thread(comptime call: fn () void) void {
     thread.join();
 }
 
+/// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
+/// deleted, `deinit` closes the loop's ring and returns.
+fn end_a_loop_that_a_watch_reads() void {
+    loop.init(&memory, options) catch return;
+    var watch = loop.heartbeat().watch();
+    _ = &watch;
+    scenario.reached_violation();
+    loop.deinit();
+}
+
 /// The loop is empty, so with the owner check deleted `deinit` closes the ring from the second
 /// thread, which the kernel allows, and returns.
 fn end_a_loop_from_another_thread() void {
@@ -324,6 +334,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "ring: read an entry the ring does not hold",
         .run = read_an_entry_the_ring_does_not_hold,
     },
+    .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
 };
 
 pub fn main(init: std.process.Init) !void {

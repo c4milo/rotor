@@ -10,44 +10,47 @@ const Dispatch = core.dispatch.Dispatch;
 
 fn ran(_: *Task) void {}
 
-var first: Task align(@alignOf(Task)) = .{ .run = ran };
-var second: Task align(@alignOf(Task)) = .{ .run = ran };
+const ran_call: Task.Call = .{ .name = "ran", .function = ran };
+var first: Task align(@alignOf(Task)) = .{ .call = &ran_call };
+var second: Task align(@alignOf(Task)) = .{ .call = &ran_call };
 var tasks: Tasks align(@alignOf(Tasks)) = .empty;
 var dispatch: Dispatch align(@alignOf(Dispatch)) = .empty;
+/// What a run stores each task's name in (decision 28).
+var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = .init(null);
 
 /// One task pushed twice: the queue would link the task to itself. With the check deleted, the
 /// second push does so, and the run of two tasks calls it twice and returns.
 fn push_one_task_twice() void {
     tasks = .empty;
-    first = .{ .run = ran };
+    first = .{ .call = &ran_call };
     tasks.push(&first, core.constants.tasks_queued_max) catch return;
     scenario.reached_violation();
     tasks.push(&first, core.constants.tasks_queued_max) catch return;
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
 }
 
 /// A queue whose count says two and whose links hold one. With the check deleted, the second pop
 /// finds no head and the run ends.
 fn run_a_queue_shorter_than_its_count() void {
-    first = .{ .run = ran };
+    first = .{ .call = &ran_call };
     tasks = .{ .head = &first, .tail = &first, .count = 2, .left = 0 };
     scenario.reached_violation();
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
 }
 
 /// A queue with a head and no tail. With the check deleted, the run pops the one task and returns.
 fn run_a_queue_with_a_head_and_no_tail() void {
-    first = .{ .run = ran };
+    first = .{ .call = &ran_call };
     tasks = .{ .head = &first, .tail = null, .count = 1, .left = 0 };
     scenario.reached_violation();
-    _ = tasks.run();
+    _ = tasks.run(&heartbeat);
 }
 
 /// The walk of a queue whose count says three and whose links hold two. With the walk's checks
 /// deleted, it returns.
 fn walk_a_queue_shorter_than_its_count() void {
-    second = .{ .run = ran };
-    first = .{ .run = ran, .next = &second };
+    second = .{ .call = &ran_call };
+    first = .{ .call = &ran_call, .next = &second };
     tasks = .{ .head = &first, .tail = &second, .count = 3, .left = 0 };
     scenario.reached_violation();
     tasks.assert_queue();
@@ -57,9 +60,9 @@ fn walk_a_queue_shorter_than_its_count() void {
 /// deleted, the discard empties the queue and returns.
 fn discard_the_tasks_inside_a_tick() void {
     dispatch = .empty;
-    first = .{ .run = ran };
+    first = .{ .call = &ran_call };
     dispatch.schedule(&first) catch return;
-    _ = dispatch.begin(0);
+    _ = dispatch.begin(&heartbeat, 0);
     scenario.reached_violation();
     _ = dispatch.discard_tasks();
 }
@@ -68,7 +71,7 @@ fn discard_the_tasks_inside_a_tick() void {
 /// the loop has ended. With the check deleted, the check returns.
 fn end_a_loop_with_a_task_queued() void {
     dispatch = .empty;
-    first = .{ .run = ran };
+    first = .{ .call = &ran_call };
     dispatch.schedule(&first) catch return;
     scenario.reached_violation();
     dispatch.assert_empty();

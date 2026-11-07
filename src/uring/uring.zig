@@ -150,6 +150,10 @@ pub const Loop = struct {
         /// with a budget answers a message that comes inside it without being woken, and spends
         /// the budget in CPU on every wait that outlasts it.
         spin_budget_ns: u64 = 0,
+        /// A turn of the loop at or above this, in nanoseconds, counts as a stall in
+        /// `statistics()`, and null counts none (decision 28). A host that sleeps in its own wait
+        /// sets null, because its sleep reads as one long turn (decision 23).
+        stall_turn_ns: ?u64 = core.constants.stall_turn_ns_default,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         /// Where loops find each other's mailbox rings. Null for a loop that posts to none and
@@ -185,6 +189,8 @@ pub const Loop = struct {
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
         _ = layout.add(u64, options.operations);
+        // The heartbeat's line, which a watch on another thread reads (decision 28).
+        _ = layout.add(core.Heartbeat, 1);
         _ = layout.add(Handle, HandleQueue.capacity_for(options.operations));
         _ = layout.add(address.Storage, entries_of(options));
         _ = layout.add(datagram_module.Message, entries_of(options));
@@ -224,14 +230,16 @@ pub const Loop = struct {
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
+        const heartbeat_line = &layout.take(memory, core.Heartbeat, 1)[0];
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
         loop.addresses = layout.take(memory, address.Storage, entries_of(options));
         loop.messages = layout.take(memory, datagram_module.Message, entries_of(options));
         assert(layout.bytes == memory_bytes(options));
-        loop.tables.init(slots, entries, starts, .{
+        loop.tables.init(slots, entries, starts, heartbeat_line, .{
             .id = options.id,
             .sampling = options.sampling,
             .spin_budget_ns = options.spin_budget_ns,
+            .stall_turn_ns = options.stall_turn_ns,
         });
         loop.cancels.init(handles);
         loop.addresses_used = 0;
@@ -250,7 +258,8 @@ pub const Loop = struct {
         loop.groups = @splat(buffers.Group.none);
     }
 
-    /// Every operation must have had its final event (decision 5, rule 7). Sends the wakes that
+    /// Every operation must have had its final event (decision 5, rule 7), no tick may run, and no
+    /// watch may read the heartbeat (decision 28). Sends the wakes that
     /// the posts noted and no tick sent, before it frees the ring (decision 4, amended
     /// 2026-11-06). `dropped_wakes` says how many of them the kernel did not take.
     pub fn deinit(loop: *Loop) void {
@@ -261,7 +270,7 @@ pub const Loop = struct {
     /// A test hands it an answer the kernel gives only under load (`uring_submit.zig`).
     pub fn deinit_through(loop: *Loop, enters: anytype) void {
         loop.tables.assert_owner();
-        loop.tables.assert_empty();
+        loop.tables.assert_ended();
         loop.deinit_dropped_wakes = submit_module.send_noted_wakes(loop, enters);
         if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.ring.deinit();
@@ -269,9 +278,9 @@ pub const Loop = struct {
 
     /// The wakes the last `deinit` dropped: the kernel took no entry for them in
     /// `constants.deinit_wake_passes_max` passes, or an enter failed (decision 4, amended
-    /// 2026-11-06). Read after
-    /// `deinit`, until the next `init`. Each message is in its target's ring, and the target reads
-    /// it when its wait ends, at most `core.constants.wait_ns_max` later.
+    /// 2026-11-06). Read after `deinit`, until the next `init`. Each message is in its target's
+    /// ring, and the target reads it when its wait ends, at most `core.constants.wait_ns_max`
+    /// later.
     pub fn dropped_wakes(loop: *const Loop) u32 {
         return loop.deinit_dropped_wakes;
     }
@@ -352,10 +361,11 @@ pub const Loop = struct {
         // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
         // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
         try loop.kept_error.take(dispatch);
-        const wait = dispatch.begin(wait_ns);
+        const heartbeat_line = loop.tables.heartbeat;
+        const wait = dispatch.begin(heartbeat_line, wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);
-        return dispatch.end(events[0..produced]);
+        return dispatch.end(heartbeat_line, events[0..produced]);
     }
 
     fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
@@ -376,6 +386,9 @@ pub const Loop = struct {
     pub const tasks_queued = dispatch_calls.tasks_queued;
     pub const task_budget_left = dispatch_calls.task_budget_left;
     pub const discard_tasks = dispatch_calls.discard_tasks;
+    // The view a library holds and the heartbeat of decision 28.
+    pub const shared = dispatch_calls.shared;
+    pub const heartbeat = dispatch_calls.heartbeat;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
@@ -402,50 +415,10 @@ pub const Loop = struct {
     pub const give_back_buffer = buffers.give_back;
     pub const release_buffers = buffers.release;
 
-    /// A buffer group for datagrams (decision 15). The reserve in front of each datagram is
-    /// chosen here, once, so a reap subtracts a constant the loop already holds and a fourth
-    /// control message later costs no caller a layout change. `provide_buffers` is untouched, so
-    /// no stream caller gains a precondition.
-    ///
-    /// One loop serves one datagram shape: a second group with a different reserve would make
-    /// the prefix a per-completion lookup, which is what the constant exists to avoid. The first
-    /// call fixes the shape, and a later call with a different one halts (`core.datagram.Shape`).
-    ///
-    /// The shape is checked and recorded after `provide` returns, so a call from another thread
-    /// halts on `provide`'s owner check before it writes anything, and a group the kernel refused
-    /// leaves the shape as it was.
-    pub fn provide_datagram_buffers(
-        loop: *Loop,
-        group_id: u16,
-        memory: []align(buffers.group_alignment) u8,
-        count: u16,
-        buffer_bytes: u32,
-        group: core.datagram.GroupOptions,
-    ) buffers.ProvideError!void {
-        core.datagram.check_buffer_bytes(buffer_bytes, group);
-        try buffers.provide(loop, group_id, memory, count, buffer_bytes);
-        loop.datagram_shape.fix(group);
-        loop.datagram_prefix = @intCast(core.datagram.prefix_bytes(group));
-    }
-
-    /// The datagram an event of group `group_id` names: the only supported reader of that
-    /// buffer, because a datagram's bytes do not start at its front. The buffer stays the
-    /// caller's until `give_back_buffer`.
-    pub fn datagram(loop: *const Loop, group_id: u16, event: core.Event) core.Delivery {
-        assert(!event.flags.message);
-        assert(event.flags.buffer);
-        const buffer = loop.provided_buffer(group_id, event.flags.buffer_id);
-        const bytes: u32 = @intCast(event.result);
-        const whole = datagram_module.delivery(buffer, bytes, loop.datagram_shape.options);
-        const capacity = buffer.len - @as(usize, @intCast(loop.datagram_prefix));
-        return core.datagram_split.view(whole, capacity, event);
-    }
-
-    /// The bytes of the provided buffer a receive event named: `buffer_id` of `group_id`.
-    pub fn provided_buffer(loop: *const Loop, group_id: u16, buffer_id: u16) []u8 {
-        assert_class_a(group_id < core.constants.buffer_groups_max);
-        return loop.groups[group_id].bytes_of(buffer_id);
-    }
+    // The datagram groups of decision 15, and the reader of a provided buffer: `uring_buffers.zig`.
+    pub const provide_datagram_buffers = buffers.provide_datagram_buffers;
+    pub const datagram = buffers.datagram;
+    pub const provided_buffer = buffers.provided_buffer;
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {

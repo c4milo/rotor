@@ -6,9 +6,9 @@
 //! a task does when it runs, and what a poller does in `begin`.
 const std = @import("std");
 const assert = std.debug.assert;
-const constants = @import("constants.zig");
-const Event = @import("event.zig").Event;
-const Random = @import("random.zig").Random;
+const constants = @import("../constants.zig");
+const Event = @import("../event.zig").Event;
+const Random = @import("../random.zig").Random;
 
 /// Pollers in the pool: more than the table holds, so an add can find the table full.
 pub const pollers_pool = constants.pollers_max + 2;

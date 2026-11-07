@@ -229,7 +229,8 @@ fn end_the_remote_on_this_thread() void {
 
 fn ran_nothing(_: *core.Task) void {}
 
-var task: core.Task align(@alignOf(core.Task)) = .{ .run = ran_nothing };
+const ran_nothing_call: core.Task.Call = .{ .name = "ran_nothing", .function = ran_nothing };
+var task: core.Task align(@alignOf(core.Task)) = .{ .call = &ran_nothing_call };
 
 /// `schedule` from a second thread (decision 27). With the check deleted, the task is queued and
 /// the call returns.
@@ -243,7 +244,38 @@ fn schedule_a_task_on_this_thread() void {
     loop.schedule(&task) catch {};
 }
 
+/// `shared` from a second thread (decision 28). With the check deleted, the call returns the view.
+fn hand_out_the_view_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(hand_out_the_view_on_this_thread);
+}
+
+fn hand_out_the_view_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.shared();
+}
+
+/// `heartbeat` from a second thread (decision 28). With the check deleted, the call returns the
+/// heartbeat.
+fn hand_out_the_heartbeat_from_another_thread() void {
+    loop.init_tables(&memory, options);
+    on_another_thread(hand_out_the_heartbeat_on_this_thread);
+}
+
+fn hand_out_the_heartbeat_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.heartbeat();
+}
+
 pub const scenarios = [_]scenario.Scenario{
+    .{
+        .name = "owner: hand out the view from another thread",
+        .run = hand_out_the_view_from_another_thread,
+    },
+    .{
+        .name = "owner: hand out the heartbeat from another thread",
+        .run = hand_out_the_heartbeat_from_another_thread,
+    },
     .{ .name = "owner: schedule a task from another thread", .run = schedule_a_task_from_another_thread },
     .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "owner: tick from another thread", .run = tick_from_another_thread },

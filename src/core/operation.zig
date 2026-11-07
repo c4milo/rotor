@@ -11,7 +11,7 @@ const assert = std.debug.assert;
 const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const datagram = @import("datagram.zig");
-const Completion = @import("dispatch.zig").Completion;
+const Completion = @import("dispatch/dispatch.zig").Completion;
 
 /// An open file, socket or listener. An integer, so a consumer's deterministic twin of the
 /// surface can hand out indices.
