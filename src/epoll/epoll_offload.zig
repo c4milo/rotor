@@ -52,15 +52,22 @@ pub fn on_a_worker(loop: *const Loop, slot: *const Slot) bool {
 /// Hands one queued operation to the caller's offload. The slot becomes `submitted` and stays the
 /// loop's until the worker's message comes back and `finish_local` ends it.
 ///
+/// With `core.constants.offload_in_flight_max` operations out, the operation stays `queued` on the
+/// held list instead, with its deadline armed, and the flush of a later tick hands it out once a
+/// result has come back. So no worker's ring can fill (decision 18, amendment of 2026-11-06).
+///
 /// Every parameter is copied out of the slot here, on the loop thread, so the worker reads no slot.
 pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
     loop.tables.assert_owner();
+    const in_flight = &loop.inbox.offload_in_flight;
+    if (!in_flight.has_room()) return in_flight.hold(&loop.tables, index);
     const offload = loop.offload.?;
     assert(index < loop.works.len);
     const code = core.offload.code_of(slot.code).?;
     const bytes = if (core.file_call.is_sync(code)) &[_]u8{} else slot.bytes();
 
     loop.tables.hand_over(index, slot);
+    in_flight.note_handed_out();
     const work = &loop.works[index];
     work.* = .{
         .run = run,
@@ -95,9 +102,11 @@ fn run(work: *Work, worker: u16) void {
     // thread makes it and nothing else.
     const result = file_call.result(core.file_call.request_of_work(work));
 
-    // The ring holds `mailbox_messages` per worker. A caller that hands one worker more operations
-    // than that without letting the loop run has overrun it, and dropping the message would owe an
-    // operation a final event it never gets (decision 5, rule 1). So the push must succeed.
+    // The ring holds `mailbox_messages` per worker, and the loop has at most
+    // `offload_in_flight_max`, which is no more, out at a time. Each result in the ring belongs to
+    // an operation that is out, so the ring has room for this one (decision 18, amendment of
+    // 2026-11-06). A dropped message would owe an operation a final event it never gets
+    // (decision 5, rule 1), so a failed push halts.
     const pushed = ring.push(.{ .tag = core.offload.tag_of(result), .payload = work.index });
     assert(pushed);
 
@@ -108,13 +117,16 @@ fn run(work: *Work, worker: u16) void {
     if (loop.inbox.offload_asleep.load(.seq_cst)) queue_module.Queue.wake(loop.queue.wake_descriptor);
 }
 
-/// Moves every result the workers pushed into the loop's finished list: `core.offload.drain`.
+/// Moves every result the workers pushed into the loop's finished list, and gives back the room each
+/// one held: `core.offload.drain`.
 ///
 /// It does not check the owner. `tick` checks it first, before its flush and expiry touch the
 /// tables, and in the loop only `tick` calls this. A second check here halted the same tick, so no
 /// halt scenario could show that `tick`'s own check halts, as decision 4 requires (2026-09-22).
 pub fn drain(loop: *Loop) u32 {
-    return core.offload.drain(loop.inbox.completions, &loop.tables, loop.works.len);
+    const inbox = &loop.inbox;
+    const in_flight = &inbox.offload_in_flight;
+    return core.offload.drain(inbox.completions, in_flight, &loop.tables, loop.works.len);
 }
 
 /// True when any worker has pushed a result the loop has not taken: `core.offload.pending`.

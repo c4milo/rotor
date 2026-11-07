@@ -324,6 +324,24 @@ a process may run either backend; a caller that sets a policy there is right on 
   bytes of the caller's, because the caller's threads write it. `examples/offload.zig` is a
   bounded pool that does this, and `bench/files/reads_pool.zig` is the one the benchmarks use.
 
+A loop has at most `offload_in_flight_max` (256) file operations out on its workers at a time.
+An operation is out from the hand-out until the loop takes its result. A further file operation
+stays queued, and a later tick hands it out when a result comes back. The loop does not refuse it,
+and it gets its final event as every operation does. So an offload never holds more than 256 of one
+loop's works at once (decision 18, amendment of 2026-11-06).
+
+A queued file operation is the loop's alone, and the loop ends it as it ends any queued operation:
+
+- Its deadline runs from the tick that queues it, as any operation's runs from the tick that hands
+  it over, so `timeout_ns` ends it with `timeout` while it waits for room.
+- A `cancel` ends it with `canceled` at the next tick, wherever it is in the queue.
+- A `close` of its descriptor ends it with `canceled`, and the caller gets that event before the
+  close's event.
+
+An operation out on a worker is the worker's until its result comes back, and a `close` does not
+end it. The worker's call can then run on a closed descriptor, or on a file that took its number.
+So take the final event of each file operation on a descriptor before you submit its `close`.
+
 `offload` is required under `.offload` and must be null under the other two policies. io_uring
 checks the options as kqueue and epoll do, so options that halt on one backend halt on all of them,
 and then ignores them. A loop that never touches a file needs none of this.
@@ -591,6 +609,7 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 | loops and remotes per registry | `loops_max`, 256 |
 | offload workers | `offload_workers_max`, 64 |
 | a turn that counts as a stall, by default | `stall_turn_ns_default`, 10 ms |
+| file operations out on the offload per loop; more stay queued | `offload_in_flight_max`, 256 |
 | registered descriptors, registered buffers | 1,024 each |
 | provided-buffer groups, buffers per group | 16, 32,768 |
 | a message's tag | `message_tag_max`, 0x7fff_f000 |

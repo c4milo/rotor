@@ -137,6 +137,20 @@ fn answer_as_a_worker_the_loop_has_no_ring_for() void {
     work.run(work, offload_workers);
 }
 
+/// A worker's push into a full ring. The loop hands out at most `offload_in_flight_max` operations,
+/// so only rotor's own count can break this (decision 18, amendment of 2026-11-06). The scenario
+/// fills the ring itself, and `run` makes its system call and then pushes. With the check deleted,
+/// the result is dropped, no wake is due, and `run` returns.
+fn push_a_result_into_a_full_ring() void {
+    const work = hand_out_one();
+    const ring = &loop.inbox.completions[0];
+    for (0..core.constants.mailbox_messages) |_| {
+        if (!ring.push(.{ .tag = 0, .payload = work.index })) return;
+    }
+    scenario.reached_violation();
+    work.run(work, 0);
+}
+
 /// The `offload` policy with no offload: nothing would ever answer, so every file operation would
 /// wait for a final event that cannot come (decision 5, rule 1).
 fn choose_the_offload_policy_without_an_offload() void {
@@ -419,6 +433,7 @@ const scenarios = [_]scenario.Scenario{
         .name = "offload: answer as a worker the loop has no ring for",
         .run = answer_as_a_worker_the_loop_has_no_ring_for,
     },
+    .{ .name = "offload: push a result into a full ring", .run = push_a_result_into_a_full_ring },
     .{
         .name = "offload: choose the offload policy without an offload",
         .run = choose_the_offload_policy_without_an_offload,

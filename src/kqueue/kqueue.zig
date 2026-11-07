@@ -454,6 +454,7 @@ test {
     _ = @import("kqueue_file_call.zig");
     _ = @import("kqueue_mailbox_test.zig");
     _ = @import("kqueue_offload_test.zig");
+    _ = @import("kqueue_offload_held_test.zig");
     _ = @import("kqueue_perform_test.zig");
     _ = @import("kqueue_sync_socket_test.zig");
     _ = @import("kqueue_tick_test.zig");

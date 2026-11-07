@@ -36,6 +36,10 @@ pub const Inbox = struct {
     /// thread knows to wake it. The workers read it, so it is atomic, where `sleeping` is not
     /// (decision 18, and decision 12's point 6 for the race it settles).
     offload_asleep: std.atomic.Value(bool),
+    /// The operations out on the offload's workers, and the file operations that wait for room
+    /// (decision 18, amendment of 2026-11-06). Only the loop thread touches it. It stays empty
+    /// unless the loop's file policy is `offload`.
+    offload_in_flight: offload.InFlight,
 
     pub fn init(registry: ?*Registry, completions: []Mailbox) Inbox {
         return .{
@@ -43,6 +47,7 @@ pub const Inbox = struct {
             .sleeping = false,
             .completions = completions,
             .offload_asleep = .init(false),
+            .offload_in_flight = .empty,
         };
     }
 
@@ -68,6 +73,10 @@ pub const Inbox = struct {
     /// sleep on that message (decision 12, point 6). Returns the wait to sleep for, or null.
     pub fn settle_to_sleep(inbox: *Inbox, receiver: LoopId, wait: ?u64) ?u64 {
         const bound = wait orelse return null;
+        // A loop with an operation held for room sleeps only while a worker owes it a result, and
+        // the worker's push wakes it. The flush holds an operation only when the count is at its
+        // limit, and a result taken since then made an event, so this tick does not sleep.
+        assert(inbox.offload_in_flight.may_sleep());
         // The offload's workers are told the same thing the other loops are told, through a flag
         // of this loop's own: an offload works without a registry, because its workers own no loop.
         if (inbox.completions.len != 0) {

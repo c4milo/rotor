@@ -5,6 +5,11 @@ ruled "let's allow a thread pool" after the comparison below showed what the kqu
 and what libxev does instead. This record amends `0002-scope.md`'s correction "files on macOS" and
 adds a row to the choice that record made.
 
+**Amended on 2026-11-06** by Camilo's ruling R1 (a): a loop has at most `offload_in_flight_max`
+operations out on its workers, and keeps a further file operation queued. Three more rulings of
+that day make the loop end a held operation as it ends a queued one: at a close of its descriptor,
+at its deadline, and at a cancel. "Amendment of 2026-11-06" below sets them out.
+
 What is built: the three policies, the hand-off, the cancel of an offloaded operation, the
 conformance scenarios and the halt scenarios. What is not: the harness row, because measurement is
 deferred (`0003-speed-sources.md`'s rule, and Camilo's ruling of 2026-09-20). **No number is
@@ -125,6 +130,104 @@ after the loop has taken its result and been drained. A loop torn down then has 
 read by that worker, and possibly written to after it was closed and its number reused.
 ThreadSanitizer reported it in the race gate the first time the epoll suite ran there, from a
 scenario that deinitialised the loop before it stopped its pool; kqueue's `run` has the same shape.
+
+## Amendment of 2026-11-06: a bound on the operations out
+
+### The defect
+
+A worker pushes each result to its own ring of `mailbox_messages` (256), and `Work.run` asserts
+that the push succeeded. A dropped result would leave an operation with no final event (decision 5,
+rule 1). Until this amendment, a loop handed out every file operation of a flush at once.
+
+So a loop with more than 256 file operations out on one worker filled that ring when the loop was
+busy, for example in a long callback, while they finished. The 257th push failed, and the process
+halted. Load and timing reached the halt, and the caller made no mistake. A robustness audit for
+stompy, which runs one loop per core, found it as F1.
+
+### The ruling
+
+Camilo chose answer (a) of R1 on 2026-11-06. The other answers were an assertion at init that
+`operations <= mailbox_messages` under `.offload`, and a documented bound only.
+
+- `core.constants.offload_in_flight_max` names the limit, and it is `mailbox_messages`. A comptime
+  assert holds it at or below `mailbox_messages`.
+- A loop counts the operations it handed out whose result it has not taken off a ring. The count
+  rises in the backend's `hand_out` and falls in `core.offload.drain`.
+- At the limit, `hand_out` keeps the operation `queued` on a held list. The operation is not
+  refused, and it still gets exactly one final event.
+- Each flush first hands out the held operations, oldest first, while there is room. So a file
+  operation queued later never passes a held one.
+- `core.offload.InFlight`, in `src/core/offload_in_flight.zig`, holds the count and the held list
+  for both kqueue and epoll. Each loop keeps it in its `Inbox`.
+
+### Why the push assertion is now an invariant
+
+Every result in a ring belongs to an operation that is out, and at most 256 are out. So a ring
+never holds more results than it has room for, and only a defect in rotor's count can fail the push.
+
+A worker must also see each ring's `head` no older than it was at the hand-out of each work it ran.
+The caller's `submit` must make the `Work` fields visible to the worker. So it orders every store
+the loop made before the hand-out, the pops of `head` among them, before the worker's loads.
+
+### The held operations: rulings (a), (b) and (c)
+
+A review of the first build found that a `close` did not end a held write on its descriptor. So the
+write went out after the close, to a closed descriptor or to a file that took its number. Camilo
+ruled on 2026-11-06 that a held operation is the loop's alone, and the loop ends it as it ends a
+queued one.
+
+- **(a) A close ends the held operations on its descriptor.** A backend's `close` first calls
+  `end_waiters`, then `InFlight.end_descriptor`, and then closes the descriptor. Each held operation
+  on the descriptor ends with `canceled`. The finished list keeps the order, so the caller sees
+  these events before the close's event, as decision 5, rule 6 requires.
+- **(b) A held operation's deadline runs from its submit.** The flush that holds the operation arms
+  its deadline, as a flush that hands an operation out does. The later hand-out keeps that deadline.
+  So a caller's `timeout_ns` ends a held operation with `timeout` while it waits for room. The
+  expiry marks the operation, and the next flush ends it, as for a queued operation.
+- **(c) A cancel ends a held operation wherever it sits.** A backend's `cancel` sets
+  `InFlight.canceled` when it marks a queued operation while some are held. The next flush then
+  visits each held operation once, ends each one that is marked, and keeps the others in order. A
+  flush with no such cancel does not walk the list. Before this ruling, a cancelled operation behind
+  one that waited for room ended only when that one went out.
+
+An operation out on a worker is not ended by a `close`. The worker owns it until its result comes
+back, and a `pread` or a `pwrite` that runs cannot be stopped. The descriptor can close before the
+worker's call starts, or while it runs. The call then fails with `EBADF`, or it reads or writes the
+file that took the number. Its event can come after the close's event. So rule 6 does not hold for
+such an operation. That was so before this amendment, and the amendment does not change it.
+`docs/using.md` tells a caller to take the final event of each such operation before a `close`.
+
+### What it costs and what it changes
+
+- `InFlight` is 20 bytes, and a comptime assert holds it there: the count, the held list and the
+  flag of ruling (c). It adds 20 bytes to the `Inbox` of every loop, io_uring's included.
+- A flush walks the held list only after a cancel that reached a queued operation while some were
+  held. A cancel of an operation on the pending list can cause that walk, which then ends nothing.
+  A `close` walks the list when it holds an operation. Each walk visits each held operation once.
+- A loop may sleep with operations held. The flush holds one only when 256 are out, so a worker
+  owes the loop a result, and that worker's push wakes it. `Inbox.settle_to_sleep` asserts this.
+- The caller's `submit` never has to queue more than 256 works for one loop at a time.
+
+### How it is checked
+
+- `src/conformance/conformance_offload_limit.zig` submits 300 reads with one worker that holds. One
+  tick hands out exactly 256. The worker then answers all 256 while the loop does not tick, which
+  fills the ring. Every read then gets exactly one event, and the pool ran 300. It runs on kqueue
+  on macOS and on epoll in the Linux gate and the race gate.
+- `src/conformance/conformance_offload_held.zig` fills the offload with 256 reads on a worker that
+  holds, and then holds one more operation. A `close` ends a held write on its descriptor with
+  `canceled` before its own event. A held read with a deadline of 1 ms ends with `timeout`. A cancel
+  of a held read behind another held read ends it with `canceled`, and the first read still goes
+  out. Each operation gets exactly one final event. It runs where the limit scenario runs.
+- `src/kqueue/kqueue_offload_held_test.zig` tests the same paths through kqueue's own flush, cancel
+  and close, with a pool that runs no work.
+- `src/core/offload_in_flight.zig` tests the count, the held list, the order, a cancel behind a held
+  operation, a deadline, and a close.
+- Halt scenarios: a push into a full ring in `tools/halt/kqueue_scenarios.zig` and in
+  `tools/halt/epoll_linux_scenarios.zig`. In `tools/halt/core_scenarios_offload.zig`: a hand-out
+  past the limit, more results taken than handed out, a sleep with an operation held and none out, a
+  hold with room, a cancel noted for an unmarked slot, a hand-out of a marked held operation, a
+  negative descriptor, and a held operation that is not queued.
 
 ## Alternatives it beat
 

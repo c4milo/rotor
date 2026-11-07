@@ -80,6 +80,21 @@ pub const loops_max: u16 = 256;
 /// multi-producer structure and no lock. A caller with more threads than this runs more loops.
 pub const offload_workers_max: u16 = 64;
 
+/// The most operations one loop has out on its offload's workers at a time: handed out, and with
+/// a result the loop has not yet taken off a ring. A file operation over this count stays queued
+/// until a result comes back (decision 18, amendment of 2026-11-06).
+///
+/// Each worker pushes its results to its own ring of `mailbox_messages`. Every result in a ring
+/// belongs to an operation that is out, so with this limit no ring can hold more results than it
+/// has room for. One worker can hold every operation that is out, so the limit is one ring's size.
+pub const offload_in_flight_max: u32 = mailbox_messages;
+
+comptime {
+    // A ring holds at most `mailbox_messages`, and one worker can hold every operation that is out.
+    std.debug.assert(offload_in_flight_max <= mailbox_messages);
+    std.debug.assert(offload_in_flight_max >= 1);
+}
+
 /// The largest tag a `Message` may carry. io_uring delivers a posted message as a completion
 /// whose 32-bit result is the sender's to choose, and a result in [-4095, -1] is an errno. The
 /// uring backend sets the top bit of the tag, so a message's result is below -4095 and never

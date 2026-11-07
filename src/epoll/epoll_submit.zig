@@ -24,9 +24,12 @@ const Loop = epoll.Loop;
 const Slot = core.Slot;
 const Filter = core.waiters.Filter;
 
-/// Handles queued slots, oldest first, until none is left.
+/// Handles queued slots, oldest first, until none is left. The file operations held for the
+/// offload's room go first, so a later one never passes them (decision 18, amendment of 2026-11-06).
 pub fn flush(loop: *Loop) void {
     const tables = &loop.tables;
+    const in_flight = &loop.inbox.offload_in_flight;
+    if (in_flight.held.count != 0) in_flight.flush(tables, loop, offload_module.hand_out);
     const queued = tables.pending.count;
     // Each loop the posts of this flush must wake is woken once, after the flush (decision 12,
     // point 6).
@@ -125,12 +128,15 @@ pub fn register(loop: *Loop, descriptor: core.Descriptor) queue_module.ControlEr
     return loop.queue.arm(descriptor, interest);
 }
 
-/// Ends every operation that waits on the descriptor with `canceled`, then closes it. The finished
-/// list keeps their order, so the caller sees each of them before the close (decision 5, rule 6).
-/// Closing the descriptor takes its registration out of the epoll instance, as the kernel removes a
-/// file from every instance when its last descriptor closes.
+/// Ends with `canceled` every operation that waits on the descriptor, and every file operation
+/// held for the offload's room, then closes it. The finished list keeps their order, so the caller
+/// sees each of them before the close (decision 5, rule 6). Closing the descriptor takes its
+/// registration out of the epoll instance, as the kernel removes a file from every instance when
+/// its last descriptor closes. An operation out on a worker is the worker's, and is not ended here
+/// (decision 18, amendment of 2026-11-06).
 fn close(loop: *Loop, slot: *const Slot) i32 {
     loop.tables.end_waiters(&loop.waiters, slot.descriptor);
+    loop.inbox.offload_in_flight.end_descriptor(&loop.tables, slot.descriptor);
     sync.close_now(slot.descriptor);
     return 0;
 }

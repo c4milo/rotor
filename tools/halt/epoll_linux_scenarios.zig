@@ -4,9 +4,10 @@
 //! backend exists for (decision 20). `zig build halt-check` does not run it.
 //!
 //! A scenario proves an assertion only if the scenario returns once that assertion is deleted. Each
-//! scenario here runs on a loop with a real epoll instance (`Loop.init`), so with the assertion
-//! deleted the loop makes its Linux calls and the scenario returns. On a Mac those calls run other
-//! system calls (`epoll_scenarios.zig`), and that is why the scenarios are here.
+//! scenario here makes Linux calls, before its check or after it, and on a Mac those calls run
+//! other system calls (`epoll_scenarios.zig`). That is why the scenarios are here. All but the
+//! offload's run on a loop with a real epoll instance (`Loop.init`), so with the assertion deleted
+//! the loop makes its Linux calls and the scenario returns.
 const std = @import("std");
 const core = @import("core");
 const epoll = @import("epoll");
@@ -115,8 +116,58 @@ fn end_a_loop_that_a_watch_reads() void {
     loop.deinit();
 }
 
+// A worker's push into a full ring (decision 18, amendment of 2026-11-06). `run` makes its
+// system call before the push, a Linux `pread`, so this scenario is here and not in the file a Mac
+// runs. The loop comes up through `init_tables` and holds no epoll instance: an awake loop is never
+// woken, so `run` makes no other call.
+
+/// One worker, so ring 0 is the only ring there is.
+const offload_workers: u16 = 1;
+
+const offload_options: Loop.Options = .{
+    .operations = 4,
+    .entries = 4,
+    .file_policy = .offload,
+    .offload = .{ .context = null, .submit = capture, .workers = offload_workers },
+};
+
+const alignment = core.layout.memory_alignment;
+var offload_memory: [Loop.memory_bytes(offload_options)]u8 align(alignment) = undefined;
+const ring_bytes = epoll.offload_module.memory_bytes(offload_workers);
+var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
+
+/// The work the loop handed out, kept so the scenario can run it as a worker would.
+var captured: ?*core.offload.Work = null;
+
+fn capture(context: ?*anyopaque, work: *core.offload.Work) void {
+    _ = context;
+    captured = work;
+}
+
+var read_buffer: [64]u8 = undefined;
+
+/// The loop hands out at most `offload_in_flight_max` operations, so only rotor's own count can
+/// fill a ring. The scenario fills it itself. With the check deleted, the result is dropped, no
+/// wake is due, and `run` returns.
+fn push_a_result_into_a_full_ring() void {
+    var options_with_rings = offload_options;
+    options_with_rings.offload_memory = &ring_memory;
+    loop.init_tables(&offload_memory, options_with_rings);
+    const read = core.Operation.read(1, closed_descriptor, &read_buffer, 0);
+    _ = loop.submit(&.{read}, &.{});
+    epoll.submit_module.flush(&loop);
+    const work = captured orelse return;
+    const ring = &loop.inbox.completions[0];
+    for (0..core.constants.mailbox_messages) |_| {
+        if (!ring.push(.{ .tag = 0, .payload = work.index })) return;
+    }
+    scenario.reached_violation();
+    work.run(work, 0);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
+    .{ .name = "offload: push a result into a full ring", .run = push_a_result_into_a_full_ring },
     .{ .name = "tick: arm a wait timer of 0 ns", .run = arm_a_wait_timer_of_nothing },
     .{
         .name = "tick: arm a wait timer above the wait limit",

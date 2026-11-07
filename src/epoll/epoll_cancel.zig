@@ -38,7 +38,11 @@ pub fn cancel(loop: *Loop, handle: Handle) void {
 /// itself when a deadline passes, with `flags.timed_out` already set.
 pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     const tables = &loop.tables;
-    if (tables.request_cancel(index, slot) != .backend) return;
+    // A queued operation may be held for the offload's room, and the next flush ends it there
+    // (decision 18, amendment of 2026-11-06).
+    if (tables.request_cancel(index, slot) != .backend) {
+        return loop.inbox.offload_in_flight.note_cancel(slot);
+    }
     assert(slot.state == .submitted);
     // An offloaded operation is out on one of the caller's threads, and a `pread` already running
     // cannot be stopped. The worker's answer is what ends it, carrying whatever the call returned:

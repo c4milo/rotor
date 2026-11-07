@@ -22,6 +22,11 @@ const layout = @import("layout.zig");
 const mailbox_module = @import("mailbox.zig");
 const operation = @import("operation.zig");
 const tables_module = @import("tables.zig");
+const in_flight_module = @import("offload_in_flight.zig");
+
+/// The count of operations out on the workers, and the file operations that wait for room
+/// (decision 18, amendment of 2026-11-06): `offload_in_flight.zig`.
+pub const InFlight = in_flight_module.InFlight;
 
 const Descriptor = operation.Descriptor;
 const Mailbox = mailbox_module.Mailbox;
@@ -178,10 +183,11 @@ const drain_rounds_max = constants.mailbox_messages / constants.messages_per_dra
 
 /// Moves every result the workers pushed into `tables`' finished list, on the loop thread. The
 /// next `drain_finished` hands their events over, as decision 5, rule 2 requires: not the call that
-/// produced the result. `works_len` is how many works the loop holds, one per slot.
+/// produced the result. `works_len` is how many works the loop holds, one per slot. Each result
+/// taken leaves room in `in_flight` for one more hand-out.
 ///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
-pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
+pub fn drain(completions: []Mailbox, in_flight: *InFlight, tables: *Tables, works_len: usize) u32 {
     const finisher: Finisher = .{ .tables = tables, .works_len = works_len };
     var finished: u32 = 0;
     for (completions) |*ring| {
@@ -190,6 +196,9 @@ pub fn drain(completions: []Mailbox, tables: *Tables, works_len: usize) u32 {
             const moved = ring.pop_each(constants.messages_per_drain, &finisher, Finisher.finish);
             if (moved == 0) break;
             finished += moved;
+            // Here and not after the loop, so a loop with no offload, which holds no ring, pays
+            // nothing for the count on every tick.
+            in_flight.note_taken(moved);
         }
     }
     return finished;
@@ -358,15 +367,19 @@ test "a result a worker hands back reaches the record of its operation, and no o
         operation.Operation.read(plain_user_data, 3, &bytes, 0),
     };
     try testing.expectEqual(@as(u32, reads.len), tables.submit(&reads, &.{}));
-    // What a backend's flush does to each: hands it out, and the slot is `submitted`.
+    // What a backend's flush does to each: hands it out and counts it, and the slot is `submitted`.
+    var in_flight: InFlight = .empty;
     for (0..reads.len) |_| {
         const index = tables.next_pending().?;
         tables.take_pending(index);
         tables.hand_over(index, tables.table.at(index));
+        in_flight.note_handed_out();
         const result: operation.Message = .{ .tag = tag_of(@intCast(bytes.len)), .payload = index };
         try testing.expect(rings[0].push(result));
     }
-    try testing.expectEqual(@as(u32, reads.len), drain(rings, &tables, test_slots));
+    try testing.expectEqual(@as(u32, reads.len), drain(rings, &in_flight, &tables, test_slots));
+    // Both results taken, so both hand-outs have their room back.
+    try testing.expectEqual(@as(u32, 0), in_flight.count);
     var events: [test_slots]Event = undefined;
     try testing.expectEqual(@as(u32, reads.len), tables.drain_finished(&events));
     try testing.expect(events[0].flags.dispatched);
