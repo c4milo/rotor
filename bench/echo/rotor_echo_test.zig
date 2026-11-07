@@ -89,6 +89,8 @@ const client_receive = 2;
 /// client loop is this test's.
 const Fixture = struct {
     server_loop: Loop,
+    /// The group the server loop reserved, which its handlers receive into.
+    server_group: core.BufferGroup,
     client_loop: Loop,
     listener: core.Descriptor,
     /// The client's end, and the end the server accepted.
@@ -101,6 +103,11 @@ const Fixture = struct {
     sent: u32,
     received: u32,
 
+    /// What the server's handlers take: its loop and the group it reserved.
+    fn serving(fixture: *Fixture) server.Serving {
+        return .{ .loop = &fixture.server_loop, .group = fixture.server_group };
+    }
+
     fn init(fixture: *Fixture, group: Group) !void {
         server.forget_connections();
         fixture.group_count = group.count;
@@ -110,9 +117,9 @@ const Fixture = struct {
         try fixture.client_loop.init(&client_memory, client_options);
         errdefer fixture.client_loop.deinit();
         const bytes = backend.buffers.group_bytes(group.count, group.buffer_bytes);
-        try testing.expectEqual(server.group_id, try fixture.server_loop.reserve_buffer_group());
+        fixture.server_group = try fixture.server_loop.reserve_buffer_group();
         try fixture.server_loop.provide_buffers(
-            server.group_id,
+            fixture.server_group,
             group_memory[0..bytes],
             group.count,
             group.buffer_bytes,
@@ -162,7 +169,7 @@ const Fixture = struct {
         try fixture.send_whole(round);
         var events: [events_max]Event = undefined;
         const arrived = try fixture.arrive(&events, fixture.group_count);
-        for (arrived) |event| server.handle(&fixture.server_loop, event);
+        for (arrived) |event| server.handle(fixture.serving(), event);
         echoed = @splat(0);
         fixture.received = 0;
         fixture.receive_rest();
@@ -222,11 +229,11 @@ const Fixture = struct {
         try fixture.send_whole(0);
         var events: [events_max]Event = undefined;
         const arrived = try fixture.arrive(&events, @max(handled_first, 1));
-        for (arrived[0..handled_first]) |event| server.handle(&fixture.server_loop, event);
-        server.close(&fixture.server_loop, fixture.accepted);
-        for (arrived[handled_first..]) |event| server.handle(&fixture.server_loop, event);
+        for (arrived[0..handled_first]) |event| server.handle(fixture.serving(), event);
+        server.close(fixture.serving(), fixture.accepted);
+        for (arrived[handled_first..]) |event| server.handle(fixture.serving(), event);
         const receive_user_data = server.user_data_of(.receive, fixture.accepted);
-        server.handle(&fixture.server_loop, Event.failure(receive_user_data, .buffers_exhausted));
+        server.handle(fixture.serving(), Event.failure(receive_user_data, .buffers_exhausted));
         try fixture.settle_close();
         fixture.close_client();
     }
@@ -299,7 +306,7 @@ const Fixture = struct {
     /// The server closes the connection through its own handlers, which hold every buffer to have
     /// come back by the time the close's event arrives.
     fn deinit(fixture: *Fixture) void {
-        server.close(&fixture.server_loop, fixture.accepted);
+        server.close(fixture.serving(), fixture.accepted);
         var events: [events_max]Event = undefined;
         for (0..ticks_max) |_| {
             if (fixture.server_loop.in_flight() == 0) break;
@@ -326,7 +333,7 @@ fn names(event: Event, descriptor: core.Descriptor) bool {
 /// events returned for the caller to read.
 fn serve(fixture: *Fixture, events: *[events_max]Event) ![]const Event {
     const count = try fixture.server_loop.tick(events, 0);
-    for (events[0..count]) |event| server.handle(&fixture.server_loop, event);
+    for (events[0..count]) |event| server.handle(fixture.serving(), event);
     return events[0..count];
 }
 
@@ -369,7 +376,7 @@ test "a connection holding more pieces than the harness's client makes is closed
     try fixture.send_whole(0);
     var events: [events_max]Event = undefined;
     const arrived = try fixture.arrive(&events, pieces_module.pieces_max + 1);
-    for (arrived) |event| server.handle(&fixture.server_loop, event);
+    for (arrived) |event| server.handle(fixture.serving(), event);
     try fixture.settle_close();
     try fixture.read_to_end();
 }

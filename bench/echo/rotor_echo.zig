@@ -57,8 +57,7 @@ const entries = 4096;
 /// Events one tick may hand over.
 const events_max = 1024;
 
-/// The group the multishot receives draw from, and its count: `rotor_echo_group.zig`.
-pub const group_id = group_module.group_id;
+/// The count of the group the multishot receives draw from: `rotor_echo_group.zig`.
 pub const group_buffers_from = group_module.group_buffers_from;
 
 /// The group's memory, cut into `--buffer-bytes` pieces. Fixed, so a larger buffer means fewer
@@ -242,10 +241,10 @@ fn serve(index: u32, listener: core.Descriptor) void {
     defer loop.deinit();
 
     const group = loop.reserve_buffer_group() catch @panic("the loop has no group id left");
-    std.debug.assert(group == group_id);
     loop.provide_buffers(group, pool_of(index), group_buffers, buffer_bytes) catch
         @panic("the buffer group was refused");
 
+    const serving: Serving = .{ .loop = &loop, .group = group };
     submit_one(&loop, .{
         .user_data = user_data_of(.accept, listener),
         .kind = .{ .accept = .{ .listener = listener, .multishot = true } },
@@ -254,7 +253,7 @@ fn serve(index: u32, listener: core.Descriptor) void {
     var events: [events_max]Event = undefined;
     while (true) {
         const count = loop.tick(&events, core.constants.ns_per_s) catch @panic("the tick failed");
-        for (events[0..count]) |event| handle(&loop, event);
+        for (events[0..count]) |event| handle(serving, event);
     }
 }
 
@@ -311,16 +310,23 @@ fn set_buffer_bytes(wanted: u32) !void {
     buffer_bytes = wanted;
 }
 
-pub fn handle(loop: *Loop, event: Event) void {
+/// A loop of the server and the buffer group it reserved: what each handler needs. Each loop runs
+/// on a thread of its own, and its group is the one its `reserve_buffer_group` gave (decision 29).
+pub const Serving = struct {
+    loop: *Loop,
+    group: core.BufferGroup,
+};
+
+pub fn handle(serving: Serving, event: Event) void {
     switch (kind_of(event.user_data)) {
-        .accept => handle_accept(loop, event),
-        .receive => handle_receive(loop, event),
-        .send => handle_send(loop, event),
+        .accept => handle_accept(serving, event),
+        .receive => handle_receive(serving, event),
+        .send => handle_send(serving, event),
         .close => handle_close(event),
     }
 }
 
-fn handle_accept(loop: *Loop, event: Event) void {
+fn handle_accept(serving: Serving, event: Event) void {
     const accepted = event.outcome() catch return;
     const descriptor: core.Descriptor = @intCast(accepted);
     if (descriptor >= connections_max) return sync.close_now(descriptor);
@@ -336,18 +342,18 @@ fn handle_accept(loop: *Loop, event: Event) void {
     // The close of the connection that last had this number came after all of its sends.
     std.debug.assert(pieces[@intCast(descriptor)].count == 0);
     open[@intCast(descriptor)] = true;
-    arm_receive(loop, descriptor);
+    arm_receive(serving, descriptor);
 }
 
 /// One receive from the group for this connection. In `group` it is multishot and serves the
 /// connection until it ends or the group empties. In `group_single` it serves one piece.
-fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
-    if (shape == .accumulate) return arm_accumulating_receive(loop, descriptor);
-    submit_one(loop, .{
+fn arm_receive(serving: Serving, descriptor: core.Descriptor) void {
+    if (shape == .accumulate) return arm_accumulating_receive(serving, descriptor);
+    submit_one(serving.loop, .{
         .user_data = user_data_of(.receive, descriptor),
         .kind = .{ .receive = .{
             .socket = descriptor,
-            .target = .{ .group = group_id },
+            .target = .{ .group = serving.group },
             .multishot = shape == .group,
         } },
     });
@@ -355,10 +361,10 @@ fn arm_receive(loop: *Loop, descriptor: core.Descriptor) void {
 
 /// One receive into what is left of this connection's buffer. Single-shot: the next one is armed
 /// when this completes, because where it lands depends on how much arrived.
-fn arm_accumulating_receive(loop: *Loop, descriptor: core.Descriptor) void {
+fn arm_accumulating_receive(serving: Serving, descriptor: core.Descriptor) void {
     const have = accumulated[@intCast(descriptor)];
     std.debug.assert(have < buffer_bytes);
-    submit_one(loop, .{
+    submit_one(serving.loop, .{
         .user_data = user_data_of(.receive, descriptor),
         .kind = .{ .receive = .{
             .socket = descriptor,
@@ -378,7 +384,7 @@ fn submit_one(loop: *Loop, operation: Operation) void {
 
 /// Bytes arrived: echo them straight back out of the buffer the loop picked, and hold that
 /// buffer until the send says it is done with it.
-fn handle_receive(loop: *Loop, event: Event) void {
+fn handle_receive(serving: Serving, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
     const received = event.outcome() catch |failure| {
         // The group emptied. That ends the multishot receive and is transient back-pressure, not
@@ -387,46 +393,46 @@ fn handle_receive(loop: *Loop, event: Event) void {
         // above the buffer count, which is exactly where the harness is asked to go. A connection
         // already closing is not read again: its close ends what is in flight.
         const again = failure == error.BuffersExhausted and open[@intCast(descriptor)];
-        if (again) return arm_receive(loop, descriptor);
-        return close(loop, descriptor);
+        if (again) return arm_receive(serving, descriptor);
+        return close(serving, descriptor);
     };
-    if (received == 0) return close(loop, descriptor);
-    if (shape == .accumulate) return accumulate_received(loop, descriptor, received);
-    hold(loop, descriptor, .{ .buffer_id = event.flags.buffer_id, .len = received });
+    if (received == 0) return close(serving, descriptor);
+    if (shape == .accumulate) return accumulate_received(serving, descriptor, received);
+    hold(serving, descriptor, .{ .buffer_id = event.flags.buffer_id, .len = received });
 }
 
 /// Bytes arrived into this connection's own buffer. A whole message is echoed with one send;
 /// anything short arms another receive into what is left, which is the point of the shape.
-fn accumulate_received(loop: *Loop, descriptor: core.Descriptor, received: u32) void {
+fn accumulate_received(serving: Serving, descriptor: core.Descriptor, received: u32) void {
     const have = &accumulated[@intCast(descriptor)];
     have.* += received;
     std.debug.assert(have.* <= buffer_bytes);
-    if (have.* < buffer_bytes) return arm_accumulating_receive(loop, descriptor);
+    if (have.* < buffer_bytes) return arm_accumulating_receive(serving, descriptor);
     have.* = 0;
-    hold(loop, descriptor, .{ .buffer_id = 0, .len = buffer_bytes });
+    hold(serving, descriptor, .{ .buffer_id = 0, .len = buffer_bytes });
 }
 
 /// Holds a piece until its echo is out, and starts its send when no other send is in flight. A
 /// piece goes straight back when its connection is closing, and when the connection already holds
 /// more than the harness's client can make, which closes it.
-fn hold(loop: *Loop, descriptor: core.Descriptor, piece: pieces_module.Piece) void {
+fn hold(serving: Serving, descriptor: core.Descriptor, piece: pieces_module.Piece) void {
     const held = &pieces[@intCast(descriptor)];
     if (!open[@intCast(descriptor)] or held.full()) {
-        release(loop, piece.buffer_id);
-        return close(loop, descriptor);
+        release(serving, piece.buffer_id);
+        return close(serving, descriptor);
     }
-    if (held.push(piece)) send_rest(loop, descriptor);
+    if (held.push(piece)) send_rest(serving, descriptor);
 }
 
 /// Submits what is left of the oldest piece this descriptor holds.
-fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
+fn send_rest(serving: Serving, descriptor: core.Descriptor) void {
     const held = &pieces[@intCast(descriptor)];
     const piece = held.oldest();
     const buffer = if (shape == .accumulate)
         accumulator_of(descriptor)
     else
-        loop.provided_buffer(group_id, piece.buffer_id);
-    submit_one(loop, .{
+        serving.loop.provided_buffer(serving.group, piece.buffer_id);
+    submit_one(serving.loop, .{
         .user_data = user_data_of(.send, descriptor),
         .kind = .{ .send = .{
             .socket = descriptor,
@@ -438,32 +444,32 @@ fn send_rest(loop: *Loop, descriptor: core.Descriptor) void {
 /// A send ended. It may have sent less than it was given, and the rest has to follow before the
 /// buffer is anyone else's: a short send that was ignored would drop those bytes and leave the
 /// caller's stream missing a piece in the middle, which no test that sends small messages sees.
-fn handle_send(loop: *Loop, event: Event) void {
+fn handle_send(serving: Serving, event: Event) void {
     const descriptor = descriptor_of(event.user_data);
     const held = &pieces[@intCast(descriptor)];
-    const sent = event.outcome() catch return drop(loop, descriptor);
+    const sent = event.outcome() catch return drop(serving, descriptor);
     // Closing: the close ended this send, or came after it, and nothing more goes out.
-    if (!open[@intCast(descriptor)]) return drop(loop, descriptor);
-    const done = held.advance(sent) orelse return send_rest(loop, descriptor);
-    release(loop, done.buffer_id);
-    if (held.count != 0) return send_rest(loop, descriptor);
+    if (!open[@intCast(descriptor)]) return drop(serving, descriptor);
+    const done = held.advance(sent) orelse return send_rest(serving, descriptor);
+    release(serving, done.buffer_id);
+    if (held.count != 0) return send_rest(serving, descriptor);
     // The single-shot shapes read again themselves: nothing is armed for this connection until
     // the echo is out.
-    if (shape != .group) arm_receive(loop, descriptor);
+    if (shape != .group) arm_receive(serving, descriptor);
 }
 
 /// Gives back every piece this connection holds, and closes it. The send that just ended was its
 /// only one in flight, so no send reads any of these buffers now.
-fn drop(loop: *Loop, descriptor: core.Descriptor) void {
-    while (pieces[@intCast(descriptor)].pop()) |piece| release(loop, piece.buffer_id);
-    close(loop, descriptor);
+fn drop(serving: Serving, descriptor: core.Descriptor) void {
+    while (pieces[@intCast(descriptor)].pop()) |piece| release(serving, piece.buffer_id);
+    close(serving, descriptor);
 }
 
 /// Gives a provided buffer back, which the accumulate shape has none of: its buffer is the
 /// connection's own and belongs to no group.
-fn release(loop: *Loop, buffer_id: u16) void {
+fn release(serving: Serving, buffer_id: u16) void {
     if (shape == .accumulate) return;
-    loop.give_back_buffer(group_id, buffer_id);
+    serving.loop.give_back_buffer(serving.group, buffer_id);
 }
 
 /// The close's own completion. It carries no buffer: the close ended the send in flight first, and
@@ -473,11 +479,11 @@ fn handle_close(event: Event) void {
     _ = event.outcome() catch {};
 }
 
-pub fn close(loop: *Loop, descriptor: core.Descriptor) void {
+pub fn close(serving: Serving, descriptor: core.Descriptor) void {
     if (descriptor < 0 or descriptor >= connections_max) return;
     if (!open[@intCast(descriptor)]) return;
     open[@intCast(descriptor)] = false;
-    submit_one(loop, .{
+    submit_one(serving.loop, .{
         .user_data = user_data_of(.close, descriptor),
         .kind = .{ .close = .{ .descriptor = descriptor } },
     });

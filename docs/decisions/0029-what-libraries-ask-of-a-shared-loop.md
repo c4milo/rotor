@@ -573,9 +573,10 @@ Where the code differs from the proposal:
    `reserve_buffer_group` and `wait_limit`, on each backend. The halt of a provide with a group that
    no caller reserved runs on each backend, through `tools/halt/buffer_release.zig`. The check of
    `wait_limit` inside a tick runs through `Dispatch.limit_between_ticks`.
-4. **`bench/echo/rotor_echo.zig` names its group by a cast.** The server is the only user of each
-   of its loops. It names the first group a loop reserves, 0, as a constant, and `serve` asserts
-   that the loop gave that id.
+4. **`bench/echo/rotor_echo.zig` keeps the group that `reserve_buffer_group` gives each loop.** The
+   first build named the first group, 0, by a cast, and `serve` asserted that the loop gave that
+   id. Camilo ruled on 2026-11-07 that the server gets its group as every library does. Each loop's
+   handlers now take a `Serving`: the loop and its group.
 5. **The halt scenarios that take a tag above the limit post `message_tag_wake + 1`.** A tag of
    `message_tag_max + 1` is the wake's tag now, which a post accepts.
 6. **`wait_limit` returns `.now` while a tick's kernel error is kept.** A tick whose kernel call
