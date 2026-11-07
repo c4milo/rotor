@@ -64,7 +64,9 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     var produced = first.produced;
     produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
-    const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
+    // `settle_to_sleep` answers null at once for a tick with no bound.
+    const bound = if (produced == 0) tables.wait_bound(wait_ns) else null;
+    const wait = loop.settle_to_sleep(bound);
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
     if (wait != null) tables.note_asleep();
     const room = @min(events.len - produced, constants.readiness_max);
@@ -83,10 +85,16 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A failed call keeps the registrations it may not have applied (decision 12, point 10).
     const ready = recover_module.settle_changes(loop, registrations, called);
     loop.wake_up();
-    // A tick that made no call has nothing to reap. What arrived since the drains above waits for
+    // A poll that made no call has nothing to reap. What arrived since the drains above waits for
     // the next tick, which does not block while a ring holds it. It still expires, so a stream of
     // messages cannot hold a due timer off.
-    if (idle) return produced + after_idle(loop, events[produced..], first.capped);
+    //
+    // A tick that was to wait and did not, because a message or a worker's result arrived after
+    // the drains above, makes no call either. It takes the drains below, so the caller gets what
+    // ended its wait from this tick. Without them the tick returned 0 with the result in its ring,
+    // which the conformance suite saw about once in 100 loaded runs (decision 18).
+    const poll = idle and bound == null;
+    if (poll) return produced + after_idle(loop, events[produced..], first.capped);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27). A wait that failed reads it too, before
@@ -113,11 +121,11 @@ fn after_idle(loop: *Loop, events: []Event, capped: bool) u32 {
     return produced;
 }
 
-/// The tick's last steps, after a kernel call that succeeded: the reap, the posted messages, the
-/// results a worker pushed while the tick waited, the lists again, and the deadlines. `before`
-/// events are already in `events`. The places the kernel's reserve kept and the reap did not use
-/// go back to the mailboxes, and then to the lists when the lists filled their share (W3, ruled
-/// 2026-11-07). Returns how many events there are now.
+/// The tick's last steps, after a kernel call that succeeded or a sleep the inbox refused: the
+/// reap, the posted messages, the results a worker pushed while the tick waited, the lists again,
+/// and the deadlines. `before` events are already in `events`. The places the kernel's reserve
+/// kept and the reap did not use go back to the mailboxes, and then to the lists when the lists
+/// filled their share (W3, ruled 2026-11-07). Returns how many events there are now.
 fn after_kernel(
     loop: *Loop,
     events: []Event,

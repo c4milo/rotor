@@ -315,11 +315,14 @@ test "an offloaded result lands in the tick that waited for it, not the one afte
     const taken = loop_fixture.loop.submit(&.{read}, &.{});
     try testing.expectEqual(@as(u32, 1), taken);
 
-    // One tick, with a wait long enough for the worker to answer. The worker's wake ends the wait,
-    // and the drain after the wait turns the result into an event. A tick that drained only before
-    // its wait would return 0 here and make the caller tick again.
+    // One tick, with the longest wait a tick takes, so a worker that the system runs late still
+    // answers inside it. The worker's wake ends the wait, and the drain after the wait turns the
+    // result into an event. A tick that drained only before its wait would return 0 here and make
+    // the caller tick again. So would a tick that found the result after its drains and before it
+    // slept, and then skipped the drains after the wait. A loaded machine showed that tick about
+    // once in 100 runs (decision 18).
     var events: [2]Event = undefined;
-    const produced = try loop_fixture.loop.tick(&events, core.constants.ns_per_s);
+    const produced = try loop_fixture.loop.tick(&events, core.constants.wait_ns_max);
     try testing.expectEqual(@as(u32, 1), produced);
     try testing.expectEqual(@as(u64, 9), events[0].user_data);
     try testing.expectEqual(@as(u32, block_bytes), try events[0].outcome());
