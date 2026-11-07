@@ -1,8 +1,26 @@
 # 31. A disk I/O scheduler
 
-Status: proposed on 2026-11-07. Nothing is built. Every cost here is a prior: a row of
-`docs/costs.md`, a row of `bench/baseline/work.txt`, or an instruction count from arithmetic.
-Nothing was measured for this record.
+Status: accepted on 2026-11-07 for the capacity and share rules (see "Ruling, 2026-11-07"). The
+rate rule is not accepted. Nothing is built. Every cost here is a prior: a row of `docs/costs.md`, a
+row of `bench/baseline/work.txt`, or an instruction count from arithmetic. Nothing was measured for
+this record.
+
+## Ruling, 2026-11-07
+
+Camilo ruled on decisions 30, 31 and 32 together. For this record:
+
+1. **The capacity rule and the share rule are accepted**, with the proposed answer to each open
+   question and the items of "Ask before" that they need.
+2. **The rate rule waits for its own ruling** (open question 2). Decisions 9 and 13 are not amended
+   until then.
+3. **The W7 disk bench runs before the build** (open question 6). It measures io-wq caps of 2, 4
+   and 8, and an fsync beside reads, on a named machine. Its numbers set the default costs (open
+   question 5).
+4. **The build order** is W3 (the fair tick order), decision 29, decision 30, then decision 32.
+   This record follows the W7 bench. It needs nothing of decisions 30 and 32.
+
+His ruling on decision 32 gives decision 30's groups names. I/O classes stay their own index space
+(open question 1), so that ruling changes nothing here.
 
 It amends decision 2, because it adds a row to the "In version one" table. It also amends these
 records:
@@ -58,7 +76,7 @@ Seastar meets rotor's rules at three points:
   only for the stall record.
 - Its queues grow on the heap. rotor allocates nothing.
 
-## The decision, as proposed
+## The decision
 
 A program that wants a scheduler gives its loop an `IoQueue` at init, in its own memory. The queue
 holds up to `io_devices_max` devices, and each device holds classes. A file operation (`read`,
@@ -72,8 +90,9 @@ runs today's path.
 2. **The share rule.** Among the classes of a device, the head of the class with the least pass
    goes out next. A dispatch adds `cost * stride` to that class's pass. Ties go to the lower class
    index. This is stride scheduling, and it reads no clock.
-3. **The rate rule, proposed for a later ruling.** A class may have a rate in units per second. It
-   refills only from `Tables.now_ns`. It is not built until Camilo rules on section 5.
+3. **The rate rule, for a later ruling.** A class may have a rate in units per second. It refills
+   only from `Tables.now_ns`. It was not accepted on 2026-11-07, and it is not built until Camilo
+   rules on it ("The rate rule, for a later ruling").
 
 At a limit, an operation is held. It is never refused, and it ends with exactly one final event.
 
@@ -318,11 +337,11 @@ operations it delays. So this record does not propose it.
 - **Decisions 26 and 28.** `SharedLoop` declares `io_state` only. A library cannot reach the queue.
 - **Decision 27.** The rate rule is not the quota of open question 13. The pick reuses the stride
   rule that "How groups could come later" sketches.
-- **Decision 30, scheduling groups (chosen 2026-11-07, not ruled).** Classes are their own index
-  space, `IoClass`, and decision 30 agrees. A journal fsync from a request's task belongs to the
-  journal's class, and not to the task's group. A later amendment may let a group name a default
-  class. Decision 30 picks among groups by DRR. This record picks among classes by stride, for the
-  reason in "Alternatives it beat".
+- **Decision 30, scheduling groups (accepted 2026-11-07).** Classes are their own index space,
+  `IoClass`, and decision 30 agrees. A named group of decision 30 is not a class either. A journal
+  fsync from a request's task belongs to the journal's class, and not to the task's group. A later
+  amendment may let a group name a default class. Decision 30 picks among groups by DRR. This
+  record picks among classes by stride, for the reason in "Alternatives it beat".
 - **Decision 32, the cross-core call helper.** A handler that answers `.later` after a file
   operation keeps its call `held` while this queue holds that operation. The call's deadline is
   compared only before the handler runs, so it does not reach the operation. A caller that needs a
@@ -440,34 +459,37 @@ pick at 8 classes.
 
 ## Open questions
 
-These are in the order that Camilo should rule on them. Each has a proposed answer.
+Camilo ruled on each one on 2026-11-07, with its proposed answer. The rate rule of question 2
+waits for a ruling of its own.
 
 1. **Classes and groups.** (a) Classes are their own index space. (b) A decision 30 group carries
-   I/O shares, as Seastar binds them. *Proposed: (a). Disk shares and CPU shares are different
+   I/O shares, as Seastar binds them. *Ruled: (a). Disk shares and CPU shares are different
    resources: a journal sync costs little CPU and needs a large disk share. A later amendment may
    let a group name a default class.*
 2. **The rate rule.** (a) Build the capacity and share rules now, and the rate rule after its own
    ruling, when stompy names a class that needs it. (b) All three now, after decisions 9 and 13
-   are amended. (c) No rate rule; the pacer of the guide only. *Proposed: (a).*
+   are amended. (c) No rate rule; the pacer of the guide only. *Ruled: (a). The rate rule waits
+   for its own ruling.*
 3. **One disk, many loops.** (a) A static split: each loop gets its own `operations_max`. (b) A
    bucket shared through decision 21's memory, as Seastar's io group shares one (recalled).
-   *Proposed: (a). A shared bucket puts a line that all cores write on each dispatch.*
+   *Ruled: (a). A shared bucket puts a line that all cores write on each dispatch.*
 4. **An operation with no class, on a loop with a queue.** (a) The default class. (b) A halt, so a
-   class that was left out is loud. *Proposed: (a). A halt breaks a library that does not know the
+   class that was left out is loud. *Ruled: (a). A halt breaks a library that does not know the
    queue exists.*
 5. **The default costs.** The read and write cost of 1 unit, 4 KiB a unit, and a sync of 64 units
-   are priors. *Proposed: set them from the W7 bench of fsync beside reads on a named machine
+   are priors. *Ruled: set them from the W7 bench of fsync beside reads on a named machine
    before the defaults are fixed.*
 6. **W7 first.** (a) W7 measures io-wq caps of 2, 4 and 8 before this is built. (b) Build now, with
-   the guide's rule of `operations_max` 2 or less for a sync class. *Proposed: (a). On io_uring the
-   cap of 2 can hide the queue's order for buffered syncs.*
-7. **`io_state`.** (a) Public, on both views, as state. (b) Left out until W9's counts. *Proposed:
+   the guide's rule of `operations_max` 2 or less for a sync class. *Ruled: (a). The W7 disk bench
+   runs before the build. On io_uring the cap of 2 can hide the queue's order for buffered
+   syncs.*
+7. **`io_state`.** (a) Public, on both views, as state. (b) Left out until W9's counts. *Ruled:
    (a). It reads state the queue holds, and an operator needs to see held work.*
 8. **A second pump after the reap.** Room that a reap frees goes out at the next flush, up to one
-   tick later. (a) The flush only. (b) Also after the reap. *Proposed: (a), then measure.*
-9. **The order of the build.** Decision 30 proposes W3, decision 29, decision 30, then decision 32.
-   *Proposed: this record after W7 (open question 6), in any place in that order, because it needs
-   nothing of decisions 30 and 32.*
+   tick later. (a) The flush only. (b) Also after the reap. *Ruled: (a), then measure.*
+9. **The order of the build.** Decision 30 proposed W3, decision 29, decision 30, then decision 32.
+   *Ruled: W3, decision 29, decision 30, decision 32, and this record after the W7 bench (open
+   question 6). It needs nothing of decisions 30 and 32.*
 
 ## Ask before
 
@@ -475,13 +497,13 @@ These items of CLAUDE.md's "Ask before" apply:
 
 | item | today | proposed |
 |---|---|---|
-| decision 2's scope | no disk scheduler | a row "disk I/O" in "In version one" |
+| decision 2's scope | no disk scheduler | a row "disk I/O" in "In version one"; accepted 2026-11-07 |
 | new named limits | | `io_devices_max` 4, `io_classes_max` 8, `io_shares_max` 1000, `io_stride_scale` 2^20 |
 | a hot structure: `Tables` | | 8 B more: `io` |
 | a hot structure: `Slot` | 2 reserved bytes | 1 becomes `io`; the size stays 64 B; `fill` writes it |
 | a hot structure: `Operation` | | 1 B on each file kind; the size must not change |
 | decision 18's held list | one FIFO for all file operations | empty when a queue is set; a new class C assertion in `hold` |
-| the rate rule (later) | | amend decision 9 (a rule 8) and decision 13, point 4 |
+| the rate rule (not ruled; it waits for its own ruling) | | amend decision 9 (a rule 8) and decision 13, point 4 |
 | the work gate | | a new row, `io-queue`, on Linux |
 | the models | | a new `spec/tla/ioqueue/`, and two Lean lemmas |
 

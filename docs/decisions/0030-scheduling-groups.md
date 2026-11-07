@@ -1,8 +1,25 @@
 # 30. Scheduling groups
 
-Status: proposed on 2026-11-07. Nothing is built. Every cost here is a prior: a row of
-`docs/costs.md` at the `mac` median, or an instruction count from arithmetic over the code at
-`5e9490d` and the counts of `bench/baseline/work.txt`. Nothing was measured for this record.
+Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"). Nothing is built. Every cost here is a
+prior: a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic over
+the code at `5e9490d` and the counts of `bench/baseline/work.txt`. Nothing was measured for this
+record.
+
+## Ruling, 2026-11-07
+
+Camilo ruled on decisions 30, 31 and 32 together. For this record:
+
+1. **This record is accepted** with the proposed answer to each open question, and with the items
+   of "Ask before" that the proposal held.
+2. **Groups have names.** He ruled on decision 32 that the caller of a cross-core call names the
+   group that the call runs in on the target. Seastar does the same. So decision 30 gains groups
+   by name, and every loop agrees on what a group is. "Named groups" below is the design.
+3. **The named groups are not ruled.** Each item that they add carries the label "new with named
+   groups; not ruled", and waits for Camilo in "Left for Camilo".
+4. **Decision 31 is accepted for capacity and shares.** Its rate rule waits for its own ruling, and
+   the W7 disk bench runs before decision 31 is built.
+5. **The build order** is W3 (the fair tick order), decision 29, this record, then decision 32.
+   Decision 31 follows the W7 bench.
 
 It builds on decisions 26, 27 and 28, and it fits with defect 3 of the robustness plan (W3, the fair
 tick order), which is ruled and is built before decision 29. It amends these records:
@@ -10,7 +27,11 @@ tick order), which is ruled and is built before decision 29. It amends these rec
 - decision 2, because decision 27 put "scheduling groups and shares" in "Not in version one";
 - decision 27, at "How groups could come later", open question 12, `holds` and `tasks_queued`;
 - decision 28, at `SharedLoop`'s refused calls, `Stall` and the heartbeat;
-- decision 9, rule 7, only if open question 6 is answered yes.
+- decision 9, rule 7, because open question 6 is ruled (b): an exact count of `TasksFull` for each
+  group, with W9;
+- decision 29, because open question 1 is ruled yes: its `reserve_group` and `GroupsFull` become
+  `reserve_buffer_group` and `BufferGroupsFull`. Decision 29's own file still holds the old names.
+  A separate change to that file follows this record.
 
 ## Context
 
@@ -37,7 +58,7 @@ Seastar's design (`scheduling.hh`, read for the drafts of this record on 2026-11
 
 - `create_scheduling_group(name, shares)` makes a group on every shard. The header recommends
   shares from 1 to 1000.
-- `set_shares` acts on the calling shard only.
+- `set_shares` acts only on the shard that calls it.
 - `max_scheduling_groups()` is a build constant. Its default of 16 is from `CMakeLists.txt`, which
   decision 27 read.
 - `scheduling_group::update_io_bandwidth` exists, so the group also carries the I/O limits. rotor
@@ -52,13 +73,14 @@ Camilo's requirements apply: wrong use fails to compile, and where the compiler 
 halts at once. A program that uses no group runs decision 27's code within the work gate's 2
 percent.
 
-## The decision, as proposed
+## The decision
 
 1. **A group is a task queue with shares, on one loop.** Each loop has a fixed table of
    `scheduling_groups_max` (16) groups, carved from its memory at init. Group 0, `.default`, is
    today's queue.
-2. **The program reserves the groups, and hands each library its group at init.** Shares are the
-   program's policy. `SharedLoop` refuses the reserve and the change of shares with a compile error.
+2. **The program declares or reserves the groups, and hands each library its group at init.**
+   Shares are the program's policy. `SharedLoop` refuses the reserve and the change of shares with
+   a compile error.
 3. **A library names its group in each `schedule_in`.** `SharedLoop` refuses the plain `schedule`,
    so a library cannot put a task in `.default` without the word `.default` in its source.
 4. **The loop serves the groups by DRR in cost units.** A task costs 1 unit, or a comptime cost
@@ -68,18 +90,25 @@ percent.
    every mode. A cost changes how the groups share the loop. It does not change how long a tick is.
 6. **Records and pollers are not in groups.** W3 bounds which events reach a tick. This record
    bounds which tasks run after them.
+7. **A named group is the same group on every loop.** (New with named groups; not ruled.) The
+   program declares its named groups once, in its root source file. Each loop reserves them at
+   init as ids 1 to n, in the order of the declaration. A cross-core call names one (decision 32).
 
 The record adds six public names: `SchedulingGroup`, `reserve_scheduling_group`,
-`set_scheduling_group_shares`, `schedule_in`, `charge_task` and `Task.init_cost`.
+`set_scheduling_group_shares`, `schedule_in`, `charge_task` and `Task.init_cost`. Named groups add
+three more, new with named groups and not ruled: `SchedulingGroupName`, `NamedSchedulingGroup` and
+`named_scheduling_group`, with the method `NamedSchedulingGroup.scheduling_group`. The public module
+`rotor` also reads one declaration of the program's root file, `rotor_scheduling_groups`. That is
+new with named groups, and not ruled.
 
 ### The surface
 
 ```zig
 // src/core/scheduling.zig (new). Pure: it takes no *Loop and reads no clock. Exported from rotor.
 
-/// A task queue with shares on one loop (decision 30). Only `reserve_scheduling_group` makes an id
-/// other than `.default`, so a literal fails to compile. An I/O class of decision 31 is a separate
-/// id, `IoClass`. Size 1 B.
+/// A task queue with shares on one loop (decision 30). Only `reserve_scheduling_group` and
+/// `NamedSchedulingGroup.scheduling_group` make an id other than `.default`, so a literal fails to
+/// compile. An I/O class of decision 31 is a separate id, `IoClass`. Size 1 B.
 pub const SchedulingGroup = enum(u8) { default = 0, _ };
 pub const ReserveSchedulingGroupError = error{SchedulingGroupsFull};
 
@@ -99,8 +128,9 @@ pub fn init_cost(
 ) Task;
 
 // rotor.Loop only. SharedLoop refuses both: "only the program sets the groups and their shares".
-/// Reserves the lowest free id with `shares` (1 to scheduling_shares_max). The id is the program's
-/// until `deinit`, and no call gives it back (as decision 29's buffer groups).
+/// Reserves the lowest free id with `shares` (1 to scheduling_shares_max). The named groups hold
+/// ids 1 to n from init, so the first reserve returns n + 1. The id belongs to this loop only. It
+/// is the program's until `deinit`, and no call gives it back (as decision 29's buffer groups).
 pub fn reserve_scheduling_group(loop: *Loop, shares: u16) ReserveSchedulingGroupError!SchedulingGroup;
 /// Sets the shares of `.default` or of a reserved group. It counts from the group's next visit.
 pub fn set_scheduling_group_shares(loop: *Loop, group: SchedulingGroup, shares: u16) void;
@@ -123,20 +153,135 @@ These calls keep their names and change as stated:
 | `is_scheduled(task)` | true when the task is queued in any group of the loop |
 | `tasks_queued()` | the sum over all groups |
 | `task_budget_left()` | the smaller of the starts left in the tick and the whole units left in the group's visit; with no other group ready, today's value |
-| `discard_tasks()` | unlinks every group, and resets every deficit, the cursor and the open visit. It halts on a station task of decision 32 that holds links, in any group. |
+| `discard_tasks()` | unlinks every group, and resets every deficit, the cursor and the open visit. It halts on a call lane of decision 32 that holds links. |
 | `drain`, `deinit` | read the sum, so `TasksStillQueued` and the `deinit` halt cover all groups |
 
 Use in stompy's program, and in a library:
 
 ```zig
-const quic = try loop.reserve_scheduling_group(400);
-const dns = try loop.reserve_scheduling_group(100);
-const journal = try loop.reserve_scheduling_group(200);
-var server = try colibri.Server.init(loop.shared(), .{ .scheduling_group = quic });
+// stompy's root source file: the groups that a cross-core call can name.
+pub const rotor_scheduling_groups = .{ .quic = 400, .dns = 100, .journal = 200 };
 
-// colibri, inside the library:
-try server.loop.schedule_in(server.scheduling_group, &connection.task);
+// stompy's program, on each core. colibri makes cross-core calls, so its option is a
+// NamedSchedulingGroup.
+var server = try colibri.Server.init(loop.shared(), .{
+    .scheduling_group = rotor.named_scheduling_group(.quic),
+});
+// stompy's compactor makes no call. Its group needs no name, and its option is a SchedulingGroup.
+const compaction = try loop.reserve_scheduling_group(50);
+var compactor = try Compactor.init(loop.shared(), .{ .scheduling_group = compaction });
+
+// colibri, inside the library: the named group gives the id for its own schedule_in.
+const group = server.scheduling_group.scheduling_group();
+try server.loop.schedule_in(group, &connection.task);
 ```
+
+A library option takes a `NamedSchedulingGroup` when the library makes cross-core calls. It takes a
+`SchedulingGroup` when the library makes none. A `SchedulingGroup` does not convert to a
+`NamedSchedulingGroup`, so the compiler refuses a reserved group where a call needs a name.
+
+### Named groups
+
+This whole section is new with named groups, and not ruled ("Left for Camilo", items 1 to 3).
+
+A reserved id belongs to one loop. Two loops that reserve in two orders give one id two uses. A
+cross-core call names the group that it runs in on the target (decision 32). So a group that a
+call names must be the same group on every loop.
+
+The program declares its named groups once, in its root source file. The field order is the id
+order, and each value is the group's shares at init. Core never reads the root file: its machinery
+is generic over a comptime declaration. The public module `rotor` binds the public names to the
+root's declaration. It reads it through `@import("root")`, as std reads `std_options`.
+
+```zig
+// src/core/scheduling.zig. Core reads no root file.
+
+/// The named groups of `declaration`, a struct literal such as `.{ .quic = 400, .dns = 100 }`.
+/// It refuses the name `default`, shares of 0 or above scheduling_shares_max, and more than
+/// scheduling_groups_max - 1 names, with a compile error.
+pub fn Named(comptime declaration: anytype) type {
+    return struct {
+        /// The names, in the order of the declaration: `enum { quic, dns }`.
+        pub const Name: type;
+        /// The count n and the shares of ids 1 to n, for a loop's options.
+        pub const table: NamedTable;
+        /// The id is 1 plus the name's place in the declaration.
+        pub fn group(comptime name: Name) NamedSchedulingGroup;
+    };
+}
+
+/// What `Loop.init` reserves: n, and the shares of ids 1 to n. Size 32 B, alignment 2.
+pub const NamedTable = struct { count: u8, shares: [constants.scheduling_groups_max - 1]u16 };
+
+/// A group that is the same group on every loop of the program. Only `Named(...).group` makes an
+/// id other than `.default`, so a literal fails to compile. Size 1 B.
+pub const NamedSchedulingGroup = enum(u8) {
+    default = 0,
+    _,
+
+    /// The same id as a `SchedulingGroup` of the loop that calls it, for `schedule_in`.
+    pub fn scheduling_group(group: NamedSchedulingGroup) SchedulingGroup;
+};
+
+// src/rotor/rotor.zig, the public module. Built from the root's `rotor_scheduling_groups`, and
+// empty when the root declares none.
+const root_groups = core.scheduling.Named(root_declaration);
+pub const NamedSchedulingGroup = core.scheduling.NamedSchedulingGroup;
+/// The program's names: `enum { quic, dns, journal }` for stompy. An undeclared name fails to
+/// compile.
+pub const SchedulingGroupName = root_groups.Name;
+pub fn named_scheduling_group(comptime name: SchedulingGroupName) NamedSchedulingGroup;
+```
+
+These rules apply:
+
+- **A program has one declaration.** Its root file holds it. The backends' `Loop.Options` gain a
+  field `named_groups: NamedTable`, empty by default. The public `Loop.Options` does not carry it:
+  its `lower` (`src/rotor/rotor_loop.zig`) sets it to `root_groups.table` for every loop. So two
+  loops of a program cannot disagree, and no check at run time is needed.
+- **Every loop reserves the names at init.** `Loop.init` gives ids 1 to n their declared shares,
+  before any `reserve_scheduling_group`, and stores n in `Groups.named`. So a named group exists on
+  every loop from its first tick, and a target cannot lack one.
+- **`Named` checks the declaration** at comptime, with the limits above.
+- **Shares belong to each loop.** `set_scheduling_group_shares` changes them only on the loop that
+  makes the call, as Seastar's `set_shares` acts only on its own shard. The name and the id do not
+  change.
+- **A forged id halts.** `@enumFromInt` compiles, as it does for decision 29's `BufferGroup`.
+  Decision 32's `send` halts on an id above n, and the target checks the id again.
+- **A library takes a `NamedSchedulingGroup` from the program** when it makes calls. It calls
+  `scheduling_group()` for its own `schedule_in`. The compiler does not stop a library that calls
+  `named_scheduling_group` itself, because `SchedulingGroupName` comes from the program's root. The
+  guide says that the program hands each library its group, as rule 2 says.
+- **A loop that uses no names pays nothing new.** The names are comptime. `Loop.init` writes the
+  shares of n lanes, and no path of a tick reads the table.
+
+### How tests name groups
+
+The root of `test-core`, of the conformance executables and of the halt runner is not the program.
+For a test, root is Zig's own test runner, which declares no `rotor_scheduling_groups`. So a test
+cannot rely on the root's declaration. This record chooses the generic machinery above, and no
+custom test runner:
+
+- A unit test in core calls `Named(.{ .low = 100, .high = 300 })` and passes its `table` to
+  `Groups.reserve_named`.
+- A conformance scenario passes such a table in the backend's options, so `Loop.init` reserves it.
+  Each scenario can choose its own table, n = 0 included.
+- A halt scenario file is the root of its own executable (`build/halt.zig`). A scenario that goes
+  through the public module declares `rotor_scheduling_groups` in that file. A scenario that goes
+  through core passes a table.
+- The compile-fail tests are each the root of their own program, so each declares what it needs.
+
+The other choice was a `test_runner` in `build/` for `test-core`, the conformance executables and
+the halt runner, which declares `rotor_scheduling_groups`. It lost for three reasons:
+
+- It is a copy of Zig's test runner, which rotor must keep in step with each Zig release.
+- It gives every test of an executable one declaration. A test could not try two tables, or n = 0,
+  in the same executable.
+- Core would read the root file, so core's types would depend on the program. No core type does
+  that today.
+
+This choice adds no build step and changes no file under `build/`. It adds one field to the
+backends' options, which "Ask before" lists.
 
 ### The rule: DRR in cost units
 
@@ -237,16 +382,19 @@ and operations.
 | structure | change | size, alignment | where |
 |---|---|---|---|
 | `SchedulingGroup` | new, `u8` | 1 B | the caller's |
+| `NamedSchedulingGroup` | new with named groups; not ruled. `u8`; ids 1 to n are the declaration's | 1 B | the caller's |
+| `NamedTable` | new with named groups; not ruled. `count: u8`, `shares: [15]u16`, in the backends' `Loop.Options` | 32 B, 2 | the options, read once at init |
 | `Dispatch` | `ticking: bool` and `polling: bool` become `phase: Phase` (`u8`: idle, polling, records, tasks, group_tasks). `groups_ready: u16`, the ready mask of groups 1 to 15, takes the freed byte and the 1 B of padding | **stays 96 B, 8** (64 + 24 + 4 + 2 + 1 + 1). A build confirms it. | `Tables` |
 | `Tasks` | no field changes. `count` stays the count of `.default` only, so `assert_shape`, `run` and `discard` stay true | 24 B, 8 | `Dispatch` |
 | `Lane` | `head`, `tail` (8 + 8), `count: u32`, `startable: u32`, `deficit: i32`, `shares: u16`, 2 B pad. Lane 0 keeps its queue in `Dispatch.tasks` and uses only `startable`, `deficit` and `shares` | 32 B, 8 | `Groups` |
-| `Groups` | `lanes: [16]Lane` (512 B), `end_mark: Task` (16 B), `reserved: u8`, `cursor: u8`, `visit_open: bool`, 5 B pad. Decision 32 puts its cold counts `stations: u8` and `serving: u8` in 2 B of the pad. | 536 B, 8 | carved from the loop's memory by `Layout.take`, as decision 28's heartbeat is |
+| `Groups` | `lanes: [16]Lane` (512 B), `end_mark: Task` (16 B), `reserved: u8`, `cursor: u8`, `visit_open: bool`, 5 B pad. Decision 32 puts its cold counts `stations: u8` and `serving: u8` in 2 B of the pad. New with named groups; not ruled: `named: u8`, n, takes 1 B more of the pad, and `reserved` is n after init. Decision 32 adds its call lanes after `end_mark`, also new with named groups and not ruled: `call_lanes: [16]CallLane`, 512 B. | 536 B, 8, plus decision 32's 512 B | carved from the loop's memory by `Layout.take`, as decision 28's heartbeat is |
 | `Tables` | gains `groups: *Groups` | + 8 B | — |
 | `Task.Call` | gains `cost: u16` | 24 B to 32 B, static data | the binary |
 | `Stall` | gains `group` in its padding | stays 32 B | `Statistics` |
 | `Heartbeat` | gains `turn_group: u8` in its padding | no change in size. A build confirms it. | its own line |
 
-Each loop's memory grows by 544 B. The new structures carry comptime asserts of their sizes.
+Each loop's memory grows by 544 B, plus decision 32's call lanes. The new structures carry comptime
+asserts of their sizes. The size of `Groups` does not depend on n, so its assert is one constant.
 
 **The end mark.** Groups 1 to 15 end their queues at `&groups.end_mark`, not at null. So a task that
 is queued in any group of any loop has a `next` that is not null, or is the tail of `.default`. The
@@ -260,7 +408,7 @@ is, and it decides nothing from an address's value.
 library that floods its group gets `TasksFull`, and the other libraries on the core can still
 schedule. The overflow assert of `callbacks_outstanding` becomes
 `scheduling_groups_max * tasks_queued_max + operations_max <= maxInt(u32)`. Decision 32 adds its
-station tasks and its calls to that sum.
+call tasks and its calls to that sum.
 
 ## Tick order
 
@@ -293,7 +441,7 @@ station tasks and its calls to that sum.
 | decision 28 | `SharedLoop` refuses `schedule`, `reserve_scheduling_group` and `set_scheduling_group_shares`, and gains `schedule_in` and `charge_task`. `Stall` and the heartbeat gain the group. |
 | decision 29 | A wake reaches a poller, and the poller schedules into its library's group. Open question 1 renames its `reserve_group`. |
 | decision 31 | Its I/O classes are a separate index space, `IoClass`, bounded by `io_classes_max` for each loop's queue (its open question 1). A file operation names a class, not a group, and the task that submits it does not change the class. `scheduling_groups_max` bounds only the groups of this record. |
-| decision 32 | A call carries no group. On the target, core's drain schedules the service's station task in the group that `serve` names, through `schedule_in`. The station task follows the rule for a cost that varies (below), with `charge_task` for each link after the first. `discard_tasks` halts on a station task that holds links. The overflow assert above gains the station tasks and the calls. |
+| decision 32 | New with named groups; not ruled. A call names a `NamedSchedulingGroup`, which crosses in the call's record. On the target, core's drain links the call to the call lane of that group, and schedules the lane's task there through `schedule_in`. The caller runs `finish` in the same group. The lane's task follows the rule for a cost that varies, with `charge_task` for each link after the first. `discard_tasks` halts on a call lane that holds links. The overflow assert above gains the call tasks and the calls. |
 | decisions 10 and 24 | A twin of the surface brings the new names, with the same DRR order. |
 | decision 13 | A run of tasks is not activity for the spin window, in every group. |
 
@@ -315,7 +463,8 @@ Priors only. The baseline counts are from `bench/baseline/work.txt` at `5e9490d`
 | the bulk credit | one division for each startable group | about 20 instructions for each group; only after debt |
 | 64 tasks in 4 groups at shares 100 | 64 visits, because each visit runs one task | about 4558 + 64 × 6 + 64 × 13 + 20 = about 5800 on `macos-aarch64-kqueue`, about 1.3 times `tasks-64`. At shares 400 each, 16 visits: about 5150. |
 | `charge_task` | the owner check (C21), the phase test, a multiply, a subtraction and the floor compare | about 8 instructions |
-| memory | `Groups` 536 B, `Tables` + 8 B; `Dispatch`, `Tasks`, `Stall` and `Heartbeat` keep their sizes | 544 B for each loop, 34 KiB on 64 cores |
+| named groups (new; not ruled) | none on a tick: the names are comptime, and `Loop.init` writes the shares of n lanes | 0 |
+| memory | `Groups` 536 B, `Tables` + 8 B; `Dispatch`, `Tasks`, `Stall` and `Heartbeat` keep their sizes | 544 B for each loop, 34 KiB on 64 cores, plus decision 32's call lanes |
 
 The groups path touches the `Groups` header and one line for each two lanes it visits. A cold line
 is C3 (128 ns on `mac`), which the instruction gate cannot see. A program with no group touches no
@@ -348,6 +497,7 @@ line of `Groups`.
 | test | what it shows |
 |---|---|
 | reserve | the lowest id first, then `SchedulingGroupsFull` |
+| named groups (new; not ruled) | init gives ids 1 to n their declared shares, in order, and a reserve after it returns n + 1. The test passes the `table` of its own `Named(...)` to `Groups.reserve_named`, as "How tests name groups" says. |
 | shares 100 and 300, both full | units served 1 : 3 exactly over 4 rounds |
 | a charge of 64 at shares 1 | the group skips through one bulk credit, and the run ends |
 | a close | positive credit is dropped, debt is kept |
@@ -383,6 +533,9 @@ other addresses. A reference model in `dispatch_test_model.zig` runs plain DRR w
 - A group of tasks of cost 64 runs beside a group of unit tasks. The unit group is served within its
   bound, and a timer and a post still arrive within 2 ticks. This checks the fit with W3.
 - `drain` and `discard_tasks` across groups.
+- New with named groups; not ruled: a loop whose options hold a table of two names has ids 1 and
+  2 at their declared shares, and its first reserve returns 3. A loop with the empty table reserves
+  no name.
 - A cost gate row: one run of 64 tasks in 16 groups, bounded at ten times what is measured.
 
 **The work gate:** today's rows stay within 2 percent, with no baseline raised. New rows
@@ -406,13 +559,18 @@ reads the sum.
 
 **Compile-fail tests (`zig build test-compile-fail`):** a literal group id; `schedule`,
 `reserve_scheduling_group` and `set_scheduling_group_shares` on a `SharedLoop`; `init_cost` with
-cost 0 and with a cost above `task_charge_max`.
+cost 0 and with a cost above `task_charge_max`; new with named groups and not ruled,
+`named_scheduling_group` with a name the root does not declare, and a `Named` declaration with the
+name `default`, with shares 0 or above 1000, or with more than 15 names.
 
 **Mutations**, each reported `CAUGHT` or `NOT CAUGHT`:
 
 | mutation | target |
 |---|---|
 | the cursor reset at each run | `test-core`, G1 and G3 |
+| init reserves the named groups in reverse order | `test-core`, the named-groups unit test |
+| init ignores the declared shares | `test-core`, the named-groups unit test |
+| `Loop.init` does not reserve the table of its options | conformance, the named-groups scenario |
 | `@min(deficit, 0)` removed at a close | `test-core`, G2 |
 | debt cleared when a group empties | `test-core`, G3 |
 | credit added again on a resumed visit | `test-core`, G1 |
@@ -436,55 +594,94 @@ lets a queued task make any tick wait 0.
 
 ## Open questions
 
-These are in the order that Camilo should rule on them.
+Camilo ruled on each one on 2026-11-07, with its proposed answer. Question 8 meets his ruling on
+decision 32, and its answer says how.
 
 1. **Names.** Should decision 29's `reserve_group` and `GroupsFull` (accepted, not built) become
    `reserve_buffer_group` and `BufferGroupsFull`, so that "group" alone never names two things?
-   Decision 21's group of processes is a third meaning, and decision 32 calls it "a decision 21
-   group" in each place. Proposed answer: yes, before decision 29 is built.
+   Decision 21's group of processes is a third use, and decision 32 calls it "a decision 21
+   group" in each place. *Ruled: yes, before decision 29 is built.*
 2. **The plain `schedule` on a `SharedLoop`.** (a) Refuse it, so a library names its group in each
    call. (b) Keep it as `.default`, as decision 27 sketched, and rely on the guide and a conformance
-   scenario. Proposed answer: (a). It breaks each library's `schedule` calls once, and wrong use
-   then fails to compile.
+   scenario. *Ruled: (a). It breaks each library's `schedule` calls once, and wrong use then fails
+   to compile.*
 3. **Shares.** (a) 1 to 1000, in hundredths of a unit, default 100. (b) 1 to 64 whole units.
-   Proposed answer: (a), Seastar's range, with the bulk credit to keep the run bounded.
+   *Ruled: (a), Seastar's range, with the bulk credit to keep the run bounded.*
 4. **Does a cost bound the tick?** (a) No: 64 starts in every mode, and a cost weighs only the
    shares. (b) 64 units, so a run of costly tasks gives the core back to I/O sooner, at the price of
-   a change to a named limit and to `Tasks.left`. Proposed answer: (a). A later record takes (b) if
-   a consumer measures I/O latency behind costly tasks.
-5. **A queue cap for each group.** Proposed answer: yes, `tasks_queued_max` for each group, with
-   the overflow assert rewritten.
+   a change to a named limit and to `Tasks.left`. *Ruled: (a). A later record takes (b) if a
+   consumer measures I/O latency behind costly tasks.*
+5. **A queue cap for each group.** *Ruled: yes, `tasks_queued_max` for each group, with the
+   overflow assert rewritten.*
 6. **Counts for each group.** (a) None in this record. (b) An exact count of `TasksFull` for each
    group, written only on the refusal path, beside W9's counts of refusals. (c) A sampled count of
-   the ticks in which a group's snapshot was left unserved. Proposed answer: (b) with W9, and (c)
-   in a later record.
-7. **Reserve after the first tick.** Proposed answer: yes, between ticks. A reserve inside a tick
-   halts (class C). stompy reserves in the same order on each core, so each loop gets the same ids.
+   the ticks in which a group's snapshot was left unserved. *Ruled: (b) with W9, and (c) in a later
+   record.*
+7. **Reserve after the first tick.** *Ruled: yes, between ticks. A reserve inside a tick halts
+   (class C).* A reserved id belongs to its loop only. A group that a cross-core call names is a
+   named group, which every loop reserves at init (see "Named groups").
 8. **A comptime name for a group.** It would let statistics print the group's name, at 8 B for each
-   lane. Proposed answer: no. A stall already names the task, and through it the library.
-9. **Default shares and `task_charge_max`.** 100 and 64 are priors. Proposed answer: read colibri's
-   and cocuyo's slices for each turn, and fix them from the `tasks-groups-4` row before the record
-   is accepted.
+   lane. *Ruled: no name for statistics. A stall already names the task, and through it the
+   library.* Camilo's ruling on decision 32 adds comptime names for a different purpose: one id for
+   one group on every loop. Those names live in the root's declaration, and a lane stores none, so
+   a lane stays 32 B. The names are new with named groups, and not ruled.
+9. **Default shares and `task_charge_max`.** 100 and 64 are priors. *Ruled: read colibri's and
+   cocuyo's slices for each turn, and fix them from the `tasks-groups-4` row.* The proposed answer
+   fixed them before the record was accepted. Camilo accepted the record before that row exists.
+   So this record moves the step: the defaults are fixed before the build lands. He did not rule
+   this change, and "Left for Camilo", item 4, asks it.
 10. **stompy's design note** refuses weighted DRR (decision 27, "How groups could come later").
-    Proposed answer: stompy's note changes in the same release, with one group for each purpose:
-    foreground, journal, compaction.
-11. **The order of the build.** Proposed answer: W3, then decision 29, then this record, then
-    decision 32, which needs `SchedulingGroup` in its `ServeOptions` and puts two counts in the
-    padding of `Groups`. Decision 31 waits for W7 and does not depend on this record. This record
-    changes no step that W3 changes, but both edit the guide's section on fairness.
+    *Ruled: stompy's note changes in the same release, with one group for each purpose: foreground,
+    journal, compaction.*
+11. **The order of the build.** *Ruled: W3, then decision 29, then this record, then decision 32.
+    Decision 31 waits for the W7 bench and does not depend on this record.* This record changes no
+    step that W3 changes, but both edit the guide's section on fairness. Decision 32 needs
+    `NamedSchedulingGroup` for its `CallOptions`, and puts two counts and its call lanes in
+    `Groups`. Those parts are new with named groups, and not ruled.
+
+## Left for Camilo
+
+The named groups of 2026-11-07 add these choices, which he has not ruled. Each item that the text
+above labels "new with named groups; not ruled" waits on them. Each choice has a proposed answer,
+and the text above follows it.
+
+1. **Where the program declares the names.** (a) In its root source file. The public module
+   `rotor` reads it through `@import("root")`, as std reads `std_options`, and passes its table to
+   each loop at init. Core reads no root file. A program then has one declaration, and a mismatch
+   cannot compile. (b) A table that the program hands to the `Registry`, which each `Loop.init`
+   reserves. Two registries could hold two tables, and a check at the first call would halt on a
+   mismatch. *Proposed: (a).* It adds no edge to `build/modules.zig`, and no core type depends on
+   the program. The public module's `SchedulingGroupName` does.
+2. **The shares of a named group.** (a) The declaration sets them at init, and
+   `set_scheduling_group_shares` changes them on one loop, as Seastar's `set_shares` does. (b) One
+   value for every loop, with no change after init. *Proposed: (a). A group's id says what the
+   group is, and decision 30's shares are a policy of each loop.*
+3. **How tests name groups.** (a) Core's `Named` is generic over a comptime declaration. The public
+   module binds the public names to the root, and a test passes the table of its own declaration.
+   (b) A custom `test_runner` in `build/` for `test-core`, the conformance executables and the halt
+   runner, which declares `rotor_scheduling_groups`. *Proposed: (a).* It changes nothing under
+   `build/`, and a test can choose its own table. "How tests name groups" gives the reasons. Its
+   cost is one field, `named_groups`, in the backends' `Loop.Options`.
+4. **When the defaults are fixed** (open question 9). (a) Before the build lands, from the
+   `tasks-groups-4` row. (b) Before the record is accepted, as the proposal said, which would undo
+   the acceptance until the row exists. *Proposed: (a).*
 
 ## Ask before
 
 | item | what changes |
 |---|---|
-| building what decision 2 leaves out of version one | scheduling groups were put in "Not in version one" by decision 27. Camilo's choice of 2026-11-07 asks for them, and this record must still be ruled before the build. |
-| new named limits in `src/core/constants.zig` | `scheduling_groups_max` = 16 (this record only; decision 31 has `io_classes_max`), `scheduling_shares_max` = 1000, `scheduling_shares_default` = 100, `scheduling_unit_credit` = 100, `task_charge_max` = 64, and the derived `visits_per_run_max`; a comptime assert `tasks_per_tick_max <= task_charge_max`, which decision 32's station run needs |
+| building what decision 2 leaves out of version one | scheduling groups were put in "Not in version one" by decision 27. Camilo accepted this record on 2026-11-07. |
+| new named limits in `src/core/constants.zig` | `scheduling_groups_max` = 16 (this record only; decision 31 has `io_classes_max`), `scheduling_shares_max` = 1000, `scheduling_shares_default` = 100, `scheduling_unit_credit` = 100, `task_charge_max` = 64, and the derived `visits_per_run_max`; a comptime assert `tasks_per_tick_max <= task_charge_max`, which decision 32's lane run needs |
 | a named limit changes meaning | `tasks_queued_max` becomes a cap for each group, and its overflow assert is rewritten |
 | the layout of a hot structure | `Dispatch` merges `ticking` and `polling` into `phase` and gains `groups_ready: u16`, at 96 B; `Tables` gains 8 B; `Task.Call` grows from 24 B to 32 B; `Stall` and `Heartbeat` gain a field in their padding; the loop's memory grows by 544 B |
+| the layout of `Groups` (new with named groups; not ruled, "Left for Camilo", item 1) | `named: u8` in 1 B of its padding; the size stays 536 B |
 | the public surface and the tag | six new names; `SharedLoop` refuses `schedule`, which breaks colibri, cocuyo and stompy once; a twin of the surface must follow (decisions 10 and 24) |
-| decision 9, rule 7 | only if open question 6 is answered (b) |
+| the public surface (new with named groups; not ruled, "Left for Camilo", item 1) | three more names, `SchedulingGroupName`, `NamedSchedulingGroup` and `named_scheduling_group`, and the method `NamedSchedulingGroup.scheduling_group` |
+| a declaration that the public module reads from the program (new with named groups; not ruled, "Left for Camilo", item 1) | `rotor` reads `rotor_scheduling_groups` through `@import("root")`. It is not an edge of `build/modules.zig`, and core does not read it. |
+| the backends' `Loop.Options` (new with named groups; not ruled, "Left for Camilo", item 3) | a field `named_groups: NamedTable`, empty by default, which the public options do not carry. No file under `build/` changes, and no build step is added. |
+| decision 9, rule 7 | an exact count of `TasksFull` for each group, on the refusal path, with W9 (open question 6) |
 | a new Lean file | `proofs/RotorProofs/Drr.lean`, kept in step with `Groups.run` |
-| none of these | no dependency, no edge in the module graph, no file on decision 7's list, and no assertion weakened or moved. If the gate later asks for a cold hint on `run_groups`, that is a separate ask. |
+| none of these | no dependency, no file on decision 7's list, and no assertion weakened or moved. If the gate later asks for a cold hint on `run_groups`, that is a separate ask. |
 
 ## Sources
 
