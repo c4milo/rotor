@@ -14,7 +14,9 @@ pub const enter_retries_max: u32 = 64;
 /// Times an enter that waits for one completion enters again when the kernel returned with none
 /// posted (decision 6, amendment of 2026-11-06). The likely cause, read from the kernel's source and
 /// not traced, is that a fired timeout ends the wait before its completion is posted. In the stress
-/// runs the next enter always posted it and returned at once. Past this bound the enter returns with none ready, and the tick ends its wait early.
+/// runs the next enter always posted it and returned at once. Past this bound the enter returns
+/// with none ready, and the tick ends its wait early. An enter with a bound uses it too, and enters
+/// again only while time is left before its deadline (amendment of 2026-11-07).
 pub const empty_wakes_max: u32 = 8;
 
 /// The most kernel worker threads of each kind, bounded and unbounded, the ring may start

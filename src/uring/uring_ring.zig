@@ -16,6 +16,8 @@ const linux = std.os.linux;
 const IoUring = linux.IoUring;
 const core = @import("core");
 const constants = @import("constants.zig");
+/// The monotonic clock the tick reads (`linux_shared_clock.zig`).
+const clock_ns = @import("linux_shared").clock.clock_ns;
 
 pub const InitError = error{ Unsupported, PermissionDenied, SystemResources, Unexpected };
 
@@ -204,7 +206,29 @@ pub const Ring = struct {
     /// wait passes. Makes no call at all when there is nothing to submit, nothing to wait for,
     /// and no completion work pending.
     pub fn enter(ring: *Ring, wait_ns: ?u64) EnterError!Entered {
-        return ring.enter_with(if (wait_ns) |nanoseconds| .{ .bounded = nanoseconds } else .none);
+        const bound_ns = wait_ns orelse return ring.enter_with(.none);
+        return ring.enter_for(bound_ns, clock_ns);
+    }
+
+    /// Submits what `get_sqe` handed out and blocks until one completion is ready or `bound_ns`
+    /// passes. The kernel can end this wait with no completion posted and time left, as it can for
+    /// `enter_until_completion`. Under load a tick with no room for its wait timer then ended its
+    /// wait with the completion still in the kernel, in 15 of 1,600 runs. So an enter that
+    /// returns with none ready reads `clock`, and enters again for the time left, at most
+    /// `empty_wakes_max` times (decision 6, amendment of 2026-11-07). A test gives its own clock.
+    fn enter_for(ring: *Ring, bound_ns: u64, comptime clock: fn () u64) EnterError!Entered {
+        const deadline_ns = clock() + bound_ns;
+        const entered = try ring.enter_with(.{ .bounded = bound_ns });
+        if (entered != .submitted) return entered;
+        var empty_wakes: u32 = 0;
+        while (ring.cq_ready() == 0 and empty_wakes < constants.empty_wakes_max) {
+            const now_ns = clock();
+            if (now_ns >= deadline_ns) break;
+            // No entry was handed out since the first enter, so this one only waits.
+            _ = try ring.enter_with(.{ .bounded = deadline_ns - now_ns });
+            empty_wakes += 1;
+        }
+        return .submitted;
     }
 
     /// Submits what `get_sqe` handed out and blocks, with no timeout, until one completion is
@@ -397,4 +421,69 @@ test "a no-op entry completes with the user data it carried" {
     try testing.expectEqual(@as(i32, 0), ring.cqe_at(0).res);
     ring.cq_advance(1);
     try testing.expectEqual(@as(u32, 0), ring.cq_ready());
+}
+
+/// A clock a test gives to `enter_for`. Its first read answers `start_ns`, and every later read
+/// answers `later_ns`, so a test sets the time each enter after the first sees as left.
+const TestClock = struct {
+    threadlocal var reads: u32 = 0;
+    threadlocal var start_ns: u64 = 0;
+    threadlocal var later_ns: u64 = 0;
+
+    fn set(start: u64, later: u64) void {
+        reads = 0;
+        start_ns = start;
+        later_ns = later;
+    }
+
+    fn read() u64 {
+        reads += 1;
+        return if (reads == 1) start_ns else later_ns;
+    }
+};
+
+test "a bounded enter that returns with none ready enters again for the time left, a few times" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var ring = try Ring.init(8);
+    defer ring.deinit();
+
+    // Nothing is in flight, so each enter ends at its timeout with none ready. The clock says
+    // 1 ms is left after each one, so each enter after the first waits 1 ms.
+    const bound_ns = 100 * core.constants.ns_per_ms;
+    const left_ns = core.constants.ns_per_ms;
+    const start_ns = core.constants.ns_per_s;
+    TestClock.set(start_ns, start_ns + bound_ns - left_ns);
+    const before = clock_ns();
+    try testing.expectEqual(Entered.submitted, try ring.enter_for(bound_ns, TestClock.read));
+    const waited = clock_ns() - before;
+    try testing.expectEqual(@as(u32, 0), ring.cq_ready());
+    try testing.expectEqual(1 + constants.empty_wakes_max, TestClock.reads);
+    // A busy machine makes a wait longer and never shorter. An enter again for the whole bound
+    // waits the whole bound each time, far past the upper check.
+    comptime assert(constants.empty_wakes_max >= 5);
+    try testing.expect(waited >= bound_ns + constants.empty_wakes_max * left_ns - left_ns);
+    try testing.expect(waited < 5 * bound_ns);
+}
+
+test "a bounded enter that returns with none ready at its deadline does not enter again" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var ring = try Ring.init(8);
+    defer ring.deinit();
+    const bound_ns = core.constants.ns_per_ms;
+    const start_ns = core.constants.ns_per_s;
+    TestClock.set(start_ns, start_ns + bound_ns);
+    try testing.expectEqual(Entered.submitted, try ring.enter_for(bound_ns, TestClock.read));
+    try testing.expectEqual(@as(u32, 0), ring.cq_ready());
+    try testing.expectEqual(@as(u32, 2), TestClock.reads);
+}
+
+test "a bounded enter that returns with a completion ready reads the clock once" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    var ring = try Ring.init(8);
+    defer ring.deinit();
+    ring.get_sqe().?.prep_nop();
+    TestClock.set(core.constants.ns_per_s, core.constants.ns_per_s);
+    try testing.expectEqual(Entered.submitted, try ring.enter_for(core.constants.ns_per_s, TestClock.read));
+    try testing.expectEqual(@as(u32, 1), ring.cq_ready());
+    try testing.expectEqual(@as(u32, 1), TestClock.reads);
 }

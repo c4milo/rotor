@@ -7,10 +7,12 @@
 #
 # Under load the kernel can end a wait for one completion before that completion is in the ring
 # (decision 6, "The wait timer", amendment of 2026-11-06). The tick then enters again, at most
-# `empty_wakes_max` times. That return comes only under load, so no single run of `zig build test`
-# or of the Linux gate shows it. This gate runs `copies` copies of the uring test executable at a
-# time, beside `busy` loops that only spin, for `rounds` rounds. With the enter again removed, 6 of
-# 1,600 runs failed at a load average of 15 to 23. With it, 0 of 4,800 failed at 18 to 35.
+# `empty_wakes_max` times. An enter with a bound does the same while time is left (amendment of
+# 2026-11-07). That return comes only under load, so no single run of `zig build test` or of the
+# Linux gate shows it. This gate runs `copies` copies of the uring test executable at a time,
+# beside `busy` loops that only spin, for `rounds` rounds. With the enter again removed, 6 of 1,600
+# runs failed at a load average of 15 to 23. With it, 0 of 4,800 failed at 18 to 35. Decision 6
+# holds the counts for the enter with a bound.
 #
 # `zig build test` does not run it: it needs Docker, as the Linux gate does, and it takes minutes.
 

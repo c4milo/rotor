@@ -232,6 +232,58 @@ Mutations of this amendment, measured against the `uring` test executable in Doc
 | the timer never moved once armed | `uring`: the first wait-timer test | CAUGHT |
 | no second wait after an enter that submitted | `uring`: the first and third wait-timer tests | CAUGHT |
 
+**Amended on 2026-11-07: an enter with a bound enters again too.** Camilo asked for a check of
+every wait before a wider fix. The io_uring backend waits in the kernel at these places, and at no
+other:
+
+| place | wait | can an empty wake make a wrong result? |
+|---|---|---|
+| `enter_bounded`, a poll | none | no: the enter waits for nothing |
+| `enter_bounded`, timer armed | `enter_until_completion` | yes, fixed by the amendment of 2026-11-06 |
+| `enter_bounded`, no room for the timer | `Ring.enter` with the tick's bound | yes: see below |
+| `wait_past_early_timer`, timer armed again | `enter_until_completion` | yes, fixed by the amendment of 2026-11-06 |
+| `wait_past_early_timer`, no room for the timer | `Ring.enter` with the time left | only in a test: see below |
+| `Loop.deinit` and `Remote` | `Ring.enter_now` | no: the enter waits for nothing |
+
+io_uring has no offload (decision 18), and a group's wake is a poll in the ring, so neither waits
+by itself. The ring has no room for the wait timer when the flush fills it. The ring holds
+`operations` rounded up to a power of two, so a caller that queues that many operations in one tick
+fills it. `wait_past_early_timer` follows an enter that submitted. `SUBMIT_ALL` makes the kernel
+take every entry, so in a tick the timer always finds room there. Only a test reaches that wait.
+
+The new `uring_tick.zig` test gives a loop of one entry a 2 ms timeout, and then a tick that waits
+up to 1 s. The timeout fills the ring, so the enter carries the tick's bound. The test then
+requires that the tick took the timeout's completion. It does this 16 times in each run. On main,
+the wait ended with the completion still in the kernel. So the tick ended its wait early, and the
+next tick handed over the completion.
+
+So `Ring.enter` with a bound reads the clock before it enters, and sets a deadline. When the enter
+returns with no completion ready, it reads the clock again. While time is left, it enters again for
+the time left, at most `empty_wakes_max` times. A normal timeout ends at or after the deadline, so
+it makes no second enter. Three `uring_ring.zig` tests give `enter_for` a clock of their own. Each
+row is one run of the stress gate, in Docker's virtual machine on `mac`:
+
+| tree | runs | failed | load |
+|---|---:|---:|---:|
+| main with the new test | 1,600 | 15 | 48 |
+| with the fix | 1,600 | 0 | 51 |
+| with the fix, and `Ring.enter` with a bound not entered again | 1,600 | 18 | 51 |
+
+Each failure was the new test, at its check that the tick took the completion. The load is the
+one-minute load average the script printed at its end. Another session ran the race gate and the
+stress gate in the same virtual machine at the same time.
+
+Mutations of this amendment, measured against the `uring` test executable in Docker:
+
+| mutation | caught by | result |
+|---|---|---|
+| `Ring.enter` with a bound not entered again | the stress gate: 18 of 1,600 runs failed | CAUGHT |
+| no enter again after an empty return | `uring`: the clock read count | CAUGHT |
+| the enter again waits the whole bound | `uring`: the upper bound | CAUGHT |
+| no limit on the enters again | `uring`: the test hangs | CAUGHT |
+| no check that the deadline passed | `uring`: the subtraction overflows and halts | CAUGHT |
+| an enter again with a completion ready | `uring`: the clock read count | CAUGHT |
+
 ## Why stompy should depend on rotor
 
 1. **stompy's layer is about to grow along the same path.** stompy is one binary with proxy,

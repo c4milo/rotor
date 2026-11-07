@@ -441,3 +441,33 @@ test "a tick whose enter fails after it produced events returns them, and the ne
     try testing.expectEqual(one_nop[0].user_data, events[0].user_data);
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }
+
+/// Rounds of the test below. Each round is one more chance for the kernel to end a wait with no
+/// completion posted, which it does only under load (tools/stress_test.sh).
+const no_room_rounds = 16;
+
+test "a tick with no room for the wait timer waits for the completion that ends its wait" {
+    if (builtin.os.tag != .linux) return error.SkipZigTest;
+    // One entry: the timeout fills the submission ring, so the enter carries the tick's bound.
+    var memory: [Loop.memory_bytes(.{ .operations = 1 })]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, .{ .operations = 1 });
+    defer loop.deinit();
+    var events: [4]Event = undefined;
+    const timeout_ns = 2 * core.constants.ns_per_ms;
+    const timeout: linux.kernel_timespec = .{ .sec = 0, .nsec = timeout_ns };
+    for (0..no_room_rounds) |_| {
+        const sqe = loop.ring.get_sqe().?;
+        sqe.prep_timeout(&timeout, 0, 0);
+        sqe.user_data = constants.user_data_cancel;
+        try testing.expectEqual(@as(u32, 0), loop.ring.sqe_space());
+        const before = clock_ns();
+        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, core.constants.ns_per_s));
+        // The timeout's completion ended the wait, and the reap took it. A wait that ended with
+        // none posted ends early, or leaves the completion to the next enter.
+        try testing.expect(clock_ns() - before >= timeout_ns);
+        _ = try loop.ring.enter(null);
+        try testing.expectEqual(@as(u32, 0), loop.ring.cq_ready());
+        try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
+    }
+}
