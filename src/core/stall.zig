@@ -117,8 +117,10 @@ pub const Heartbeat = struct {
     /// (decision 28, ruling B). A turn after a wait, or before the first tick, spans 0 ns, because
     /// `beat_ns` holds `asleep` and this subtraction saturates. The loop reaches it only for a
     /// stall, for its first tick, for a stamp before the last one, and for a span of
-    /// `maxInt(u64)` under a null threshold.
-    fn check_turn(
+    /// `maxInt(u64)` under a null threshold. It is `noinline`, so its code stays out of each
+    /// backend's tick, which then counts 3 instructions fewer on arm64 Linux (decision 7, ledger
+    /// row H5).
+    noinline fn check_turn(
         heartbeat: *const Heartbeat,
         statistics: *Statistics,
         pollers: *const [constants.pollers_max]*Poller,

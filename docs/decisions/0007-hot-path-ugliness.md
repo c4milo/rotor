@@ -8,6 +8,10 @@ Amended on 2026-11-06 by Camilo: `src/uring/uring.zig`, `src/kqueue/kqueue.zig` 
 (decision 26). Ledger rows H1 to H3 hold the numbers. The hint landed in d1657ce before this
 amendment, which is the mistake the amendment corrects. The lint does not report `@branchHint`.
 
+Amended on 2026-11-07 by Camilo: `src/core/stall.zig` joins the table, for one use, `noinline` on
+`Heartbeat.check_turn` (decision 28). Ledger row H5 holds the numbers. The lint does not report
+`noinline`.
+
 ## The collision
 
 The Performance Hints favour hand-unrolled loops, raw pointers in place of spans, and hot
@@ -47,6 +51,7 @@ These files may contain the techniques listed below. No other file may.
 | `src/uring/uring.zig` | `tick`, which skips the dispatch of decision 26 when nothing waits for it |
 | `src/kqueue/kqueue.zig` | the same |
 | `src/epoll/epoll.zig` | the same |
+| `src/core/stall.zig` | the turn check that the first clock stamp of each tick makes (decision 28) |
 
 None of these files exists yet. The list is the budget: adding a file to it changes this record.
 
