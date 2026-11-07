@@ -43,11 +43,11 @@ test "global-state flags a var every thread shares, and passes a thread's own" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    try harness.expect_messages(try harness.run(arena, Rule, "src/core/tables.zig", "var shared: u32 = 0;"), &.{
+    try harness.expect_messages(try harness.run(arena, Rule, "src/core/tables/tables.zig", "var shared: u32 = 0;"), &.{
         "var shared is state every thread shares: make it threadlocal, or hand it in",
     });
     try harness.expect_messages(
-        try harness.run(arena, Rule, "src/core/tables.zig", "threadlocal var mine: u32 = 0;"),
+        try harness.run(arena, Rule, "src/core/tables/tables.zig", "threadlocal var mine: u32 = 0;"),
         &.{},
     );
 }
@@ -58,7 +58,7 @@ test "global-state reads the library under src/, and not its tests or the proces
     try testing.expect(config.scope.applies("src/kqueue/kqueue.zig"));
     try testing.expect(!config.scope.applies("src/rotor/rotor_choice.zig"));
     try testing.expect(!config.scope.applies("src/conformance/conformance_tcp.zig"));
-    try testing.expect(!config.scope.applies("src/core/tables_test.zig"));
+    try testing.expect(!config.scope.applies("src/core/tables/tables_test.zig"));
     try testing.expect(!config.scope.applies("src/kqueue/kqueue_offload_test.zig"));
     try testing.expect(!config.scope.applies("bench/crosscore/rotor_post.zig"));
     try testing.expect(!config.scope.applies("examples/echo.zig"));

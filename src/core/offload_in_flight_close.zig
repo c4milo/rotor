@@ -17,7 +17,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
-const tables_module = @import("tables.zig");
+const tables_module = @import("tables/tables.zig");
 const in_flight_module = @import("offload_in_flight.zig");
 
 const Descriptor = operation_module.Descriptor;

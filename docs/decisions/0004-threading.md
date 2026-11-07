@@ -499,8 +499,8 @@ exports it. What it settled that this paragraph did not say:
 - The remote's ring holds `constants.remote_entries` entries, one: it submits one wake at a time
   in an enter of its own, and drops the answers to earlier wakes before the next.
 - A `Remote` belongs to one thread. `init` records the thread's identity, the address of the
-  thread-local marker `core/tables.zig` keeps for a loop, and `post` and `deinit` halt on any
-  other thread.
+  thread-local marker `core/tables/tables.zig` keeps for a loop, and `post` and `deinit` halt on
+  any other thread.
 - A registry claim on kqueue is `.acq_rel`, not `.release`: the claimant of a released id becomes
   the producer of that id's rings, and the claim is the one edge that carries the previous holder's
   last stores to it (`kqueue_mailbox.zig`, the ordering argument). The application decides when an

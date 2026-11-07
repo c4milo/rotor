@@ -5,10 +5,10 @@
 //! ones, so a caller writes `tables.arm(...)`.
 const std = @import("std");
 const assert = std.debug.assert;
-const assert_class_a = @import("assertion_class.zig").assert_class_a;
-const constants = @import("constants.zig");
-const event_module = @import("event.zig");
-const slot_module = @import("slot.zig");
+const assert_class_a = @import("../assertion_class.zig").assert_class_a;
+const constants = @import("../constants.zig");
+const event_module = @import("../event.zig");
+const slot_module = @import("../slot.zig");
 const tables_module = @import("tables.zig");
 
 const Event = event_module.Event;
@@ -146,11 +146,11 @@ pub fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
 }
 
 const testing = std.testing;
-const Completion = @import("dispatch/dispatch.zig").Completion;
-const Handle = @import("handle.zig").Handle;
-const Heartbeat = @import("stall.zig").Heartbeat;
-const Operation = @import("operation.zig").Operation;
-const TimerHeap = @import("timer_heap.zig").TimerHeap;
+const Completion = @import("../dispatch/dispatch.zig").Completion;
+const Handle = @import("../handle.zig").Handle;
+const Heartbeat = @import("../stall.zig").Heartbeat;
+const Operation = @import("../operation.zig").Operation;
+const TimerHeap = @import("../timer_heap.zig").TimerHeap;
 
 /// Slots of the tests below: room for every operation one of them submits.
 const test_slots = 4;

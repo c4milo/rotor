@@ -21,7 +21,7 @@ const constants = @import("constants.zig");
 const layout = @import("layout.zig");
 const mailbox_module = @import("mailbox.zig");
 const operation = @import("operation.zig");
-const tables_module = @import("tables.zig");
+const tables_module = @import("tables/tables.zig");
 const in_flight_module = @import("offload_in_flight.zig");
 
 /// The count of operations out on the workers, and the file operations that wait for room

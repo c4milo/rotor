@@ -34,7 +34,7 @@ pub const stall = @import("stall.zig");
 pub const statistics = @import("statistics.zig");
 pub const surface = @import("surface.zig");
 pub const sync = @import("sync.zig");
-pub const tables = @import("tables.zig");
+pub const tables = @import("tables/tables.zig");
 pub const tasks = @import("tasks.zig");
 pub const tick_error = @import("tick_error.zig");
 pub const timer_heap = @import("timer_heap.zig");
@@ -97,7 +97,7 @@ test {
     _ = surface;
     _ = sync;
     _ = tables;
-    _ = @import("tables_test.zig");
+    _ = @import("tables/tables_test.zig");
     _ = tasks;
     _ = @import("tasks_test.zig");
     _ = tick_error;

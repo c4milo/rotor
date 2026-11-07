@@ -30,7 +30,7 @@ const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 const slot_list = @import("slot_list.zig");
-const tables_module = @import("tables.zig");
+const tables_module = @import("tables/tables.zig");
 const close_module = @import("offload_in_flight_close.zig");
 
 const Descriptor = operation_module.Descriptor;

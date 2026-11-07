@@ -8,22 +8,23 @@
 //! one compare (C21), with no system call.
 const std = @import("std");
 const assert = std.debug.assert;
-const assert_class_a = @import("assertion_class.zig").assert_class_a;
-const constants = @import("constants.zig");
-const event_module = @import("event.zig");
-const handle_module = @import("handle.zig");
-const operation_module = @import("operation.zig");
-const slot_module = @import("slot.zig");
-const slot_list_module = @import("slot_list.zig");
-const slot_table_module = @import("slot_table.zig");
-const statistics_module = @import("statistics.zig");
-const spin_module = @import("spin.zig");
-const timer_heap_module = @import("timer_heap.zig");
-const waiters_module = @import("waiters.zig");
+const assert_class_a = @import("../assertion_class.zig").assert_class_a;
+const constants = @import("../constants.zig");
+const event_module = @import("../event.zig");
+const handle_module = @import("../handle.zig");
+const operation_module = @import("../operation.zig");
+const slot_module = @import("../slot.zig");
+const slot_list_module = @import("../slot_list.zig");
+const slot_table_module = @import("../slot_table.zig");
+const statistics_module = @import("../statistics.zig");
+const spin_module = @import("../spin.zig");
+const timer_heap_module = @import("../timer_heap.zig");
+const waiters_module = @import("../waiters.zig");
 const deadline = @import("tables_deadline.zig");
-const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
-const Heartbeat = @import("stall.zig").Heartbeat;
-const Shuffle = @import("shuffle.zig").Shuffle;
+const finish_module = @import("tables_finish.zig");
+const Dispatch = @import("../dispatch/dispatch.zig").Dispatch;
+const Heartbeat = @import("../stall.zig").Heartbeat;
+const Shuffle = @import("../shuffle.zig").Shuffle;
 
 const Code = event_module.Code;
 const Descriptor = operation_module.Descriptor;
@@ -325,76 +326,6 @@ pub const Tables = struct {
         }
     }
 
-    /// The loop produced the operation's final result itself. The slot waits on `finished`, and
-    /// the next `drain_finished` hands its event over and releases it: never the call that
-    /// produced the result (decision 5, rule 2).
-    pub fn finish_local(tables: *Tables, index: u32, result: i32) void {
-        // A receive from a group that succeeded took a buffer, which `finish_local_buffer` records.
-        assert_class_a(result < 0 or !names_buffer(tables.table.at(index)));
-        tables.finish_now(index, result);
-    }
-
-    /// `finish_local` for a single-shot receive from a group that the flush completed: its event
-    /// names the buffer the call took. The slot holds the id in `len` until the event is handed
-    /// over, because a receive from a group names no buffer of its own and leaves `len` unused.
-    pub fn finish_local_buffer(tables: *Tables, index: u32, result: i32, buffer_id: u16) void {
-        const slot = tables.table.at(index);
-        assert(names_buffer(slot));
-        assert(result >= 0);
-        slot.len = buffer_id;
-        tables.finish_now(index, result);
-    }
-
-    fn finish_now(tables: *Tables, index: u32, result: i32) void {
-        const slot = tables.table.at(index);
-        assert_class_a(slot.state == .queued or slot.state == .submitted);
-        if (slot.heap_position != slot_module.heap_position_none) tables.timers.disarm(index);
-        slot.state = .finishing;
-        slot.result = result;
-        tables.finished.push(tables.table.slots, index);
-    }
-
-    /// Hands the caller the final events the loop produced itself, oldest first, and releases
-    /// their slots: the moment decision 5, rule 1 names.
-    pub fn drain_finished(tables: *Tables, events: []Event) u32 {
-        var produced: u32 = 0;
-        while (produced < events.len) : (produced += 1) {
-            const index = tables.finished.pop(tables.table.slots) orelse break;
-            const slot = tables.table.at(index);
-            assert_class_a(slot.state == .finishing);
-            // A repeating timer that was not cancelled has more to come: its event says so and
-            // its slot stays the loop's (decision 14, rule 2).
-            const again = repeats(slot);
-            if (slot.flags.sampled and !again) tables.statistics.finished(index, slot, tables.now_ns);
-            // The flags are built in a register and stored with the event. A packed literal with two
-            // runtime fields compiled to a read of the old event and a second write (decision 26).
-            var flags: Event.Flags = .{};
-            flags.more = again;
-            flags.dispatched = slot.flags.dispatched;
-            events[produced] = .{ .user_data = slot.user_data, .result = slot.result, .flags = flags };
-            if (names_buffer(slot) and slot.result >= 0) {
-                events[produced].flags.buffer = true;
-                events[produced].flags.buffer_id = @intCast(slot.len);
-            }
-            if (again) deadline.rearm(tables, index, slot) else tables.table.release(index);
-        }
-        assert(produced <= events.len);
-        return produced;
-    }
-
-    /// True for a single-shot receive from a group: an event of it that succeeded names the buffer
-    /// its bytes are in. A multishot one never finishes locally with a success.
-    fn names_buffer(slot: *const Slot) bool {
-        return slot.flags.buffer_group and !slot.flags.multishot;
-    }
-
-    /// True when this slot is a repeating timer whose caller has not cancelled it, so the event
-    /// being handed over is one of many and not the last (decision 14, rule 2).
-    fn repeats(slot: *const Slot) bool {
-        if (slot.code != .timer or !slot.flags.multishot) return false;
-        return !slot.flags.cancel_requested;
-    }
-
     /// Marks `slot` for cancellation, once, and ends it when the tables can: a timer lives in
     /// the heap, so its cancel is synchronous and has no race (decision 5, rule 5). A queued
     /// slot is ended by the backend's flush, which finds the mark before the kernel sees the
@@ -407,7 +338,7 @@ pub const Tables = struct {
     /// 2026-09-23 (decision 14, rule 5).
     pub fn request_cancel(tables: *Tables, index: u32, slot: *Slot) CancelAction {
         assert(slot.state != .free);
-        assert(slot.state != .finishing or repeats(slot));
+        assert(slot.state != .finishing or finish_module.repeats(slot));
         if (slot.flags.cancel_requested) return .none;
         slot.flags.cancel_requested = true;
         if (slot.state == .queued) return .none;
@@ -445,7 +376,7 @@ pub const Tables = struct {
         return switch (slot.state) {
             .free => false,
             .queued, .submitted => true,
-            .finishing => repeats(slot),
+            .finishing => finish_module.repeats(slot),
         };
     }
 
@@ -463,6 +394,12 @@ pub const Tables = struct {
         }
     }
 
+    /// The loop produced the operation's final result itself: `tables_finish.zig`.
+    pub const finish_local = finish_module.finish_local;
+    /// `finish_local` for a receive from a group, whose event names a buffer: `tables_finish.zig`.
+    pub const finish_local_buffer = finish_module.finish_local_buffer;
+    /// Hands over the final events the loop produced itself: `tables_finish.zig`.
+    pub const drain_finished = finish_module.drain_finished;
     /// Arms an operation's deadline or a timer's delay: `tables_deadline.zig`.
     pub const arm = deadline.arm;
     /// How long a tick may block: `tables_deadline.zig`.

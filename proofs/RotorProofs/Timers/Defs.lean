@@ -3,8 +3,8 @@ import RotorProofs.Heap.Spec
 /-!
 # Timers: the model
 
-A model of what `src/core/tables.zig` and a backend's `flush` and `tick` do to a timer, written to
-be read beside them. Each definition names the Zig function it mirrors. The heap is the verified
+A model of what `src/core/tables/tables.zig` and a backend's `flush` and `tick` do to a timer,
+written to be read beside them. Each definition names the Zig function it mirrors. The heap is the verified
 model of `Heap/`, so every property proved about it holds here.
 
 What it leaves out, and why the omission changes nothing proved here:

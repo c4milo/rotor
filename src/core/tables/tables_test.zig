@@ -1,19 +1,19 @@
 //! `Tables` under test: the half of a loop that is the same on every kernel.
 const std = @import("std");
 const testing = std.testing;
-const constants = @import("constants.zig");
-const event_module = @import("event.zig");
+const constants = @import("../constants.zig");
+const event_module = @import("../event.zig");
 const tables_module = @import("tables.zig");
 
 const CancelAction = tables_module.CancelAction;
-const core = @import("core.zig");
+const core = @import("../core.zig");
 
 const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
 const Slot = core.Slot;
 const Tables = tables_module.Tables;
-const core_statistics = @import("statistics.zig");
+const core_statistics = @import("../statistics.zig");
 const TimerHeap = core.timer_heap.TimerHeap;
 
 const capacity = 4;

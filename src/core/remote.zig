@@ -17,8 +17,8 @@
 //! loop that posts to a remote's id is answered `loop_not_found`, as for any id that runs no loop.
 //!
 //! A `Remote` belongs to one thread, as a loop does. Every backend records the thread at `init`
-//! and halt a `post` or `deinit` from another thread, with the compare `core/tables.zig` makes
-//! for a loop.
+//! and halt a `post` or `deinit` from another thread, with the compare
+//! `core/tables/tables.zig` makes for a loop.
 //!
 //! `send` is the post of the readiness backends, kqueue and epoll, where a loop's post and a
 //! `Remote`'s post write the same mailbox ring, on io_uring too since 2026-09-25 (decision 4).

@@ -1,8 +1,8 @@
 # Proofs
 
 Machine-checked proofs, in [Lean 4](https://lean-lang.org), of rotor's timers: the timer heap in
-`src/core/timer_heap.zig`, and what `src/core/tables.zig` and a backend's `flush` and `tick` do
-to a timer. Each proof is about a model of the Zig code, written to be read beside it. Every
+`src/core/timer_heap.zig`, and what `src/core/tables/tables.zig` and a backend's `flush` and `tick`
+do to a timer. Each proof is about a model of the Zig code, written to be read beside it. Every
 definition names the Zig function it mirrors.
 
 ```bash
