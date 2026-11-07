@@ -139,19 +139,19 @@ pub const Registry = struct {
     /// True when `init_group` made the registry, and its loops may run in several processes.
     group: bool,
 
-    /// The bytes a registry of `loop_count` loops needs: a function of the loops the application
+    /// The bytes a registry of `loops` loops needs: a function of the loops the application
     /// runs, never of `constants.loops_max` (decision 12, point 6).
-    pub fn memory_bytes(loop_count: u16) usize {
-        assert(loop_count >= loops_min);
-        assert(loop_count <= constants.loops_max);
-        const count: usize = loop_count;
+    pub fn memory_bytes(loops: u16) usize {
+        assert(loops >= loops_min);
+        assert(loops <= constants.loops_max);
+        const count: usize = loops;
         const tables_bytes = @sizeOf(Header) + wakes_bytes(count) + count * @sizeOf(Entry) +
             count * count * @sizeOf(Mailbox);
         return mailbox_module.alignment_slack_bytes + tables_bytes;
     }
 
-    /// A registry for loops of one process. `loop_count` is in [2, constants.loops_max] and
-    /// `memory.len` is at least `memory_bytes(loop_count)`. Afterwards every mailbox is empty,
+    /// A registry for loops of one process. `loops` is in [2, constants.loops_max] and
+    /// `memory.len` is at least `memory_bytes(loops)`. Afterwards every mailbox is empty,
     /// every descriptor is absent, no loop sleeps, and there are no wakes. The first loop of each
     /// id makes its wake, and the registry keeps it.
     ///
@@ -161,10 +161,10 @@ pub const Registry = struct {
     pub fn init(
         registry: *Registry,
         memory: []align(layout.memory_alignment) u8,
-        loop_count: u16,
+        loops: u16,
     ) void {
-        write_header(memory, loop_count, false);
-        registry.* = carve(memory, loop_count);
+        write_header(memory, loops, false);
+        registry.* = carve(memory, loops);
         for (registry.wakes) |*stored| stored.* = Wake.none;
         registry.empty();
     }
@@ -176,13 +176,13 @@ pub const Registry = struct {
     pub fn init_group(
         registry: *Registry,
         memory: []align(layout.memory_alignment) u8,
-        loop_count: u16,
+        loops: u16,
         wakes: []const Wake,
     ) void {
         assert(@intFromPtr(memory.ptr) % @alignOf(Mailbox) == 0);
-        assert(wakes.len == loop_count);
-        write_header(memory, loop_count, true);
-        registry.* = carve(memory, loop_count);
+        assert(wakes.len == loops);
+        write_header(memory, loops, true);
+        registry.* = carve(memory, loops);
         for (registry.wakes, 0..) |*stored, id| {
             assert(wakes[id].send >= 0 and wakes[id].watch >= 0);
             stored.* = wakes[id];
@@ -202,19 +202,19 @@ pub const Registry = struct {
         const header = header_at(memory);
         if (header.magic != header_magic) return error.NotARegistry;
         if (header.version != header_version) return error.VersionMismatch;
-        const loop_count = header.loop_count;
-        if (loop_count < loops_min or loop_count > constants.loops_max) return error.NotARegistry;
-        if (memory.len < memory_bytes(loop_count)) return error.MemoryTooShort;
+        const loops = header.loop_count;
+        if (loops < loops_min or loops > constants.loops_max) return error.NotARegistry;
+        if (memory.len < memory_bytes(loops)) return error.MemoryTooShort;
         if (header.group != 1) return error.NotAGroup;
-        registry.* = carve(memory, loop_count);
+        registry.* = carve(memory, loops);
         assert(registry.group);
     }
 
-    /// Splits `memory` into the tables of `loop_count` loops. It reads the header's group flag and
+    /// Splits `memory` into the tables of `loops` loops. It reads the header's group flag and
     /// writes nothing.
-    fn carve(memory: []align(layout.memory_alignment) u8, loop_count: u16) Registry {
-        assert(memory.len >= memory_bytes(loop_count));
-        const count: usize = loop_count;
+    fn carve(memory: []align(layout.memory_alignment) u8, loops: u16) Registry {
+        assert(memory.len >= memory_bytes(loops));
+        const count: usize = loops;
         const header = header_at(memory);
         const skipped = @intFromPtr(header) - @intFromPtr(memory.ptr);
         const wakes_start = skipped + @sizeOf(Header);
@@ -242,12 +242,12 @@ pub const Registry = struct {
         return @ptrCast(@alignCast(memory.ptr + skipped));
     }
 
-    fn write_header(memory: []align(layout.memory_alignment) u8, loop_count: u16, group: bool) void {
-        assert(memory.len >= memory_bytes(loop_count));
+    fn write_header(memory: []align(layout.memory_alignment) u8, loops: u16, group: bool) void {
+        assert(memory.len >= memory_bytes(loops));
         header_at(memory).* = .{
             .magic = header_magic,
             .version = header_version,
-            .loop_count = loop_count,
+            .loop_count = loops,
             .group = @intFromBool(group),
         };
     }
@@ -261,7 +261,7 @@ pub const Registry = struct {
     }
 
     /// How many loops the registry was sized for.
-    pub fn loops(registry: *const Registry) u16 {
+    pub fn loop_count(registry: *const Registry) u16 {
         assert(registry.entries.len >= loops_min);
         assert(registry.entries.len <= constants.loops_max);
         return @intCast(registry.entries.len);
@@ -452,7 +452,7 @@ test "a process that attaches sees the rings, the entries and the wakes the crea
     var member: Registry = undefined;
     try member.attach(&memory);
     try testing.expect(member.group);
-    try testing.expectEqual(@as(u16, pair_loops), member.loops());
+    try testing.expectEqual(@as(u16, pair_loops), member.loop_count());
     try testing.expectEqual(wakes[4], member.wake(4).?);
     try testing.expectEqual(wakes[1].send, member.get(1));
     var out: [2]Message = undefined;

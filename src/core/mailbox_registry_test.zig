@@ -28,7 +28,7 @@ test "every ordered pair of loops has a mailbox of its own" {
     var memory: [pair_bytes]u8 align(layout.memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&memory, pair_loops);
-    try testing.expectEqual(@as(u16, pair_loops), registry.loops());
+    try testing.expectEqual(@as(u16, pair_loops), registry.loop_count());
     for (0..pair_loops * pair_loops) |pair| {
         const sender = pair / pair_loops;
         const receiver = pair % pair_loops;

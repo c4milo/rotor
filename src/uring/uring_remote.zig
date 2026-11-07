@@ -57,7 +57,7 @@ pub const Remote = struct {
     /// `id` must be below the count the registry was sized for, and free. Claiming one twice, or one
     /// a loop already holds, halts.
     pub fn init(remote: *Remote, registry: *Registry, id: core.LoopId) InitError!void {
-        assert(id < registry.loops());
+        assert(id < registry.loop_count());
         const ring = try Ring.init(constants.remote_entries);
         remote.* = .{
             .registry = registry,

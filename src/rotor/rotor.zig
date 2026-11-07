@@ -239,8 +239,8 @@ const loop_error_sets = [_][]const u8{
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{
-    "memory_bytes", "init", "loops", "GroupError", "AttachError", "init_group", "attach", "release",
-    "close_wakes",
+    "memory_bytes", "init", "loop_count", "GroupError", "AttachError", "init_group", "attach", "release",
+    "deinit",
 };
 
 fn named(comptime T: type, comptime lists: []const []const []const u8) bool {
@@ -316,8 +316,8 @@ test "a registry and a remote work through the public module" {
     var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&registry_memory, 3);
-    defer registry.close_wakes();
-    try testing.expectEqual(3, registry.loops());
+    defer registry.deinit();
+    try testing.expectEqual(3, registry.loop_count());
     var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
     var options = test_options;
@@ -343,7 +343,7 @@ test "a loop posts to another loop through the public module, with no event of i
     var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
     var registry: Registry = undefined;
     registry.init(&registry_memory, 3);
-    defer registry.close_wakes();
+    defer registry.deinit();
     var options = test_options;
     options.registry = &registry;
     var sender_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;

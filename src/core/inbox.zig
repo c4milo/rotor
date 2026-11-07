@@ -61,7 +61,7 @@ pub const Inbox = struct {
     /// touches it. It stays empty unless the loop's file policy is `offload`.
     offload_in_flight: offload.InFlight,
     /// The sender whose ring the next `drain_mailboxes` visits first (W3, ruled 2026-11-07). It is
-    /// always below `registry.loops()`. Only the loop thread reads or writes it.
+    /// always below `registry.loop_count()`. Only the loop thread reads or writes it.
     sender_cursor: LoopId,
 
     /// `out` is the out array a loop with an offload carved from its memory, or null for one with
@@ -95,7 +95,7 @@ pub const Inbox = struct {
         if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, dispatch);
         var visit: Visit = .{ .out = events };
         var popped: u32 = 0;
-        for (0..registry.loops()) |sender| {
+        for (0..registry.loop_count()) |sender| {
             if (sender == receiver) continue;
             const room = @min(events.len - visit.written, constants.messages_per_drain);
             if (room == 0) {
@@ -120,7 +120,7 @@ pub const Inbox = struct {
         events: []Event,
         dispatch: *Dispatch,
     ) u32 {
-        const loops = registry.loops();
+        const loops = registry.loop_count();
         const cursor = inbox.sender_cursor;
         assert(cursor < loops);
         var visit: Visit = .{ .out = events };
@@ -149,7 +149,7 @@ pub const Inbox = struct {
     pub fn holds_messages(inbox: *const Inbox, receiver: LoopId) bool {
         if (offload.pending(inbox.completions)) return true;
         const registry = inbox.registry orelse return false;
-        for (0..registry.loops()) |sender| {
+        for (0..registry.loop_count()) |sender| {
             if (sender == receiver) continue;
             if (!registry.mailbox(@intCast(sender), receiver).is_empty()) return true;
         }
@@ -174,7 +174,7 @@ pub const Inbox = struct {
         const registry = inbox.registry orelse return bound;
         registry.begin_sleep(receiver);
         inbox.sleeping = true;
-        for (0..registry.loops()) |sender| {
+        for (0..registry.loop_count()) |sender| {
             if (sender == receiver) continue;
             if (!registry.mailbox(@intCast(sender), receiver).is_empty()) return null;
         }

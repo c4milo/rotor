@@ -412,9 +412,9 @@ may do to it is post a message:
   still readable after `deinit`. On io_uring it is a lower bound: an answer the kernel posts after
   the remote's last enter is not read. A `Remote` belongs to one thread as a loop does.
 - The offload's workers answer through rings of their own, not through a `Remote`.
-- The registry keeps the descriptor that wakes each loop until `registry.close_wakes()`, so a
+- The registry keeps the descriptor that wakes each loop until `registry.deinit()`, so a
   sender that read it never wakes a descriptor that a later open got. The first loop of each id
-  makes it. Call `close_wakes` once every loop and remote of the registry ended and every thread
+  makes it. Call `deinit` once every loop and remote of the registry ended and every thread
   that posts to them stopped: an id still held halts it. Until then each id a loop held keeps one
   descriptor open, and a kqueue or io_uring loop holds two more while it runs (decision 4,
   amendment of 2026-11-06).
@@ -449,7 +449,7 @@ supervisor), and a surviving process calls `registry.release(id)` for each loop 
 Posts to those ids are then refused as `loop_not_found`. A new process started by the creator may
 then run loops with those ids, and is handed what was posted to the dead loop and not read.
 `release` is only for a process known to be dead: one that is only stopped would come back to find
-a second loop on its rings. Each process calls `registry.close_wakes()` when it is done with the
+a second loop on its rings. Each process calls `registry.deinit()` when it is done with the
 group.
 
 A macOS process holds two descriptors per loop of the group. The default limit a macOS process

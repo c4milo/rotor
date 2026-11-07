@@ -79,7 +79,7 @@ pub const RegistryLife = struct {
     /// loop, and the error of that `try` is the one to read.
     fn report_claimed(life: RegistryLife) void {
         if (life.registry.group) return;
-        for (0..life.registry.loops()) |id| {
+        for (0..life.registry.loop_count()) |id| {
             const holder = life.registry.get(@intCast(id));
             if (holder == core.mailbox.descriptor_none) continue;
             std.debug.print("a registry's life ends while id {d} is still held; a step of the " ++

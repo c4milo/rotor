@@ -15,7 +15,7 @@ const kqueue = @import("kqueue");
 
 /// The registry a group of loops shares, for `post` between them (decision 4). The application
 /// owns its memory and hands it to every loop and remote of the group. It keeps the descriptor that
-/// wakes each loop for its whole life, so the application calls `close_wakes` once every loop and
+/// wakes each loop for its whole life, so the application calls `deinit` once every loop and
 /// remote of it ended (decision 4, amendment of 2026-11-06).
 pub const Registry = struct {
     inner: Inner,
@@ -25,35 +25,35 @@ pub const Registry = struct {
     else
         union(Tag) { kqueue: kqueue.Registry };
 
-    /// The bytes `init` needs for `loop_count` loops and remotes: the most any backend this build
+    /// The bytes `init` needs for `loops` loops and remotes: the most any backend this build
     /// carries needs, because the memory is sized before the choice is made.
-    pub fn memory_bytes(loop_count: u16) usize {
+    pub fn memory_bytes(loops: u16) usize {
         var most: usize = 0;
         inline for (comptime std.enums.values(Tag)) |tag| {
-            most = @max(most, module(tag).Registry.memory_bytes(loop_count));
+            most = @max(most, module(tag).Registry.memory_bytes(loops));
         }
         return most;
     }
 
     /// A registry for loops of one process. It makes no descriptor: the first loop of each id
-    /// makes the one that wakes it, and the registry keeps it until `close_wakes`.
+    /// makes the one that wakes it, and the registry keeps it until `deinit`.
     pub fn init(
         registry: *Registry,
         memory: []align(core.layout.memory_alignment) u8,
-        loop_count: u16,
+        loops: u16,
     ) void {
         switch (chosen()) {
             inline else => |tag| {
                 registry.inner = @unionInit(Inner, @tagName(tag), undefined);
-                @field(registry.inner, @tagName(tag)).init(memory, loop_count);
+                @field(registry.inner, @tagName(tag)).init(memory, loops);
             },
         }
     }
 
     /// How many loops and remotes the registry was sized for.
-    pub fn loops(registry: *const Registry) u16 {
+    pub fn loop_count(registry: *const Registry) u16 {
         return switch (registry.inner) {
-            inline else => |*inner| inner.loops(),
+            inline else => |*inner| inner.loop_count(),
         };
     }
 
@@ -70,15 +70,15 @@ pub const Registry = struct {
     pub fn init_group(
         registry: *Registry,
         memory: []align(core.layout.memory_alignment) u8,
-        loop_count: u16,
+        loops: u16,
     ) GroupError!void {
-        assert(loop_count <= core.constants.loops_max);
+        assert(loops <= core.constants.loops_max);
         var wakes: [core.constants.loops_max]core.mailbox.Wake = undefined;
         switch (chosen()) {
             inline else => |tag| {
-                try module(tag).group_module.make(wakes[0..loop_count]);
+                try module(tag).group_module.make(wakes[0..loops]);
                 registry.inner = @unionInit(Inner, @tagName(tag), undefined);
-                @field(registry.inner, @tagName(tag)).init_group(memory, loop_count, wakes[0..loop_count]);
+                @field(registry.inner, @tagName(tag)).init_group(memory, loops, wakes[0..loops]);
             },
         }
     }
@@ -108,7 +108,7 @@ pub const Registry = struct {
     /// still holds an id halts it, and the call closes the descriptor each id's first loop made
     /// (decision 4, amendment of 2026-11-06). In a group it closes this process's copies of the
     /// wakes, and every process closes its own.
-    pub fn close_wakes(registry: *Registry) void {
+    pub fn deinit(registry: *Registry) void {
         switch (registry.inner) {
             inline else => |*inner, tag| {
                 if (inner.group) {
@@ -124,14 +124,14 @@ pub const Registry = struct {
 const testing = std.testing;
 
 test "a group's registry is attached by a second value over its memory, and releases a loop's id" {
-    const loop_count = 2;
-    var memory: [Registry.memory_bytes(loop_count)]u8 align(128) = undefined;
+    const loops = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(128) = undefined;
     var registry: Registry = undefined;
-    try registry.init_group(&memory, loop_count);
-    defer registry.close_wakes();
+    try registry.init_group(&memory, loops);
+    defer registry.deinit();
     var member: Registry = undefined;
     try member.attach(&memory);
-    try testing.expectEqual(@as(u16, loop_count), member.loops());
+    try testing.expectEqual(@as(u16, loops), member.loop_count());
 
     // A remote of a process that died holds id 1. Once another process releases it, a new remote
     // claims it; a claim of an id still held would halt.
@@ -144,11 +144,11 @@ test "a group's registry is attached by a second value over its memory, and rele
 }
 
 test "attach refuses memory that holds a registry of one process" {
-    const loop_count = 2;
-    var memory: [Registry.memory_bytes(loop_count)]u8 align(128) = undefined;
+    const loops = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(128) = undefined;
     var registry: Registry = undefined;
-    registry.init(&memory, loop_count);
-    registry.close_wakes();
+    registry.init(&memory, loops);
+    registry.deinit();
     var member: Registry = undefined;
     try testing.expectError(error.NotAGroup, member.attach(&memory));
 }
@@ -170,11 +170,11 @@ test "a remote counts the wakes the kernel refused, and its deinit keeps the cou
     if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
         return error.SkipZigTest;
     }
-    const loop_count = 2;
-    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+    const loops = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
         undefined;
     var registry: Registry = undefined;
-    registry.init(&memory, loop_count);
+    registry.init(&memory, loops);
     const ends = try test_pipe();
     defer for (ends) |end| {
         _ = if (linux) std.os.linux.close(end) else std.c.close(end);
@@ -205,12 +205,12 @@ test "a loop counts the wakes the kernel refused, and its deinit keeps the count
     if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
         return error.SkipZigTest;
     }
-    const loop_count = 2;
-    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+    const loops = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
         undefined;
     var registry: Registry = undefined;
-    registry.init(&memory, loop_count);
-    defer registry.close_wakes();
+    registry.init(&memory, loops);
+    defer registry.deinit();
     const ends = try test_pipe();
     defer for (ends) |end| {
         _ = if (linux) std.os.linux.close(end) else std.c.close(end);
@@ -250,15 +250,15 @@ fn is_open(descriptor: core.Descriptor) bool {
     return std.c.fcntl(descriptor, std.c.F.GETFD) >= 0;
 }
 
-test "a registry of one process keeps the descriptor that wakes a loop until close_wakes" {
+test "a registry of one process keeps the descriptor that wakes a loop until deinit" {
     if (!(if (linux) uring.supported or epoll.supported else kqueue.supported)) {
         return error.SkipZigTest;
     }
-    const loop_count = 2;
-    var memory: [Registry.memory_bytes(loop_count)]u8 align(core.layout.memory_alignment) =
+    const loops = 2;
+    var memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) =
         undefined;
     var registry: Registry = undefined;
-    registry.init(&memory, loop_count);
+    registry.init(&memory, loops);
     const sizing: loop_module.Loop.Options = .{ .operations = 1 };
     var loop_memory: [loop_module.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) =
         undefined;
@@ -271,6 +271,6 @@ test "a registry of one process keeps the descriptor that wakes a loop until clo
     // A sender may still hold the number after the loop ended, so the loop leaves it open.
     loop.deinit();
     try testing.expect(is_open(number));
-    registry.close_wakes();
+    registry.deinit();
     try testing.expect(!is_open(number));
 }

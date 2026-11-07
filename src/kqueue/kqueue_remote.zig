@@ -52,7 +52,7 @@ pub const Remote = struct {
     /// a loop already holds, halts: two senders on one id would share a ring that has room for one
     /// producer.
     pub fn init(remote: *Remote, registry: *Registry, id: core.LoopId) InitError!void {
-        assert(id < registry.loops());
+        assert(id < registry.loop_count());
         remote.* = .{
             .registry = registry,
             .owner = core.tables.thread_identity(),

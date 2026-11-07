@@ -84,7 +84,7 @@ pub fn send(
     target: LoopId,
     message: Message,
 ) SendError!?Descriptor {
-    if (target >= registry.loops()) return error.LoopNotFound;
+    if (target >= registry.loop_count()) return error.LoopNotFound;
     // Negative covers a loop that is not running and another remote, which publishes a sentinel
     // below zero for exactly this reason.
     const wake = registry.get(target);
