@@ -528,3 +528,30 @@ does not split. epoll kept `K` only while an operation waited for readiness, and
 receive that began a split waits no more. A tick with a long finished list then gave the split no
 place. So epoll's tick counts a pending split as the kernel's answer, as the reap serves it first.
 A review of W3 found the gap on 2026-11-07, and a test of `epoll_tick.zig` holds it.
+
+## Amendment, 2026-11-07: a pending split does not block a tick
+
+Camilo asked on 2026-11-07 whether a tick can block while a split is pending, and ruled to fix it.
+Until this date it could, on io_uring and on epoll, and the gap was there before W3 too.
+
+The path was this. A tick hands over a split's events only in the reap, after its one kernel call.
+A tick whose first drain wrote no event decided to block. On io_uring the enter then waited for a
+completion, and on epoll the call waited for readiness. The split's datagrams were already in user
+space. So nothing in the kernel ended the wait, and the tick took its whole `wait_ns`. A loop that
+ticks with a long wait and no other traffic held the rest of the split for that time.
+
+1. **A pending split makes the tick poll.** Each Linux backend's `wait_for` returns null while
+   `loop.split.pending()` is true. The kernel call then does not wait, and the reap hands over the
+   split as before.
+2. **The check runs only when the first drain wrote no event.** A tick that produced events does
+   not block and does not read the split here, so the fast path does not change.
+3. **kqueue does not split**, so it needs no check.
+
+The scenario is "a tick does not block while datagrams of a coalesced one wait to be handed over",
+in `conformance_udp_coalesce.zig`. It receives the first of four coalesced datagrams into an events
+array of one. Then it ticks with a wait of one second and requires each of the three other events
+in less than half of that wait. Before the fix, each such tick on both Linux backends waited 1,008
+to 1,009 ms.
+
+Mutations, 2, each CAUGHT against the Linux gate: no split check in `uring_tick.zig`'s `wait_for`,
+and no split check in `epoll_tick.zig`'s `wait_for`.

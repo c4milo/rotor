@@ -196,10 +196,13 @@ fn arm_wait_timer(loop: *Loop, now_ns: u64, deadline_ns: u64) bool {
 }
 
 /// How long the enter may block: not at all while a cancel waits for its entry, a wake waits for
-/// room in the submission ring, or a loop of a group has no poll of its eventfd in the ring, and
-/// otherwise what `core.Tables` allows.
+/// room in the submission ring, a loop of a group has no poll of its eventfd in the ring, or a
+/// split datagram has events left, and otherwise what `core.Tables` allows. The reap hands over
+/// the rest of a split, and no completion may come to end a wait (decision 15, amendment of
+/// 2026-11-07).
 fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
     if (loop.cancels.count != 0) return null;
+    if (loop.split.pending()) return null;
     if (loop.wakes.targets.count() != 0) return null;
     if (group_wake.unarmed(loop)) return null;
     return loop.tables.wait_bound(wait_ns);

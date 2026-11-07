@@ -190,6 +190,62 @@ test "the datagrams of a coalesced one that do not fit a tick's events come in t
     try end(&harness, handles[0]);
 }
 
+/// The wait of each tick while a split is pending. A tick that blocks takes all of it, and a tick
+/// that does not block takes a small part of it.
+const split_wait_ns = core.constants.ns_per_s;
+
+/// Receives one datagram of a coalesced one into a single event, so the rest of it is pending.
+fn first_segment(harness: *Harness, pair: Pair) !core.Handle {
+    // The send ends first, so no event of it is left for a later tick.
+    const payload: [40]u8 = @splat('w');
+    var out = outbound(pair, 10);
+    try harness.submit(&.{Operation.send_to(2, pair.sender, &payload, &out)}, &.{});
+    var sent: [1]Event = undefined;
+    try harness.collect(&sent);
+    try testing.expectEqual(@as(u32, payload.len), try sent[0].outcome());
+    var handles: [1]core.Handle = undefined;
+    try harness.submit(&.{Operation.receive_from(1, pair.receiver, group_id)}, &handles);
+    for (0..100) |_| {
+        var one: [1]Event = undefined;
+        if (try harness.loop.tick(&one, 10 * core.constants.ns_per_ms) == 0) continue;
+        try testing.expectEqual(@as(u64, 1), one[0].user_data);
+        try testing.expectEqual(@as(u6, 0), one[0].flags.segment);
+        harness.loop.give_back_buffer(group_id, one[0].flags.buffer_id);
+        return handles[0];
+    }
+    return error.EventsMissing;
+}
+
+test "a tick does not block while datagrams of a coalesced one wait to be handed over" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    // macOS has no GRO, so a kqueue loop never holds a split.
+    if (!linux) return;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    try harness.loop.provide_datagram_buffers(group_id, &large_memory, group_buffers, large_buffer_bytes, group);
+    const pair = try Pair.open_default();
+    defer pair.close();
+    const handle = try first_segment(&harness, pair);
+    // A failure ends the receive too, so the loop's `deinit` finds every operation ended.
+    errdefer end(&harness, handle) catch {};
+    // Nothing else is due and the socket holds nothing more. Each tick hands over the next
+    // datagram of the split at once, and does not wait for the kernel (decision 15).
+    for (1..4) |segment| {
+        var one: [1]Event = undefined;
+        const before_ns = harness.loop.now_ns();
+        try testing.expectEqual(@as(u32, 1), try harness.loop.tick(&one, split_wait_ns));
+        const waited_ns = harness.loop.now_ns() - before_ns;
+        if (waited_ns >= split_wait_ns / 2) {
+            std.debug.print("the tick waited {d} ms with a split pending\n", .{waited_ns / core.constants.ns_per_ms});
+            return error.TestUnexpectedResult;
+        }
+        try testing.expectEqual(@as(u6, @intCast(segment)), one[0].flags.segment);
+        harness.loop.give_back_buffer(group_id, one[0].flags.buffer_id);
+    }
+    try end(&harness, handle);
+}
+
 test "a socket that does not coalesce takes a segmented send as one datagram per segment" {
     if (conformance.unsupported()) return error.SkipZigTest;
     // macOS refuses the segmented send, which `conformance_udp.zig` asserts.

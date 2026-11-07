@@ -63,7 +63,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     var produced = first.produced;
     produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
-    const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
+    const wait = if (produced == 0) loop.settle_to_sleep(wait_for(loop, wait_ns)) else null;
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
     if (wait != null) tables.note_asleep();
     const room = @min(events.len - produced, constants.readiness_max);
@@ -119,6 +119,14 @@ fn after_kernel(
     produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
     assert(produced <= events.len);
     return produced;
+}
+
+/// How long the call may block: not at all while a split datagram has events left, and otherwise
+/// what `core.Tables` allows. The reap hands over the rest of a split, and the socket can be empty,
+/// so no readiness may come to end a wait (decision 15, amendment of 2026-11-07).
+fn wait_for(loop: *const Loop, wait_ns: u64) ?u64 {
+    if (loop.split.pending()) return null;
+    return loop.tables.wait_bound(wait_ns);
 }
 
 /// The tick's one `epoll_pwait2` call. A poll returns at once. A call that blocks carries no
