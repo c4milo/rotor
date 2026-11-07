@@ -391,7 +391,8 @@ test "a tick a datagram wakes reads the clock after its wait" {
     var registry: backend.Registry = undefined;
     const registry_alignment = core.layout.memory_alignment;
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
-    registry.init(&registry_memory, 2);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
     var harness: Harness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();

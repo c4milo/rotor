@@ -81,7 +81,8 @@ const Sender = struct {
 test "a thread with no loop posts through a remote, and the loop receives the message" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
 
     var harness: Harness = undefined;
     try harness.init(loop_id, &registry);
@@ -107,7 +108,8 @@ test "a thread with no loop posts through a remote, and the loop receives the me
 test "a loop that posts to a remote's id is told there is no loop there" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
 
     var harness: Harness = undefined;
     try harness.init(loop_id, &registry);
@@ -128,7 +130,8 @@ test "a loop that posts to a remote's id is told there is no loop there" {
 test "a remote is answered loop_not_found before the loop starts and after it stops" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
 
     var remote: Remote = undefined;
     try remote.init(&registry, remote_id);
@@ -156,7 +159,8 @@ test "a remote is answered loop_not_found before the loop starts and after it st
 test "a remote that outruns the loop is refused when its ring is full, and never loses a message" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
 
     var harness: Harness = undefined;
     try harness.init(loop_id, &registry);
@@ -228,7 +232,8 @@ const Sleeper = struct {
 test "a remote's post wakes a loop that sleeps in its tick, long before its wait is over" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&wake_registry_memory, wake_ids);
+    const life = try conformance.RegistryLife.start(&registry, &wake_registry_memory, wake_ids);
+    defer life.end();
     var harness: Harness = undefined;
     try harness.init(loop_id, &registry);
     defer harness.deinit();

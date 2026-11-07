@@ -290,6 +290,8 @@ test "a tick with a message to hand over and nothing waiting on a socket polls n
         undefined;
     var registry: kqueue.Registry = undefined;
     registry.init(&registry_memory, loops);
+    // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
+    defer kqueue.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
     var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
@@ -318,6 +320,8 @@ test "a loop whose own wake trigger came back skips the poll again" {
         undefined;
     var registry: kqueue.Registry = undefined;
     registry.init(&registry_memory, loops);
+    // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
+    defer kqueue.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
     var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;

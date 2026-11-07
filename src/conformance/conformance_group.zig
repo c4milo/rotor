@@ -37,13 +37,17 @@ const status_wrong_message: u8 = 5;
 const status_slept_through: u8 = 6;
 
 /// A registry two processes share, and the wakes its creator made. The creator keeps its copies of
-/// the wakes until `deinit`.
+/// the wakes until `deinit`. Its life begins before the wakes exist, so `deinit` halts when a wake
+/// stays open.
 const Group = struct {
     memory: Memory,
     wakes: [loops]Wake,
     registry: Registry,
+    life: conformance.RegistryLife,
 
     fn init(group: *Group) !void {
+        group.life = try conformance.RegistryLife.begin(&group.registry);
+        errdefer group.life.forget();
         group.memory = try process.shared_memory(Registry.memory_bytes(loops));
         errdefer process.release_memory(group.memory);
         try backend.group_module.make(&group.wakes);
@@ -52,6 +56,7 @@ const Group = struct {
 
     fn deinit(group: *Group) void {
         backend.group_module.close(&group.wakes);
+        group.life.end();
         process.release_memory(group.memory);
     }
 };

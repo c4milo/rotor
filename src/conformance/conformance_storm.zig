@@ -442,7 +442,8 @@ fn run_target(target: *Target, storm: *Storm) !u64 {
 
 fn scenario() !void {
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
     var harness: Harness = undefined;
     try harness.init(target_id, &registry);
     defer harness.deinit();

@@ -103,6 +103,8 @@ test "a loop that polls and never waits still sees a completion and a posted mes
     var registry: uring.Registry = undefined;
     var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
     registry.init(&registry_memory, 2);
+    // Runs after every loop's `deinit`: the registry keeps each loop's wake until then.
+    defer uring.wake_module.close_kept(&registry);
     var sender: Fixture = undefined;
     try sender.init(.{ .operations = operations, .entries = 8, .id = 0, .registry = &registry });
     defer sender.loop.deinit();
@@ -157,6 +159,8 @@ test "a post reaches the other loop with its payload and tag, and a missing loop
     var registry: uring.Registry = undefined;
     var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
     registry.init(&registry_memory, 2);
+    // Runs after every loop's `deinit`: the registry keeps each loop's wake until then.
+    defer uring.wake_module.close_kept(&registry);
     var sender: Fixture = undefined;
     try sender.init(.{ .operations = operations, .entries = 8, .id = 0, .registry = &registry });
     defer sender.loop.deinit();
@@ -260,6 +264,8 @@ test "a wake that finds no room in the submission ring waits for it, and the loo
     var registry: uring.Registry = undefined;
     var registry_memory: [uring.Registry.memory_bytes(2)]u8 align(memory_alignment) = undefined;
     registry.init(&registry_memory, 2);
+    // Runs after every loop's `deinit`: the registry keeps each loop's wake until then.
+    defer uring.wake_module.close_kept(&registry);
     var sender: Fixture = undefined;
     try sender.init(.{ .operations = operations, .entries = 1, .id = 0, .registry = &registry });
     defer sender.loop.deinit();
@@ -316,6 +322,8 @@ test "deinit sends every wake its posts noted, more than the submission ring hol
     var registry_memory: [uring.Registry.memory_bytes(loops)]u8 align(memory_alignment) =
         undefined;
     registry.init(&registry_memory, loops);
+    // Runs after the sender's `deinit`: the registry keeps its wake until then.
+    defer uring.wake_module.close_kept(&registry);
     // Rings stand in for loops 1 to 3, and each says it sleeps, so each post notes a wake.
     var targets: [loops - 1]uring.ring_module.Ring = undefined;
     for (&targets, 1..) |*target, id| {

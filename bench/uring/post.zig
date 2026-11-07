@@ -140,6 +140,8 @@ const Echo = struct {
 
 fn measure(mode: Mode) !void {
     registry.init(&registry_memory, 2);
+    // Runs after both loops ended: the registry keeps the wake of each until then.
+    defer uring.wake_module.close_kept(&registry);
     var first: Side = .{};
     var options = options_first;
     options.registry = &registry;

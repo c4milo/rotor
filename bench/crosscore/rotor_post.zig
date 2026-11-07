@@ -259,6 +259,8 @@ fn measure(options: Options) !Result {
     std.debug.assert(options.samples >= 1);
     if (options.peer_process) return measure_across(options);
     registry.init(&registry_memory, loops);
+    // Runs after both loops ended: the registry keeps the wake of each until then.
+    defer backend.wake_module.close_kept(&registry);
     const own = placement.place(options.cpu);
 
     try first.loop.init(&first.memory, loop_options(options.mode, id_first));

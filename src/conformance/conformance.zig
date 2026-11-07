@@ -10,11 +10,14 @@ const std = @import("std");
 const core = @import("core");
 const backend = @import("backend");
 const stall = @import("conformance_stall.zig");
+const registry_life = @import("conformance_registry.zig");
 
 pub const Loop = backend.Loop;
 pub const Event = core.Event;
 pub const Handle = core.Handle;
 pub const Operation = core.Operation;
+
+pub const RegistryLife = registry_life.RegistryLife;
 
 pub const operations = 64;
 pub const entries = 16;
@@ -56,6 +59,7 @@ pub const Harness = struct {
         id: core.LoopId,
         registry: ?*backend.Registry,
     ) !void {
+        try check_life(registry);
         try harness.loop.init(&harness.memory, .{
             .operations = operations,
             .entries = entries,
@@ -73,6 +77,7 @@ pub const Harness = struct {
         registry: ?*backend.Registry,
         sampling: core.statistics.Options,
     ) !void {
+        try check_life(registry);
         try harness.loop.init(&harness.memory, .{
             .operations = operations,
             .entries = entries,
@@ -95,6 +100,13 @@ pub const Harness = struct {
 
     pub fn deinit(harness: *Harness) void {
         harness.loop.deinit();
+    }
+
+    /// Refuses a loop on a registry when no `RegistryLife` is open, because nothing would close the
+    /// wake the registry keeps for the loop (decision 4, amendment of 2026-11-06).
+    fn check_life(registry: ?*backend.Registry) error{RegistryNotStarted}!void {
+        if (registry == null) return;
+        if (!registry_life.life_open()) return error.RegistryNotStarted;
     }
 
     /// Submits `batch` whole, or fails: no scenario fills the table.
@@ -186,4 +198,5 @@ test {
     _ = @import("conformance_storm.zig");
     _ = @import("conformance_wait_descriptor.zig");
     _ = @import("conformance_wake_reuse.zig");
+    _ = @import("conformance_registry.zig");
 }

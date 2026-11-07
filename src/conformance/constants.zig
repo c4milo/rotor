@@ -18,3 +18,15 @@ comptime {
     std.debug.assert(callback_stall_ns_max >= 10 * core.constants.ns_per_ms);
     std.debug.assert(callback_stall_ns_max < core.constants.ns_per_s);
 }
+
+/// The descriptors `conformance_registry.zig` counts, from 0: it asks the kernel whether each one is
+/// open. The kernel gives each open the lowest number free. The scenario that holds the most,
+/// `conformance_wake_reuse.zig`, holds about 130 (an estimate from its code, not measured), so
+/// every number a scenario opens is below this. A count costs one call per descriptor, and a
+/// registry's life counts twice.
+pub const descriptors_counted_max: u32 = 1024;
+
+comptime {
+    std.debug.assert(descriptors_counted_max >= 256);
+    std.debug.assert(descriptors_counted_max <= 1 << 16);
+}

@@ -251,7 +251,8 @@ const Sockets = struct {
 fn run_seed(seed: u64, totals: *Totals) !void {
     var registry: backend.Registry = undefined;
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
-    registry.init(&registry_memory, 2);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
     var main: Harness = undefined;
     try main.init(0, &registry);
     defer main.deinit();

@@ -49,7 +49,8 @@ test "a message crosses to a loop on another thread and its answer comes back" {
     var registry: backend.Registry = undefined;
     const registry_alignment = core.layout.memory_alignment;
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
-    registry.init(&registry_memory, 2);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
     var harness: Harness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();
@@ -124,7 +125,8 @@ test "a post wakes a loop that sleeps in its tick, long before its wait is over"
     var registry: backend.Registry = undefined;
     const registry_alignment = core.layout.memory_alignment;
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
-    registry.init(&registry_memory, 2);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
     var harness: Harness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();

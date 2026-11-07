@@ -99,7 +99,8 @@ fn start_and_stop(registry: *backend.Registry) !u32 {
 test "a loop that stops while another thread posts to it wakes no descriptor opened after it" {
     if (conformance.unsupported()) return error.SkipZigTest;
     var registry: backend.Registry = undefined;
-    registry.init(&registry_memory, ids);
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
     var poster: Poster = .{ .registry = &registry };
     const thread = try std.Thread.spawn(.{}, Poster.run, .{&poster});
     const started = start_and_stop(&registry);
@@ -111,6 +112,4 @@ test "a loop that stops while another thread posts to it wakes no descriptor ope
     try testing.expectEqual(@as(?anyerror, null), poster.failure);
     try testing.expect(poster.posted > 0);
     for (traps[0..opened]) |*trap| try testing.expect(!trap.received());
-    // Every loop and remote ended, so the registry may close what it kept.
-    backend.wake_module.close_kept(&registry);
 }

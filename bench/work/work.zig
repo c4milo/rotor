@@ -141,6 +141,8 @@ pub fn main(init: std.process.Init) !void {
     if (workload == .wait and !can_wake_itself) std.process.exit(unsupported_status);
 
     registry.init(&registry_memory, 2);
+    // Runs after both loops ended: the registry keeps the wake of each until then.
+    defer backend.wake_module.close_kept(&registry);
     var options = loop_options;
     options.registry = &registry;
     try first.loop.init(&first.memory, options);

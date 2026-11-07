@@ -57,6 +57,8 @@ const Targets = struct {
             targets.registry.clear(@intCast(id));
             ring.deinit();
         }
+        // The sender's loop ended before this call, and the registry kept its wake.
+        uring.wake_module.close_kept(&targets.registry);
     }
 
     /// The wakes the ring of loop `id` received, which this call consumes.
