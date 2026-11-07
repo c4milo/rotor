@@ -43,7 +43,7 @@ pub fn main(init: std.process.Init) !void {
     const address = rotor.Address.ipv4(.{ 127, 0, 0, 1 }, port);
     const listener = try rotor.sync.listen(&address, .{ .backlog = 128, .reuse_port = false });
     // One multishot accept delivers every connection.
-    try submit(&loop, rotor.Operation.accept(tag(.accept, listener), listener, true));
+    try submit(&loop, rotor.Operation.accept_multishot(tag(.accept, listener), listener));
     std.debug.print("echo on 127.0.0.1:{d}, {t} backend\n", .{ port, rotor.backend() });
 
     var events: [64]rotor.Event = undefined;
@@ -65,7 +65,9 @@ fn handle(loop: *rotor.Loop, event: rotor.Event) !void {
     switch (@as(Kind, @enumFromInt(event.user_data >> 32))) {
         .accept => {
             // An event without `more` ends the multishot accept, so arm another.
-            if (!event.flags.more) try submit(loop, rotor.Operation.accept(event.user_data, socket, true));
+            if (!event.flags.more) {
+                try submit(loop, rotor.Operation.accept_multishot(event.user_data, socket));
+            }
             const accepted: rotor.Descriptor = @intCast(event.outcome() catch return);
             if (accepted >= connections_max) return rotor.sync.close_now(accepted);
             try receive(loop, accepted);

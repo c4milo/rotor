@@ -219,7 +219,7 @@ test "cancel_all and drain leave the loop empty, whatever was in flight" {
         receive(1, pair[0], &first, 0),
         receive(2, pair[1], &second, outlasts_drain_ns),
         Operation.timer(3, outlasts_drain_ns, 0),
-        Operation.accept(4, listener.descriptor, true),
+        Operation.accept_multishot(4, listener.descriptor),
     }, &.{});
     var scratch: [4]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&scratch, 0));

@@ -225,8 +225,13 @@ pub const Operation = struct {
     // Each builds the common shape of one kind in a call, with no deadline and no registered
     // descriptor: set `timeout_ns` or `descriptor_registered` on the result when either is wanted.
     // A receive into a registered buffer, or a group receive that is not multishot, is written out.
-    pub fn accept(user_data: u64, listener: Descriptor, multishot: bool) Operation {
-        return .{ .user_data = user_data, .kind = .{ .accept = .{ .listener = listener, .multishot = multishot } } };
+    /// One accept: its one event is its final one.
+    pub fn accept(user_data: u64, listener: Descriptor) Operation {
+        return .{ .user_data = user_data, .kind = .{ .accept = .{ .listener = listener } } };
+    }
+    /// A multishot accept: one event flagged `more` per connection.
+    pub fn accept_multishot(user_data: u64, listener: Descriptor) Operation {
+        return .{ .user_data = user_data, .kind = .{ .accept = .{ .listener = listener, .multishot = true } } };
     }
     pub fn connect(user_data: u64, socket: Descriptor, address: *const Address) Operation {
         return .{ .user_data = user_data, .kind = .{ .connect = .{ .socket = socket, .address = address } } };

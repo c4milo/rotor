@@ -136,7 +136,7 @@ const Fixture = struct {
     fn connect(fixture: *Fixture) !void {
         const address = try sync.local_address(fixture.listener);
         const accept_user_data = server.user_data_of(.accept, fixture.listener);
-        submit(&fixture.server_loop, Operation.accept(accept_user_data, fixture.listener, false));
+        submit(&fixture.server_loop, Operation.accept(accept_user_data, fixture.listener));
         submit(&fixture.client_loop, Operation.connect(0, fixture.client, &address));
         fixture.accepted = -1;
         var connected = false;

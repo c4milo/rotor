@@ -70,7 +70,7 @@ test "receives that end at the flush keep no accept out of a tick" {
     var bytes: [1]u8 = undefined;
     const receive = Operation.receive(receive_user_data, pair[1], &bytes);
     try fair.submit_copies(receive, constants.fair_inline_receives);
-    try fair.submit_copies(Operation.accept(accept_user_data, listener.descriptor, false), 1);
+    try fair.submit_copies(Operation.accept(accept_user_data, listener.descriptor), 1);
     try testing.expectEqual(@as(?i32, null), try tick(&fair, pair[1], &bytes));
 
     // One connection arrives while the finished list holds hundreds of receives.

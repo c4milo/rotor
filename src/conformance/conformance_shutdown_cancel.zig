@@ -57,7 +57,7 @@ test "cancel_all ends every record once, and the queued tasks still run once" {
         Operation.timer(0, shutdown.never_ns, 0).completion(&records[0].completion),
         Operation.timer(0, ms, period_ns).completion(&records[1].completion),
         Operation.receive(0, pair[1], &bytes).completion(&records[2].completion),
-        Operation.accept(0, listener.descriptor, true).completion(&records[3].completion),
+        Operation.accept_multishot(0, listener.descriptor).completion(&records[3].completion),
         Operation.timer(plain_user_data, shutdown.never_ns, 0),
     }, &.{});
     try testing.expectEqual(@as(u32, 0), try shutdown.tick_until(&harness, &records[1], fired));

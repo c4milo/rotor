@@ -39,7 +39,7 @@ pub fn connected_pair(harness: *Harness, listener: *const Listener) ![2]core.Des
     const client = try sync.open_socket(listener.address.family);
     errdefer sync.close_now(client);
     try harness.submit(&.{
-        Operation.accept(100, listener.descriptor, false),
+        Operation.accept(100, listener.descriptor),
         Operation.connect(101, client, &listener.address),
     }, &.{});
     var events: [2]Event = undefined;
@@ -158,7 +158,7 @@ test "one multishot accept takes every connection, and a cancel ends it with one
     defer sync.close_now(listener.descriptor);
 
     var handles: [1]Handle = undefined;
-    try harness.submit(&.{Operation.accept(1, listener.descriptor, true)}, &handles);
+    try harness.submit(&.{Operation.accept_multishot(1, listener.descriptor)}, &handles);
     comptime std.debug.assert(storm_waves * storm_connections > conformance.entries);
     for (0..storm_waves) |_| {
         const accepted = try storm_wave(&harness, &listener, 1);
@@ -202,8 +202,8 @@ test "a one-shot accept behind a cancelled multishot accept still takes the next
     // Both wait on the one listener: the multishot accept first, the one-shot accept behind it.
     var handles: [2]Handle = undefined;
     try harness.submit(&.{
-        Operation.accept(1, listener.descriptor, true),
-        Operation.accept(2, listener.descriptor, false),
+        Operation.accept_multishot(1, listener.descriptor),
+        Operation.accept(2, listener.descriptor),
     }, &handles);
     var ended: [1]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&ended, 0));

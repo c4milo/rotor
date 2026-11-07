@@ -429,7 +429,7 @@ test "the offload policy leaves a socket operation's cancel alone" {
     defer sync.close_now(listener);
 
     var handles: [1]core.Handle = undefined;
-    const taken = loop_fixture.loop.submit(&.{Operation.accept(13, listener, false)}, &handles);
+    const taken = loop_fixture.loop.submit(&.{Operation.accept(13, listener)}, &handles);
     try testing.expectEqual(@as(u32, 1), taken);
 
     var events: [2]Event = undefined;

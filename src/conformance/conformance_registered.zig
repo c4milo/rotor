@@ -136,7 +136,7 @@ test "sockets named by registered index carry bytes, time out, shut down, and ac
 /// A multishot accept on the registered listener takes a connection, and a cancel ends it.
 fn accept_by_index(harness: *Harness, listener: *const tcp.Listener) !void {
     var handles: [1]Handle = undefined;
-    try harness.submit(&.{registered(Operation.accept(6, 0, true), 2)}, &handles);
+    try harness.submit(&.{registered(Operation.accept_multishot(6, 0), 2)}, &handles);
     const client = try sync.open_socket(.ipv4);
     defer sync.close_now(client);
     try harness.submit(&.{Operation.connect(7, client, &listener.address)}, &.{});

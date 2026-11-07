@@ -1,9 +1,10 @@
 //! `zig build test-compile-fail`: proves that a library cannot tick, drain, end or cancel
 //! everything on a loop it shares (decision 28), and cannot name a buffer group by a literal or
-//! answer a poller with a `bool` (decision 29). Each file of `tools/compile_fail/` makes one such
-//! call, and its compile must fail with the message that states the rule or names the type. A
-//! compile that succeeds, or that fails with another message, fails the step. `zig build test`
-//! depends on it.
+//! answer a poller with a `bool` (decision 29). It also proves that a caller cannot make a call of
+//! decision 1's amendment of 2026-11-07 in its old shape. Each file of `tools/compile_fail/` makes
+//! one such call, and its compile must fail with the message that states the rule or names the
+//! type. A compile that succeeds, or that fails with another message, fails the step.
+//! `zig build test` depends on it.
 const std = @import("std");
 const modules = @import("modules.zig");
 
@@ -32,6 +33,8 @@ pub const cases = [_]Case{
         .message = "expected type 'fn (*poller.Library) dispatch.dispatch_callbacks.WaitLimit', " ++
             "found 'fn (*poller.Library) bool'",
     },
+    // Decision 1, amendment of 2026-11-07: the public calls that changed their shape.
+    .{ .file = "accept_flag", .message = "expected 2 argument(s), found 3" },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.

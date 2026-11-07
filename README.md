@@ -106,7 +106,7 @@ pub fn main(init: std.process.Init) !void {
 
     const address = rotor.Address.ipv4(.{ 127, 0, 0, 1 }, port);
     const listener = try rotor.sync.listen(&address, .{ .backlog = 128, .reuse_port = false });
-    try submit(&loop, rotor.Operation.accept(tag(.accept, listener), listener, true));
+    try submit(&loop, rotor.Operation.accept_multishot(tag(.accept, listener), listener));
 
     var events: [64]rotor.Event = undefined;
     while (true) {

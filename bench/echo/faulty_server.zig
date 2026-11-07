@@ -120,7 +120,7 @@ fn serve(server: *Server) !void {
     server.loop = &loop;
     defer close_connections(server);
     defer empty(&loop);
-    submit(server, Operation.accept(user_data_of(.accept, 0), server.listener, false));
+    submit(server, Operation.accept(user_data_of(.accept, 0), server.listener));
 
     var events: [events_max]Event = undefined;
     while (!server.stopping.load(.acquire)) {
@@ -174,7 +174,7 @@ fn accepted(server: *Server, event: Event) !void {
         .open = true,
     };
     server.accepted += 1;
-    submit(server, Operation.accept(user_data_of(.accept, 0), server.listener, false));
+    submit(server, Operation.accept(user_data_of(.accept, 0), server.listener));
     switch (server.fault) {
         .close => {
             sync.close_now(descriptor);

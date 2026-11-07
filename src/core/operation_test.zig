@@ -94,7 +94,7 @@ test "each constructor builds its kind with every field it was given, and nothin
         .flags = .{ .peer = true },
     };
     const built = [_]Operation{
-        Operation.accept(1, 3, true),
+        Operation.accept_multishot(1, 3),
         Operation.connect(2, 4, &address),
         Operation.receive(3, 5, &bytes),
         Operation.receive_group(4, 6, @enumFromInt(2)),
@@ -109,11 +109,12 @@ test "each constructor builds its kind with every field it was given, and nothin
         Operation.receive_from(13, 14, @enumFromInt(3)),
         Operation.send_to(14, 15, bytes[0..1], &outbound),
         Operation.fsync(15, 16),
+        Operation.accept(16, 17),
     };
     const codes = [_]Operation.Code{
         .accept, .connect, .receive,   .receive, .send, .shutdown,     .close,
         .read,   .write,   .fdatasync, .timer,   .post, .receive_from, .send_to,
-        .fsync,
+        .fsync,  .accept,
     };
     for (built, codes, 1..) |operation, expected, user_data| {
         try std.testing.expectEqual(expected, operation.code());
@@ -138,4 +139,5 @@ test "each constructor builds its kind with every field it was given, and nothin
     try std.testing.expect(built[13].kind.send_to.socket == 15 and built[13].kind.send_to.to == &outbound);
     try std.testing.expect(built[13].kind.send_to.buffer.bytes.len == 1);
     try std.testing.expect(built[14].kind.fsync.file == 16);
+    try std.testing.expect(!built[15].kind.accept.multishot and built[15].kind.accept.listener == 17);
 }

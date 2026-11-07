@@ -113,7 +113,7 @@ fn connected_pair(loop: *rotor.Loop, address: *rotor.Address) !Pair {
     defer rotor.sync.close_now(listener);
     address.* = try rotor.sync.local_address(listener);
     const client = try rotor.sync.open_socket(.ipv4);
-    try submit_one(loop, rotor.Operation.accept(accept_data, listener, false));
+    try submit_one(loop, rotor.Operation.accept(accept_data, listener));
     try submit_one(loop, rotor.Operation.connect(connect_data, client, address));
     var events: [64]rotor.Event = undefined;
     const server = try (try next_event(loop, accept_data, &events)).outcome();
