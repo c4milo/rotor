@@ -1,8 +1,8 @@
 //! The task queue of decision 27 on every backend. Only the program ticks the loop; libraries
 //! continue their work in records, pollers and tasks, and every task runs exactly once.
 //!
-//! `conformance_stall.zig` makes every record, poller and task here, and the harness ticks the
-//! loop, so a callback that holds the loop past its limit fails the scenario.
+//! `conformance_stall.zig` makes every record, poller and task here except `Forever`, and the
+//! harness ticks the loop, so a callback that holds the loop past its limit fails the scenario.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
@@ -23,9 +23,12 @@ const ticks_max = 1_000_000;
 /// fails the bound below by far.
 const long_wait_ns = 2 * core.constants.ns_per_s;
 
-/// A task that schedules itself again on every run, as a library with endless work would.
+/// A task that schedules itself again on every run, as a library with endless work would. Its run
+/// is not timed. It runs once in each of thousands of ticks, and a loaded host held the thread
+/// for 94 ms inside one run that used 11 µs of CPU. The timed run then failed with
+/// `CallbackStalled`. The run only counts and schedules, so a long run can come only from the host.
 const Forever = struct {
-    task: core.Task = stall.task(Forever, "task", ran),
+    task: core.Task = .init(Forever, "task", ran),
     loop: *Harness,
     runs: u32 = 0,
 
