@@ -382,8 +382,8 @@ test "a due timer behind an offloaded read's deadline fires in a tick with an ev
     try testing.expectEqual(@as(u32, 0), try loop_fixture.loop.tick(&events, 0));
     // The timer's delay starts at the stamp of the tick above, which the caller saw (decision 14,
     // rule 6), so its deadline is 1 ms behind the read's. No tick comes before the one below.
-    // A tick here took its own stamp, and a stamp 1 ms or more late expired the read's deadline
-    // before the timer was behind it. A loaded machine showed that tick.
+    // A tick here took its own stamp. Under load that stamp came 1 ms or more late, and the tick
+    // expired the read's deadline before the timer was behind it.
     const timer = Operation.timer(9, 2 * core.constants.ns_per_ms, 0);
     try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{timer}, handles[1..2]));
     timers.hold_off(10 * core.constants.ns_per_ms);

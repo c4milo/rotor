@@ -168,7 +168,9 @@ fn expire_after_reap(loop: *Loop, events: []Event, full: bool, answered: u32) u3
 /// would then end such an operation with `timeout` and not with its result (issue 10). So while a
 /// deadline is due and the last answer was full and held such entries, the tick polls again for
 /// that many places and reaps them. The loop's own entries clear as they are delivered, so each
-/// call finds fewer of them. Returns how many events it wrote into `events`.
+/// call finds fewer of them. A call that continues delivered at least one own entry, so the count
+/// of own entries, `own_entries_max`, also bounds the count of calls. Returns how many events it
+/// wrote into `events`.
 fn reap_past_own_entries(loop: *Loop, events: []Event, answered: u32) u32 {
     const tables = &loop.tables;
     var own = own_entries(loop, loop.readiness[0..answered]);
