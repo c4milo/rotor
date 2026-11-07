@@ -58,7 +58,7 @@ const Pool = struct {
     }
 
     /// What the loop holds: this pool as its context, and `submit`.
-    fn offload(pool: *Pool) rotor.offload.Offload {
+    fn offload(pool: *Pool) rotor.Offload {
         return .{ .context = pool, .submit = submit, .workers = workers };
     }
 
@@ -111,7 +111,7 @@ const block_bytes = 512;
 const ticks_max = 1000;
 
 var the_pool: Pool align(@alignOf(Pool)) = undefined;
-var rings: [rotor.offload_memory_bytes(workers)]u8 align(rotor.memory_alignment) = undefined;
+var rings: [rotor.Offload.memory_bytes(workers)]u8 align(rotor.memory_alignment) = undefined;
 
 /// The options the loop's memory is sized for. The offload's context is the pool, which only the
 /// running program has, so `main` fills it in.

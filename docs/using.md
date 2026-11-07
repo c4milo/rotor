@@ -51,13 +51,13 @@ choice when none is made, and the choice holds for the life of the process. The 
 refuses a ring. It never falls back, and an error stores nothing. Requiring the backend the process
 already runs succeeds.
 
-What the module exports: `Loop`, `SharedLoop`, `Heartbeat`, `Registry`, `Remote`, the helpers
-`sync` and `buffers`, `backend`,
-`require_backend`, `Backend` and `RequireError`, the flags `files_block`, `post_bounded` and
-`supported`, `offload_memory_bytes`, `memory_alignment`, and the
-types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
+What the module exports: `Loop`, `SharedLoop`, `Heartbeat`, `Registry`, `Remote`, `Offload`,
+`Statistics`, the helpers `sync` and `buffers`, `backend`, `require_backend`, `Backend` and
+`RequireError`, the flags `files_block`, `post_bounded` and `supported`, `memory_alignment`, and
+the types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
 `Address`, `Message`, `LoopId`, `Descriptor`, `Code`, `Error`, `Delivery`, and the namespaces
-`constants`, `datagram`, `offload`, `statistics`).
+`constants`, `datagram`, `offload`, `statistics`). `Loop` holds its error sets, `AddPollerError`
+and `ScheduleError` among them.
 
 There is one API, and it is this one. `Loop`, `Registry` and `Remote` are types of this module that
 carry exactly the surface named in `src/core/surface.zig` and forward to the host's backend; the
@@ -330,7 +330,7 @@ a process may run either backend; a caller that sets a policy there is right on 
 - `.blocking`: the loop performs it inline, and the tick stalls for its duration.
 - `.offload`: the loop hands it to the caller's threads. `offload` is an `Offload`: a context, a
   `submit` function the loop calls with a `Work` the worker runs, and the number of workers, at
-  most `offload_workers_max` (64). `offload_memory` is `rotor.offload_memory_bytes(workers)`
+  most `offload_workers_max` (64). `offload_memory` is `rotor.Offload.memory_bytes(workers)`
   bytes of the caller's, because the caller's threads write it. `examples/offload.zig` is a
   bounded pool that does this, and `bench/files/reads_pool.zig` is the one the benchmarks use.
 

@@ -367,11 +367,11 @@ fn end_a_loop_whose_operation_the_kernel_holds() void {
 }
 
 /// Rings for more workers than a loop holds. A caller reaches this through
-/// `rotor.offload_memory_bytes` before any loop exists. A loop's own options halt on the same count
+/// `rotor.Offload.memory_bytes` before any loop exists. A loop's own options halt on the same count
 /// earlier, in `assert_options`, so only this scenario can prove the sizing's check.
 fn size_the_rings_for_more_workers_than_the_limit() void {
     scenario.reached_violation();
-    _ = core.offload.memory_bytes(core.constants.offload_workers_max + 1);
+    _ = core.offload.Offload.memory_bytes(core.constants.offload_workers_max + 1);
 }
 
 /// A backend reaches `request_cancel` through `cancellable` or `next_cancellable`, and both refuse

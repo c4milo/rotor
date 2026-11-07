@@ -37,9 +37,7 @@ pub const Completion = core.Completion;
 pub const Poller = core.Poller;
 pub const WaitLimit = core.WaitLimit;
 pub const BufferGroup = core.BufferGroup;
-pub const AddPollerError = core.dispatch.AddPollerError;
 pub const Task = core.Task;
-pub const ScheduleError = core.ScheduleError;
 pub const Handle = core.Handle;
 pub const Heartbeat = core.Heartbeat;
 pub const LoopId = core.LoopId;
@@ -63,19 +61,26 @@ pub const datagram = struct {
     pub const payload_capacity = core.datagram.payload_capacity;
 };
 
+/// The caller's threads, which a loop hands a blocking file operation to (decision 18).
+/// `Offload.memory_bytes(workers)` sizes the memory of its rings, `Loop.Options.offload_memory`. On
+/// Linux it is what epoll needs, and what io_uring checks for although it uses none of it; a caller
+/// sizes it before the choice is made.
+pub const Offload = core.offload.Offload;
+
 /// Files on a backend whose file operations block (decision 18): what the loop does with one, and
-/// the caller's threads when it hands them out.
+/// what one worker runs.
 pub const offload = struct {
     pub const FilePolicy = core.offload.FilePolicy;
-    pub const Offload = core.offload.Offload;
     pub const Work = core.offload.Work;
 };
 
 /// What a loop counts about itself: sampled latencies (decision 9), and exact stalls (decision 9,
-/// rule 7, and decision 28).
+/// rule 7, and decision 28). `Loop.statistics` returns it.
+pub const Statistics = core.statistics.Statistics;
+
+/// The parts of `Statistics`: how often a loop samples, and what it keeps of its last stall.
 pub const statistics = struct {
     pub const Options = core.statistics.Options;
-    pub const Statistics = core.statistics.Statistics;
     pub const Stall = core.statistics.Stall;
 };
 
@@ -202,13 +207,6 @@ else
 /// True when a kernel this module can run on is the one running. False in a cross build.
 pub const supported = if (linux) uring.supported or epoll.supported else kqueue.supported;
 
-/// The bytes of memory `Loop.Options.offload_memory` needs for an offload of `workers` threads
-/// (decision 18): the rings the workers answer through. On Linux it is what epoll needs, and what
-/// io_uring checks for although it uses none of it; a caller sizes it before the choice is made.
-pub fn offload_memory_bytes(workers: u16) usize {
-    return core.offload.memory_bytes(workers);
-}
-
 /// The registry a group of loops shares, for `post` between them (decision 4).
 pub const Registry = loop_module.Registry;
 
@@ -235,7 +233,8 @@ const testing = std.testing;
 
 /// The declarations of `Loop` beyond the surface: its error sets, and nothing else.
 const loop_error_sets = [_][]const u8{
-    "InitError", "TickError", "DrainError", "RegisterError", "ProvideError", "PostError",
+    "InitError",    "TickError",      "DrainError",    "RegisterError",
+    "ProvideError", "PostError",      "AddPollerError", "ScheduleError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{
@@ -385,7 +384,7 @@ test "every public function compiles for this host, not only the ones something 
     }
     _ = &backend;
     _ = &require_backend;
-    _ = &offload_memory_bytes;
+    _ = &Offload.memory_bytes;
 }
 
 test "the public sync carries the backend's twenty-four names, and nothing else" {

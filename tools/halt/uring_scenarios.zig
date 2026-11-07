@@ -163,7 +163,7 @@ const offload_options: Loop.Options = .{
 };
 
 const alignment = core.layout.memory_alignment;
-const ring_bytes = core.offload.memory_bytes(offload_workers);
+const ring_bytes = core.offload.Offload.memory_bytes(offload_workers);
 var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 
 /// Ring memory with room to spare, so the worker count is the only thing wrong with the options.

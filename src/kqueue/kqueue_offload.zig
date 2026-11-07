@@ -37,7 +37,7 @@ const Work = core.offload.Work;
 
 /// The rings are `core`'s: every readiness backend carves the same ones out of the caller's memory
 /// (`core/offload.zig`). The loop's `init` and the tests reach them through `offload_module`.
-pub const memory_bytes = core.offload.memory_bytes;
+pub const memory_bytes = core.offload.Offload.memory_bytes;
 pub const init_rings = core.offload.init_rings;
 
 /// True when the caller's offload holds `slot`. Under the `offload` policy a file operation reaches

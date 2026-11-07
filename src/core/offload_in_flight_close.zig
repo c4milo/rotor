@@ -132,7 +132,7 @@ const Fixture = struct {
     tables: Tables,
     in_flight: InFlight,
     out: in_flight_module.OutArray,
-    ring_memory: [offload.memory_bytes(1)]u8 align(layout.memory_alignment),
+    ring_memory: [offload.Offload.memory_bytes(1)]u8 align(layout.memory_alignment),
     rings: []Mailbox,
     closed: [test_slots]Descriptor,
     closed_len: u32,

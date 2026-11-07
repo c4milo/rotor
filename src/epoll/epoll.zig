@@ -183,7 +183,7 @@ pub const Loop = struct {
         _ = layout.add(core.waiters.Entry, Waiters.capacity_for(options.operations));
         // Nothing for an offload the options did not ask for, so a caller that wants none pays no
         // byte for one. The rings are not here: the caller's threads write them, so the caller
-        // owns their memory. `core.offload.memory_bytes` sizes those.
+        // owns their memory. `core.offload.Offload.memory_bytes` sizes those.
         // `Layout.add` takes at least one entry, so a loop with no offload adds nothing at all.
         if (workers_of(options) != 0) {
             _ = layout.add(core.offload.Work, options.operations);

@@ -162,7 +162,7 @@ pub const Loop = struct {
         offload: ?core.offload.Offload = null,
         /// Checked and ignored, for the same reason as `file_policy`. This backend holds no ring for
         /// an offload and asks for no memory for one, but under the `offload` policy it requires
-        /// `core.offload.memory_bytes(offload.?.workers)` bytes, as epoll does.
+        /// `core.offload.Offload.memory_bytes(offload.?.workers)` bytes, as epoll does.
         offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
     };
 

@@ -100,6 +100,10 @@ pub const Loop = struct {
         kqueue.buffers.ProvideError;
     /// Why `post` sent nothing: the same on every backend.
     pub const PostError = core.remote.SendError;
+    /// Why `add_poller` added nothing: the same on every backend.
+    pub const AddPollerError = core.dispatch.AddPollerError;
+    /// Why `schedule` queued nothing: the same on every backend.
+    pub const ScheduleError = core.ScheduleError;
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -133,7 +137,7 @@ pub const Loop = struct {
         file_policy: core.offload.FilePolicy = .refuse,
         /// The caller's threads, required when `file_policy` is `offload` and refused otherwise.
         offload: ?core.offload.Offload = null,
-        /// Memory for the offload's rings, of `offload_memory_bytes(offload.?.workers)` bytes. The
+        /// Memory for the offload's rings, of `Offload.memory_bytes(offload.?.workers)` bytes. The
         /// caller owns it because its own threads write it.
         offload_memory: []align(core.layout.memory_alignment) u8 = &.{},
 
@@ -246,7 +250,7 @@ pub const Loop = struct {
     }
 
     /// Adds `poller`, which the loop calls once in each tick (decision 26).
-    pub fn add_poller(loop: *Loop, poller: *core.Poller) core.dispatch.AddPollerError!void {
+    pub fn add_poller(loop: *Loop, poller: *core.Poller) AddPollerError!void {
         return switch (loop.inner) {
             inline else => |*inner| inner.add_poller(poller),
         };
@@ -260,7 +264,7 @@ pub const Loop = struct {
     }
 
     /// Asks the loop to call `task.run` once, later (decision 27).
-    pub fn schedule(loop: *Loop, task: *core.Task) core.ScheduleError!void {
+    pub fn schedule(loop: *Loop, task: *core.Task) ScheduleError!void {
         return switch (loop.inner) {
             inline else => |*inner| inner.schedule(task),
         };
