@@ -122,6 +122,8 @@ pub const Loop = struct {
     /// The loops this loop's posts must wake whose wake found no room in the submission ring yet.
     /// A tick does not block while one is left, so no wake is lost (`uring_submit.zig`).
     wakes: core.remote.Wakes,
+    /// The wakes the last `deinit` dropped, which `dropped_wakes` reads. `init` sets it to 0.
+    deinit_dropped_wakes: u32,
     /// In a group, the eventfd its creator made for this loop, and -1 outside one (decision 21,
     /// point 3). The loop keeps a poll of it in the ring.
     group_wake: core.Descriptor,
@@ -242,6 +244,7 @@ pub const Loop = struct {
         loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
         loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
         loop.wakes = .{};
+        loop.deinit_dropped_wakes = 0;
         loop.group_wake = -1;
         loop.group_wake_armed = false;
         loop.groups = @splat(buffers.Group.none);
@@ -249,13 +252,28 @@ pub const Loop = struct {
 
     /// Every operation must have had its final event (decision 5, rule 7). Sends the wakes that
     /// the posts noted and no tick sent, before it frees the ring (decision 4, amended
-    /// 2026-11-06).
+    /// 2026-11-06). `dropped_wakes` says how many of them the kernel did not take.
     pub fn deinit(loop: *Loop) void {
+        loop.deinit_through(submit_module.KernelEnter{});
+    }
+
+    /// `deinit`, with each enter that sends a noted wake made through `enters.enter(&loop.ring)`.
+    /// A test hands it an answer the kernel gives only under load (`uring_submit.zig`).
+    pub fn deinit_through(loop: *Loop, enters: anytype) void {
         loop.tables.assert_owner();
         loop.tables.assert_empty();
-        submit_module.send_noted_wakes(loop);
+        loop.deinit_dropped_wakes = submit_module.send_noted_wakes(loop, enters);
         if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.ring.deinit();
+    }
+
+    /// The wakes the last `deinit` dropped: the kernel took no entry for them in
+    /// `constants.deinit_wake_passes_max` passes, or an enter failed (decision 4, amended
+    /// 2026-11-06). Read after
+    /// `deinit`, until the next `init`. Each message is in its target's ring, and the target reads
+    /// it when its wait ends, at most `core.constants.wait_ns_max` later.
+    pub fn dropped_wakes(loop: *const Loop) u32 {
+        return loop.deinit_dropped_wakes;
     }
 
     /// Halts when an operation has not had its final event. `deinit` calls it before it touches
@@ -468,6 +486,7 @@ test {
     _ = @import("uring_reap_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
+    _ = @import("uring_loop_test_wakes.zig");
 }
 
 test "entries default to the operations rounded up to a power of two, capped at the ring's most" {

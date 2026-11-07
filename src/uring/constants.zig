@@ -61,10 +61,10 @@ pub const remote_entries: u16 = 1;
 /// The most passes `Loop.deinit` makes to send the wakes its posts noted and no tick sent
 /// (decision 4, amended 2026-11-06). Each pass fills the submission ring with wakes and enters it
 /// once. A loop notes at most one wake per loop of the registry, and a pass whose enter the kernel
-/// takes sends at least one, so one pass per loop is enough. An enter that answers EBUSY takes no
-/// entry and sends none, so a run of them can end the passes with wakes still noted. The extra pass is for entries an earlier
-/// tick left in the ring. A wake still noted after the last pass is dropped, as a `Remote` drops a
-/// wake the kernel refuses.
+/// takes sends at least one, so one pass per loop is enough. The extra pass is for entries an
+/// earlier tick left in the ring. An enter that answers EBUSY takes no entry and sends none, so a
+/// run of them can end the passes with wakes left. A wake left after the last pass is dropped, as
+/// a `Remote` drops a wake the kernel refuses, and `Loop.dropped_wakes` counts it.
 pub const deinit_wake_passes_max: u32 = @import("core").constants.loops_max + 1;
 
 /// The largest errno Linux returns, `core`'s, as the signed result a completion carries. A

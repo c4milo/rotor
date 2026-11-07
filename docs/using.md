@@ -350,8 +350,10 @@ may do to it is post a message:
   `Loop.PostError`, `MailboxFull` or `LoopNotFound`. It costs the sender about half the work of a
   post operation, because no tick has to hand an event over. A target that sleeps is woken at once
   on kqueue and epoll, and by the sender's next tick on io_uring. A sender that calls `deinit`
-  before that tick sends the wake in `deinit`. A burst to one loop is cheaper as post operations in
-  one submit, whose tick wakes the target once.
+  before that tick sends the wake in `deinit`. When the kernel takes none of those wakes,
+  `deinit` drops them, and `loop.dropped_wakes()` says how many after `deinit`. The target still
+  reads each message when its wait ends. A burst to one loop is cheaper as post operations in one
+  submit, whose tick wakes the target once.
 - A thread that owns no loop holds a `Remote`: `remote.init(&registry, id)` on that thread, taking
   one id of the registry, and `remote.post(target, message)` returns `Remote.PostError` where a
   loop's post produces an event: `MailboxFull` or `LoopNotFound`. `SystemResources`, `Unanswered`

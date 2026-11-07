@@ -15,6 +15,7 @@ pub const loop_declarations = [_][]const u8{
     "memory_bytes",
     "init",
     "deinit",
+    "dropped_wakes",
     "submit",
     "cancel",
     "post",
@@ -77,6 +78,7 @@ const Complete = struct {
     pub fn memory_bytes() void {}
     pub fn init() void {}
     pub fn deinit() void {}
+    pub fn dropped_wakes() void {}
     pub fn submit() void {}
     pub fn cancel() void {}
     pub fn post() void {}

@@ -231,6 +231,37 @@ Mutations, each measured against the target named:
 | io_uring's `deinit` sends no noted wake | `conformance-uring`, the Linux gate | CAUGHT |
 | io_uring's `deinit` makes one pass only | `uring`, the Linux gate | CAUGHT |
 
+**Amended again on 2026-11-06, by Camilo's request of that day: `deinit` counts the wakes it
+drops.** A drop was silent before. It is an operational limit and not a programmer error, so no
+assertion reports it. It is no error value either: `deinit` still frees all that it holds, and
+the message is in its target's mailbox. `deinit` returns `void` on every backend. A value in its
+place would change about a hundred calls of a loop's `deinit` in this tree, and each consumer's,
+so its signature stays.
+The loop gains `Loop.dropped_wakes`, which a program reads after `deinit`, until the next `init`.
+On kqueue and epoll it is always 0. The surface gains that one name.
+
+The count is the targets still noted, plus the wakes still in the submission ring. The passes stop
+with wakes left when every enter answers EBUSY, or at the first enter that fails. An enter that
+answers EBUSY takes no entry, and the wakes it was given stay in that ring. Before this change the
+passes stopped once no target was noted, so `deinit` freed the ring with those wakes in it. Now the
+passes go on while an entry waits there too. A wake that an earlier tick left there is sent as well.
+
+The kernel answers EBUSY only while its completion ring overflows, so a test cannot get the answer
+on demand. `Loop.deinit_through` takes the enter as a parameter, as `core.file_call.result` takes
+its system call, and a test hands it `overcommitted` on every pass.
+
+| mutation | caught by | result |
+|---|---|---|
+| the passes stop once no target is noted | `uring`, the Linux gate | CAUGHT |
+| every entry in the submission ring counts as a wake | `uring`, the Linux gate | CAUGHT |
+| the count leaves out the targets still noted | `uring`, the Linux gate | CAUGHT |
+| `deinit` keeps no count | `uring`, the Linux gate | CAUGHT |
+| `init` leaves a count that is not 0 | `uring`, the Linux gate | CAUGHT |
+| the public module's `dropped_wakes` gives 0 on io_uring | `rotor`, the Linux gate | CAUGHT |
+| epoll's `dropped_wakes` gives 1 | `rotor`, the Linux gate | CAUGHT |
+| kqueue's `dropped_wakes` gives 1 | `test-rotor` | CAUGHT |
+| `Ring.sqe_at` reads past the entries that wait | `halt-check`, the Linux gate | CAUGHT |
+
 ### When one core is hot
 
 The loop accepts the imbalance. It never migrates anything on its own, because a loop that

@@ -269,6 +269,15 @@ fn release_a_group_never_provided() void {
     buffer_release.release_a_group_never_provided(&loop);
 }
 
+/// An entry past those the kernel has not taken, which `send_noted_wakes` would count as a wake it
+/// dropped. The ring holds no waiting entry after `init`. With the check deleted, `sqe_at` returns
+/// an entry of the ring that holds what its last use left, and the scenario returns.
+fn read_an_entry_the_ring_does_not_hold() void {
+    loop.init(&memory, options) catch return;
+    scenario.reached_violation();
+    _ = loop.ring.sqe_at(0);
+}
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "buffers: release a group in use", .run = release_a_group_in_use },
     .{ .name = "buffers: release a group never provided", .run = release_a_group_never_provided },
@@ -311,6 +320,10 @@ const scenarios = [_]scenario.Scenario{
         .run = give_back_a_buffer_from_another_thread,
     },
     .{ .name = "owner: end a remote from another thread", .run = end_a_remote_from_another_thread },
+    .{
+        .name = "ring: read an entry the ring does not hold",
+        .run = read_an_entry_the_ring_does_not_hold,
+    },
 };
 
 pub fn main(init: std.process.Init) !void {

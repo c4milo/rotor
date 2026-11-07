@@ -164,6 +164,21 @@ pub const Ring = struct {
         return capacity - used;
     }
 
+    /// Submission entries `get_sqe` handed out that the kernel has not taken: those since the last
+    /// `enter`, and those an `enter` answered `overcommitted` left.
+    pub fn sq_ready(ring: *Ring) u32 {
+        return ring.io.sq_ready();
+    }
+
+    /// The submission entry `offset` places past the oldest one the kernel has not taken. Each
+    /// entry sits at the position of the ring that its turn names, because the ring's index array
+    /// maps every position to itself (`IoUring.flush_sq`).
+    pub fn sqe_at(ring: *Ring, offset: u32) *const linux.io_uring_sqe {
+        assert(offset < ring.sq_ready());
+        const head = @atomicLoad(u32, ring.io.sq.head, .acquire);
+        return &ring.io.sq.sqes[(head +% offset) & ring.io.sq.mask];
+    }
+
     /// The tick's one system call: submits what `get_sqe` handed out and runs the kernel's
     /// deferred completion work. With `wait_ns`, blocks until one completion is ready or the
     /// wait passes. Makes no call at all when there is nothing to submit, nothing to wait for,

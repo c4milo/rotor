@@ -225,21 +225,61 @@ fn send_wakes(loop: *Loop) void {
     }
 }
 
+/// What `Loop.deinit` enters the ring through when it sends the noted wakes: the kernel itself.
+pub const KernelEnter = struct {
+    pub fn enter(
+        _: KernelEnter,
+        ring: *ring_module.Ring,
+    ) ring_module.EnterError!ring_module.Entered {
+        return ring.enter(null);
+    }
+};
+
 /// Sends every wake still noted in `loop.wakes`, for `Loop.deinit` (decision 4, amended
-/// 2026-11-06). A `Loop.post` notes its wake and the next tick sends it, so a loop that posts and
-/// then stops has no next tick. Each pass drops the completions in the ring, fills the submission
-/// ring with wakes and enters once. `deinit` calls it after it asserts that no operation is in
-/// flight, so every completion is one the reap drops anyway. An enter the kernel refuses ends the
-/// passes, and the wakes left are dropped: each message is in its ring, and the target reads it
-/// when its wait ends.
-pub fn send_noted_wakes(loop: *Loop) void {
+/// 2026-11-06), and returns how many wakes it dropped. A `Loop.post` notes its wake and the next
+/// tick sends it, so a loop that posts and then stops has no next tick. Each enter goes through
+/// `enters.enter(&loop.ring)`. In `deinit` that is `KernelEnter`. A test hands it answers the
+/// kernel gives only under load, such as `overcommitted` on every pass.
+///
+/// Each pass drops the completions in the ring, fills the submission ring with wakes and enters
+/// once. `deinit` calls it after it asserts that no operation is in flight, so every completion is
+/// one the reap drops anyway. The passes go on while a wake is noted or an entry waits in the
+/// submission ring. An `overcommitted` enter takes no entry, and an earlier tick can leave its
+/// wakes there too. The passes stop at `deinit_wake_passes_max`, or at an enter that fails.
+///
+/// A wake left after the last pass is dropped. Each message is in its ring, and the target reads
+/// it when its wait ends. The result counts the targets still noted and the wakes still in the
+/// submission ring. A target can be in both, when a tick left its wake in the ring and a later
+/// post noted it again, and then it counts twice: two wakes were dropped.
+pub fn send_noted_wakes(loop: *Loop, enters: anytype) u32 {
     var pass: u32 = 0;
-    while (loop.wakes.targets.count() != 0 and pass < constants.deinit_wake_passes_max) {
+    while (pass < constants.deinit_wake_passes_max and wakes_unsent(loop)) : (pass += 1) {
         loop.ring.cq_advance(loop.ring.cq_ready());
         send_wakes(loop);
-        _ = loop.ring.enter(null) catch break;
-        pass += 1;
+        _ = enters.enter(&loop.ring) catch break;
     }
+    assert(pass <= constants.deinit_wake_passes_max);
+    const noted: u32 = @intCast(loop.wakes.targets.count());
+    assert(noted <= core.constants.loops_max);
+    return noted + wakes_in_submission_ring(&loop.ring);
+}
+
+/// True while a wake is noted, or an entry waits in the submission ring.
+fn wakes_unsent(loop: *Loop) bool {
+    return loop.wakes.targets.count() != 0 or loop.ring.sq_ready() != 0;
+}
+
+/// The wakes among the entries the kernel has not taken. The ring can also hold an entry that is
+/// no wake, such as the wait timer an `overcommitted` tick left, and that is no wake to count.
+fn wakes_in_submission_ring(ring: *ring_module.Ring) u32 {
+    const waiting = ring.sq_ready();
+    var wakes: u32 = 0;
+    var offset: u32 = 0;
+    while (offset < waiting) : (offset += 1) {
+        if (ring.sqe_at(offset).user_data == constants.user_data_wake) wakes += 1;
+    }
+    assert(wakes <= waiting);
+    return wakes;
 }
 
 /// Makes `sqe` wake the loop that owns `target_ring`: an `IORING_OP_MSG_RING` that carries no

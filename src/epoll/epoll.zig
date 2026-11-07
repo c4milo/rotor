@@ -265,6 +265,13 @@ pub const Loop = struct {
         return loop.tables.now_ns;
     }
 
+    /// Always 0: this backend's `post` and flush wake each target before they return, so `deinit`
+    /// has no noted wake to send or drop (decision 4, amended 2026-11-06).
+    pub fn dropped_wakes(loop: *const Loop) u32 {
+        _ = loop;
+        return 0;
+    }
+
     /// The loop's epoll instance: what a host that owns the wait sleeps on, in a wait of its own
     /// (decision 23). It turns readable when a descriptor an operation waits on is ready. It is the
     /// epoll instance and not the eventfd that wakes the loop, which reports a post and nothing

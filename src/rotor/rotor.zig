@@ -430,6 +430,23 @@ test "a loop names a descriptor a host can wait on, on every backend but io_urin
     try testing.expectEqual(backend() == .uring, loop.wait_descriptor() == null);
 }
 
+test "a loop reads the wakes its backend's deinit dropped" {
+    if (!supported) return error.SkipZigTest;
+    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, test_options);
+    loop.deinit();
+    try testing.expectEqual(0, loop.dropped_wakes());
+    // Only an EBUSY on every pass makes io_uring's count above 0, and uring's own tests make one
+    // (decision 4, amended 2026-11-06). This holds the public `Loop` to its backend's count.
+    switch (loop.inner) {
+        inline else => |*inner, tag| if (comptime std.mem.eql(u8, @tagName(tag), "uring")) {
+            inner.deinit_dropped_wakes = 3;
+            try testing.expectEqual(3, loop.dropped_wakes());
+        },
+    }
+}
+
 test "a socket from sync suits the backend: it does not block exactly when epoll runs" {
     if (!supported or !linux) return error.SkipZigTest;
     const os = std.os.linux;
