@@ -15,9 +15,9 @@ const group_buffer_bytes = 8;
 
 test "a receive from a group that would block gives its buffer back and asks to wait" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const group_bytes = comptime kqueue.buffers.group_bytes(group_buffers, group_buffer_bytes);
     var group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment) = undefined;
     const group = try loop.reserve_buffer_group();

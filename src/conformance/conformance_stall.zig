@@ -225,14 +225,14 @@ const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
 /// One loop with a stall threshold of its own.
 const Fixture = struct {
-    memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment),
+    memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment),
     loop: Loop,
 
     fn init(fixture: *Fixture, turn_ns: u64) !void {
         var with_threshold = options;
         with_threshold.stall_turn_ns = turn_ns;
         with_threshold.spin_budget_ns = conformance.spin_budget_ns();
-        try fixture.loop.init(&fixture.memory, with_threshold);
+        try fixture.loop.init(&fixture.memory, &with_threshold);
     }
 };
 
@@ -334,7 +334,7 @@ test "a null threshold counts no stall" {
     var fixture: Fixture = undefined;
     var without = options;
     without.stall_turn_ns = null;
-    try fixture.loop.init(&fixture.memory, without);
+    try fixture.loop.init(&fixture.memory, &without);
     defer fixture.loop.deinit();
     var events: [4]Event = undefined;
     _ = try fixture.loop.tick(&events, 0);

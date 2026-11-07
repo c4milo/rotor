@@ -143,7 +143,7 @@ pub const Loop = struct {
 
         /// These options for the backend `tag` names. The registry is that backend's own, which is
         /// the member its union holds: every registry and loop of a process follow one choice.
-        fn lower(options: Options, comptime tag: Tag) module(tag).Loop.Options {
+        fn lower(options: *const Options, comptime tag: Tag) module(tag).Loop.Options {
             var lowered = options.sizing(tag);
             if (options.registry) |registry| {
                 lowered.registry = &@field(registry.inner, @tagName(tag));
@@ -152,7 +152,7 @@ pub const Loop = struct {
         }
 
         /// These options for sizing memory for the backend `tag` names, which reads no registry.
-        fn sizing(options: Options, comptime tag: Tag) module(tag).Loop.Options {
+        fn sizing(options: *const Options, comptime tag: Tag) module(tag).Loop.Options {
             return .{
                 .operations = options.operations,
                 .entries = options.entries,
@@ -170,10 +170,10 @@ pub const Loop = struct {
 
     /// The bytes of memory `init` needs for `options`, aligned to `memory_alignment`: the most any
     /// backend this build carries needs, because the memory is sized before the choice is made.
-    pub fn memory_bytes(options: Options) usize {
+    pub fn memory_bytes(options: *const Options) usize {
         var most: usize = 0;
         inline for (comptime std.enums.values(Tag)) |tag| {
-            most = @max(most, module(tag).Loop.memory_bytes(options.sizing(tag)));
+            most = @max(most, module(tag).Loop.memory_bytes(&options.sizing(tag)));
         }
         return most;
     }
@@ -183,12 +183,12 @@ pub const Loop = struct {
     pub fn init(
         loop: *Loop,
         memory: []align(core.layout.memory_alignment) u8,
-        options: Options,
+        options: *const Options,
     ) InitError!void {
         switch (chosen()) {
             inline else => |tag| {
                 loop.inner = @unionInit(Inner, @tagName(tag), undefined);
-                return @field(loop.inner, @tagName(tag)).init(memory, options.lower(tag));
+                return @field(loop.inner, @tagName(tag)).init(memory, &options.lower(tag));
             },
         }
     }
@@ -434,8 +434,8 @@ const testing = std.testing;
 test "the memory a loop and a registry ask for fits whichever backend runs" {
     const options: Loop.Options = .{ .operations = 8 };
     inline for (comptime std.enums.values(Tag)) |tag| {
-        const needed = module(tag).Loop.memory_bytes(options.sizing(tag));
-        try testing.expect(Loop.memory_bytes(options) >= needed);
+        const needed = module(tag).Loop.memory_bytes(&options.sizing(tag));
+        try testing.expect(Loop.memory_bytes(&options) >= needed);
         try testing.expect(Registry.memory_bytes(4) >= module(tag).Registry.memory_bytes(4));
     }
 }

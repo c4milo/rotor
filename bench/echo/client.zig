@@ -105,7 +105,7 @@ pub const Options = struct {
 };
 
 var loop_memory: [
-    Loop.memory_bytes(.{
+    Loop.memory_bytes(&.{
         .operations = operations,
         .entries = entries,
     })
@@ -213,7 +213,7 @@ pub fn run(options: Options) !Result {
     fill_pattern();
 
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    try loop.init(&loop_memory, &.{ .operations = operations, .entries = entries });
     defer loop.deinit();
     var client: Client = .{ .loop = &loop, .options = options };
     // These three run in reverse: the loop is emptied, then the sockets close, then the loop is

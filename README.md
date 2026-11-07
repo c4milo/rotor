@@ -97,12 +97,12 @@ every connection, and each tick hands over the events that finished:
 
 ```zig
 const options: rotor.Loop.Options = .{ .operations = connections_max + 1 };
-var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
 
 pub fn main(init: std.process.Init) !void {
     const port = try port_of(init);
     var loop: rotor.Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
 
     const address = rotor.Address.ipv4(.{ 127, 0, 0, 1 }, port);
     const listener = try rotor.sync.listen(&address, .{ .backlog = 128, .reuse_port = false });

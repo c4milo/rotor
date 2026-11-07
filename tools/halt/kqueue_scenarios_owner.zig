@@ -15,7 +15,7 @@ const Loop = kqueue.Loop;
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 const one_timer = [_]core.Operation{
@@ -34,7 +34,7 @@ fn on_another_thread(comptime call: fn () void) void {
 }
 
 fn submit_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(submit_on_this_thread);
 }
 
@@ -46,7 +46,7 @@ fn submit_on_this_thread() void {
 /// With the check deleted, the tick reads the clock and makes its `kevent` call on the closed
 /// descriptor, which fails, and `tick` returns the error.
 fn tick_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.queue = .{ .descriptor = closed_descriptor };
     on_another_thread(tick_on_this_thread);
 }
@@ -62,7 +62,7 @@ fn tick_on_this_thread() void {
 var timer_handle: [1]core.Handle align(@alignOf(core.Handle)) = undefined;
 
 fn cancel_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &timer_handle);
     on_another_thread(cancel_on_this_thread);
 }
@@ -73,7 +73,7 @@ fn cancel_on_this_thread() void {
 }
 
 fn cancel_every_operation_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &.{});
     on_another_thread(cancel_every_operation_on_this_thread);
 }
@@ -85,7 +85,7 @@ fn cancel_every_operation_on_this_thread() void {
 
 /// With the check deleted, the loop has no registry, so `post` answers `LoopNotFound`.
 fn post_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(post_on_this_thread);
 }
 
@@ -97,7 +97,7 @@ fn post_on_this_thread() void {
 /// The loop is empty, so with the check deleted `deinit` closes the queue's descriptor and
 /// returns. The descriptor is the closed one: `close` answers `EBADF`, which `deinit` ignores.
 fn end_a_loop_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.queue = .{ .descriptor = closed_descriptor };
     on_another_thread(end_the_loop_on_this_thread);
 }
@@ -110,7 +110,7 @@ fn end_the_loop_on_this_thread() void {
 var registered_block: [64]u8 = undefined;
 
 fn register_the_buffers_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(register_the_buffers_on_this_thread);
 }
 
@@ -123,7 +123,7 @@ fn register_the_buffers_on_this_thread() void {
 /// With the check deleted, the `fcntl` of the closed descriptor fails, and the call returns
 /// `DescriptorInvalid`.
 fn register_descriptors_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(register_descriptors_on_this_thread);
 }
 
@@ -152,7 +152,7 @@ fn aligned_group_memory() []align(group_alignment) u8 {
 var reserved_group: core.BufferGroup align(@alignOf(core.BufferGroup)) = undefined;
 
 fn provide_a_group_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_a_group_on_this_thread);
 }
@@ -164,7 +164,7 @@ fn provide_a_group_on_this_thread() void {
 
 /// With the check deleted, the reservation takes the lowest id and returns it.
 fn reserve_a_group_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(reserve_a_group_on_this_thread);
 }
 
@@ -176,7 +176,7 @@ fn reserve_a_group_on_this_thread() void {
 /// A host's `wait_limit` from a second thread (decision 29). With the check deleted, the call reads
 /// the tables and returns `.none`.
 fn read_the_wait_limit_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(read_the_wait_limit_on_this_thread);
 }
 
@@ -194,7 +194,7 @@ var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alig
 /// With the check deleted, `provide` makes the group without a system call, and the loop records
 /// the datagram shape after it.
 fn provide_datagram_buffers_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_datagram_buffers_on_this_thread);
 }
@@ -212,7 +212,7 @@ fn provide_datagram_buffers_on_this_thread() void {
 var taken_buffer: u16 = undefined;
 
 fn give_back_a_buffer_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     reserved_group = loop.reserve_buffer_group() catch return;
     loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
     taken_buffer = loop.groups[@intFromEnum(reserved_group)].take() orelse return;
@@ -265,7 +265,7 @@ var task: core.Task align(@alignOf(core.Task)) = .{ .call = &ran_nothing_call };
 /// `schedule` from a second thread (decision 27). With the check deleted, the task is queued and
 /// the call returns.
 fn schedule_a_task_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(schedule_a_task_on_this_thread);
 }
 
@@ -276,7 +276,7 @@ fn schedule_a_task_on_this_thread() void {
 
 /// `shared` from a second thread (decision 28). With the check deleted, the call returns the view.
 fn hand_out_the_view_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(hand_out_the_view_on_this_thread);
 }
 
@@ -288,7 +288,7 @@ fn hand_out_the_view_on_this_thread() void {
 /// `heartbeat` from a second thread (decision 28). With the check deleted, the call returns the
 /// heartbeat.
 fn hand_out_the_heartbeat_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     on_another_thread(hand_out_the_heartbeat_on_this_thread);
 }
 

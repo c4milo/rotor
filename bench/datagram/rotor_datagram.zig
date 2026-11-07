@@ -85,7 +85,7 @@ const user_data_client_receive = 2;
 const user_data_send = 3;
 
 var loop_memory: [
-    Loop.memory_bytes(.{ .operations = operations, .entries = entries })
+    Loop.memory_bytes(&.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
 const group_alignment = backend.buffers.group_alignment;
@@ -136,7 +136,7 @@ pub fn main(init: std.process.Init) !void {
     payload = @splat('q');
 
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    try loop.init(&loop_memory, &.{ .operations = operations, .entries = entries });
     defer loop.deinit();
 
     const any_port = Address.ipv4(.{ 127, 0, 0, 1 }, 0);

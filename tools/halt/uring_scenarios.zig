@@ -34,7 +34,7 @@ const Loop = uring.Loop;
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 const one_timer = [_]core.Operation{
@@ -42,7 +42,7 @@ const one_timer = [_]core.Operation{
 };
 
 fn submit_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const thread = std.Thread.spawn(.{}, submit_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -54,7 +54,7 @@ fn submit_on_this_thread() void {
 
 /// With the owner check deleted, the reservation takes the lowest id and returns it (decision 29).
 fn reserve_a_group_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const thread = std.Thread.spawn(.{}, reserve_a_group_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -67,7 +67,7 @@ fn reserve_a_group_on_this_thread() void {
 /// A host's `wait_limit` from a second thread (decision 29). With the owner check deleted, the
 /// call reads the tables and returns `.none`.
 fn read_the_wait_limit_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const thread = std.Thread.spawn(.{}, read_the_wait_limit_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -82,7 +82,7 @@ fn read_the_wait_limit_on_this_thread() void {
 var timer_handle: [1]core.Handle align(@alignOf(core.Handle)) = undefined;
 
 fn cancel_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &timer_handle);
     const thread = std.Thread.spawn(.{}, cancel_on_this_thread, .{}) catch return;
     thread.join();
@@ -94,7 +94,7 @@ fn cancel_on_this_thread() void {
 }
 
 fn cancel_every_operation_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &.{});
     const thread = std.Thread.spawn(.{}, cancel_every_operation_on_this_thread, .{}) catch return;
     thread.join();
@@ -107,7 +107,7 @@ fn cancel_every_operation_on_this_thread() void {
 
 /// With the check deleted, the loop has no registry, so `post` answers `LoopNotFound`.
 fn post_from_another_thread() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const thread = std.Thread.spawn(.{}, post_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -120,14 +120,14 @@ fn post_on_this_thread() void {
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
 /// for `deinit` to close, and a halt inside the ring's own close would pass for the wrong reason.
 fn end_a_loop_with_an_operation_in_flight() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &.{});
     scenario.reached_violation();
     loop.assert_empty();
 }
 
 fn post_to_the_loop_itself() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const post = [_]core.Operation{.{ .user_data = 1, .kind = .{ .post = .{
         .target = options.id,
         .message = .{ .payload = 0, .tag = 0 },
@@ -137,7 +137,7 @@ fn post_to_the_loop_itself() void {
 }
 
 fn submit_more_handles_than_operations() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var handles: [2]core.Handle = undefined;
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &handles);
@@ -175,7 +175,7 @@ fn choose_the_offload_policy_without_an_offload() void {
     options_without.offload = null;
     options_without.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&memory, options_without);
+    loop.init_tables(&memory, &options_without);
 }
 
 fn give_an_offload_no_workers() void {
@@ -183,7 +183,7 @@ fn give_an_offload_no_workers() void {
     options_empty.offload = .{ .context = null, .submit = submit_nothing, .workers = 0 };
     options_empty.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&memory, options_empty);
+    loop.init_tables(&memory, &options_empty);
 }
 
 fn give_an_offload_more_workers_than_the_limit() void {
@@ -195,7 +195,7 @@ fn give_an_offload_more_workers_than_the_limit() void {
     };
     options_many.offload_memory = &ample_ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&memory, options_many);
+    loop.init_tables(&memory, &options_many);
 }
 
 /// Less ring memory than the workers need. kqueue and epoll halt on this twice, once here and once
@@ -204,14 +204,14 @@ fn give_an_offload_too_little_ring_memory() void {
     var options_short: Loop.Options = offload_options;
     options_short.offload_memory = ring_memory[0 .. ring_bytes - alignment];
     scenario.reached_violation();
-    loop.init_tables(&memory, options_short);
+    loop.init_tables(&memory, &options_short);
 }
 
 fn name_an_offload_under_another_policy() void {
     var options_blocking: Loop.Options = offload_options;
     options_blocking.file_policy = .blocking;
     scenario.reached_violation();
-    loop.init_tables(&memory, options_blocking);
+    loop.init_tables(&memory, &options_blocking);
 }
 
 // The Remote's assertions (decision 4). Each is a mistake only the caller can make. On io_uring a

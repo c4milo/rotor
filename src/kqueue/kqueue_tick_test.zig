@@ -35,9 +35,9 @@ const Record = struct {
 test "a tick whose call fails after it produced events returns them, and the next tick fails" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const ends = try kqueue.testing.nonblocking_pair();
     defer for (ends) |end| {
@@ -103,9 +103,9 @@ fn restore(loop: *const Loop, saved: core.Descriptor) !void {
 test "a failed call keeps the registration it carried, and the receive ends when the kqueue is back" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const ends = try kqueue.testing.nonblocking_pair();
     defer for (ends) |end| {
@@ -141,9 +141,9 @@ test "a failed call keeps the registration it carried, and the receive ends when
 test "a change refused with no room for its answer loses no registration behind it" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const ends = try kqueue.testing.nonblocking_pair();
     const other = try kqueue.testing.nonblocking_pair();
@@ -185,9 +185,9 @@ test "a poll returns at once, and five hundred of them stay far under the kernel
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const bound_ns = 3 * core.constants.ns_per_ms;
     const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 0 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [4]Event = undefined;
     // The best of several bursts, as the cost gates of `conformance_cost.zig` do it: other work on
@@ -226,9 +226,9 @@ test "a tick with a message to hand over and nothing waiting on a socket polls n
     // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
     defer kqueue.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    try loop.init(&memory, &.{ .operations = 2, .id = receiver, .registry = &registry });
     defer loop.deinit();
 
     // Another loop posts, and wakes this one as a post to a loop that sleeps does.
@@ -256,9 +256,9 @@ test "a tick that makes no call keeps no place for the kernel, so the mailboxes 
     // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
     defer kqueue.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    try loop.init(&memory, &.{ .operations = 2, .id = receiver, .registry = &registry });
     defer loop.deinit();
 
     // More messages than the tick has events. The loop is quiet: no change, no waiter, no trigger.
@@ -286,9 +286,9 @@ test "a loop whose own wake trigger came back skips the poll again" {
     // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
     defer kqueue.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    try loop.init(&memory, &.{ .operations = 2, .id = receiver, .registry = &registry });
     defer loop.deinit();
     const pair = try kqueue.testing.nonblocking_pair();
     defer for (pair) |descriptor| sync_close(descriptor);
@@ -316,9 +316,9 @@ test "a loop whose own wake trigger came back skips the poll again" {
 test "a wake ahead of a socket's readiness does not end its receive with timeout (issue 10)" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const pair = try kqueue.testing.nonblocking_pair();
     defer for (pair) |descriptor| sync_close(descriptor);
@@ -343,9 +343,9 @@ test "a wake ahead of a socket's readiness does not end its receive with timeout
 test "the wait timer stays armed for a later deadline and moves for an earlier one" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
@@ -371,9 +371,9 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
 test "a wait timer an earlier tick armed does not cut a later wait short" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [4]Event = undefined;
 
@@ -397,9 +397,9 @@ test "a wait timer an earlier tick armed does not cut a later wait short" {
 test "a wait whose changelist is full carries its timeout and leaves the timer alone" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [4]Event = undefined;
 
@@ -415,9 +415,9 @@ test "a wait whose changelist is full carries its timeout and leaves the timer a
 test "a wait timer the kernel refused is not waited on again" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     // The kernel reports a change it refused as the change itself, flagged `EV_ERROR`. Waiting
@@ -446,9 +446,9 @@ test "the wait timer fires when it is due, even for a thread the system runs as 
     try testing.expectEqual(@as(c_int, 0), setpriority(prio_darwin_thread, 0, prio_darwin_bg));
     defer _ = setpriority(prio_darwin_thread, 0, 0);
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [4]Event = undefined;
 

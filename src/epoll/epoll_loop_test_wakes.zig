@@ -42,14 +42,14 @@ const Target = struct {
 };
 
 const Sender = struct {
-    memory: [Loop.memory_bytes(options_base)]u8 align(memory_alignment),
+    memory: [Loop.memory_bytes(&options_base)]u8 align(memory_alignment),
     loop: Loop,
 
     fn init(sender: *Sender, registry: *Registry) !void {
         var options = options_base;
         options.id = 1;
         options.registry = registry;
-        try sender.loop.init(&sender.memory, options);
+        try sender.loop.init(&sender.memory, &options);
     }
 
     /// Submits a post operation to loop 0 and ticks until its event comes back. The flush sends

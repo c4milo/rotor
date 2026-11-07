@@ -32,11 +32,11 @@ test "the loop's memory holds the slots, the timers, the starts and the waiters,
     // Each part is carved to `memory_alignment`, so the total is at least their sum and the padding
     // is bounded by one alignment per part.
     const sum = slots + timers + starts + waiting;
-    try testing.expect(Loop.memory_bytes(options) >= sum);
-    try testing.expect(Loop.memory_bytes(options) <= sum + 4 * core.layout.memory_alignment);
+    try testing.expect(Loop.memory_bytes(&options) >= sum);
+    try testing.expect(Loop.memory_bytes(&options) <= sum + 4 * core.layout.memory_alignment);
     // No offload was asked for, so not one byte of `Work` is counted.
     const works = sized_operations * @sizeOf(core.offload.Work);
-    try testing.expect(Loop.memory_bytes(options) < sum + works);
+    try testing.expect(Loop.memory_bytes(&options) < sum + works);
 }
 
 test "an offload's works are counted only when the policy asks for one" {
@@ -52,10 +52,10 @@ test "an offload's works are counted only when the policy asks for one" {
         .offload = offload,
     };
     const works = sized_operations * @sizeOf(core.offload.Work);
-    try testing.expect(Loop.memory_bytes(with) >= Loop.memory_bytes(without) + works);
+    try testing.expect(Loop.memory_bytes(&with) >= Loop.memory_bytes(&without) + works);
     // An offload named without the policy that uses it holds no rings, so it counts no works.
     const named: Loop.Options = .{ .operations = sized_operations, .offload = offload };
-    try testing.expectEqual(Loop.memory_bytes(without), Loop.memory_bytes(named));
+    try testing.expectEqual(Loop.memory_bytes(&without), Loop.memory_bytes(&named));
 }
 
 /// An offload that takes work and does nothing with it. The sizing tests never hand it any: they
@@ -67,9 +67,9 @@ fn submit_nothing(context: ?*anyopaque, work: *core.offload.Work) void {
 
 test "init_tables leaves an empty loop that owns this thread and holds no group" {
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.assert_owner();
     loop.assert_empty();
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
@@ -90,9 +90,9 @@ test "init_tables leaves an empty loop that owns this thread and holds no group"
 
 test "submit claims a slot per operation until the table is full, and makes no system call" {
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
 
     const timer: Operation = .{
         .user_data = 1,
@@ -110,9 +110,9 @@ test "submit claims a slot per operation until the table is full, and makes no s
 
 test "a loop with no registry drains no mailbox and sleeps for the wait it was given" {
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
 
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u32, 0), loop.drain_mailboxes(&events));
@@ -137,10 +137,10 @@ test "a loop with a registry says it sleeps, and a message already posted keeps 
     // The memory is sized from the one field `memory_bytes` reads, because the options below hold a
     // pointer to the registry, which no array length can be.
     const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) = undefined;
     const options: Loop.Options = .{ .operations = 2, .id = receiver, .registry = &registry };
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
 
     const wait = core.constants.ns_per_ms;
     try testing.expectEqual(@as(?u64, wait), loop.settle_to_sleep(wait));
@@ -216,9 +216,9 @@ test "one readiness for a reader and a writer hands over what fits, and the rest
     if (!epoll.supported) return error.SkipZigTest;
     const linux = std.os.linux;
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     const ends = try socket_pair();

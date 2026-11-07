@@ -212,9 +212,9 @@ const testing = std.testing;
 test "a full changelist is applied early, and a change the kernel refused waits for the tick" {
     if (!@import("builtin").os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const pair = try @import("kqueue_testing.zig").nonblocking_pair();
     defer for (pair) |descriptor| {

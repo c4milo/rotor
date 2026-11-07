@@ -42,7 +42,7 @@ const cpu_first = 0;
 const cpu_second = 1;
 
 const options_first: Loop.Options = .{ .operations = operations, .entries = entries, .id = 0 };
-const memory_bytes = Loop.memory_bytes(options_first);
+const memory_bytes = Loop.memory_bytes(&options_first);
 
 var registry: uring.Registry align(@alignOf(uring.Registry)) = undefined;
 const registry_bytes = uring.Registry.memory_bytes(2);
@@ -123,7 +123,7 @@ const Echo = struct {
 
     fn serve(echo: *Echo) !void {
         pin(cpu_second);
-        try echo.side.loop.init(&echo.side.memory, .{
+        try echo.side.loop.init(&echo.side.memory, &.{
             .operations = operations,
             .entries = entries,
             .id = 1,
@@ -145,7 +145,7 @@ fn measure(mode: Mode) !void {
     var first: Side = .{};
     var options = options_first;
     options.registry = &registry;
-    try first.loop.init(&first.memory, options);
+    try first.loop.init(&first.memory, &options);
     defer first.loop.deinit();
     var echo: Echo = .{ .mode = mode };
     const thread = try std.Thread.spawn(.{}, Echo.run, .{&echo});

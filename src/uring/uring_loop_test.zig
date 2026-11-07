@@ -20,7 +20,7 @@ const Operation = core.Operation;
 
 const operations = 16;
 const memory_alignment = core.layout.memory_alignment;
-const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = 8 });
+const memory_bytes = Loop.memory_bytes(&.{ .operations = operations, .entries = 8 });
 
 /// The most rounds `Fixture.collect` ticks before it gives up: with a 10 ms wait each, a second.
 const collect_rounds_max = 100;
@@ -31,7 +31,7 @@ const Fixture = struct {
     loop: Loop,
 
     fn init(fixture: *Fixture, options: Loop.Options) !void {
-        try fixture.loop.init(&fixture.memory, options);
+        try fixture.loop.init(&fixture.memory, &options);
     }
 
     /// Ticks until `events` is full, and fails when it is not full within a second.
@@ -364,9 +364,9 @@ const refused_group_shape: core.datagram.GroupOptions = .{ .control_reserve = 0 
 test "a datagram group the kernel refuses leaves the loop's datagram shape as it was" {
     if (!uring.supported) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     // The test registers a ring for the group the loop reserves first, 0, itself. The loop does not
@@ -399,11 +399,11 @@ test "a datagram group the kernel refuses leaves the loop's datagram shape as it
 
 // Moved here from `uring.zig` on 2026-11-06 for the 500-line limit. It enters no kernel.
 test "entries default to the operations rounded up to a power of two, capped at the ring's most" {
-    try std.testing.expectEqual(@as(u16, 1), Loop.entries_of(.{ .operations = 1 }));
-    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1000 }));
-    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(.{ .operations = 1024 }));
+    try std.testing.expectEqual(@as(u16, 1), Loop.entries_of(&.{ .operations = 1 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(&.{ .operations = 1000 }));
+    try std.testing.expectEqual(@as(u16, 1024), Loop.entries_of(&.{ .operations = 1024 }));
     const most = uring.constants.entries_max;
-    try std.testing.expectEqual(most, Loop.entries_of(.{ .operations = 1 << 20 }));
+    try std.testing.expectEqual(most, Loop.entries_of(&.{ .operations = 1 << 20 }));
     // A caller that names a count keeps it.
-    try std.testing.expectEqual(@as(u16, 8), Loop.entries_of(.{ .operations = 1000, .entries = 8 }));
+    try std.testing.expectEqual(@as(u16, 8), Loop.entries_of(&.{ .operations = 1000, .entries = 8 }));
 }

@@ -121,9 +121,9 @@ const testing = std.testing;
 
 test "a group's buffers start after its bookkeeping and its holders, and the size helper counts all" {
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const count = 4;
     const buffer_bytes = 16;
     var group_memory: [group_bytes(count, buffer_bytes)]u8 align(group_alignment) = undefined;
@@ -141,9 +141,9 @@ test "a group's buffers start after its bookkeeping and its holders, and the siz
 
 test "a buffer a split datagram holds goes back to the group at its last event's give-back" {
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const count = 4;
     var group_memory: [group_bytes(count, 64)]u8 align(group_alignment) = undefined;
     const reserved = try reserve(&loop);
@@ -161,9 +161,9 @@ test "a buffer a split datagram holds goes back to the group at its last event's
 
 test "a reserved id is the caller's until the loop ends: a release keeps it, and a provide again" {
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const count = 4;
     var group_memory: [group_bytes(count, 64)]u8 align(group_alignment) = undefined;
     const first = try reserve(&loop);

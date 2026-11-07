@@ -43,6 +43,8 @@ pub const cases = [_]Case{
         .file = "next_generation",
         .message = "struct 'handle.Handle' has no member named 'next_generation'",
     },
+    // Zig 0.16 prints both types as `T` in this message.
+    .{ .file = "options_by_value", .message = "expected type '*const T', found 'T'" },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.

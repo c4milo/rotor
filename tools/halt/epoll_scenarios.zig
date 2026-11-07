@@ -23,7 +23,7 @@ const buffer_release = @import("buffer_release.zig").Scenario(Loop, epoll.buffer
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 const one_timer = [_]core.Operation{
@@ -34,7 +34,7 @@ const one_timer = [_]core.Operation{
 /// scenario calls the check itself rather than `deinit`, because this loop has no epoll instance
 /// for `deinit` to close and a halt inside that close would pass for the wrong reason.
 fn end_a_loop_with_an_operation_in_flight() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &.{});
     scenario.reached_violation();
     loop.assert_empty();
@@ -43,7 +43,7 @@ fn end_a_loop_with_an_operation_in_flight() void {
 /// A loop cannot post to itself: it would be the producer and the consumer of one ring, which the
 /// ordering argument of `core/mailbox.zig` does not hold for.
 fn post_to_the_loop_itself() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const post = [_]core.Operation{.{ .user_data = 1, .kind = .{ .post = .{
         .target = options.id,
         .message = .{ .payload = 0, .tag = 0 },
@@ -55,7 +55,7 @@ fn post_to_the_loop_itself() void {
 /// One handle per operation. More handles than operations means the caller would read a handle the
 /// loop never wrote.
 fn submit_more_handles_than_operations() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var handles: [2]core.Handle = undefined;
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &handles);
@@ -66,7 +66,7 @@ fn submit_more_handles_than_operations() void {
 /// has tables and no epoll instance. With the check deleted the call answers -1 and returns, with
 /// no Linux call on the way.
 fn ask_an_ended_loop_for_its_wait_descriptor() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.queue = .{
         .descriptor = -1,
         .wake_descriptor = -1,
@@ -92,7 +92,7 @@ const offload_options: Loop.Options = .{
 };
 
 const alignment = core.layout.memory_alignment;
-var offload_memory: [Loop.memory_bytes(offload_options)]u8 align(alignment) = undefined;
+var offload_memory: [Loop.memory_bytes(&offload_options)]u8 align(alignment) = undefined;
 const ring_bytes = epoll.offload_module.memory_bytes(offload_workers);
 var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 
@@ -131,7 +131,7 @@ const one_read = [_]core.Operation{
 fn hand_out_one() *core.offload.Work {
     var options_with_rings = offload_options;
     options_with_rings.offload_memory = &ring_memory;
-    loop.init_tables(&offload_memory, options_with_rings);
+    loop.init_tables(&offload_memory, &options_with_rings);
     _ = loop.submit(&one_read, &.{});
     epoll.submit_module.flush(&loop);
     return captured.?;
@@ -154,7 +154,7 @@ fn choose_the_offload_policy_without_an_offload() void {
     var options_without: Loop.Options = offload_options;
     options_without.offload = null;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_without);
+    loop.init_tables(&offload_memory, &options_without);
 }
 
 /// An offload with no worker: `submit` would be called and no thread would ever run the work.
@@ -163,7 +163,7 @@ fn give_an_offload_no_workers() void {
     options_empty.offload = .{ .context = null, .submit = capture, .workers = 0 };
     options_empty.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_empty);
+    loop.init_tables(&offload_memory, &options_empty);
 }
 
 /// An offload under a policy that never hands it work. The options refuse it, and until 2026-09-23
@@ -173,7 +173,7 @@ fn name_an_offload_under_another_policy() void {
     options_blocking.file_policy = .blocking;
     options_blocking.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_blocking);
+    loop.init_tables(&offload_memory, &options_blocking);
 }
 
 /// An offload with more workers than a loop holds rings for.
@@ -186,7 +186,7 @@ fn give_an_offload_more_workers_than_the_limit() void {
     };
     options_many.offload_memory = &ample_ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_many);
+    loop.init_tables(&offload_memory, &options_many);
 }
 
 // The buffer groups' assertions. `provide` takes `[]align(group_alignment) u8`, so the type carries
@@ -205,7 +205,7 @@ var group_memory: [group_slack]u8 align(group_alignment) = undefined;
 /// cast alone: the pointer's declared alignment is a lie the scenario tells on purpose, which is
 /// exactly the lie a caller tells when its own memory is not aligned.
 fn provide_a_group_that_is_not_aligned() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const misaligned = blk: {
@@ -220,7 +220,7 @@ fn provide_a_group_that_is_not_aligned() void {
 /// Aligned memory, so the group is made, and then the same group id again: the second call would
 /// leave the first group's buffers with the caller and no way to give them back.
 fn provide_one_group_id_twice() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const aligned: []align(group_alignment) u8 = blk: {
         const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
@@ -235,7 +235,7 @@ fn provide_one_group_id_twice() void {
 /// The buffers are registered once per loop. A second call would replace what the first recorded
 /// while the kernel still held the first set, on the backend where registering means something.
 fn register_buffers_twice() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var block: [64]u8 = undefined;
     const registered = [_][]u8{&block};
     loop.register_buffers(&registered) catch return;
@@ -249,7 +249,7 @@ fn register_buffers_twice() void {
 /// was still free here, so the free list's own check halted too, and deleting the id check was not
 /// caught.
 fn give_back_a_buffer_the_group_does_not_hold() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const aligned: []align(group_alignment) u8 = blk: {
         const start: [*]align(group_alignment) u8 = @ptrFromInt(base);
@@ -313,25 +313,25 @@ fn post_a_tag_above_the_limit() void {
 
 /// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
 fn provide_datagram_groups_of_two_shapes() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     datagram_shapes.provide_two_shapes(&loop);
 }
 
 /// A group taken back while a receive from it is in flight (`buffer_release.zig`).
 fn release_a_group_in_use() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.release_a_group_in_use(&loop);
 }
 
 /// A group taken back that was never provided (`buffer_release.zig`).
 fn release_a_group_never_provided() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.release_a_group_never_provided(&loop);
 }
 
 /// A group provided that no caller reserved (`buffer_release.zig`).
 fn provide_a_group_never_reserved() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.provide_a_group_never_reserved(&loop);
 }
 

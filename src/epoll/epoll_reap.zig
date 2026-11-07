@@ -340,9 +340,9 @@ test "every bit that ends or advances an operation wakes the direction it belong
 test "the wait timer's readiness makes no event and leaves the timer disarmed" {
     // A loop with tables and no epoll instance: the timer's readiness enters no kernel.
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.wait_timer_deadline_ns = 1;
     const readiness = [1]Readiness{.{
         .events = linux.EPOLL.IN,
@@ -374,9 +374,9 @@ fn wait_to_read(loop: *Loop, descriptor: core.Descriptor) u32 {
 test "an attempt that is done marks the events of an operation that names a record" {
     // A loop with tables and no epoll instance: neither event below enters the kernel.
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var record: core.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const descriptor = 5;
@@ -420,9 +420,9 @@ fn send_batch(sender: core.Descriptor, socket: core.Descriptor) !void {
 test "one recvmmsg batch marks each event of a datagram receive that names a record" {
     if (!epoll.supported) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const group_bytes = comptime epoll.buffers.group_bytes(batch_buffers, batch_buffer_bytes);
     var group_memory: [group_bytes]u8 align(epoll.buffers.group_alignment) = undefined;

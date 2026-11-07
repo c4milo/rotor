@@ -95,7 +95,7 @@ pub const Options = struct {
 };
 
 var loop_memory: [
-    Loop.memory_bytes(.{ .operations = operations, .entries = entries })
+    Loop.memory_bytes(&.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
 var connections: [connections_max]Connection align(@alignOf(Connection)) = undefined;
@@ -128,7 +128,7 @@ const Storm = struct {
 pub fn run(options: Options) !Result {
     if (options.connections > connections_max) return error.TooManyConnections;
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    try loop.init(&loop_memory, &.{ .operations = operations, .entries = entries });
     defer loop.deinit();
     var storm: Storm = .{
         .loop = &loop,

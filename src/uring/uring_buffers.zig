@@ -246,9 +246,9 @@ test "a buffer a split datagram holds goes back to the kernel at its last event'
     // A loop with tables and no ring, and a group whose buffer ring is plain memory: a give-back
     // writes a ring entry and moves the tail, and enters no kernel.
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const count = 4;
     var ring_memory: [ring_bytes(count)]u8 align(group_alignment) = undefined;
     var holders: [count]u8 = @splat(0);

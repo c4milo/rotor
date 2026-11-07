@@ -69,7 +69,7 @@ const Pool = struct {
 const Fixture = struct {
     loop: Loop,
     pool: Pool,
-    memory: [Loop.memory_bytes(options_for(&dummy_pool))]u8 align(alignment),
+    memory: [Loop.memory_bytes(&options_for(&dummy_pool))]u8 align(alignment),
     rings: [offload_module.memory_bytes(workers)]u8 align(alignment),
     buffer: [64]u8,
 
@@ -90,7 +90,7 @@ const Fixture = struct {
         state.pool = .{};
         var options = options_for(&state.pool);
         options.offload_memory = &state.rings;
-        state.loop.init_tables(&state.memory, options);
+        state.loop.init_tables(&state.memory, &options);
     }
 
     /// Submits `count` reads and flushes, so each is handed to the pool. Returns nothing: what the
@@ -181,9 +181,9 @@ test "a loop with no offload holds no ring, and asks for no memory for one" {
     const plain: Loop.Options = .{ .operations = operations, .entries = entries };
     try testing.expectEqual(@as(usize, 0), offload_module.memory_bytes(0));
 
-    var memory: [Loop.memory_bytes(plain)]u8 align(alignment) = undefined;
+    var memory: [Loop.memory_bytes(&plain)]u8 align(alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, plain);
+    loop.init_tables(&memory, &plain);
     try testing.expectEqual(@as(usize, 0), loop.inbox.completions.len);
     try testing.expectEqual(@as(usize, 0), loop.works.len);
     try testing.expectEqual(core.offload.FilePolicy.refuse, loop.file_policy);

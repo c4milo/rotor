@@ -60,7 +60,7 @@ const fire_period_ns = 10 * core.constants.ns_per_us;
 const operations = 1024;
 const events_max = 512;
 const options: Loop.Options = .{ .operations = operations };
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 // Each static restates its type's alignment. Zig 0.16's own x86-64 backend, which builds Debug on
 // x86-64, places a static without the alignment its type takes from an aligned field, unless the
 // static declares it. `conformance_offload.zig` met it on 2026-09-23.
@@ -108,7 +108,7 @@ fn expect_under(measured_ns: u64, bound_ns: u64, what: []const u8) !void {
 
 test "a poll with nothing to do stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
 
@@ -125,7 +125,7 @@ test "a poll with nothing to do stays under its bound" {
 
 test "one fire of a repeating timer stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
 
@@ -155,7 +155,7 @@ test "one fire of a repeating timer stays under its bound" {
 
 test "one operation of a batch submit stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
 
@@ -196,7 +196,7 @@ const task_bound_ns = 300;
 
 test "one task of a full run stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var events: [events_max]Event = undefined;
 

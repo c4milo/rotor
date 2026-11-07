@@ -91,7 +91,7 @@ const options_template: Loop.Options = .{
     .entries = entries,
     .id = id_first,
 };
-const memory_bytes = Loop.memory_bytes(options_template);
+const memory_bytes = Loop.memory_bytes(&options_template);
 
 /// The options of the loop with `id`, in `mode`: both loops share the registry, and a loop in
 /// `spin-budget` is given the budget in its options.
@@ -203,7 +203,7 @@ const Peer = struct {
 
     fn serve(peer: *Peer) !void {
         peer_placement = placement.place(peer.cpu);
-        try peer.side.loop.init(&peer.side.memory, loop_options(peer.mode, id_second));
+        try peer.side.loop.init(&peer.side.memory, &loop_options(peer.mode, id_second));
         defer peer.side.loop.deinit();
         std.debug.assert(peer.side.loop.in_flight() == 0);
 
@@ -263,7 +263,7 @@ fn measure(options: Options) !Result {
     defer backend.wake_module.close_kept(&registry);
     const own = placement.place(options.cpu);
 
-    try first.loop.init(&first.memory, loop_options(options.mode, id_first));
+    try first.loop.init(&first.memory, &loop_options(options.mode, id_first));
     defer first.loop.deinit();
 
     var peer: Peer = .{
@@ -351,7 +351,7 @@ fn measure_across(options: Options) !Result {
         .samples = options.samples,
     }, .memory = memory }, serve_across);
     const own = placement.place(options.cpu);
-    try first.loop.init(&first.memory, loop_options(options.mode, id_first));
+    try first.loop.init(&first.memory, &loop_options(options.mode, id_first));
     defer first.loop.deinit();
     try wait_for_peer(report);
 

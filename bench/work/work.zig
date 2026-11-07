@@ -76,7 +76,7 @@ const ping: core.Message = .{ .payload = 1, .tag = 1 };
 const pong: core.Message = .{ .payload = 2, .tag = 2 };
 
 const loop_options: Loop.Options = .{ .operations = operations, .id = first_id };
-const memory_bytes = Loop.memory_bytes(loop_options);
+const memory_bytes = Loop.memory_bytes(&loop_options);
 
 const Side = struct {
     memory: [memory_bytes]u8 align(core.layout.memory_alignment) = undefined,
@@ -145,10 +145,10 @@ pub fn main(init: std.process.Init) !void {
     defer backend.wake_module.close_kept(&registry);
     var options = loop_options;
     options.registry = &registry;
-    try first.loop.init(&first.memory, options);
+    try first.loop.init(&first.memory, &options);
     defer first.loop.deinit();
     options.id = second_id;
-    try second.loop.init(&second.memory, options);
+    try second.loop.init(&second.memory, &options);
     defer second.loop.deinit();
     for (&batch, 0..) |*operation, index| operation.* = Operation.timer(index, 0, 0);
 

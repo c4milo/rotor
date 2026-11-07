@@ -168,14 +168,14 @@ pub const Loop = struct {
 
     /// The submission ring entries `options` asks for: its own, or the default derived from
     /// `operations` when it names none.
-    pub fn entries_of(options: Options) u16 {
+    pub fn entries_of(options: *const Options) u16 {
         if (options.entries != 0) return options.entries;
         const wanted: u32 = @min(options.operations, constants.entries_max);
         return @intCast(std.math.ceilPowerOfTwoAssert(u32, wanted));
     }
 
     /// The bytes of memory `init` needs for `options`, aligned to `core.layout.memory_alignment`.
-    pub fn memory_bytes(options: Options) usize {
+    pub fn memory_bytes(options: *const Options) usize {
         var layout: Layout = .{};
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
@@ -193,7 +193,7 @@ pub const Loop = struct {
     pub fn init(
         loop: *Loop,
         memory: []align(core.layout.memory_alignment) u8,
-        options: Options,
+        options: *const Options,
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.ring = try ring_module.Ring.init(entries_of(options));
@@ -219,7 +219,7 @@ pub const Loop = struct {
     pub fn init_tables(
         loop: *Loop,
         memory: []align(core.layout.memory_alignment) u8,
-        options: Options,
+        options: *const Options,
     ) void {
         assert(options.operations >= 1);
         assert(options.operations <= core.constants.operations_max);

@@ -35,7 +35,7 @@ const piece_bytes_max = 4096;
 /// Slots: a receive and a send per connection, and the accept.
 const loop_options: Loop.Options = .{ .operations = 2 * connections_max + 1, .entries = 64 };
 
-var loop_memory: [Loop.memory_bytes(loop_options)]u8 align(core.layout.memory_alignment) = undefined;
+var loop_memory: [Loop.memory_bytes(&loop_options)]u8 align(core.layout.memory_alignment) = undefined;
 var pieces: [connections_max][piece_bytes_max]u8 = undefined;
 
 /// What a completion's `user_data` says: the kind in the high half, the connection in the low. A
@@ -114,7 +114,7 @@ fn run(server: *Server) void {
 /// The loop is built here and not in `start`, because a loop belongs to the thread that runs it.
 fn serve(server: *Server) !void {
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, loop_options);
+    try loop.init(&loop_memory, &loop_options);
     // In reverse: the loop is emptied, then the sockets close, then the loop is torn down.
     defer loop.deinit();
     server.loop = &loop;

@@ -135,7 +135,7 @@ pub const Fixture = struct {
     loop: Loop,
     pool: Pool,
     memory: [
-        Loop.memory_bytes(.{
+        Loop.memory_bytes(&.{
             .operations = operations,
             .entries = entries,
             .file_policy = .offload,
@@ -166,7 +166,7 @@ pub const Fixture = struct {
         try sync.set_file_size(fixture.file, operations * read_bytes);
         try fixture.pool.start();
         errdefer fixture.pool.stop();
-        try fixture.loop.init(&fixture.memory, .{
+        try fixture.loop.init(&fixture.memory, &.{
             .operations = operations,
             .entries = entries,
             .file_policy = .offload,

@@ -51,7 +51,7 @@ const user_data_receive = 1;
 const user_data_send = 2;
 
 var loop_memory: [
-    Loop.memory_bytes(.{ .operations = operations, .entries = entries })
+    Loop.memory_bytes(&.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 var group_memory: [backend.buffers.group_bytes(group_buffers, buffer_bytes)]u8 align(backend.buffers.group_alignment) = undefined;
 
@@ -93,7 +93,7 @@ pub fn main(init: std.process.Init) !void {
     const options = try parse(init);
     payload = @splat('b');
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    try loop.init(&loop_memory, &.{ .operations = operations, .entries = entries });
     defer loop.deinit();
     const group = try loop.reserve_buffer_group();
     try loop.provide_datagram_buffers(group, &group_memory, group_buffers, buffer_bytes, .{});

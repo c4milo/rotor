@@ -150,9 +150,9 @@ const testing = std.testing;
 
 test "no slot is on a worker unless the policy is offload and the tag is one that blocks" {
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
 
     var slot: Slot = std.mem.zeroes(Slot);
     slot.tag = .read;

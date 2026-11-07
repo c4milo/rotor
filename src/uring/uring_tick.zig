@@ -227,9 +227,9 @@ const one_nop = [_]core.Operation{.{ .user_data = 1, .kind = .nop }};
 
 test "the wait timer stays armed for a later deadline and moves for an earlier one" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
@@ -265,9 +265,9 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
 
 test "a wait timer an earlier tick armed does not cut a later wait short" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
     var events: [4]Event = undefined;
 
@@ -306,9 +306,9 @@ fn fill_submission_ring(loop: *Loop, far: *const linux.kernel_timespec) void {
 
 test "a wait with no room for the timer's entry carries its timeout and takes its whole wait" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
     var events: [4]Event = undefined;
     const far: linux.kernel_timespec = .{ .sec = far_s, .nsec = 0 };
@@ -352,9 +352,9 @@ fn wait_for_completion(loop: *Loop) !void {
 
 test "a timer that fired early with no room to arm it again leaves the rest to a timeout" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
 
     // A timer 5 ms out, and enters that wait for its completion up to `setup_wait_ns`. A bound of
@@ -393,9 +393,9 @@ const Record = struct {
 
 test "a tick whose enter fails after it produced events returns them, and the next tick fails" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 4 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 4 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 4 });
+    try loop.init(&memory, &.{ .operations = 4 });
     defer loop.deinit();
     var ends: [2]i32 = undefined;
     const kind = linux.SOCK.STREAM | linux.SOCK.CLOEXEC;
@@ -449,9 +449,9 @@ const no_room_rounds = 16;
 test "a tick with no room for the wait timer waits for the completion that ends its wait" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     // One entry: the timeout fills the submission ring, so the enter carries the tick's bound.
-    var memory: [Loop.memory_bytes(.{ .operations = 1 })]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&.{ .operations = 1 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 1 });
+    try loop.init(&memory, &.{ .operations = 1 });
     defer loop.deinit();
     var events: [4]Event = undefined;
     const timeout_ns = 2 * core.constants.ns_per_ms;

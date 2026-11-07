@@ -281,9 +281,9 @@ const test_wait_ns = test_wait_ms * constants.ns_per_ms;
 
 test "a loop built through the public module runs, cancels, drains and counts" {
     if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
+    try loop.init(&memory, &test_options);
     defer loop.deinit();
     var handles = [_]Handle{.none};
     var events: [4]Event = undefined;
@@ -321,11 +321,11 @@ test "a registry and a remote work through the public module" {
     registry.init(&registry_memory, 3);
     defer registry.deinit();
     try testing.expectEqual(3, registry.loop_count());
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
     var options = test_options;
     options.registry = &registry;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var remote: Remote = undefined;
     try remote.init(&registry, 1);
@@ -349,14 +349,14 @@ test "a loop posts to another loop through the public module, with no event of i
     defer registry.deinit();
     var options = test_options;
     options.registry = &registry;
-    var sender_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var sender_memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var sender: Loop = undefined;
-    try sender.init(&sender_memory, options);
+    try sender.init(&sender_memory, &options);
     defer sender.deinit();
     options.id = 1;
-    var receiver_memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var receiver_memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var receiver: Loop = undefined;
-    try receiver.init(&receiver_memory, options);
+    try receiver.init(&receiver_memory, &options);
     defer receiver.deinit();
 
     try sender.post(1, .{ .payload = 41, .tag = 3 });

@@ -184,9 +184,9 @@ test "a process that requires epoll before anything asks runs epoll, even where 
     try testing.expectEqual(Tag.epoll, chosen());
 
     // A loop made now is an epoll loop, with a descriptor a host can wait on, and it runs.
-    var memory: [Loop.memory_bytes(required_options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&required_options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, required_options);
+    try loop.init(&memory, &required_options);
     defer loop.deinit();
     try testing.expectEqual(Tag.epoll, std.meta.activeTag(loop.inner));
     try testing.expect(loop.wait_descriptor() != null);

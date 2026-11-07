@@ -12,7 +12,7 @@ const Loop = rotor.Loop;
 
 const options: Loop.Options = .{ .operations = 4 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// Runs `call` on a second thread and waits for it. A scenario whose thread cannot start returns
@@ -24,7 +24,7 @@ fn on_another_thread(comptime call: fn () void) void {
 
 /// `shared` from a second thread. With the check deleted, the call returns the view.
 fn hand_out_the_view_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     on_another_thread(hand_out_the_view_on_this_thread);
 }
 

@@ -70,9 +70,9 @@ inside this tree.
 
 ```zig
 const options: rotor.Loop.Options = .{ .operations = 1024 };
-var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
 var loop: rotor.Loop = undefined;
-try loop.init(&memory, options);
+try loop.init(&memory, &options);
 defer loop.deinit();
 ```
 

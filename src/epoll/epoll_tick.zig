@@ -228,9 +228,9 @@ test "a tick with a message to hand over and nothing waiting on a socket polls n
     // Runs after the loop's `deinit`: the registry keeps the loop's wake until then.
     defer epoll.wake_module.close_kept(&registry);
     const sizing: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2, .id = receiver, .registry = &registry });
+    try loop.init(&memory, &.{ .operations = 2, .id = receiver, .registry = &registry });
     defer loop.deinit();
 
     // Another loop posts, and wakes this one as a post to a loop that sleeps does.
@@ -259,10 +259,10 @@ test "only the wait timer's readiness, alone, counts as a wait the timer ended" 
 
 test "the wait timer stays armed for a later deadline and moves for an earlier one" {
     if (!epoll.supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
         undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
@@ -287,10 +287,10 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
 
 test "a wait timer an earlier tick armed does not cut a later wait short" {
     if (!epoll.supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
         undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     defer loop.deinit();
     var events: [4]Event = undefined;
 
@@ -313,10 +313,10 @@ test "a wait timer an earlier tick armed does not cut a later wait short" {
 
 test "a wait whose timer the kernel refuses carries its timeout and still takes its whole wait" {
     if (!epoll.supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
+    var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) =
         undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, .{ .operations = 2 });
+    try loop.init(&memory, &.{ .operations = 2 });
     // `timerfd_settime` refuses a descriptor that is not a timerfd, so the eventfd stands in for
     // the timer. The real one goes back before `deinit` closes it.
     const timer = loop.queue.wait_timer_descriptor;
@@ -357,9 +357,9 @@ const Record = struct {
 test "a tick whose call fails after it produced events returns them, and the next tick fails" {
     if (!epoll.supported) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     var ends: [2]i32 = undefined;
     const kind = linux.SOCK.STREAM | linux.SOCK.NONBLOCK | linux.SOCK.CLOEXEC;
@@ -415,9 +415,9 @@ test "a tick whose call fails after it produced events returns them, and the nex
 test "a pending split keeps the kernel's places while no operation waits for readiness" {
     if (!epoll.supported) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 32 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     // At 16 events with no registry, K is 16 / 4 + 2 own entries, and the lists may take 10.
     const events_len = 16;

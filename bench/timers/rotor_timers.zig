@@ -58,7 +58,7 @@ const events_max = 4096;
 const samples_max = 1 << 17;
 
 var loop_memory: [
-    Loop.memory_bytes(.{ .operations = operations, .entries = entries })
+    Loop.memory_bytes(&.{ .operations = operations, .entries = entries })
 ]u8 align(core.layout.memory_alignment) = undefined;
 
 /// When each armed timer is due, by slot.
@@ -100,7 +100,7 @@ pub fn main(init: std.process.Init) !void {
     if (options.timers > timers_max) return error.TooManyTimers;
 
     var loop: Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = operations, .entries = entries });
+    try loop.init(&loop_memory, &.{ .operations = operations, .entries = entries });
     defer loop.deinit();
     var churn: Churn = .{
         .loop = &loop,

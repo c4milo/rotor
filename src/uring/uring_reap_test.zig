@@ -23,7 +23,7 @@ const options: Loop.Options = .{ .operations = 8, .entries = 8 };
 
 /// What a completion the backend consumes yields.
 const none: ?Event = null;
-const memory_bytes = Loop.memory_bytes(options);
+const memory_bytes = Loop.memory_bytes(&options);
 
 /// Room for the default prefix and a small datagram.
 const datagram_buffer_bytes = 512;
@@ -37,7 +37,7 @@ const Fixture = struct {
     datagram_buffer: [datagram_buffer_bytes]u8,
 
     fn init(fixture: *Fixture) void {
-        fixture.loop.init_tables(&fixture.memory, options);
+        fixture.loop.init_tables(&fixture.memory, &options);
         fixture.buffer = @splat(0);
         fixture.datagram_buffer = @splat(0);
     }

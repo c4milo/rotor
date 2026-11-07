@@ -67,9 +67,9 @@ pub fn main(init: std.process.Init) !void {
         .operations = 4,
         .stall_turn_ns = 5 * rotor.constants.ns_per_ms,
     };
-    var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+    var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
     var loop: rotor.Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     var watcher: Watcher = .{ .heartbeat = loop.heartbeat(), .io = init.io };

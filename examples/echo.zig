@@ -27,7 +27,7 @@ fn tag(kind: Kind, socket: rotor.Descriptor) u64 {
 /// The loop holds the accept and one operation per connection: a connection is receiving, sending
 /// or closing, never two at once. rotor allocates nothing, so its memory is declared here.
 const options: rotor.Loop.Options = .{ .operations = connections_max + 1 };
-var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
 
 /// One buffer per connection, the bytes it last received, and how many of them are sent back.
 var buffers: [connections_max][buffer_bytes]u8 = undefined;
@@ -37,7 +37,7 @@ var sent: [connections_max]u32 = undefined;
 pub fn main(init: std.process.Init) !void {
     const port = try port_of(init);
     var loop: rotor.Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     // The server runs until it is stopped, so it never calls `loop.deinit()`.
 
     const address = rotor.Address.ipv4(.{ 127, 0, 0, 1 }, port);

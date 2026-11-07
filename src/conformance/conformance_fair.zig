@@ -42,13 +42,13 @@ pub const FairLoop = struct {
     memory: [memory_bytes]u8 align(core.layout.memory_alignment),
     loop: backend.Loop,
 
-    const memory_bytes = backend.Loop.memory_bytes(.{
+    const memory_bytes = backend.Loop.memory_bytes(&.{
         .operations = constants.fair_operations,
         .entries = conformance.entries,
     });
 
     pub fn init(fair: *FairLoop, registry: ?*backend.Registry) !void {
-        try fair.loop.init(&fair.memory, .{
+        try fair.loop.init(&fair.memory, &.{
             .operations = constants.fair_operations,
             .entries = conformance.entries,
             .id = tested_id,

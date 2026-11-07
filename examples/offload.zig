@@ -120,7 +120,7 @@ const sizing: rotor.Loop.Options = .{
     .file_policy = .offload,
     .offload = .{ .context = null, .submit = Pool.submit, .workers = workers },
 };
-var memory: [rotor.Loop.memory_bytes(sizing)]u8 align(rotor.memory_alignment) = undefined;
+var memory: [rotor.Loop.memory_bytes(&sizing)]u8 align(rotor.memory_alignment) = undefined;
 
 pub fn main(init: std.process.Init) !void {
     try the_pool.start(init.io);
@@ -128,7 +128,7 @@ pub fn main(init: std.process.Init) !void {
     options.offload = the_pool.offload();
     options.offload_memory = &rings;
     var loop: rotor.Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
 
     // A file of its own: the loop's first clock stamp names it.
     var events: [8]rotor.Event = undefined;

@@ -77,9 +77,9 @@ fn fill(loop: *Loop, descriptor: core.Descriptor) void {
 test "a call that ended in a signal applied its list, and the error stands" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const pair = try kqueue.testing.nonblocking_pair();
     defer for (pair) |descriptor| {
@@ -96,9 +96,9 @@ test "a call that ended in a signal applied its list, and the error stands" {
 test "a call that failed with no registration on its list reports the kqueue's error" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     // Only the tick's own trigger. A call with nothing to send would succeed on a kqueue that works,
@@ -112,9 +112,9 @@ test "a call that failed with no registration on its list reports the kqueue's e
 test "a registration the failed call may not have applied is applied, and the tick goes on" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const pair = try kqueue.testing.nonblocking_pair();
     defer for (pair) |descriptor| {

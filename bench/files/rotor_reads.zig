@@ -80,7 +80,7 @@ const reads_max = 1 << 26;
 
 /// The loop's memory, sized for the larger of the two policies. Under `offload` the loop holds one
 /// `Work` per slot, so a block sized for `blocking` would be too small and `init` would refuse it.
-const loop_bytes = Loop.memory_bytes(.{
+const loop_bytes = Loop.memory_bytes(&.{
     .operations = operations,
     .entries = entries,
     .file_policy = if (backend.files_block) .offload else .blocking,
@@ -131,7 +131,7 @@ pub fn main(init: std.process.Init) !void {
     // `blocking` is what this workload measured on kqueue before decision 18: the loop performs
     // the read itself and stalls for its duration. The default policy refuses, so a run that wants
     // the stall asks for it. On io_uring both policies behave the same: the kernel needs no thread.
-    try loop.init(&loop_memory, .{
+    try loop.init(&loop_memory, &.{
         .operations = operations,
         .entries = entries,
         .file_policy = switch (options.policy) {

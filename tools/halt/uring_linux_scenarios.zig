@@ -19,7 +19,7 @@ const buffer_release = @import("buffer_release.zig").Scenario(Loop, uring.buffer
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// The wait the tick from another thread asks for. It is above 0 so that `tick` enters the kernel:
@@ -31,7 +31,7 @@ const tick_wait_ns = core.constants.ns_per_ms;
 /// check deleted, the second thread's `io_uring_enter` gets EEXIST from the kernel, `tick` returns
 /// `Unexpected`, and the scenario returns.
 fn tick_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const thread = std.Thread.spawn(.{}, tick_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -52,7 +52,7 @@ fn on_another_thread(comptime call: fn () void) void {
 /// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
 /// deleted, `deinit` closes the loop's ring and returns.
 fn end_a_loop_that_a_watch_reads() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     var watch = loop.heartbeat().watch();
     _ = &watch;
     scenario.reached_violation();
@@ -62,7 +62,7 @@ fn end_a_loop_that_a_watch_reads() void {
 /// The loop is empty, so with the owner check deleted `deinit` closes the ring from the second
 /// thread, which the kernel allows, and returns.
 fn end_a_loop_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     on_another_thread(end_the_loop_on_this_thread);
 }
 
@@ -74,7 +74,7 @@ fn end_the_loop_on_this_thread() void {
 var registered_block: [64]u8 = undefined;
 
 fn register_the_buffers_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     on_another_thread(register_the_buffers_on_this_thread);
 }
 
@@ -89,7 +89,7 @@ fn register_the_buffers_on_this_thread() void {
 const open_descriptor: core.Descriptor = 1;
 
 fn register_descriptors_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     on_another_thread(register_descriptors_on_this_thread);
 }
 
@@ -119,7 +119,7 @@ var group_memory: [group_scenario_bytes + 2 * group_alignment]u8 align(group_ali
 /// says, as `@alignCast` does, and a caller built without checks gets no such refusal. rotor's
 /// assertions stay on either way (CLAUDE.md non-negotiable 1).
 fn provide_a_group_that_is_not_aligned() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_alignment);
     const misaligned = blk: {
@@ -144,7 +144,7 @@ fn aligned_group_memory() []align(group_alignment) u8 {
 var reserved_group: core.BufferGroup align(@alignOf(core.BufferGroup)) = undefined;
 
 fn provide_a_group_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_a_group_on_this_thread);
 }
@@ -163,7 +163,7 @@ var datagram_memory: [datagram_group_bytes + group_alignment]u8 align(group_alig
 /// With the owner check deleted, `provide` asks the kernel for the group from the second thread
 /// and returns what it answers, and the scenario returns.
 fn provide_datagram_buffers_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     reserved_group = loop.reserve_buffer_group() catch return;
     on_another_thread(provide_datagram_buffers_on_this_thread);
 }
@@ -180,7 +180,7 @@ fn provide_datagram_buffers_on_this_thread() void {
 /// entry to the group's ring, which is memory the process shares with the kernel, and makes no
 /// system call.
 fn give_back_a_buffer_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     reserved_group = loop.reserve_buffer_group() catch return;
     loop.provide_buffers(reserved_group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
     on_another_thread(give_back_a_buffer_on_this_thread);
@@ -194,7 +194,7 @@ fn give_back_a_buffer_on_this_thread() void {
 /// The same group id twice. With the check deleted, `provide_buffers` asks the kernel for a second
 /// ring under the same id and returns what it answers, and the scenario returns.
 fn provide_one_group_id_twice() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const group = loop.reserve_buffer_group() catch return;
     loop.provide_buffers(group, aligned_group_memory(), group_buffers, group_buffer_bytes) catch return;
     scenario.reached_violation();
@@ -204,7 +204,7 @@ fn provide_one_group_id_twice() void {
 /// The buffers twice. With the check deleted, `register_buffers` asks the kernel to register them
 /// again and returns what it answers, and the scenario returns.
 fn register_the_buffers_twice() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const registered = [_][]u8{&registered_block};
     loop.register_buffers(&registered) catch return;
     scenario.reached_violation();
@@ -246,13 +246,13 @@ var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(cor
 var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn tick_with_no_room_for_an_event() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.tick(&no_events, 0) catch {};
 }
 
 fn tick_with_more_events_than_a_batch() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.tick(&too_many_events, 0) catch {};
 }
@@ -262,7 +262,7 @@ fn tick_with_more_events_than_a_batch() void {
 /// how long to wait, and until 2026-09-23 that was the only place kqueue and epoll checked the
 /// wait.
 fn tick_with_a_wait_above_the_limit() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     var handle: [1]core.Handle = undefined;
     _ = loop.submit(&one_timer, &handle);
     loop.cancel(handle[0]);
@@ -272,26 +272,26 @@ fn tick_with_a_wait_above_the_limit() void {
 
 /// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
 fn provide_datagram_groups_of_two_shapes() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     datagram_shapes.provide_two_shapes(&loop);
 }
 
 /// A group taken back while a receive from it is in flight (`buffer_release.zig`).
 fn release_a_group_in_use() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     buffer_release.release_a_group_in_use(&loop);
 }
 
 /// A group taken back that was never provided (`buffer_release.zig`).
 fn release_a_group_never_provided() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     buffer_release.release_a_group_never_provided(&loop);
 }
 
 /// A group provided that no caller reserved (`buffer_release.zig`). With the check deleted, the
 /// kernel takes the group's ring and the scenario returns.
 fn provide_a_group_never_reserved() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     buffer_release.provide_a_group_never_reserved(&loop);
 }
 
@@ -299,7 +299,7 @@ fn provide_a_group_never_reserved() void {
 /// dropped. The ring holds no waiting entry after `init`. With the check deleted, `sqe_at` returns
 /// an entry of the ring that holds what its last use left, and the scenario returns.
 fn read_an_entry_the_ring_does_not_hold() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.ring.sqe_at(0);
 }

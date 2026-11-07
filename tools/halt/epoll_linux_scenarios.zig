@@ -17,14 +17,14 @@ const Loop = epoll.Loop;
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 /// A loop belongs to the thread that initialised it (decision 4). An epoll instance has no owning
 /// thread, so with the owner check deleted the second thread's `epoll_pwait2` returns at once with
 /// nothing ready, `tick` returns 0, and the scenario returns.
 fn tick_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const thread = std.Thread.spawn(.{}, tick_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -42,7 +42,7 @@ const closed_descriptor: core.Descriptor = 4096;
 /// With the owner check deleted, the second thread's `fcntl` of the closed descriptor fails,
 /// `register_descriptors` returns `DescriptorInvalid`, and the scenario returns.
 fn register_descriptors_from_another_thread() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     const thread = std.Thread.spawn(.{}, register_descriptors_on_this_thread, .{}) catch return;
     thread.join();
 }
@@ -67,13 +67,13 @@ var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(cor
 var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn tick_with_no_room_for_an_event() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.tick(&no_events, 0) catch {};
 }
 
 fn tick_with_more_events_than_a_batch() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.tick(&too_many_events, 0) catch {};
 }
@@ -83,7 +83,7 @@ fn tick_with_more_events_than_a_batch() void {
 /// how long to wait, and until 2026-09-23 that was the only place kqueue and epoll checked the
 /// wait.
 fn tick_with_a_wait_above_the_limit() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     var handle: [1]core.Handle = undefined;
     _ = loop.submit(&one_timer, &handle);
     loop.cancel(handle[0]);
@@ -95,13 +95,13 @@ fn tick_with_a_wait_above_the_limit() void {
 /// leave the wait unbounded. With a check deleted, `timerfd_settime` takes the value and the
 /// scenario returns.
 fn arm_a_wait_timer_of_nothing() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.queue.arm_wait_timer(0);
 }
 
 fn arm_a_wait_timer_above_the_wait_limit() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     scenario.reached_violation();
     _ = loop.queue.arm_wait_timer(core.constants.wait_ns_max + 1);
 }
@@ -109,7 +109,7 @@ fn arm_a_wait_timer_above_the_wait_limit() void {
 /// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
 /// deleted, `deinit` closes the loop's epoll instance and returns.
 fn end_a_loop_that_a_watch_reads() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     var watch = loop.heartbeat().watch();
     _ = &watch;
     scenario.reached_violation();
@@ -132,7 +132,7 @@ const offload_options: Loop.Options = .{
 };
 
 const alignment = core.layout.memory_alignment;
-var offload_memory: [Loop.memory_bytes(offload_options)]u8 align(alignment) = undefined;
+var offload_memory: [Loop.memory_bytes(&offload_options)]u8 align(alignment) = undefined;
 const ring_bytes = epoll.offload_module.memory_bytes(offload_workers);
 var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 
@@ -152,7 +152,7 @@ var read_buffer: [64]u8 = undefined;
 fn push_a_result_into_a_full_ring() void {
     var options_with_rings = offload_options;
     options_with_rings.offload_memory = &ring_memory;
-    loop.init_tables(&offload_memory, options_with_rings);
+    loop.init_tables(&offload_memory, &options_with_rings);
     const read = core.Operation.read(1, closed_descriptor, &read_buffer, 0);
     _ = loop.submit(&.{read}, &.{});
     epoll.submit_module.flush(&loop);

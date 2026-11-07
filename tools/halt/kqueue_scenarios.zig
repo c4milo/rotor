@@ -16,7 +16,7 @@ const buffer_release = @import("buffer_release.zig").Scenario(Loop, kqueue.buffe
 
 const options: Loop.Options = .{ .operations = 4, .entries = 4, .id = 2 };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
 const one_timer = [_]core.Operation{
@@ -26,7 +26,7 @@ const one_timer = [_]core.Operation{
 /// `deinit` checks this first. The scenario calls the check itself, because its loop has no ring
 /// for `deinit` to close, and a halt inside the ring's own close would pass for the wrong reason.
 fn end_a_loop_with_an_operation_in_flight() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     _ = loop.submit(&one_timer, &.{});
     scenario.reached_violation();
     loop.assert_empty();
@@ -35,7 +35,7 @@ fn end_a_loop_with_an_operation_in_flight() void {
 /// A watch that still reads the heartbeat when the loop ends (decision 28). With the check
 /// deleted, `deinit` closes the loop's kqueue and returns.
 fn end_a_loop_that_a_watch_reads() void {
-    loop.init(&memory, options) catch return;
+    loop.init(&memory, &options) catch return;
     var watch = loop.heartbeat().watch();
     _ = &watch;
     scenario.reached_violation();
@@ -43,7 +43,7 @@ fn end_a_loop_that_a_watch_reads() void {
 }
 
 fn post_to_the_loop_itself() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const post = [_]core.Operation{.{ .user_data = 1, .kind = .{ .post = .{
         .target = options.id,
         .message = .{ .payload = 0, .tag = 0 },
@@ -53,7 +53,7 @@ fn post_to_the_loop_itself() void {
 }
 
 fn submit_more_handles_than_operations() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var handles: [2]core.Handle = undefined;
     scenario.reached_violation();
     _ = loop.submit(&one_timer, &handles);
@@ -63,7 +63,7 @@ fn submit_more_handles_than_operations() void {
 /// `deinit` leaves the queue's descriptor at -1, which this loop is given: it has tables and no
 /// kqueue. With the check deleted the call answers -1 and returns.
 fn ask_an_ended_loop_for_its_wait_descriptor() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.queue = .{ .descriptor = -1 };
     scenario.reached_violation();
     _ = loop.wait_descriptor();
@@ -84,7 +84,7 @@ const offload_options: Loop.Options = .{
 };
 
 const alignment = core.layout.memory_alignment;
-var offload_memory: [Loop.memory_bytes(offload_options)]u8 align(alignment) = undefined;
+var offload_memory: [Loop.memory_bytes(&offload_options)]u8 align(alignment) = undefined;
 const ring_bytes = kqueue.offload_module.memory_bytes(offload_workers);
 var ring_memory: [ring_bytes]u8 align(alignment) = undefined;
 
@@ -123,7 +123,7 @@ const one_read = [_]core.Operation{
 fn hand_out_one() *core.offload.Work {
     var options_with_rings = offload_options;
     options_with_rings.offload_memory = &ring_memory;
-    loop.init_tables(&offload_memory, options_with_rings);
+    loop.init_tables(&offload_memory, &options_with_rings);
     _ = loop.submit(&one_read, &.{});
     kqueue.submit_module.flush(&loop);
     return captured.?;
@@ -159,7 +159,7 @@ fn choose_the_offload_policy_without_an_offload() void {
     var options_without: Loop.Options = offload_options;
     options_without.offload = null;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_without);
+    loop.init_tables(&offload_memory, &options_without);
 }
 
 /// An offload with no worker: `submit` would be called and no thread would ever run the work.
@@ -168,7 +168,7 @@ fn give_an_offload_no_workers() void {
     options_empty.offload = .{ .context = null, .submit = capture, .workers = 0 };
     options_empty.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_empty);
+    loop.init_tables(&offload_memory, &options_empty);
 }
 
 /// An offload under a policy that never hands it work. The options refuse it, and until 2026-09-23
@@ -178,7 +178,7 @@ fn name_an_offload_under_another_policy() void {
     options_blocking.file_policy = .blocking;
     options_blocking.offload_memory = &ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_blocking);
+    loop.init_tables(&offload_memory, &options_blocking);
 }
 
 /// An offload with more workers than a loop holds rings for.
@@ -191,7 +191,7 @@ fn give_an_offload_more_workers_than_the_limit() void {
     };
     options_many.offload_memory = &ample_ring_memory;
     scenario.reached_violation();
-    loop.init_tables(&offload_memory, options_many);
+    loop.init_tables(&offload_memory, &options_many);
 }
 
 // The Remote's assertions (decision 4). Each is a mistake only the caller can make, and each halts
@@ -265,7 +265,7 @@ var group_memory: [group_scenario_slack]u8 align(group_scenario_alignment) = und
 /// a caller built without checks does not. rotor's assertions stay on either way (CLAUDE.md
 /// non-negotiable 1), and that is the gap this covers.
 fn provide_a_group_that_is_not_aligned() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const group = loop.reserve_buffer_group() catch return;
     const base = std.mem.alignForward(usize, @intFromPtr(&group_memory), group_scenario_alignment);
     const misaligned = blk: {
@@ -292,7 +292,7 @@ var too_many_events: [core.constants.batch_max + 1]core.Event align(@alignOf(cor
 var one_event: [1]core.Event align(@alignOf(core.Event)) = undefined;
 
 fn init_with_a_closed_queue() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     loop.queue = .{ .descriptor = closed_descriptor };
 }
 
@@ -353,7 +353,7 @@ fn provide_the_group(group: core.BufferGroup) kqueue.buffers.ProvideError!void {
 /// Aligned memory, so the group is made, and then the same group id again: the second call would
 /// leave the first group's buffers with the caller and no way to give them back.
 fn provide_one_group_id_twice() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const group = loop.reserve_buffer_group() catch return;
     provide_the_group(group) catch return;
     scenario.reached_violation();
@@ -363,7 +363,7 @@ fn provide_one_group_id_twice() void {
 /// The buffers are registered once per loop. A second call would replace what the first recorded
 /// while the kernel still held the first set, on the backend where registering means something.
 fn register_buffers_twice() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     var block: [64]u8 = undefined;
     const registered = [_][]u8{&block};
     loop.register_buffers(&registered) catch return;
@@ -375,7 +375,7 @@ fn register_buffers_twice() void {
 /// on the free list. One buffer is taken out first, as a receive would take it, so the free list has
 /// room and the id check is the only assertion this call can reach.
 fn give_back_a_buffer_the_group_does_not_hold() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     const group = loop.reserve_buffer_group() catch return;
     provide_the_group(group) catch return;
     _ = loop.groups[@intFromEnum(group)].take() orelse return;
@@ -385,25 +385,25 @@ fn give_back_a_buffer_the_group_does_not_hold() void {
 
 /// Two datagram groups of different shapes on one loop (`datagram_shapes.zig`).
 fn provide_datagram_groups_of_two_shapes() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     datagram_shapes.provide_two_shapes(&loop);
 }
 
 /// A group taken back while a receive from it is in flight (`buffer_release.zig`).
 fn release_a_group_in_use() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.release_a_group_in_use(&loop);
 }
 
 /// A group taken back that was never provided (`buffer_release.zig`).
 fn release_a_group_never_provided() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.release_a_group_never_provided(&loop);
 }
 
 /// A group provided that no caller reserved (`buffer_release.zig`).
 fn provide_a_group_never_reserved() void {
-    loop.init_tables(&memory, options);
+    loop.init_tables(&memory, &options);
     buffer_release.provide_a_group_never_reserved(&loop);
 }
 

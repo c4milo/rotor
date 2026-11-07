@@ -158,7 +158,7 @@ const loops_max = 16;
 var loops: u32 = 1;
 
 var loop_memory: [loops_max][
-    Loop.memory_bytes(.{
+    Loop.memory_bytes(&.{
         .operations = operations,
         .entries = entries,
     })
@@ -236,7 +236,7 @@ fn core_of(index: u32) ?usize {
 fn serve(index: u32, listener: core.Descriptor) void {
     if (index != 0) _ = placement.place(core_of(index));
     var loop: Loop = undefined;
-    loop.init(&loop_memory[index], .{ .operations = operations, .entries = entries }) catch
+    loop.init(&loop_memory[index], &.{ .operations = operations, .entries = entries }) catch
         @panic("the loop refused its memory");
     defer loop.deinit();
 

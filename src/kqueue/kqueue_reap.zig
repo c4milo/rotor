@@ -161,14 +161,14 @@ const Fixture = struct {
     const buffers = 4;
     const group_bytes = kqueue.buffers.group_bytes(buffers, buffer_bytes);
 
-    memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment),
+    memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment),
     group_memory: [group_bytes]u8 align(kqueue.buffers.group_alignment),
     loop: Loop,
     pair: [testing_module.pair_ends]i32,
     group: core.BufferGroup,
 
     fn init(fixture: *Fixture) !void {
-        try fixture.loop.init(&fixture.memory, options);
+        try fixture.loop.init(&fixture.memory, &options);
         errdefer fixture.loop.deinit();
         fixture.group = try fixture.loop.reserve_buffer_group();
         try fixture.loop.provide_buffers(fixture.group, &fixture.group_memory, buffers, buffer_bytes);
@@ -305,9 +305,9 @@ test "one readiness serves one-shot receives in their order, and the one left wa
 test "an operation behind a multishot receive that ran out of buffers is still served" {
     if (!@import("builtin").os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 4, .entries = 4 };
-    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     const buffer_bytes = 8;
     const group_bytes = comptime kqueue.buffers.group_bytes(1, buffer_bytes);

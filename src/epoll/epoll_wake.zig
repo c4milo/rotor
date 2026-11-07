@@ -100,11 +100,11 @@ const epoll = @import("epoll.zig");
 /// A loop of a registry, over static memory.
 const Held = struct {
     const sizing: epoll.Loop.Options = .{ .operations = 1 };
-    memory: [epoll.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment),
+    memory: [epoll.Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment),
     loop: epoll.Loop,
 
     fn init(held: *Held, registry: *Registry, id: core.LoopId) !void {
-        try held.loop.init(&held.memory, .{ .operations = 1, .id = id, .registry = registry });
+        try held.loop.init(&held.memory, &.{ .operations = 1, .id = id, .registry = registry });
     }
 };
 

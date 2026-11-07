@@ -29,9 +29,9 @@ var backing: [bytes + buffers.group_alignment]u8 align(buffers.group_alignment) 
 pub fn main() !void {
     // "A loop"
     const options: rotor.Loop.Options = .{ .operations = 1024 };
-    var memory: [rotor.Loop.memory_bytes(options)]u8 align(rotor.memory_alignment) = undefined;
+    var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
     var loop: rotor.Loop = undefined;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
 
     // A connected pair on 127.0.0.1 to receive on, made through the loop.

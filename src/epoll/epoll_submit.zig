@@ -166,14 +166,14 @@ const Fixture = struct {
     const group_bytes = epoll.buffers.group_bytes(buffers, buffer_bytes);
     const pair_ends = 2;
 
-    memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment),
+    memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment),
     group_memory: [group_bytes]u8 align(epoll.buffers.group_alignment),
     loop: Loop,
     pair: [pair_ends]i32,
     group: core.BufferGroup,
 
     fn init(fixture: *Fixture) !void {
-        try fixture.loop.init(&fixture.memory, options);
+        try fixture.loop.init(&fixture.memory, &options);
         errdefer fixture.loop.deinit();
         fixture.group = try fixture.loop.reserve_buffer_group();
         try fixture.loop.provide_buffers(fixture.group, &fixture.group_memory, buffers, buffer_bytes);

@@ -36,7 +36,7 @@ const per_mille = 1000;
 
 const options: Loop.Options = .{ .operations = operations, .entries = entries };
 
-var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 var batch: [batch_max]core.Operation align(@alignOf(core.Operation)) = undefined;
 var events: [batch_max]core.Event align(@alignOf(core.Event)) = undefined;
@@ -58,7 +58,7 @@ fn round(size: u32) !void {
 
 pub fn main() !void {
     if (builtin.os.tag != .linux) return error.NeedsLinux;
-    try loop.init(&memory, options);
+    try loop.init(&memory, &options);
     defer loop.deinit();
     for (&batch, 0..) |*operation, index| operation.* = .{ .user_data = index, .kind = .nop };
 

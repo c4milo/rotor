@@ -49,7 +49,7 @@ const Pool = struct {
 const Fixture = struct {
     loop: Loop,
     pool: Pool,
-    memory: [Loop.memory_bytes(options_for(null))]u8 align(alignment),
+    memory: [Loop.memory_bytes(&options_for(null))]u8 align(alignment),
     rings: [offload_module.memory_bytes(workers)]u8 align(alignment),
     bytes: [8]u8,
 
@@ -69,7 +69,7 @@ const Fixture = struct {
         fixture.bytes = @splat(0);
         var options = options_for(&fixture.pool);
         options.offload_memory = &fixture.rings;
-        fixture.loop.init_tables(&fixture.memory, options);
+        fixture.loop.init_tables(&fixture.memory, &options);
         var index: u32 = 0;
         while (index < core.constants.offload_in_flight_max) : (index += 1) {
             _ = try fixture.submit(Operation.read(index, closed_descriptor, &fixture.bytes, 0));

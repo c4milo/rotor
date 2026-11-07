@@ -25,9 +25,9 @@ const test_wait_ns = test_wait_ms * constants.ns_per_ms;
 
 test "a library's calls on the view reach the loop, and its address is the loop's" {
     if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
+    try loop.init(&memory, &test_options);
     defer loop.deinit();
     const shared = loop.shared();
     try testing.expectEqual(@intFromPtr(&loop), @intFromPtr(shared));
@@ -42,9 +42,9 @@ test "a library's calls on the view reach the loop, and its address is the loop'
 
 test "a loop names a descriptor a host can wait on, on every backend but io_uring" {
     if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
+    try loop.init(&memory, &test_options);
     defer loop.deinit();
     // The conformance suite holds each backend to what a host sees on this descriptor. This holds
     // the public `Loop` to its backend's answer (decision 23).
@@ -53,9 +53,9 @@ test "a loop names a descriptor a host can wait on, on every backend but io_urin
 
 test "a loop reads the wakes its backend dropped" {
     if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(test_options)]u8 align(memory_alignment) = undefined;
+    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
     var loop: Loop = undefined;
-    try loop.init(&memory, test_options);
+    try loop.init(&memory, &test_options);
     loop.deinit();
     try testing.expectEqual(0, loop.dropped_wakes());
     // A count above 2^32 shows that no backend narrows it. This holds the public `Loop` to its

@@ -21,7 +21,7 @@ pub const RegistryLife = registry_life.RegistryLife;
 
 pub const operations = 64;
 pub const entries = 16;
-const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = entries });
+const memory_bytes = Loop.memory_bytes(&.{ .operations = operations, .entries = entries });
 
 /// The most rounds `Harness.collect` ticks before it gives up: with a 10 ms wait each, 2 s.
 pub const collect_rounds_max = 200;
@@ -60,7 +60,7 @@ pub const Harness = struct {
         registry: ?*backend.Registry,
     ) !void {
         try check_life(registry);
-        try harness.loop.init(&harness.memory, .{
+        try harness.loop.init(&harness.memory, &.{
             .operations = operations,
             .entries = entries,
             .id = id,
@@ -78,7 +78,7 @@ pub const Harness = struct {
         sampling: core.statistics.Options,
     ) !void {
         try check_life(registry);
-        try harness.loop.init(&harness.memory, .{
+        try harness.loop.init(&harness.memory, &.{
             .operations = operations,
             .entries = entries,
             .id = id,
@@ -91,7 +91,7 @@ pub const Harness = struct {
     /// A loop with the spin budget `budget_ns`, whatever the environment asks, for the scenarios
     /// that check what a budget does (decision 13).
     pub fn init_spin(harness: *Harness, budget_ns: u64) !void {
-        try harness.loop.init(&harness.memory, .{
+        try harness.loop.init(&harness.memory, &.{
             .operations = operations,
             .entries = entries,
             .spin_budget_ns = budget_ns,

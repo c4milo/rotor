@@ -153,13 +153,13 @@ pub const Loop = struct {
     };
 
     /// The workers `options` asks the loop to hold rings for: the offload's, or none.
-    fn workers_of(options: Options) u16 {
+    fn workers_of(options: *const Options) u16 {
         if (options.file_policy != .offload) return 0;
         return (options.offload orelse return 0).workers;
     }
 
     /// The bytes of memory `init` needs for `options`, aligned to `core.layout.memory_alignment`.
-    pub fn memory_bytes(options: Options) usize {
+    pub fn memory_bytes(options: *const Options) usize {
         var layout: Layout = .{};
         _ = layout.add(Slot, options.operations);
         _ = layout.add(TimerHeap.Entry, options.operations);
@@ -185,7 +185,7 @@ pub const Loop = struct {
     pub fn init(
         loop: *Loop,
         memory: []align(core.layout.memory_alignment) u8,
-        options: Options,
+        options: *const Options,
     ) InitError!void {
         loop.init_tables(memory, options);
         loop.queue = try queue_module.Queue.init();
@@ -212,7 +212,7 @@ pub const Loop = struct {
     pub fn init_tables(
         loop: *Loop,
         memory: []align(core.layout.memory_alignment) u8,
-        options: Options,
+        options: *const Options,
     ) void {
         assert(options.operations >= 1);
         assert(options.operations <= core.constants.operations_max);

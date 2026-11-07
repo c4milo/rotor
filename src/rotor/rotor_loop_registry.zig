@@ -223,10 +223,10 @@ test "a loop counts the wakes the kernel refused, and its deinit keeps the count
         },
     }
     const sizing: loop_module.Loop.Options = .{ .operations = 1 };
-    var loop_memory: [loop_module.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) =
+    var loop_memory: [loop_module.Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) =
         undefined;
     var loop: loop_module.Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = 1, .id = 1, .registry = &registry });
+    try loop.init(&loop_memory, &.{ .operations = 1, .id = 1, .registry = &registry });
     try testing.expectEqual(0, loop.dropped_wakes());
     try loop.post(0, .{ .payload = 1, .tag = 0 });
     // io_uring sends the wake and reads the kernel's answer in `deinit`, kqueue and epoll in
@@ -260,10 +260,10 @@ test "a registry of one process keeps the descriptor that wakes a loop until dei
     var registry: Registry = undefined;
     registry.init(&memory, loops);
     const sizing: loop_module.Loop.Options = .{ .operations = 1 };
-    var loop_memory: [loop_module.Loop.memory_bytes(sizing)]u8 align(core.layout.memory_alignment) =
+    var loop_memory: [loop_module.Loop.memory_bytes(&sizing)]u8 align(core.layout.memory_alignment) =
         undefined;
     var loop: loop_module.Loop = undefined;
-    try loop.init(&loop_memory, .{ .operations = 1, .registry = &registry });
+    try loop.init(&loop_memory, &.{ .operations = 1, .registry = &registry });
     const number = switch (registry.inner) {
         inline else => |*inner| inner.get(0),
     };

@@ -71,8 +71,8 @@ const client_options: Loop.Options = .{ .operations = 4, .entries = 4 };
 const memory_alignment = core.layout.memory_alignment;
 const group_alignment = backend.buffers.group_alignment;
 
-var server_memory: [Loop.memory_bytes(server_options)]u8 align(memory_alignment) = undefined;
-var client_memory: [Loop.memory_bytes(client_options)]u8 align(memory_alignment) = undefined;
+var server_memory: [Loop.memory_bytes(&server_options)]u8 align(memory_alignment) = undefined;
+var client_memory: [Loop.memory_bytes(&client_options)]u8 align(memory_alignment) = undefined;
 var group_memory: [group_bytes_max]u8 align(group_alignment) = undefined;
 
 var message: [message_bytes_max]u8 = undefined;
@@ -112,9 +112,9 @@ const Fixture = struct {
         server.forget_connections();
         fixture.group_count = group.count;
         fixture.message_bytes = group.message_bytes();
-        try fixture.server_loop.init(&server_memory, server_options);
+        try fixture.server_loop.init(&server_memory, &server_options);
         errdefer fixture.server_loop.deinit();
-        try fixture.client_loop.init(&client_memory, client_options);
+        try fixture.client_loop.init(&client_memory, &client_options);
         errdefer fixture.client_loop.deinit();
         const bytes = backend.buffers.group_bytes(group.count, group.buffer_bytes);
         fixture.server_group = try fixture.server_loop.reserve_buffer_group();

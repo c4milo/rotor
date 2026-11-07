@@ -16,7 +16,7 @@ const Ring = uring.ring_module.Ring;
 
 const operations = 4;
 const memory_alignment = core.layout.memory_alignment;
-const memory_bytes = Loop.memory_bytes(.{ .operations = operations, .entries = 2 });
+const memory_bytes = Loop.memory_bytes(&.{ .operations = operations, .entries = 2 });
 
 /// The loops of the registry: the sender, loop 0, and three targets.
 const loops = 4;
@@ -84,7 +84,7 @@ const Sender = struct {
 
     /// A loop with id 0 in `registry`, whose submission ring holds `entries`.
     fn init(sender: *Sender, registry: *uring.Registry, entries: u16) !void {
-        try sender.loop.init(&sender.memory, .{
+        try sender.loop.init(&sender.memory, &.{
             .operations = operations,
             .entries = entries,
             .id = 0,
