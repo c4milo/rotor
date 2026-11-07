@@ -43,10 +43,10 @@ test "an operation names its code and a well-formed one passes assert_valid" {
             .message = .{ .payload = 7, .tag = 9 },
         } } },
     };
-    const codes = [_]Operation.Code{ .accept, .receive, .read, .timer, .post };
+    const codes = [_]Operation.Tag{ .accept, .receive, .read, .timer, .post };
     const descriptors = [_]?Descriptor{ 3, 4, 5, null, null };
     for (&operations, codes, descriptors) |*operation, expected, named| {
-        try testing.expectEqual(expected, operation.code());
+        try testing.expectEqual(expected, operation.tag());
         try testing.expectEqual(named, operation.descriptor());
         operation.assert_valid();
     }
@@ -111,13 +111,13 @@ test "each constructor builds its kind with every field it was given, and nothin
         Operation.fsync(15, 16),
         Operation.accept(16, 17),
     };
-    const codes = [_]Operation.Code{
+    const codes = [_]Operation.Tag{
         .accept, .connect, .receive,   .receive, .send, .shutdown,     .close,
         .read,   .write,   .fdatasync, .timer,   .post, .receive_from, .send_to,
         .fsync,  .accept,
     };
     for (built, codes, 1..) |operation, expected, user_data| {
-        try std.testing.expectEqual(expected, operation.code());
+        try std.testing.expectEqual(expected, operation.tag());
         try std.testing.expectEqual(@as(u64, user_data), operation.user_data);
         try std.testing.expectEqual(@as(u64, 0), operation.timeout_ns);
         try std.testing.expect(!operation.descriptor_registered);

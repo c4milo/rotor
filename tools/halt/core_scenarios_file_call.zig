@@ -31,7 +31,7 @@ var file_bytes: [1]u8 = undefined;
 
 fn answer_a_read_with_more_bytes_than_it_was_given() void {
     const request: core.file_call.Request = .{
-        .code = .read,
+        .tag = .read,
         .descriptor = 0,
         .bytes = &file_bytes,
         .offset = 0,
@@ -42,7 +42,7 @@ fn answer_a_read_with_more_bytes_than_it_was_given() void {
 
 fn hand_an_fsync_bytes_to_transfer() void {
     const request: core.file_call.Request = .{
-        .code = .fsync,
+        .tag = .fsync,
         .descriptor = 0,
         .bytes = &file_bytes,
         .offset = 0,
@@ -53,7 +53,7 @@ fn hand_an_fsync_bytes_to_transfer() void {
 
 fn hand_a_sync_bytes_to_transfer() void {
     const request: core.file_call.Request = .{
-        .code = .fdatasync,
+        .tag = .fdatasync,
         .descriptor = 0,
         .bytes = &file_bytes,
         .offset = 0,

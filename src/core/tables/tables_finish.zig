@@ -49,7 +49,7 @@ fn finish_now(tables: *Tables, index: u32, result: i32) void {
 /// drain hands its event over (W3, ruled 2026-11-07). A timer that a cancel ends goes to `finished`
 /// through `finish_canceled`.
 pub fn fire(tables: *Tables, index: u32) void {
-    assert(tables.table.at(index).code == .timer);
+    assert(tables.table.at(index).tag == .timer);
     finish_onto(tables, &tables.fired, index, 0);
 }
 
@@ -122,7 +122,7 @@ fn names_buffer(slot: *const Slot) bool {
 /// True when this slot is a repeating timer whose caller has not cancelled it, so the event
 /// being handed over is one of many and not the last (decision 14, rule 2).
 pub fn repeats(slot: *const Slot) bool {
-    if (slot.code != .timer or !slot.flags.multishot) return false;
+    if (slot.tag != .timer or !slot.flags.multishot) return false;
     return !slot.flags.cancel_requested;
 }
 

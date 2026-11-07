@@ -17,8 +17,8 @@ const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
 
-const nop_kind = @intFromEnum(Operation.Code.nop);
-const receive_kind = @intFromEnum(Operation.Code.receive);
+const nop_kind = @intFromEnum(Operation.Tag.nop);
+const receive_kind = @intFromEnum(Operation.Tag.receive);
 
 fn nop(user_data: u64) Operation {
     return .{ .user_data = user_data, .kind = .nop };

@@ -31,7 +31,7 @@ const Kernel = struct {
     pub fn transfer(_: Kernel, request: Request) Answer {
         const bytes = request.bytes;
         const offset: i64 = @intCast(request.offset);
-        return switch (request.code) {
+        return switch (request.tag) {
             .read => answer_of(std.c.pread(request.descriptor, bytes.ptr, bytes.len, offset)),
             .write => answer_of(std.c.pwrite(request.descriptor, bytes.ptr, bytes.len, offset)),
             .fdatasync, .fsync => unreachable,
@@ -51,7 +51,7 @@ const Kernel = struct {
 /// `F_FULLFSYNC` on macOS, which writes the data and all of the file's metadata and then flushes
 /// the drive, so it keeps `fsync`'s promise as well as `fdatasync`'s (decision 12, point 5).
 fn answer_with(kernel: anytype, request: Request) Answer {
-    return switch (request.code) {
+    return switch (request.tag) {
         .read, .write => kernel.transfer(request),
         .fdatasync, .fsync => sync_answer(kernel, request.descriptor),
     };
@@ -93,7 +93,7 @@ const Syncs = struct {
     plain_made: u32 = 0,
 
     pub fn answer(syncs: *Syncs, request: Request) Answer {
-        std.debug.assert(core.file_call.is_sync(request.code));
+        std.debug.assert(core.file_call.is_sync(request.tag));
         return answer_with(syncs, request);
     }
 
@@ -119,8 +119,8 @@ const Syncs = struct {
         return syncs.sync_as(.fdatasync);
     }
 
-    fn sync_as(syncs: *Syncs, code: core.file_call.Code) i32 {
-        const request: Request = .{ .code = code, .descriptor = 0, .bytes = &.{}, .offset = 0 };
+    fn sync_as(syncs: *Syncs, tag: core.file_call.Tag) i32 {
+        const request: Request = .{ .tag = tag, .descriptor = 0, .bytes = &.{}, .offset = 0 };
         return core.file_call.result(syncs, request, core.constants.interrupt_retries_max);
     }
 };

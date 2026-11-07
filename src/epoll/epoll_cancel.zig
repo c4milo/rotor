@@ -48,7 +48,7 @@ pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     // cannot be stopped. The worker's answer is what ends it, carrying whatever the call returned:
     // decision 5 says a cancel that loses its race ends the operation with its own result.
     if (offload_module.on_a_worker(loop, slot)) return;
-    const filter = perform.filter_of(slot.code);
+    const filter = perform.filter_of(slot.tag);
     const removed = loop.waiters.remove(tables.table.slots, slot.descriptor, filter, index);
     assert(removed);
     // A refusal leaves the registration as it was, which costs one early report the reap then

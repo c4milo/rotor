@@ -233,7 +233,7 @@ pub const Tables = struct {
             slot.fill(operation);
             // A timer's delay runs from the reading the caller sees now (decision 14, rule 6).
             // `fill` left a timer's buffer at 0, and `arm` reads this from it.
-            if (slot.code == .timer) slot.buffer = tables.now_ns;
+            if (slot.tag == .timer) slot.buffer = tables.now_ns;
             // A buffer the loop never registered: kqueue and epoll would ignore the index and
             // io_uring would hand the kernel a bad one, so the mistake halts on every backend.
             if (slot.flags.buffer_registered) assert(slot.buffer_index < tables.buffers_registered);
@@ -241,7 +241,7 @@ pub const Tables = struct {
             tables.statistics.submitted(sequence, index, slot, tables.now_ns);
             records += @intFromBool(operation.dispatched);
             // A loop that posts to itself would wait on an event only its own tick can produce.
-            assert_class_a(slot.code != .post or slot.descriptor != tables.id);
+            assert_class_a(slot.tag != .post or slot.descriptor != tables.id);
             tables.pending.push(tables.table.slots, index);
             if (handles.len != 0) handles[taken] = tables.table.handle_of(index);
             taken += 1;
@@ -272,7 +272,7 @@ pub const Tables = struct {
             const index = tables.pending.peek() orelse return null;
             const slot = tables.table.at(index);
             assert_class_a(slot.state == .queued);
-            if (!slot.flags.cancel_requested and slot.code != .timer) return index;
+            if (!slot.flags.cancel_requested and slot.tag != .timer) return index;
             tables.take_pending(index);
             if (slot.flags.cancel_requested) {
                 tables.finish_canceled(index);
@@ -351,7 +351,7 @@ pub const Tables = struct {
             slot.result = event_module.result_of(cancel_code(slot));
             return .none;
         }
-        if (slot.code != .timer) return .backend;
+        if (slot.tag != .timer) return .backend;
         tables.timers.disarm(index);
         tables.finish_canceled(index);
         return .none;

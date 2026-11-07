@@ -31,11 +31,11 @@ const Slot = slot_module.Slot;
 const Work = offload.Work;
 
 /// The file operations: the ones an offload is handed, because they are the ones that block.
-pub const Code = Work.Code;
+pub const Tag = Work.Tag;
 
 /// One file operation, as either path hands it to `result`.
 pub const Request = struct {
-    code: Code,
+    tag: Tag,
     descriptor: operation.Descriptor,
     /// The bytes to transfer. Empty for a sync, and for nothing else.
     bytes: []u8,
@@ -43,8 +43,8 @@ pub const Request = struct {
 };
 
 /// True for the two syncs, which transfer no bytes.
-pub fn is_sync(code: Code) bool {
-    return code == .fdatasync or code == .fsync;
+pub fn is_sync(tag: Tag) bool {
+    return tag == .fdatasync or tag == .fsync;
 }
 
 /// What one system call answered: the count it returned, or its errno. `E` is the backend's errno
@@ -59,7 +59,7 @@ pub fn Answer(comptime E: type) type {
 /// `Answer`. In a backend it is the kernel; in a test it is a list of answers.
 pub fn result(calls: anytype, request: Request, comptime retries_max: u32) i32 {
     comptime assert(retries_max >= 1);
-    assert(is_sync(request.code) == (request.bytes.len == 0));
+    assert(is_sync(request.tag) == (request.bytes.len == 0));
     var retry: u32 = 0;
     while (retry <= retries_max) : (retry += 1) {
         switch (calls.answer(request)) {
@@ -81,22 +81,22 @@ pub fn result(calls: anytype, request: Request, comptime retries_max: u32) i32 {
 
 /// The request of a slot that holds a file operation, built on the loop thread.
 pub fn request_of_slot(slot: *const Slot) Request {
-    const code: Code = offload.code_of(slot.code).?;
+    const tag: Tag = offload.work_tag_of(slot.tag).?;
     // A sync's slot holds no buffer, so `bytes` would fail its own check.
-    const bytes: []u8 = if (is_sync(code)) &.{} else slot.bytes();
-    return .{ .code = code, .descriptor = slot.descriptor, .bytes = bytes, .offset = slot.offset };
+    const bytes: []u8 = if (is_sync(tag)) &.{} else slot.bytes();
+    return .{ .tag = tag, .descriptor = slot.descriptor, .bytes = bytes, .offset = slot.offset };
 }
 
 /// The request of a handed-out operation, built on the worker's thread from what the loop copied
 /// out of the slot. It reads no slot.
 pub fn request_of_work(work: *const Work) Request {
     var request: Request = .{
-        .code = work.code,
+        .tag = work.tag,
         .descriptor = work.descriptor,
         .bytes = &.{},
         .offset = work.offset,
     };
-    if (!is_sync(work.code)) {
+    if (!is_sync(work.tag)) {
         const buffer: [*]u8 = @ptrFromInt(work.buffer);
         request.bytes = buffer[0..work.length];
     }
@@ -132,7 +132,7 @@ const test_bytes_len = 8;
 threadlocal var test_bytes: [test_bytes_len]u8 = undefined;
 
 fn read_request() Request {
-    return .{ .code = .read, .descriptor = test_descriptor, .bytes = &test_bytes, .offset = 0 };
+    return .{ .tag = .read, .descriptor = test_descriptor, .bytes = &test_bytes, .offset = 0 };
 }
 
 test "a call a signal interrupted is made again, and its count is the result" {
@@ -182,7 +182,7 @@ test "any other errno ends the operation with its code, after one call" {
 test "a sync a signal interrupted is made again, and ends with 0" {
     var script: PosixScript = .{ .answers = &.{ intr, .{ .count = 0 } } };
     const request: Request = .{
-        .code = .fdatasync,
+        .tag = .fdatasync,
         .descriptor = test_descriptor,
         .bytes = &.{},
         .offset = 0,
@@ -213,7 +213,7 @@ test "a slot's request carries its buffer, and a sync's carries none" {
         .offset = 4096,
     } } });
     const write = request_of_slot(&slot);
-    try testing.expectEqual(Code.write, write.code);
+    try testing.expectEqual(Tag.write, write.tag);
     try testing.expectEqual(@as(operation.Descriptor, 6), write.descriptor);
     try testing.expectEqual(@as(usize, @intFromPtr(&test_bytes)), @intFromPtr(write.bytes.ptr));
     try testing.expectEqual(test_bytes.len, write.bytes.len);
@@ -221,13 +221,13 @@ test "a slot's request carries its buffer, and a sync's carries none" {
 
     slot.fill(&.{ .user_data = 2, .kind = .{ .fdatasync = .{ .file = 7 } } });
     const sync = request_of_slot(&slot);
-    try testing.expectEqual(Code.fdatasync, sync.code);
+    try testing.expectEqual(Tag.fdatasync, sync.tag);
     try testing.expectEqual(@as(operation.Descriptor, 7), sync.descriptor);
     try testing.expectEqual(@as(usize, 0), sync.bytes.len);
 
     slot.fill(&.{ .user_data = 3, .kind = .{ .fsync = .{ .file = 8 } } });
     const full = request_of_slot(&slot);
-    try testing.expectEqual(Code.fsync, full.code);
+    try testing.expectEqual(Tag.fsync, full.tag);
     try testing.expectEqual(@as(operation.Descriptor, 8), full.descriptor);
     try testing.expectEqual(@as(usize, 0), full.bytes.len);
 }
@@ -237,24 +237,24 @@ test "a work's request carries the bytes the loop copied, and a sync's carries n
         .run = undefined,
         .owner = undefined,
         .index = 0,
-        .code = .read,
+        .tag = .read,
         .descriptor = 6,
         .buffer = @intFromPtr(&test_bytes),
         .length = test_bytes.len,
         .offset = 512,
     };
     const request = request_of_work(&read);
-    try testing.expectEqual(Code.read, request.code);
+    try testing.expectEqual(Tag.read, request.tag);
     try testing.expectEqual(@as(usize, @intFromPtr(&test_bytes)), @intFromPtr(request.bytes.ptr));
     try testing.expectEqual(test_bytes.len, request.bytes.len);
     try testing.expectEqual(@as(u64, 512), request.offset);
 
     // A sync's buffer is never turned into a pointer, so an address of 0 is not read.
     var sync = read;
-    sync.code = .fdatasync;
+    sync.tag = .fdatasync;
     sync.buffer = 0;
     sync.length = 0;
     try testing.expectEqual(@as(usize, 0), request_of_work(&sync).bytes.len);
-    sync.code = .fsync;
+    sync.tag = .fsync;
     try testing.expectEqual(@as(usize, 0), request_of_work(&sync).bytes.len);
 }

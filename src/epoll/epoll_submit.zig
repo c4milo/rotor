@@ -49,7 +49,7 @@ pub fn flush(loop: *Loop) void {
 fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) void {
     assert_class_a(slot.state == .queued);
     const tables = &loop.tables;
-    switch (slot.code) {
+    switch (slot.tag) {
         .post => {
             const result = core.remote.post(loop.inbox.registry, tables.id, slot, wakes);
             tables.finish_local(index, result);
@@ -67,9 +67,9 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
 /// because the finished list could not name a buffer, and each paid an `epoll_ctl` (decision 20).
 fn start(loop: *Loop, index: u32, slot: *Slot) void {
     if (slot.flags.descriptor_registered) descriptors_module.resolve(loop, slot);
-    if (slot.code == .receive_from) limit_coalescing(loop, slot);
+    if (slot.tag == .receive_from) limit_coalescing(loop, slot);
     if (slot.flags.multishot or group_is_empty(loop, slot)) {
-        return wait(loop, index, slot, perform.filter_of(slot.code));
+        return wait(loop, index, slot, perform.filter_of(slot.tag));
     }
     const attempt = perform.attempt(loop, slot);
     // The caller's offload has it now, and a worker's ring carries the result back (decision 18).

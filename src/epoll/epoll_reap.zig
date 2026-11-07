@@ -146,7 +146,7 @@ fn begin_split(loop: *Loop, group_id: ?u16, event: Event) void {
 fn serve_read(loop: *Loop, descriptor: core.Descriptor, events: []Event) u32 {
     const index = loop.waiters.first(descriptor, .read) orelse return 0;
     const slot = loop.tables.table.at(index);
-    if (slot.code == .receive_from and slot.flags.multishot) {
+    if (slot.tag == .receive_from and slot.flags.multishot) {
         const size = batch_size(loop.reaps, slot);
         if (size > 1) {
             if (serve_batch(loop, descriptor, index, size, events)) |produced| return produced;
@@ -161,7 +161,7 @@ fn serve_read(loop: *Loop, descriptor: core.Descriptor, events: []Event) u32 {
 /// `serve_slot` handles. Returns how many events it wrote.
 fn serve_batch(loop: *Loop, descriptor: core.Descriptor, index: u32, size: u32, events: []Event) ?u32 {
     const slot = loop.tables.table.at(index);
-    assert_class_a(slot.code == .receive_from and slot.flags.multishot);
+    assert_class_a(slot.tag == .receive_from and slot.flags.multishot);
     const group = &loop.groups[slot.buffer_index];
     const count = @min(size, batch_count(events.len, group.free_count));
     // One datagram is `serve`'s, whose single `recvmsg` costs less than a batch of one.
@@ -252,10 +252,10 @@ fn conclude(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u32
         event.flags.buffer_id = buffer_id;
     }
     // Read before the slot can be released below.
-    const datagram_group: ?u16 = if (slot.code == .receive_from) slot.buffer_index else null;
+    const datagram_group: ?u16 = if (slot.tag == .receive_from) slot.buffer_index else null;
     // A multishot operation goes on after a success, and ends at its first failure or at the end
     // of its stream.
-    if (slot.flags.multishot and core.attempt.goes_on(slot.code, attempt.result)) {
+    if (slot.flags.multishot and core.attempt.goes_on(slot.tag, attempt.result)) {
         event.flags.more = true;
         begin_split(loop, datagram_group, event);
         return event;

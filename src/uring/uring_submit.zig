@@ -58,20 +58,20 @@ pub fn flush(loop: *Loop) void {
 /// Fills the entry, or the two entries of a `close`, for one slot. False when the submission
 /// ring lacks the room, and the slot stays queued. A post takes no entry, and ends here.
 fn flush_entry(loop: *Loop, index: u32, slot: *Slot) bool {
-    if (slot.code == .post) {
+    if (slot.tag == .post) {
         loop.tables.take_pending(index);
         const result = core.remote.post(loop.inbox.registry, loop.tables.id, slot, &loop.wakes);
         loop.tables.finish_local(index, result);
         return true;
     }
-    const entries_needed: u32 = if (slot.code == .close) entries_per_close else 1;
+    const entries_needed: u32 = if (slot.tag == .close) entries_per_close else 1;
     if (loop.ring.sqe_space() < entries_needed) return false;
     var extra: Extra = .{};
-    switch (slot.code) {
+    switch (slot.tag) {
         .connect => extra = connect_extra(loop, slot),
         .receive_from, .send_to => {
             extra = datagram_extra(loop);
-            if (slot.code == .receive_from) limit_coalescing(loop, slot);
+            if (slot.tag == .receive_from) limit_coalescing(loop, slot);
         },
         .close => prepare_close_cancel(loop.ring.get_sqe().?, slot.descriptor),
         else => {},
@@ -121,7 +121,7 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
     sqe.* = std.mem.zeroes(linux.io_uring_sqe);
     sqe.user_data = user_data;
     sqe.fd = slot.descriptor;
-    switch (slot.code) {
+    switch (slot.tag) {
         .accept => prepare_accept(sqe, slot),
         .connect => {
             ring_module.set_opcode(sqe, .CONNECT);
@@ -163,7 +163,7 @@ pub fn prepare(sqe: *linux.io_uring_sqe, slot: *const Slot, user_data: u64, extr
     if (slot.flags.descriptor_registered) {
         // `fd` holds the index, which `Operation.assert_valid` allows for no kind that puts
         // something else there.
-        assert(slot.code != .close);
+        assert(slot.tag != .close);
         sqe.flags |= linux.IOSQE_FIXED_FILE;
     }
 }
@@ -190,7 +190,7 @@ fn prepare_receive(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
 }
 
 fn prepare_file_transfer(sqe: *linux.io_uring_sqe, slot: *const Slot) void {
-    const is_read = slot.code == .read;
+    const is_read = slot.tag == .read;
     sqe.addr = slot.buffer;
     sqe.len = slot.len;
     sqe.off = slot.offset;

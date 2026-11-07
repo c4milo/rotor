@@ -64,7 +64,7 @@ pub fn wake_one(loop: *Loop, group: bool, descriptor: core.Descriptor) void {
 fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) void {
     assert(slot.state == .queued);
     const tables = &loop.tables;
-    switch (slot.code) {
+    switch (slot.tag) {
         .post => {
             const result = core.remote.post(loop.inbox.registry, tables.id, slot, wakes);
             tables.finish_local(index, result);
@@ -80,7 +80,7 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
 fn start(loop: *Loop, index: u32, slot: *Slot) void {
     if (slot.flags.descriptor_registered) descriptors_module.resolve(loop, slot);
     if (slot.flags.multishot or slot.flags.buffer_group) {
-        return wait(loop, index, slot, perform.filter_of(slot.code));
+        return wait(loop, index, slot, perform.filter_of(slot.tag));
     }
     const attempt = perform.attempt(loop, slot);
     // The caller's offload has it now, and a worker's ring carries the result back (decision 18).

@@ -48,8 +48,8 @@ pub const Attempt = struct {
 };
 
 /// The direction an operation of this kind waits on when it cannot complete at once.
-pub fn filter_of(code: operation.Operation.Code) Filter {
-    return switch (code) {
+pub fn filter_of(tag: operation.Operation.Tag) Filter {
+    return switch (tag) {
         .accept, .receive, .receive_from => .read,
         .connect, .send, .send_to => .write,
         else => unreachable,
@@ -59,9 +59,9 @@ pub fn filter_of(code: operation.Operation.Code) Filter {
 /// What a successful attempt took from what the kernel reported ready: one connection for an
 /// accept, and the bytes it moved for a transfer. A failure and a connect take nothing. A reap that
 /// serves one readiness more than once counts with it (decision 12, point 3).
-pub fn used(code: operation.Operation.Code, result: i32) u32 {
+pub fn used(tag: operation.Operation.Tag, result: i32) u32 {
     if (result < 0) return 0;
-    return switch (code) {
+    return switch (tag) {
         .accept => 1,
         .receive, .receive_from, .send, .send_to => @intCast(result),
         else => 0,
@@ -72,8 +72,8 @@ pub fn used(code: operation.Operation.Code, result: i32) u32 {
 /// a success and ends at its first failure. A stream receive also ends at 0, the end of the stream,
 /// where io_uring ends it with a final event (decision 5). A datagram receive's 0 is an empty
 /// datagram and an accept's 0 is descriptor 0, so both go on.
-pub fn goes_on(code: operation.Operation.Code, result: i32) bool {
-    if (code == .receive) return result > 0;
+pub fn goes_on(tag: operation.Operation.Tag, result: i32) bool {
+    if (tag == .receive) return result > 0;
     return result >= 0;
 }
 

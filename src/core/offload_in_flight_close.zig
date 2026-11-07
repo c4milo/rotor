@@ -43,7 +43,7 @@ pub fn out_on(in_flight: *const InFlight, descriptor: Descriptor) bool {
 pub fn keep(in_flight: *InFlight, tables: *Tables, index: u32) bool {
     const slot = tables.table.at(index);
     // Only a close is kept, and only one the loop has not ended: a slot on no list.
-    assert(slot.code == .close and slot.state == .queued);
+    assert(slot.tag == .close and slot.state == .queued);
     if (!in_flight.out_on(slot.descriptor)) return false;
     in_flight.closing.push(tables.table.slots, index);
     // The deadline starts at the flush that keeps the close, as a held operation's does. A close

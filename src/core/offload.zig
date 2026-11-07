@@ -58,7 +58,7 @@ pub const Work = struct {
     owner: *anyopaque,
     /// The slot this work finishes. The loop reads it back off the mailbox and finishes it there.
     index: u32,
-    code: Code,
+    tag: Tag,
     descriptor: Descriptor,
     /// The bytes to transfer, as an address and a length, which is how a `Slot` carries them.
     /// Both are 0 for a sync.
@@ -68,7 +68,7 @@ pub const Work = struct {
 
     /// The operations an offload is ever handed. The two syncs are here because they block as long
     /// as the device takes.
-    pub const Code = enum { read, write, fdatasync, fsync };
+    pub const Tag = enum { read, write, fdatasync, fsync };
 };
 
 /// The caller's side of the hand-off.
@@ -151,10 +151,10 @@ pub fn init_rings(memory: []align(layout.memory_alignment) u8, workers: u16) []M
     return taken;
 }
 
-/// The `Work.Code` an operation maps to, or null when it is not one an offload is handed. Every
+/// The `Work.Tag` an operation maps to, or null when it is not one an offload is handed. Every
 /// other operation waits for readiness, so handing it to a worker would spend a thread on nothing.
-pub fn code_of(code: operation.Operation.Code) ?Work.Code {
-    return switch (code) {
+pub fn work_tag_of(tag: operation.Operation.Tag) ?Work.Tag {
+    return switch (tag) {
         .read => .read,
         .write => .write,
         .fdatasync => .fdatasync,
@@ -268,22 +268,22 @@ test "an offload is valid with workers the loop can hold, and not otherwise" {
 test "the offloadable operations are the four that block, and no others" {
     // Socket operations are never offloaded. kqueue reports their readiness, so they do not block
     // the loop, and handing one to a thread would cost a hop and save nothing.
-    try testing.expectEqual(@as(usize, 4), @typeInfo(Work.Code).@"enum".fields.len);
-    try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Code.read));
-    try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Code.write));
-    try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Code.fdatasync));
-    try testing.expectEqual(@as(u2, 3), @intFromEnum(Work.Code.fsync));
+    try testing.expectEqual(@as(usize, 4), @typeInfo(Work.Tag).@"enum".fields.len);
+    try testing.expectEqual(@as(u2, 0), @intFromEnum(Work.Tag.read));
+    try testing.expectEqual(@as(u2, 1), @intFromEnum(Work.Tag.write));
+    try testing.expectEqual(@as(u2, 2), @intFromEnum(Work.Tag.fdatasync));
+    try testing.expectEqual(@as(u2, 3), @intFromEnum(Work.Tag.fsync));
 }
 
 test "only the three blocking operations map to offload work" {
-    try testing.expectEqual(Work.Code.read, code_of(.read).?);
-    try testing.expectEqual(Work.Code.write, code_of(.write).?);
-    try testing.expectEqual(Work.Code.fdatasync, code_of(.fdatasync).?);
-    try testing.expectEqual(Work.Code.fsync, code_of(.fsync).?);
-    const others = [_]operation.Operation.Code{
+    try testing.expectEqual(Work.Tag.read, work_tag_of(.read).?);
+    try testing.expectEqual(Work.Tag.write, work_tag_of(.write).?);
+    try testing.expectEqual(Work.Tag.fdatasync, work_tag_of(.fdatasync).?);
+    try testing.expectEqual(Work.Tag.fsync, work_tag_of(.fsync).?);
+    const others = [_]operation.Operation.Tag{
         .accept, .receive, .send, .connect, .timer, .post, .close,
     };
-    for (others) |code| try testing.expectEqual(@as(?Work.Code, null), code_of(code));
+    for (others) |tag| try testing.expectEqual(@as(?Work.Tag, null), work_tag_of(tag));
 }
 
 test "a result survives the trip through a message tag, failures included" {

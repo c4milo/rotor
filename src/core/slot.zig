@@ -61,7 +61,7 @@ pub const Slot = extern struct {
     /// The registered buffer that contains the buffer, or the provided-buffer group, as `flags`
     /// says.
     buffer_index: u16,
-    code: Operation.Code,
+    tag: Operation.Tag,
     state: State,
     flags: Flags,
     /// Times a backend resubmitted the operation, at most `constants.transfer_retries_max`.
@@ -107,7 +107,7 @@ pub const Slot = extern struct {
         assert_class_a(slot.generation >= constants.generation_first);
         slot.user_data = operation.user_data;
         slot.timeout_ns = operation.timeout_ns;
-        slot.code = operation.code();
+        slot.tag = operation.tag();
         slot.heap_position = heap_position_none;
         // The flags the operation itself sets, built in a register and stored once. `fill_kind`
         // adds the rest. A packed literal with two runtime fields compiled to more work.
@@ -122,7 +122,7 @@ pub const Slot = extern struct {
         slot.len = 0;
         slot.buffer_index = 0;
         slot.fill_kind(operation);
-        assert_class_a(slot.code == operation.code());
+        assert_class_a(slot.tag == operation.tag());
     }
 
     fn fill_kind(slot: *Slot, operation: *const Operation) void {
@@ -226,27 +226,27 @@ pub const Slot = extern struct {
 
     /// The address a `connect` names, which `fill` put in `buffer`.
     pub fn address(slot: *const Slot) *const Address {
-        assert(slot.code == .connect);
+        assert(slot.tag == .connect);
         assert(slot.buffer != 0);
         return @ptrFromInt(slot.buffer);
     }
 
     /// The outbound block a `send_to` names, which `fill` put in `offset`.
     pub fn outbound(slot: *const Slot) *const Outbound {
-        assert(slot.code == .send_to);
+        assert(slot.tag == .send_to);
         assert(slot.offset != 0);
         return @ptrFromInt(slot.offset);
     }
 
     /// The loop a `post` goes to, which `fill` put in `descriptor`.
     pub fn post_target(slot: *const Slot) LoopId {
-        assert(slot.code == .post);
+        assert(slot.tag == .post);
         return @intCast(slot.descriptor);
     }
 
     /// The message a `post` carries, which `fill` put in `buffer` and `len`.
     pub fn message(slot: *const Slot) Message {
-        assert(slot.code == .post);
+        assert(slot.tag == .post);
         return .{ .payload = slot.buffer, .tag = slot.len };
     }
 };
@@ -284,7 +284,7 @@ test "fill flattens a read: descriptor, buffer, length, offset, deadline, regist
         .buffer = .{ .bytes = &buffer, .registered = 3 },
         .offset = 8192,
     } } });
-    try testing.expectEqual(Operation.Code.read, slot.code);
+    try testing.expectEqual(Operation.Tag.read, slot.tag);
     try testing.expectEqual(@as(u64, 0xFEED), slot.user_data);
     try testing.expectEqual(@as(i32, 9), slot.descriptor);
     try testing.expectEqual(@intFromPtr(&buffer), slot.buffer);

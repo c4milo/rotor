@@ -19,13 +19,13 @@ const WaitLimit = @import("../dispatch/dispatch.zig").WaitLimit;
 /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a timer.
 /// A slot being resubmitted keeps the deadline it has.
 pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
-    const after_ns = if (slot.code == .timer) slot.offset else slot.timeout_ns;
+    const after_ns = if (slot.tag == .timer) slot.offset else slot.timeout_ns;
     assert_class_a(after_ns <= constants.timeout_ns_max);
-    if (slot.code != .timer and after_ns == 0) return;
+    if (slot.tag != .timer and after_ns == 0) return;
     if (tables.timers.is_armed(index)) return;
     const due_ns = start_ns(tables, slot) + after_ns;
     // A repeating timer measures every later period from this deadline (decision 14, rule 3).
-    if (slot.code == .timer) slot.buffer = due_ns;
+    if (slot.tag == .timer) slot.buffer = due_ns;
     tables.timers.arm(index, due_ns);
 }
 
@@ -35,7 +35,7 @@ pub fn arm(tables: *Tables, index: u32, slot: *Slot) void {
 /// not also wait out the rest of the batch (decision 14, rule 6). A timer submitted before any
 /// tick read the clock, and an operation's deadline, start at this tick's reading.
 fn start_ns(tables: *const Tables, slot: *const Slot) u64 {
-    if (slot.code != .timer or slot.buffer == 0) return tables.now_ns;
+    if (slot.tag != .timer or slot.buffer == 0) return tables.now_ns;
     // The clock only moves forward, so the reading at submit is at or before this one.
     assert(slot.buffer <= tables.now_ns);
     return slot.buffer;
@@ -98,7 +98,7 @@ pub fn finish_due_timers(tables: *Tables) void {
         const earliest_ns = tables.timers.earliest_ns() orelse return;
         if (earliest_ns > tables.now_ns) return;
         const head = tables.timers.entries[0].slot;
-        if (tables.table.at(head).code != .timer) return;
+        if (tables.table.at(head).tag != .timer) return;
         const index = tables.timers.pop_due(tables.now_ns).?;
         assert(index == head);
         tables.fire(index);
@@ -124,7 +124,7 @@ pub fn next_expired(tables: *Tables) ?u32 {
         const index = tables.timers.pop_due(tables.now_ns) orelse return null;
         const slot = tables.table.at(index);
         assert(slot.state == .queued or slot.state == .submitted);
-        if (slot.code != .timer) {
+        if (slot.tag != .timer) {
             slot.flags.timed_out = true;
             return index;
         }
@@ -174,7 +174,7 @@ pub fn expire_after_reap(
 /// A deadline already past is armed anyway and fires at the next tick: rule 4 hands the
 /// caller an event per missed period rather than swallowing them.
 pub fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
-    assert(slot.code == .timer and slot.flags.multishot);
+    assert(slot.tag == .timer and slot.flags.multishot);
     assert(slot.timeout_ns >= 1);
     slot.buffer +%= slot.timeout_ns;
     slot.state = .submitted;

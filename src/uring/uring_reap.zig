@@ -82,13 +82,13 @@ pub fn complete(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
         // A datagram's completion counts the prefix in front of it too, so the result the caller
         // sees is the count less a constant the group fixed (decision 15). The probe measured
         // that `cqe.res` less the prefix is exactly the payload length.
-        .result = if (slot.code == .receive_from) cqe.res - loop.datagram_prefix else cqe.res,
+        .result = if (slot.tag == .receive_from) cqe.res - loop.datagram_prefix else cqe.res,
         .flags = @bitCast(cqe.flags & flags_passed),
     };
     event.flags.dispatched = slot.flags.dispatched;
     if (core.shuffle.enabled) note_close(loop, slot);
     if (!event.flags.more) loop.tables.finish(handle.index, slot);
-    if (event.flags.buffer and slot.code == .receive_from) begin_split(loop, slot.buffer_index, event);
+    if (event.flags.buffer and slot.tag == .receive_from) begin_split(loop, slot.buffer_index, event);
     return event;
 }
 
@@ -159,7 +159,7 @@ fn complete_negative(loop: *Loop, cqe: *const linux.io_uring_cqe) ?Event {
 /// before it, because the kernel ends the operations the close cancelled first (decision 10,
 /// amendment of 2026-11-06). The other builds never call it.
 fn note_close(loop: *Loop, slot: *const Slot) void {
-    if (slot.code == .close) loop.tables.shuffle.note_barrier();
+    if (slot.tag == .close) loop.tables.shuffle.note_barrier();
 }
 
 /// EAGAIN and EINTR transferred nothing, so the operation goes back on the pending list, unless

@@ -117,7 +117,7 @@ fn serve_one(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u3
     if (attempt.outcome != .done) return null;
     var served: Served = .{
         .event = .{ .user_data = slot.user_data, .result = attempt.result, .flags = .{ .dispatched = slot.flags.dispatched } },
-        .used = core.attempt.used(slot.code, attempt.result),
+        .used = core.attempt.used(slot.tag, attempt.result),
         .departed = true,
     };
     if (attempt.buffer_id) |buffer_id| {
@@ -126,7 +126,7 @@ fn serve_one(loop: *Loop, descriptor: core.Descriptor, filter: Filter, index: u3
     }
     // A multishot operation goes on after a success, and ends at its first failure or at the end
     // of its stream.
-    if (slot.flags.multishot and core.attempt.goes_on(slot.code, attempt.result)) {
+    if (slot.flags.multishot and core.attempt.goes_on(slot.tag, attempt.result)) {
         served.event.flags.more = true;
         served.departed = false;
         return served;

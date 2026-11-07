@@ -31,7 +31,7 @@ const Kernel = struct {
 fn call(calls: anytype, request: Request) usize {
     const bytes = request.bytes;
     const offset: i64 = @intCast(request.offset);
-    return switch (request.code) {
+    return switch (request.tag) {
         .read => calls.pread(request.descriptor, bytes.ptr, bytes.len, offset),
         .write => calls.pwrite(request.descriptor, bytes.ptr, bytes.len, offset),
         .fdatasync => calls.fdatasync(request.descriptor),
@@ -85,7 +85,7 @@ fn negated(errno: linux.E) usize {
 
 test "an interrupted pread is made again, and one that would block ends with would_block" {
     var bytes: [8]u8 = undefined;
-    const request: Request = .{ .code = .read, .descriptor = 0, .bytes = &bytes, .offset = 0 };
+    const request: Request = .{ .tag = .read, .descriptor = 0, .bytes = &bytes, .offset = 0 };
     const limit = core.constants.interrupt_retries_max;
 
     var interrupted: Returns = .{ .words = &.{ negated(.INTR), 4 } };
@@ -123,10 +123,10 @@ const Recorded = struct {
 test "each file operation makes its own call, and fsync is not fdatasync" {
     var bytes: [4]u8 = undefined;
     const cases = .{
-        .{ Request{ .code = .read, .descriptor = 3, .bytes = &bytes, .offset = 0 }, .pread },
-        .{ Request{ .code = .write, .descriptor = 3, .bytes = &bytes, .offset = 0 }, .pwrite },
-        .{ Request{ .code = .fdatasync, .descriptor = 3, .bytes = &.{}, .offset = 0 }, .fdatasync },
-        .{ Request{ .code = .fsync, .descriptor = 3, .bytes = &.{}, .offset = 0 }, .fsync },
+        .{ Request{ .tag = .read, .descriptor = 3, .bytes = &bytes, .offset = 0 }, .pread },
+        .{ Request{ .tag = .write, .descriptor = 3, .bytes = &bytes, .offset = 0 }, .pwrite },
+        .{ Request{ .tag = .fdatasync, .descriptor = 3, .bytes = &.{}, .offset = 0 }, .fdatasync },
+        .{ Request{ .tag = .fsync, .descriptor = 3, .bytes = &.{}, .offset = 0 }, .fsync },
     };
     inline for (cases) |case| {
         var recorded: Recorded = .{};
@@ -136,7 +136,7 @@ test "each file operation makes its own call, and fsync is not fdatasync" {
 }
 
 test "an interrupted fdatasync is made again, and its other errnos end it with their code" {
-    const request: Request = .{ .code = .fdatasync, .descriptor = 0, .bytes = &.{}, .offset = 0 };
+    const request: Request = .{ .tag = .fdatasync, .descriptor = 0, .bytes = &.{}, .offset = 0 };
     const limit = core.constants.interrupt_retries_max;
 
     var interrupted: Returns = .{ .words = &.{ negated(.INTR), 0 } };

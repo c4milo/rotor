@@ -29,7 +29,7 @@ fn claimed_slot() Slot {
     var slot: Slot = std.mem.zeroes(Slot);
     slot.state = .queued;
     slot.generation = constants.generation_first;
-    slot.code = .nop;
+    slot.tag = .nop;
     return slot;
 }
 

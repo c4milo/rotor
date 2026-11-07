@@ -359,7 +359,7 @@ fn counted(
 
 test "sampling takes one operation in the mask's count, chosen by the sequence alone" {
     var fixture: Fixture = undefined;
-    const timer_kind = @intFromEnum(Operation.Code.timer);
+    const timer_kind = @intFromEnum(Operation.Tag.timer);
 
     // 64 operations at 1 in 32 are sampled twice: sequence 0 and sequence 32.
     const every_32 = counted(&fixture, .{ .sample_mask = 31 }, 64, 0);
@@ -393,7 +393,7 @@ test "the same calls give the same statistics, whatever the clock did between th
 
 test "a sampled operation's latency lands in the bucket of the time the loop held" {
     var fixture: Fixture = undefined;
-    const timer_kind = @intFromEnum(Operation.Code.timer);
+    const timer_kind = @intFromEnum(Operation.Tag.timer);
 
     const immediate = counted(&fixture, .{ .sample_mask = 0 }, 4, 0);
     try testing.expectEqual(@as(u32, 4), immediate.latency[timer_kind][0]);
@@ -409,7 +409,7 @@ test "operations in flight together each keep their own start, whatever slot the
     var fixture: Fixture = undefined;
     fixture.init_sampling(.{ .sample_mask = 0 });
     const tables = &fixture.tables;
-    const timer_kind = @intFromEnum(Operation.Code.timer);
+    const timer_kind = @intFromEnum(Operation.Tag.timer);
 
     // Two operations submitted far apart and finished at one moment. Their latencies differ by
     // the gap, so each has to be measured from its own start and not from the other's.
@@ -435,7 +435,7 @@ test "a multishot operation is counted once and records no latency" {
     var fixture: Fixture = undefined;
     fixture.init_sampling(.{ .sample_mask = 0 });
     const tables = &fixture.tables;
-    const receive_kind = @intFromEnum(Operation.Code.receive);
+    const receive_kind = @intFromEnum(Operation.Tag.receive);
 
     var multishot = fixture.receive(1, 0);
     multishot.kind.receive.target = .{ .group = @enumFromInt(0) };
@@ -456,7 +456,7 @@ test "an operation the loop never sampled is counted nowhere, and events are the
     var fixture: Fixture = undefined;
     // Sample nothing this run: phase 1 of a mask of 1 never matches sequence 0.
     const none = counted(&fixture, .{ .sample_mask = 1, .sample_phase = 1 }, 1, 0);
-    try testing.expectEqual(@as(u64, 0), none.sampled[@intFromEnum(Operation.Code.timer)]);
+    try testing.expectEqual(@as(u64, 0), none.sampled[@intFromEnum(Operation.Tag.timer)]);
 
     // The caller's events do not depend on whether the loop measured them (rule 1).
     var sampled_fixture: Fixture = undefined;

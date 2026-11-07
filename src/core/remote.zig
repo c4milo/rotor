@@ -145,7 +145,7 @@ pub const Wakes = struct {
 /// wakes it once (decision 12, point 6). The result is the post's own final event. Until
 /// 2026-09-25 kqueue and epoll each carried a copy, and io_uring posted through the kernel.
 pub fn post(registry: ?*mailbox.Registry, sender: LoopId, slot: *const Slot, wakes: *Wakes) i32 {
-    assert(slot.code == .post);
+    assert(slot.tag == .post);
     const known = registry orelse return event.result_of(.loop_not_found);
     const target = slot.post_target();
     const wake = send(known, sender, target, slot.message()) catch |err| {

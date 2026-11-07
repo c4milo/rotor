@@ -41,13 +41,13 @@ pub const memory_bytes = core.offload.memory_bytes;
 pub const init_rings = core.offload.init_rings;
 
 /// True when the caller's offload holds `slot`. Under the `offload` policy a file operation reaches
-/// `submitted` only by being handed out, so the policy and the operation's code decide this.
+/// `submitted` only by being handed out, so the policy and the operation's tag decide this.
 ///
 /// The cancel path uses it to avoid treating such a slot as one waiting on a kqueue filter. A file
 /// registers no filter, so `perform.filter_of` has no answer for one.
 pub fn on_a_worker(loop: *const Loop, slot: *const Slot) bool {
     if (loop.file_policy != .offload) return false;
-    return core.offload.code_of(slot.code) != null;
+    return core.offload.work_tag_of(slot.tag) != null;
 }
 
 /// Hands one queued operation to the caller's offload. The slot becomes `submitted` and stays the
@@ -64,8 +64,8 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
     if (!in_flight.has_room()) return in_flight.hold(&loop.tables, index);
     const offload = loop.offload.?;
     assert(index < loop.works.len);
-    const code = core.offload.code_of(slot.code).?;
-    const bytes = if (core.file_call.is_sync(code)) &[_]u8{} else slot.bytes();
+    const tag = core.offload.work_tag_of(slot.tag).?;
+    const bytes = if (core.file_call.is_sync(tag)) &[_]u8{} else slot.bytes();
 
     loop.tables.hand_over(index, slot);
     in_flight.note_handed_out(index, slot.descriptor);
@@ -74,7 +74,7 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
         .run = run,
         .owner = loop,
         .index = index,
-        .code = code,
+        .tag = tag,
         .descriptor = slot.descriptor,
         .buffer = @intFromPtr(bytes.ptr),
         .length = @intCast(bytes.len),

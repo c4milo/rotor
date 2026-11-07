@@ -130,7 +130,7 @@ pub const InFlight = struct {
     pub fn note_cancel(in_flight: *InFlight, tables: *Tables, index: u32, slot: *const Slot) void {
         assert(slot.flags.cancel_requested);
         if (slot.state != .queued) return;
-        if (slot.code == .close) return in_flight.end_canceled_close(tables, index);
+        if (slot.tag == .close) return in_flight.end_canceled_close(tables, index);
         if (in_flight.held.count != 0) in_flight.canceled = true;
     }
 

@@ -45,7 +45,7 @@ pub fn request(loop: *Loop, index: u32, slot: *Slot) void {
     // stops its threads first leaves an operation that can never end, and `drain` reports it as
     // `StillInFlight` rather than hanging.
     if (offload_module.on_a_worker(loop, slot)) return;
-    const filter = perform.filter_of(slot.code);
+    const filter = perform.filter_of(slot.tag);
     const removed = loop.waiters.remove(tables.table.slots, slot.descriptor, filter, index);
     assert(removed);
     // A kept filter goes, and an operation that waited behind this one gets a one-shot filter of

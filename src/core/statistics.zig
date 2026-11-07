@@ -20,10 +20,10 @@ const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 
-const Code = operation_module.Operation.Code;
+const Tag = operation_module.Operation.Tag;
 const Slot = slot_module.Slot;
 
-pub const kinds = @typeInfo(Code).@"enum".fields.len;
+pub const kinds = @typeInfo(Tag).@"enum".fields.len;
 pub const buckets = constants.latency_buckets;
 
 pub const Options = struct {
@@ -85,7 +85,7 @@ pub const Statistics = struct {
         assert_class_a(!slot.flags.sampled);
         if (sequence & statistics.sample_mask != statistics.sample_phase) return;
         slot.flags.sampled = true;
-        statistics.sampled[@intFromEnum(slot.code)] += 1;
+        statistics.sampled[@intFromEnum(slot.tag)] += 1;
         statistics.starts[index] = now_ns;
     }
 
@@ -95,7 +95,7 @@ pub const Statistics = struct {
         if (slot.flags.multishot) return;
         const start_ns = statistics.starts[index];
         assert_class_a(now_ns >= start_ns);
-        statistics.latency[@intFromEnum(slot.code)][bucket_of(now_ns - start_ns)] += 1;
+        statistics.latency[@intFromEnum(slot.tag)][bucket_of(now_ns - start_ns)] += 1;
     }
 };
 

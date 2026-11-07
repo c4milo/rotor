@@ -120,7 +120,7 @@ test "a write request becomes a write, and a read request a read" {
         .registered = common.registered,
         .offset = common.offset,
     });
-    try testing.expectEqual(core.Operation.Code.read, read.code());
+    try testing.expectEqual(core.Operation.Tag.read, read.tag());
     try testing.expectEqual(@as(u64, 7), read.user_data);
     try testing.expectEqual(@as(u64, 8192), read.kind.read.offset);
     try testing.expectEqual(@as(core.Descriptor, 3), read.kind.read.file);
@@ -133,7 +133,7 @@ test "a write request becomes a write, and a read request a read" {
         .registered = common.registered,
         .offset = common.offset,
     });
-    try testing.expectEqual(core.Operation.Code.write, write.code());
+    try testing.expectEqual(core.Operation.Tag.write, write.tag());
     try testing.expectEqual(@as(u64, 8192), write.kind.write.offset);
     try testing.expectEqual(@as(core.Descriptor, 3), write.kind.write.file);
 }

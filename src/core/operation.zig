@@ -87,7 +87,7 @@ pub const Operation = struct {
     }
 
     /// The tag of `Kind`, 8 bits, which is what a `Slot` stores.
-    pub const Code = enum(u8) {
+    pub const Tag = enum(u8) {
         accept,
         connect,
         receive,
@@ -102,11 +102,11 @@ pub const Operation = struct {
         nop,
         receive_from,
         send_to,
-        /// Appended last, so that every code before it keeps its value.
+        /// Appended last, so that every tag before it keeps its value.
         fsync,
     };
 
-    pub const Kind = union(Code) {
+    pub const Kind = union(Tag) {
         accept: Accept,
         connect: Connect,
         receive: Receive,
@@ -278,7 +278,7 @@ pub const Operation = struct {
         return .{ .user_data = user_data, .kind = .{ .send_to = .{ .socket = socket, .buffer = .{ .bytes = bytes }, .to = to } } };
     }
 
-    pub fn code(operation: *const Operation) Code {
+    pub fn tag(operation: *const Operation) Tag {
         return std.meta.activeTag(operation.kind);
     }
 
@@ -306,7 +306,7 @@ pub const Operation = struct {
     pub fn assert_valid(operation: *const Operation) void {
         assert_class_a(operation.timeout_ns <= constants.timeout_ns_max);
         if (operation.descriptor_registered) {
-            assert(operation.code() != .close);
+            assert(operation.tag() != .close);
             // Halts on a kind that names no descriptor.
             assert(operation.descriptor().? < constants.registered_descriptors_max);
         }
@@ -402,6 +402,6 @@ pub const Operation = struct {
 
 comptime {
     assert(@sizeOf(Message) == constants.event_bytes);
-    const codes = @typeInfo(Operation.Code).@"enum".fields.len;
-    assert(codes == @typeInfo(Operation.Kind).@"union".fields.len);
+    const tags = @typeInfo(Operation.Tag).@"enum".fields.len;
+    assert(tags == @typeInfo(Operation.Kind).@"union".fields.len);
 }
