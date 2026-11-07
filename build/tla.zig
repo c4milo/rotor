@@ -1,6 +1,6 @@
 //! `zig build tla`: TLC over every model under spec/tla/, through pepegrillo's `tla` tool
 //! (`tools/tla.zig`). The models are the sleep handshake of decision 12, point 6, and decision 18
-//! (spec/tla/wake/).
+//! (spec/tla/wake/), and the heartbeat's memory orders of decision 28 (spec/tla/heartbeat/).
 //!
 //! It is a step of its own and not part of `zig build test`, so a contributor without Java can run
 //! the gate, and CI runs it in a job of its own. `zig build test` compiles the tool, so it cannot
