@@ -146,9 +146,59 @@ fn after_kernel(
     if (capped or moved) produced += tables.drain_finished(events[produced..]);
     // After the reap, so a descriptor the kernel reported ready ends its operation with the
     // transfer's result and not with `timeout` (issue 10).
-    produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
+    const full = ready_count == @min(events.len - before, constants.readiness_max);
+    produced += expire_after_reap(loop, events[produced..], full, ready_count);
     assert(produced <= events.len);
     return produced;
+}
+
+/// The tick's expiry, after the reap. While a deadline is due and the kernel's answer was full,
+/// the answer may have left readiness in the kernel, which `reap_past_own_entries` reaps first.
+/// Returns how many events it wrote into `events`.
+fn expire_after_reap(loop: *Loop, events: []Event, full: bool, answered: u32) u32 {
+    const tables = &loop.tables;
+    const earliest_ns = tables.timers.earliest_ns() orelse return 0;
+    if (earliest_ns > tables.now_ns) return 0;
+    const reaped = if (full) reap_past_own_entries(loop, events, answered) else 0;
+    return reaped + tables.expire_after_reap(loop, cancel_module.request, events[reaped..]);
+}
+
+/// A full answer can hold entries that name no operation, the wake trigger, the wait timer or the
+/// group watch, in the places of readiness the kernel still holds. A deadline due in this tick
+/// would then end such an operation with `timeout` and not with its result (issue 10). So while a
+/// deadline is due and the last answer was full and held such entries, the tick polls again for
+/// that many places and reaps them. The loop's own entries clear as they are delivered, so each
+/// call finds fewer of them. Returns how many events it wrote into `events`.
+fn reap_past_own_entries(loop: *Loop, events: []Event, answered: u32) u32 {
+    const tables = &loop.tables;
+    var own = own_entries(loop, loop.readiness[0..answered]);
+    var produced: u32 = 0;
+    var calls: u32 = 0;
+    while (own != 0 and calls < constants.own_entries_max) : (calls += 1) {
+        const room = @min(own, events.len - produced);
+        if (room == 0) break;
+        const readiness = loop.readiness[0..room];
+        // A call that fails here fails again in the next tick, which returns the error.
+        const count = loop.queue.exchange(&.{}, readiness, null) catch break;
+        const reaped = reap_module.reap(loop, readiness[0..count], events[produced..]);
+        if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
+        produced += reaped;
+        own = if (count == room) own_entries(loop, readiness[0..count]) else 0;
+    }
+    assert(produced <= events.len);
+    return produced;
+}
+
+/// How many entries of `readiness` name no operation: the wake trigger, the wait timer and the
+/// group watch, as `reap` tells them apart.
+fn own_entries(loop: *const Loop, readiness: []const Kevent) u32 {
+    var count: u32 = 0;
+    for (readiness) |*ready| {
+        const watch = ready.ident == loop.group_watch and ready.filter == std.c.EVFILT.READ;
+        const own = watch or ready.filter == std.c.EVFILT.TIMER or ready.filter == std.c.EVFILT.USER;
+        if (own) count += 1;
+    }
+    return count;
 }
 
 /// Decision 13: polls with ticks that do not wait until one spin budget after the loop last handed

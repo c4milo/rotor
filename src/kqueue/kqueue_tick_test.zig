@@ -313,6 +313,33 @@ test "a loop whose own wake trigger came back skips the poll again" {
     try testing.expectEqual(@as(u32, 1), try loop.queue.exchange(&.{}, loop.readiness[0..1], 0));
 }
 
+test "a wake ahead of a socket's readiness does not end its receive with timeout (issue 10)" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const options: Loop.Options = .{ .operations = 2 };
+    var memory: [Loop.memory_bytes(options)]u8 align(core.layout.memory_alignment) = undefined;
+    var loop: Loop = undefined;
+    try loop.init(&memory, options);
+    defer loop.deinit();
+    const pair = try kqueue.testing.nonblocking_pair();
+    defer for (pair) |descriptor| sync_close(descriptor);
+
+    // The deadline is 1 ns after the first tick's stamp, so it is due at the next tick.
+    var buffer: [8]u8 = undefined;
+    var receive = Operation.receive(1, pair[0], &buffer);
+    receive.timeout_ns = 1;
+    try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &.{}));
+    var events: [1]Event = undefined;
+    try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+    const armed_ns = loop.tables.now_ns;
+    // The trigger is set before the bytes come, so the kernel answers it first, in the one place.
+    queue_module.Queue.wake(loop.queue.descriptor);
+    try testing.expectEqual(@as(isize, 2), std.c.write(pair[1], "hi", 2));
+    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
+    try testing.expect(loop.tables.now_ns > armed_ns);
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectEqual(@as(u32, 2), try events[0].outcome());
+}
+
 test "the wait timer stays armed for a later deadline and moves for an earlier one" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     const options: Loop.Options = .{ .operations = 2 };
