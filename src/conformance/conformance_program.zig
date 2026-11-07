@@ -22,6 +22,7 @@ const actions = @import("conformance_program_actions.zig");
 
 const Harness = conformance.Harness;
 const Event = core.Event;
+const Operation = core.Operation;
 const sync = backend.sync;
 
 pub const soak_variable = "ROTOR_CONFORMANCE_SOAK_SECONDS";
@@ -39,6 +40,15 @@ const soak_seconds_max = 24 * 60 * 60;
 const libraries_count = 3;
 
 const loopback = core.Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+/// The datagrams that check that the receiver takes only its sender's datagrams. A stranger's
+/// datagram is not 8 bytes long, so a receive in the program that takes one fails with
+/// `DatagramLengthWrong`.
+const stranger_payload = "from a stranger";
+const sender_payload = "from the sender";
+/// The user data of the operations that prepare the datagram sockets, before the program.
+const connect_user_data = 1;
+const send_user_data = 2;
+const receive_user_data = 3;
 const group_bytes = backend.buffers.group_bytes(actions.group_buffers, actions.buffer_bytes);
 var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undefined;
 
@@ -224,7 +234,47 @@ const Sockets = struct {
         const receiver = try sync.open_datagram(.ipv4, &loopback, .{ .coalesce = false });
         errdefer sync.close_now(receiver);
         const sender = try sync.open_datagram(.ipv4, &loopback, .{});
+        errdefer sync.close_now(sender);
+        try hear_only(main, receiver, sender);
         return .{ .stream = stream, .receiver = receiver, .sender = sender };
+    }
+
+    /// Connects `receiver` to `sender`, so the kernel hands it no datagram from another socket.
+    /// macOS can bind a dual-stack socket on `::` to the port of a socket on 127.0.0.1. The IPv4
+    /// datagrams sent to that port then reach the 127.0.0.1 socket. A test in another process sent
+    /// its datagram to this receiver that way. Then a third socket and the sender each send one
+    /// datagram, and the receiver must take the sender's datagram first.
+    fn hear_only(main: *Harness, receiver: core.Descriptor, sender: core.Descriptor) !void {
+        const sender_address = try sync.local_address(sender);
+        try main.submit(&.{Operation.connect(connect_user_data, receiver, &sender_address)}, &.{});
+        var connected: [1]Event = undefined;
+        try main.collect(&connected);
+        try testing.expectEqual(@as(u32, 0), try connected[0].outcome());
+        const stranger = try sync.open_datagram(.ipv4, &loopback, .{});
+        defer sync.close_now(stranger);
+        const out: core.datagram.Outbound = .{
+            .peer = try sync.local_address(receiver),
+            .local = undefined,
+            .segment_bytes = 0,
+            .ecn = .not_ect,
+            .flags = .{ .peer = true },
+        };
+        // The stranger sends first, so a receiver that takes its datagram takes it first.
+        try send_one(main, stranger, stranger_payload, &out);
+        try send_one(main, sender, sender_payload, &out);
+        var buffer: [2 * sender_payload.len]u8 = undefined;
+        try main.submit(&.{Operation.receive(receive_user_data, receiver, &buffer)}, &.{});
+        var received: [1]Event = undefined;
+        try main.collect(&received);
+        const bytes = try received[0].outcome();
+        try testing.expectEqualStrings(sender_payload, buffer[0..bytes]);
+    }
+
+    fn send_one(main: *Harness, socket: core.Descriptor, bytes: []const u8, out: *const core.datagram.Outbound) !void {
+        try main.submit(&.{Operation.send_to(send_user_data, socket, bytes, out)}, &.{});
+        var sent: [1]Event = undefined;
+        try main.collect(&sent);
+        try testing.expectEqual(@as(u32, @intCast(bytes.len)), try sent[0].outcome());
     }
 
     fn close(sockets: *const Sockets) void {
