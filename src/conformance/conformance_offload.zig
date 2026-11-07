@@ -377,15 +377,21 @@ test "a due timer behind an offloaded read's deadline fires in a tick with an ev
     var handles: [3]core.Handle = undefined;
     try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{read}, handles[0..1]));
     var events: [3]Event = undefined;
+    // The read's deadline starts at this tick's stamp, and the tick expires against that same
+    // stamp, so the tick ends no deadline.
     try testing.expectEqual(@as(u32, 0), try loop_fixture.loop.tick(&events, 0));
+    // The timer's delay starts at the stamp of the tick above, which the caller saw (decision 14,
+    // rule 6), so its deadline is 1 ms behind the read's. No tick comes before the one below.
+    // A tick here took its own stamp, and a stamp 1 ms or more late expired the read's deadline
+    // before the timer was behind it. A loaded machine showed that tick.
     const timer = Operation.timer(9, 2 * core.constants.ns_per_ms, 0);
     try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{timer}, handles[1..2]));
-    try testing.expectEqual(@as(u32, 0), try loop_fixture.loop.tick(&events, 0));
     timers.hold_off(10 * core.constants.ns_per_ms);
 
     // A cancel of a timer still queued gives the tick an event before it asks the kernel
     // anything, and no descriptor waits for readiness, so a kqueue tick makes no call. It expires
-    // all the same, and hands the timer over (issue 10).
+    // all the same, and hands the timer over (issue 10). The tick's flush puts the timer in the
+    // heap before the first expiry, so both deadlines have passed when that expiry runs.
     const queued = Operation.timer(8, core.constants.ns_per_s, 0);
     try testing.expectEqual(@as(u32, 1), loop_fixture.loop.submit(&.{queued}, handles[2..3]));
     loop_fixture.loop.cancel(handles[2]);
