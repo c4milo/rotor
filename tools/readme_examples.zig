@@ -19,6 +19,8 @@ const documents = [_]Document{
 const examples = [_]Document{
     .{ .name = "examples/echo.zig", .text = @embedFile("examples/echo.zig") },
     .{ .name = "examples/guide.zig", .text = @embedFile("examples/guide.zig") },
+    .{ .name = "examples/offload.zig", .text = @embedFile("examples/offload.zig") },
+    .{ .name = "examples/stall_watch.zig", .text = @embedFile("examples/stall_watch.zig") },
     .{ .name = "examples/consumer/build.zig", .text = @embedFile("examples/consumer/build.zig") },
 };
 

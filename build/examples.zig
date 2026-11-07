@@ -22,6 +22,8 @@ pub const Program = struct { name: []const u8, root: []const u8, checker: ?[]con
 pub const programs = [_]Program{
     .{ .name = "echo", .root = "examples/echo.zig", .checker = "tools/echo_check.zig" },
     .{ .name = "guide", .root = "examples/guide.zig", .checker = null },
+    .{ .name = "offload", .root = "examples/offload.zig", .checker = null },
+    .{ .name = "stall_watch", .root = "examples/stall_watch.zig", .checker = null },
 };
 
 /// The Zig sources under `examples/`, which the lint and the format check read. They are named file by
@@ -30,6 +32,8 @@ pub const programs = [_]Program{
 pub const sources = [_][]const u8{
     "examples/echo.zig",
     "examples/guide.zig",
+    "examples/offload.zig",
+    "examples/stall_watch.zig",
     "examples/consumer/build.zig",
 };
 
@@ -39,6 +43,8 @@ const excerpted_files = [_][]const u8{
     "docs/using.md",
     "examples/echo.zig",
     "examples/guide.zig",
+    "examples/offload.zig",
+    "examples/stall_watch.zig",
     "examples/consumer/build.zig",
 };
 

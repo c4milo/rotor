@@ -18,7 +18,8 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 | Operations | TCP, UDP with ECN, files, timers and repeating timers, deadlines, cancellation, and messages between loops |
 | Memory | rotor allocates nothing. A program gives each loop its memory once, at startup, and every table has a fixed limit. |
 | Threads | One loop per thread, with no locks. Loops post messages to each other, across threads or processes. |
-| Safety | Assertions stay on in release builds. Misuse stops the program at a named check. |
+| Safety | Assertions stay on in release builds. Misuse stops the program at a named check. A library that tries to tick a loop it shares fails to compile. |
+| Stalls | Each loop counts the turns that held it too long, and names the callback. A thread of the program can see a callback that never returns. |
 | Dependencies | None. Zig 0.16.0 and its standard library. |
 | Version | 0.9.0 |
 | License | Apache-2.0 |
@@ -191,7 +192,7 @@ and the commands to take every number again.
 
 | document | what it covers |
 |---|---|
-| [`docs/using.md`](docs/using.md) | the guide: every operation and its promises, buffers, datagrams, files, threads and limits |
+| [`docs/using.md`](docs/using.md) | the guide: every operation and its promises, buffers, datagrams, files, threads, a loop that libraries share, stalls and limits |
 | [`examples/`](examples) | complete programs that `zig build test` compiles |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | the full measurements, and how to take them again |
 | [`docs/decisions/`](docs/decisions) | one record per design decision, with the alternatives it was chosen over |

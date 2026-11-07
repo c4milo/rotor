@@ -51,7 +51,8 @@ choice when none is made, and the choice holds for the life of the process. The 
 refuses a ring. It never falls back, and an error stores nothing. Requiring the backend the process
 already runs succeeds.
 
-What the module exports: `Loop`, `Registry`, `Remote`, the helpers `sync` and `buffers`, `backend`,
+What the module exports: `Loop`, `SharedLoop`, `Heartbeat`, `Registry`, `Remote`, the helpers
+`sync` and `buffers`, `backend`,
 `require_backend`, `Backend` and `RequireError`, the flags `files_block`, `post_bounded` and
 `supported`, `offload_memory_bytes`, `memory_alignment`, and the
 types a caller builds operations from and reads events with (`Operation`, `Event`, `Handle`,
@@ -89,9 +90,9 @@ defer loop.deinit();
   the kqueue. A kernel that refuses io_uring does not fail `init` on Linux: the process runs epoll.
 - `deinit` requires an empty loop: nothing in flight. `cancel_all` then `drain` gets there.
 
-The other options: `id` and `registry` for a loop that posts to others (below), `sampling` for the
-statistics, `spin_budget_ns` for a loop that polls before it sleeps, and `file_policy`, `offload`
-and `offload_memory` for files on macOS and on epoll (below).
+The other options: `id` and `registry` for a loop that posts to others (below), `sampling` and
+`stall_turn_ns` for the statistics, `spin_budget_ns` for a loop that polls before it sleeps, and
+`file_policy`, `offload` and `offload_memory` for files on macOS and on epoll (below).
 
 `spin_budget_ns` is 0 by default, and then a tick that is given a wait blocks at once, as it always
 has. With a budget, at most `rotor.constants.spin_budget_ns_max`, a tick given a longer wait first
@@ -320,8 +321,8 @@ a process may run either backend; a caller that sets a policy there is right on 
 - `.offload`: the loop hands it to the caller's threads. `offload` is an `Offload`: a context, a
   `submit` function the loop calls with a `Work` the worker runs, and the number of workers, at
   most `offload_workers_max` (64). `offload_memory` is `rotor.offload_memory_bytes(workers)`
-  bytes of the caller's, because the caller's threads write it. `bench/files/reads_pool.zig` is a
-  pool that does this.
+  bytes of the caller's, because the caller's threads write it. `examples/offload.zig` is a
+  bounded pool that does this, and `bench/files/reads_pool.zig` is the one the benchmarks use.
 
 `offload` is required under `.offload` and must be null under the other two policies. io_uring
 checks the options as kqueue and epoll do, so options that halt on one backend halt on all of them,
@@ -329,7 +330,12 @@ and then ignores them. A loop that never touches a file needs none of this.
 
 A caller that hands a loop an offload stops the offload's threads before the loop's `deinit`, and
 not before the loop is drained: a worker still inside `Work.run` reads the loop after its result is
-visible (decision 18).
+visible (decision 18). `examples/offload.zig` does the three steps in that order.
+
+A file call that blocks under `.blocking` holds the loop for its whole length, and every other
+operation and callback of the loop waits for it. The stall count sees it when its tick does not
+block, and a watch sees it either way (Stalls, below). The offload moves the call to the caller's
+threads, so the loop goes on.
 
 ## Threads
 
@@ -406,16 +412,28 @@ byte of it.
 
 ## A library that shares a loop
 
-A library such as a resolver takes a `*Loop` from the application and owns no socket, thread or
-loop of its own. Several libraries may share one loop (decision 26). Only the program calls
-`tick`: a library submits, returns, and finishes its work in records, pollers and tasks
+A library such as a resolver takes a `*SharedLoop` from the application and owns no socket,
+thread or loop of its own. Several libraries may share one loop (decision 26). Only the program
+calls `tick`: a library submits, returns, and finishes its work in records, pollers and tasks
 (decision 27). What that needs:
+
+- The program calls `loop.shared()` and hands each library the `*SharedLoop` it returns, which the
+  library keeps. Its address is the loop's, and each call on it is the `Loop` call of the same
+  name: `submit`, `cancel`, `post`, `now_ns`, `schedule`, `is_scheduled`, `task_budget_left`,
+  `add_poller`, `remove_poller`, and the buffer group calls. `tick`, `drain`, `deinit`,
+  `cancel_all` and `discard_tasks` fail to compile on it, with a message that states the rule
+  (decision 28). A library that casts the view back to a `*Loop` and ticks inside a callback still
+  halts.
 
 - Each operation of the library names a `Completion`, a record inside the library's own struct:
   `Operation.receive_from(0, socket, group).completion(&endpoint.receive)`. The tick calls the
   record for every event of that operation, `more` events and the final one included, and does not
   hand those events to the caller of `tick`. Declare the record with
   `Completion.init(Endpoint, "receive", Endpoint.on_receive)`, and the handler takes `*Endpoint`.
+  `init` names the record after its type and field, here `Endpoint.receive` with the type's full
+  path, and a stall or a watch reports that name. A record written by hand points to a `Call` that
+  is a container-level `const` with a literal name, because another thread may read the name after
+  the library frees the record.
 - Work that is not one operation, such as a batch of sends to flush, goes in a `Poller`, declared
   with `Poller.init`. `loop.add_poller` adds it, and the loop calls it once in each tick before the
   tick waits. It returns true when the tick must not block, for example because work is left. At
@@ -431,7 +449,8 @@ loop of its own. Several libraries may share one loop (decision 26). Only the pr
   one more returns `error.TasksFull`.
 - A callback, a poller or a task may submit, cancel, give buffers back and schedule a task. A
   callback or a task may add or remove a poller; a poller may not. Any of them that calls `tick`
-  halts. Remove every poller, and let every task run, before `deinit`, which halts on either.
+  or `deinit` halts. Remove every poller, and let every task run, before `deinit`, which halts on
+  either.
   `drain` runs the queued tasks; when a task never stops, it fails with `TasksStillQueued`, and
   `loop.discard_tasks()` unlinks the tasks without a call.
 - An event of an operation that names no record, and a message another loop posted, go to the
@@ -463,6 +482,8 @@ the loop when the loop has something to deliver (decision 23).
   descriptor readable later for no operation.
 - **The host does nothing else to the descriptor.** It does not read it, close it, or change what
   it holds, and it stops waiting on it before `deinit`.
+- **The host sets `stall_turn_ns = null`, and watches no heartbeat.** Its sleep is between two
+  ticks, so it reads as one long turn, and every sleep would count as a stall (decision 28).
 
 What the descriptor does not report, so that the host wakes for it by its own means:
 
@@ -481,9 +502,80 @@ its socket, meets neither. Decision 23 has the measurements under its open quest
 
 ## Statistics
 
-`loop.statistics()` is sampled: one operation in `sample_mask + 1` records its latency into
-power-of-two buckets, per kind, and nothing else is counted (decision 9). Nothing logs on the
-loop's path.
+`loop.statistics()` holds two kinds of count. Latencies are sampled: one operation in
+`sample_mask + 1` records its latency into power-of-two buckets, per kind (decision 9). Stalls are
+exact (decision 9, rule 7, and decision 28). Nothing logs on the loop's path. A program reads the
+statistics between ticks, and exports them.
+
+## Stalls
+
+A callback that runs long holds the loop, and every other operation and callback of the loop waits.
+rotor gives a count to see such a stall after it ends, and a heartbeat to see one while it lasts
+(decision 28).
+
+A **stamp** is a value of the clock that a tick reads: one at its start, and one after a wait that
+blocked. A **turn** runs from one stamp to the next tick's first stamp. It holds the callbacks of
+the last tick, the program's own code between the two ticks, and the pollers of the next tick. A
+kernel wait is never in a turn: the stamp after a wait starts a new one. A turn at or above
+`Options.stall_turn_ns` is a **stall**. The default is `constants.stall_turn_ns_default`, 10 ms;
+null counts no stall. The loop counts each stall in three fields of `statistics()`:
+
+- `stalls`, the count;
+- `stall_ns_max`, the longest;
+- `last_stall`, a `statistics.Stall`: when the turn ended, how long it was, the callbacks the loop
+  called in it, and their name when it called one.
+
+| `last_stall` | what held the loop |
+|---|---|
+| `callbacks == 1`, `name` set | that callback |
+| `callbacks > 1`, `name` null | several callbacks together. A watch names the one that runs while the turn is open |
+| `callbacks == 0` | the program's own code between ticks, or the loop's own work in a tick that did not block, such as a file call under `file_policy = .blocking` |
+
+The loop's own work in a tick that then blocks is in no turn that the count sees. That work comes
+after the first stamp and before the wait, and the stamp after the wait starts a new turn. So a
+file call under `.blocking` in such a tick is not a stall. A watch sees it while it runs, with a
+null name.
+
+A test that runs a shared loop sets `stall_turn_ns` and checks at its end that
+`loop.statistics().stalls` is 0; on a failure, `last_stall` names the callback. The check compares
+times, so a busy machine can fail it: raise a threshold that proves flaky deliberately, with the
+number beside it.
+
+A callback that never returns never ends its turn, so the count never sees it. A thread of the
+program's own sees it, through the loop's **heartbeat**. rotor starts no thread. The program takes
+`loop.heartbeat()` on the loop's thread, and hands it to its watch thread:
+
+```zig
+var watcher: Watcher = .{ .heartbeat = loop.heartbeat(), .io = init.io };
+const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
+```
+
+The watch thread calls `watch` on it once, `check` once in each period it chooses, and `end` before
+the loop's `deinit`, which halts while a watch reads the heartbeat:
+
+```zig
+var watch = watcher.heartbeat.watch();
+defer watch.end();
+for (0..checks_max) |_| {
+    watcher.io.sleep(.fromMilliseconds(period_ms), .awake) catch return;
+    const stuck = watch.check() orelse continue;
+    if (stuck.checks < checks_limit) continue;
+```
+
+`check` reads no clock. It returns null when the loop moved since the last check, when the loop
+sleeps in a kernel wait, and on the first check of a turn. Otherwise it returns a `Heartbeat.Stuck`:
+the name of the callback that runs now, or null for code outside a callback, the stamp that
+started the turn, and `checks`, the checks in a row after the first that saw the turn open. A turn
+of `n` periods or more is reported with `checks` of `n - 1` or more, so a program's limit is a count
+of checks. A name is static data, so the program may read it after a library frees its record.
+`examples/stall_watch.zig` is the whole program.
+
+Three ways prevent a stall:
+
+- **Work split into slices.** A long task reads `task_budget_left()`, does that many slices, and
+  schedules itself again.
+- **Another loop.** CPU work that cannot be split goes to a loop on another thread, through `post`.
+- **The offload.** A file call that blocks goes to the program's threads (Files, above).
 
 ## Limits
 
@@ -498,6 +590,7 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 | one transfer | `transfer_bytes_max`, 2,147,479,552 bytes |
 | loops and remotes per registry | `loops_max`, 256 |
 | offload workers | `offload_workers_max`, 64 |
+| a turn that counts as a stall, by default | `stall_turn_ns_default`, 10 ms |
 | registered descriptors, registered buffers | 1,024 each |
 | provided-buffer groups, buffers per group | 16, 32,768 |
 | a message's tag | `message_tag_max`, 0x7fff_f000 |
