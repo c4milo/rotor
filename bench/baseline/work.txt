@@ -87,6 +87,8 @@
 # pays for the share of decision 12, point 6, so Camilo raised `post-operation`, `timer` and
 # `record` on macOS kqueue (median of 3 runs on `mac`) and on arm64 io_uring and epoll
 # (cachegrind). Its fast path took arm64 io_uring `post`, `task` and `poller` under, so they fell.
+# The x86-64 rows are CI's counts at `586c195`, run 42392169953: the same three rows rose, and
+# io_uring `post` and `poller` fell.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -99,23 +101,23 @@ tasks-64 4558
 record 1283
 poller 573
 section linux-x86_64-uring
-post-operation 3030
-timer 1105
+post-operation 3169
+timer 1165
 batch 26376
-post 1195
+post 1169
 task 617
 tasks-64 4158
-record 1241
-poller 576
+record 1296
+poller 564
 section linux-x86_64-epoll
 post 1289
-timer 1134
+timer 1211
 batch 26194
 wait 709
-post-operation 3197
+post-operation 3367
 task 654
 tasks-64 4236
-record 1276
+record 1353
 poller 619
 section linux-aarch64-uring
 post 1039
