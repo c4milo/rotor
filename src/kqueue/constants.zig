@@ -26,8 +26,15 @@ pub const wait_timer_rearms_max: u32 = 4;
 /// more than a few; what is left keeps the pipe ready and the next tick reads it.
 pub const group_wake_drain_bytes: usize = 64;
 
+/// The entries of one `kevent` answer that name no operation and write no event: the wake trigger,
+/// the wait timer and the group watch. Each takes a readiness place, so the kernel's reserve of a
+/// tick adds them (W3, ruled 2026-11-07).
+pub const own_entries_max: u32 = 3;
+
 comptime {
     const assert = std.debug.assert;
     assert(changes_max >= readiness_max);
     assert(readiness_max >= 1);
+    assert(own_entries_max <= @import("core").constants.kernel_own_max);
+    assert(own_entries_max < readiness_max);
 }

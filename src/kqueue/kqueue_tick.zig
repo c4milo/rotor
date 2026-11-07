@@ -43,8 +43,26 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // check stays here, at the call: inside a helper, the compiler moved the drain's entry with it.
     const offloads = loop.inbox.completions.len != 0;
     if (offloads) _ = offload_module.drain(loop);
-    var produced = tables.drain_finished(events);
-    produced += loop.drain_mailboxes(events[produced..]);
+    // A poll with no change to carry in and no operation waiting for readiness makes no call. The
+    // kernel could report only this loop's own wake event, which names no operation, and what a
+    // wake announces, a message or an offload's result, is read from its ring above and below. A
+    // trigger another loop sent stays set for the next call that waits, which then ends at once:
+    // the wasted wake decision 12, point 6 already allows. A trigger this loop armed and has not
+    // seen come back is not left: that call is made, and hands it back. The drains below change
+    // none of these inputs.
+    const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
+    // The lists stop short of the reserves of the mailboxes and of the kernel, so neither waits
+    // behind a long list (W3, ruled 2026-11-07).
+    const share = core.tick_share.split(
+        @intCast(events.len),
+        !quiet,
+        loop.inbox.registry != null,
+        constants.own_entries_max,
+        constants.readiness_max,
+    );
+    var produced = tables.drain_lists(events, share.lists_max);
+    const capped = produced == share.lists_max;
+    produced += loop.drain_mailboxes(events[produced .. events.len - share.kernel_min]);
 
     const wait = if (produced == 0) loop.settle_to_sleep(tables.wait_bound(wait_ns)) else null;
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
@@ -55,13 +73,6 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // the next tick that waits at once. That is what a tick whose events were already full did
     // until 2026-09-22, which the conformance suite's multishot accept caught once a second loop
     // made its late connection. Whether such a tick parks as a poll with room does is not measured.
-    // A poll with no change to carry in and no operation waiting for readiness makes no call. The
-    // kernel could report only this loop's own wake event, which names no operation, and what a
-    // wake announces, a message or an offload's result, is read from its ring above and below. A
-    // trigger another loop sent stays set for the next call that waits, which then ends at once:
-    // the wasted wake decision 12, point 6 already allows. A trigger this loop armed and has not
-    // seen come back is not left: that call is made, and hands it back.
-    const quiet = loop.changes_used == 0 and loop.waiters.used == 0 and !loop.trigger_armed;
     const idle = wait == null and quiet;
     // The changes the flush and the reaps queued, before the tick adds its trigger or its timer.
     const registrations = loop.changes_used;
@@ -75,9 +86,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A tick that made no call has nothing to reap. What arrived since the drains above waits for
     // the next tick, which does not block while a ring holds it. It still expires, so a stream of
     // messages cannot hold a due timer off.
-    if (idle) {
-        return produced + tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
-    }
+    if (idle) return produced + after_idle(loop, events[produced..], capped);
     // A tick that blocked reads the clock again before it hands anything over, so `now_ns`, the
     // reap's stamps on sampled operations and the spin window all start after the wait, whatever
     // ended it (decision 9, rule 4, amended 2026-09-27). A wait that failed reads it too, before
@@ -88,24 +97,45 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
-    return after_kernel(loop, events, produced, ready_count, offloads);
+    return after_kernel(loop, events, produced, ready_count, offloads, capped);
 }
 
-/// The tick's last steps, after a kernel call that succeeded: the reap, the results a worker pushed
-/// while the tick waited, the posted messages, and the deadlines. `before` events are already in
-/// `events`. Returns how many there are now.
-fn after_kernel(loop: *Loop, events: []Event, before: u32, ready_count: u32, offloads: bool) u32 {
+/// The last steps of a tick that made no call: the places the reserves kept and nothing used go
+/// back to the lists when the lists filled their share (W3), then the deadlines. A quiet loop keeps
+/// no kernel reserve, so the mailboxes already had every place they could use. Returns how many
+/// events it wrote into `events`.
+fn after_idle(loop: *Loop, events: []Event, capped: bool) u32 {
+    const tables = &loop.tables;
+    var produced: u32 = 0;
+    if (capped) produced += tables.drain_finished(events);
+    produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
+    assert(produced <= events.len);
+    return produced;
+}
+
+/// The tick's last steps, after a kernel call that succeeded: the reap, the posted messages, the
+/// results a worker pushed while the tick waited, the lists again, and the deadlines. `before`
+/// events are already in `events`. The places the kernel's reserve kept and the reap did not use
+/// go back to the mailboxes, and then to the lists when the lists filled their share (W3, ruled
+/// 2026-11-07). Returns how many events there are now.
+fn after_kernel(
+    loop: *Loop,
+    events: []Event,
+    before: u32,
+    ready_count: u32,
+    offloads: bool,
+    capped: bool,
+) u32 {
     const tables = &loop.tables;
     var produced = before;
     const reaped = reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
     // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
     if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
     produced += reaped;
-    // A worker may have answered while this tick waited, and the wake is what ended the wait.
-    if (offloads and offload_module.drain(loop) != 0) {
-        produced += tables.drain_finished(events[produced..]);
-    }
     produced += loop.drain_mailboxes(events[produced..]);
+    // A worker may have answered while this tick waited, and the wake is what ended the wait.
+    const moved = offloads and offload_module.drain(loop) != 0;
+    if (capped or moved) produced += tables.drain_finished(events[produced..]);
     // After the reap, so a descriptor the kernel reported ready ends its operation with the
     // transfer's result and not with `timeout` (issue 10).
     produced += tables.expire_after_reap(loop, cancel_module.request, events[produced..]);
