@@ -177,6 +177,8 @@ test {
     _ = @import("conformance_families.zig");
     _ = @import("conformance_post.zig");
     _ = @import("conformance_post_now.zig");
+    _ = @import("conformance_fair.zig");
+    _ = @import("conformance_fair_readiness.zig");
     _ = @import("conformance_registered.zig");
     _ = @import("conformance_remote.zig");
     _ = @import("conformance_statistics.zig");
