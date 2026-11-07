@@ -14,12 +14,46 @@ Camilo ruled on decisions 30, 31 and 32 together. For this record:
    The caller names the scheduling group that the call runs in on the target, as Seastar does.
    Decision 30 gains groups by name, so every loop agrees on what a group is. "Scheduling groups
    (decision 30)" below is the design.
-3. **The design for item 2 is not ruled.** Each item that it adds carries the label "new with named
-   groups; not ruled", and waits for Camilo in "Left for Camilo".
-4. **Decision 30 is accepted.** Decision 31 is accepted for capacity and shares. Its rate rule waits
+3. **Decision 30 is accepted.** Decision 31 is accepted for capacity and shares. Its rate rule waits
    for its own ruling, and the W7 disk bench runs before decision 31 is built.
-5. **The build order** is W3 (the fair tick order), decision 29, decision 30, then this record.
+4. **The build order** is W3 (the fair tick order), decision 29, decision 30, then this record.
    Decision 31 follows the W7 bench.
+
+Later the same day he ruled on the four choices that the design for item 2 added. Before this
+ruling, the list "Left for Camilo" held them:
+
+5. **No default group on the target.** `ServeOptions` is gone. Every call names its group, and a
+   call that wants no group of its own writes `.default`. The other choice was a default group in
+   `ServeOptions`, and the group of a call would then depend on the target again.
+6. **Each call carries its own task, as Seastar does.** He chose this over both proposed choices.
+   They were one call lane for each group id on each loop, and a task for each service and group
+   in each station. Seastar's `work_item` derives from `task`, and is built with
+   `task(current_scheduling_group())` (read in `smp.hh`, see "Seastar"). So each `CallRecord`
+   carries a `Task`. The target's drain schedules it in the group that the caller named, and it
+   runs the handler. The caller's drain schedules it in the same group, and it runs `finish`. The
+   call lanes are removed. "The task queue and the fair tick" is the design.
+7. **The names and the tests follow decision 30.** The program declares its names in its root
+   source file, and a test passes its own table (decision 30, ruling items 5 and 7).
+8. **`finish` runs in the call's group on the caller's loop** (open question 9). No
+   `Service.attach` is added.
+
+The per-call task added four more choices. Later the same day he ruled on them, each with its
+proposed answer:
+
+9. **`CallLink` is 64 B, and keeps the pointer `calls_out`.** Item 6 put the task in the record,
+   at 16 B more in the caller's record. The 16 B `Task` takes the place of the lane's
+   8 B `next`, and the 8 B pointer names the count that `finish` lowers. The other choice was 56 B
+   with no pointer, at several dependent loads for each call ("Alternatives it beat"). With the
+   pointer, `CallStation` holds `loop` in place of `run` and `entry`, and `self_out` becomes a
+   `u32`. The station stays 128 B.
+10. **`calls_out` falls when `finish` runs**, on the caller's thread, and not when the drain pops
+    the return. So the calls of one pair bound the queued tasks of calls.
+11. **A call's task has its own limit.** Each push of a call's task uses the limit
+    `tasks_queued_max + call_tasks_max` = 82,368, and so does a call to self. The cap of each
+    group refuses only `schedule` and `schedule_in`. Each bound of a queue's length reads the sum
+    (decision 30, "A queue cap for each group"). Two other choices lost ("Alternatives it beat").
+12. **`Task.Call` gains `call_record: bool`** in its padding, so `discard_tasks` halts on the queued
+    task of a call. `Task.Call` stays 32 B.
 
 It amends decision 2, because it adds a row to the "In version one" table. It also amends these
 records:
@@ -28,10 +62,11 @@ records:
 - decision 5, with a rule of one result for each call;
 - decision 21, at the content of a `Mailbox` and at `header_version`;
 - decision 26, at the count `callbacks_outstanding` and its property P7;
-- decision 27, at `discard_tasks` and at the bound of the task queue;
+- decision 27, at `discard_tasks`, at the bound of the task queue, and at open question 14 for a
+  call;
 - decision 29, at `message_tag_max` and at the compare in the drain;
-- decision 30, which gains named groups for this record, and call lanes in its `Groups` (new with
-  named groups; not ruled).
+- decision 30, which gains named groups for this record, two counts in its `Groups`, and a limit
+  for the push of a call's task.
 
 ## Context
 
@@ -73,17 +108,20 @@ checked these facts in a local copy of Seastar's `src/core/reactor.cc`:
 - Requests wait in `pending_fifo`, and replies in `_completed_fifo`, until `batch_size` of them
   are ready. A `work_item` is a heap object, and its pointer crosses the cores.
 
-Read in Seastar's `include/seastar/core/smp.hh` on 2026-11-07: the timeout of
-`smp_submit_to_options` covers only the wait to be processed on the remote shard, and not the run
-there. A `work_item` takes `current_scheduling_group()` when the caller's shard builds it. That the
-target then runs it in that group was not traced.
+Read in Seastar's `include/seastar/core/smp.hh` on 2026-11-07:
+
+- The timeout of `smp_submit_to_options` covers only the wait to be processed on the remote shard,
+  and not the run there.
+- `work_item` derives from `task`. The caller's shard builds it with
+  `task(current_scheduling_group())`, so each call is a task that carries its group.
+- How the target's scheduler then puts that task in the group's run queue was not traced.
 
 Recalled, and not checked: a pair queue holds 128 items, `batch_size` is 16, and a `submit_to`
 cannot be cancelled.
 
 rotor keeps the pointer to a record, a bound on the requests out for each pair, and a reply path
-that cannot fail. It also keeps the caller's choice of group. It drops the heap, the admission
-wait, and the second queue.
+that cannot fail. It also keeps the caller's choice of group, and a task in each call. It drops the
+heap, the admission wait, and the second queue.
 
 ## The decision
 
@@ -91,12 +129,10 @@ wait, and the second queue.
    type, a reply type and a handler. It holds one station for each loop.
 2. **A call is a record that the caller owns.** The ring carries its address. The record is the
    target's from the push until the target answers, and the caller's again when its result runs.
-3. **The caller names the group, and each loop runs calls in a task that it owns.** (The group and
-   the lanes are new with named groups; not ruled.) A call names a named group of decision 30.
-   Each loop has a call lane, with one task, for each group id. Calls use the lanes of `.default`
-   and of the named groups. The drain
-   links a call to the target's lane of that group, and a return to the caller's lane of the same
-   group. No task crosses threads.
+3. **The caller names the group, and each call carries its own task.** A call names a named group
+   of decision 30. The target's drain schedules the record's task in that group, and the task runs
+   the handler. The caller's drain schedules the same task in the same group, and the task runs
+   `finish`. A loop schedules the task only on its own queue, and only while it owns the record.
 4. **Each accepted call ends with exactly one result** at the caller: `replied`, `expired` or
    `target_stopped`.
 5. **A return never meets a full ring.** A post sees 224 of 256 slots, and at most 32 calls are
@@ -114,7 +150,9 @@ pub fn Service(
     comptime handler: fn (context: *Context, call: *CallRecord(Request, Reply)) Answer(Reply),
 ) type {
     return struct {
-        /// One station for each loop, indexed by `LoopId`. Program memory, 128 B each.
+        /// One station for each loop, indexed by `LoopId`. Program memory, 128 B each. The type
+        /// also has one static `Task.Call`, named after `handler`, which a call's task runs on the
+        /// target.
         stations: [constants.loops_max]core.CallStation,
         /// Every station unused. A program declares the service once, as a static.
         pub const init: @This();
@@ -132,14 +170,16 @@ pub fn Service(
     };
 }
 
-/// The caller's record, in the caller's struct. Size 48 B + Request + Reply, alignment 8.
+/// The caller's record, in the caller's struct. Size 64 B + Request + Reply, alignment 8. Its
+/// link holds the call's task and the pointer `calls_out` (ruling items 6 and 9).
 pub fn CallRecord(comptime Request: type, comptime Reply: type) type {
     return struct {
         link: core.CallLink,
         request: Request,
         reply: Reply,
 
-        /// `finish` runs exactly once for each `send` that returns success.
+        /// `finish` runs exactly once for each `send` that returns success, in the call's task.
+        /// `init` builds a static `Task.Call` for it, named after `Parent` and `field`.
         pub fn init(comptime Parent: type, comptime field: []const u8,
             comptime finish: fn (parent: *Parent, result: CallResult(Reply)) void) @This();
         pub fn is_out(call: *const @This()) bool;
@@ -200,41 +240,61 @@ try append.send(shared, journal_core, &writer.append_call, .{ .bytes = ... },
 | a `send` with a forged group id (`@enumFromInt` above the declared count) | halts, at the caller |
 | a second answer, or an answer from another thread | halts |
 | a call that reaches a loop that never served the service | halts, on the target |
+| `discard_tasks` while the task of a call is queued | halts |
 | `serve` on a station that serves, or in a decision 21 group | halts |
 | `deinit` while a call is out or held, or while a station serves | halts |
 
 ### The flow
 
-1. **`send` on the caller C.** It writes the request, and in the link `origin`, `target`, `group`,
-   `deadline_ns`, `generation + 1` and the state `out`. It calls `call`.
+1. **`send` on the caller C.** It writes the request. In the link it writes `origin`, `target`,
+   `group`, `deadline_ns`, `generation + 1` and the state `out`. It also writes the address of the
+   count of ring C to T, `calls_out`, and the service's static entry in `task.call`. It calls
+   `call`.
 2. **`call`.** It halts on a group id above C's `Groups.named`. At `calls_per_pair_max` in
    `calls_out` of ring C to T, it returns `CallsFull`. Otherwise it pushes
    `{ payload = &link, tag = message_tag_call, reserved = generation }` through `push_post`. On
    success it adds 1 to `calls_out` and to `callbacks_outstanding`. On an error it sets `idle`
    again and changes nothing else.
 3. **The drain on T.** One compare, `tag > message_tag_max`, sends a reserved tag to a cold
-   function, `Inbox.take_reserved`. It checks the link, the group included, and sets `held`. It
-   links the call to T's call lane of the link's group, and adds 1 to `callbacks_outstanding`. It
-   schedules the lane's task in that group when the task is not queued. It writes no event.
-4. **The lane's task on T.** It takes at most `task_budget_left() + 1` links, oldest first, and
-   calls `charge_task` with the count after the first (decision 30). A lane holds calls and
-   returns, and step 7 says what a return does. For each call: when the service's station on T has
-   stopped, it answers `target_stopped`. When the deadline is at or before the cached `now_ns`, it
-   answers `expired`. In both cases the handler does not run. Otherwise the handler runs, through
-   `stations[T].run`: `.now` answers `replied`, and `.later` keeps the call held. The task
-   schedules itself again while its list holds links. A task that a task queues runs in the next
-   tick (decision 27), so one link for each run would serve one call for each tick.
+   function, `Inbox.take_reserved`. It checks the link, the group included, sets `held`, and adds 1
+   to `callbacks_outstanding`. It schedules the record's task in the link's group on T, as
+   `schedule_in` does, with the limit of "The task queue and the fair tick". It writes no event.
+4. **The record's task on T.** Its entry is the service's static `Task.Call`, named after the
+   handler. When the service's station on T has stopped, it answers `target_stopped`. When the
+   deadline is at or before the cached `now_ns` of the station's loop, it answers `expired`. In
+   both cases the handler does not run. Otherwise the handler runs: `.now` answers `replied`, and
+   `.later` keeps the call held. The task is one task of cost 1 (decision 30). A handler that does
+   more work calls `charge_task`, as any task does.
 5. **`answer` on T.** It sets `answered`, and pushes `{ payload = &link, tag =
    message_tag_return, reserved = generation }` through `push`, which sees all 256 slots. It
    subtracts 1 from `callbacks_outstanding`.
-6. **The drain on C.** It checks the link, subtracts 1 from `calls_out`, and sets `back`. It links
-   the return to C's call lane of the same group, and schedules that lane's task.
-7. **The lane's task on C.** It takes links as in step 4. For each one it sets `idle`, subtracts
-   1 from `callbacks_outstanding`, and calls `finish`. So `finish` may send the same record again.
+6. **The drain on C.** It checks the link and sets `back`. It writes the record's `finish` entry in
+   `task.call`. It schedules the record's task in the call's group on C, with the same limit as
+   step 3. It subtracts 1 from `callbacks_outstanding` for the call, and the queued task counts in
+   its place until it runs.
+7. **The record's task on C.** Its entry is the `finish` entry, named after the caller's field. It
+   sets `idle`, subtracts 1 from the count that `link.calls_out` names, and calls `finish`. So
+   `finish` may send the same record again. `calls_out` falls here, and not in the drain (ruling
+   item 10). So the calls of one pair stay at or below `calls_per_pair_max` until each `finish`
+   runs, and that bounds the queued tasks of calls.
 
-A call to the caller's own loop uses no ring. `call` links the record to its own call lane of the
-call's group as `held`. The station's `self_out` bounds such calls at `calls_per_pair_max`. The
-handler and `finish` run in later task runs, never inside `send`.
+A call to the caller's own loop uses no ring. The station's `self_out` bounds such calls at
+`calls_per_pair_max`: `send` writes its address in the link's `calls_out`. The steps change:
+
+- **`call`** checks the group id and the count, as step 2 does. It adds 1 to `self_out`. It adds 1
+  to `callbacks_outstanding` for the call out, as step 2 does. It adds 1 more for the call held, as
+  step 3 does. Then it sets `held` and schedules the record's task in the call's group on its own
+  loop.
+- **`answer`** pushes nothing. It subtracts 1 from `callbacks_outstanding` for the call held, as
+  step 5 does. It subtracts 1 more for the call out, as step 6 does. Then it sets `back`, writes the
+  `finish` entry, and schedules the task again in the same group.
+- **Each push of the task** adds 1 to `callbacks_outstanding`, as any push does. It uses the limit
+  `tasks_queued_max + call_tasks_max`, as the drain does. So `call` never meets `TasksFull`, which
+  `CallError` cannot state (ruling item 11).
+- **The overflow assert** counts a call to self twice, out and held, in its `services_max` term
+  (see "Layout").
+
+The handler and `finish` run in later task runs, never inside `send`.
 
 ### Ownership, the analogue of decision 5
 
@@ -243,15 +303,20 @@ handler and `finish` run in later task runs, never inside `send`.
 
 | state | owner | who writes it |
 |---|---|---|
-| `idle` | the caller | the task of the caller's call lane, just before `finish` |
+| `idle` | the caller | the record's task on the caller's loop, just before `finish` |
 | `out` | the target, from the push | the caller's `send`, before the push |
 | `held` | the target | the target's drain, or `call` for a call to self |
 | `answered` | the caller's loop, from the push | the target's `answer`, before the push |
-| `back` | the caller's loop | the caller's drain |
+| `back` | the caller's loop | the caller's drain, or `answer` for a call to self |
 
 - Each change of owner is a ring push, with the `.seq_cst` store of `tail`, and a pop, with the
   load of `tail`. `mailbox.zig` argues these orderings for a slot's bytes. They also make the
   request visible to the target, and the reply to the caller. The record needs no atomic.
+- The record's task belongs to the loop that owns the record. Only that loop's thread queues it,
+  on its own queue. The target's run pops the task before the handler, and the pop clears `next`.
+  So the task is not queued on the target when `answer` pushes the return, and the caller's push
+  meets an unqueued task. On the target, the push of the return is the last read or write of the
+  record, its task included.
 - The program must not touch the request or the reply while `is_out` is true. Zig cannot refuse
   that, as it cannot refuse a write to a `Completion` in flight.
 - **A call message never outlives its record.** The record leaves `out` only when its message is
@@ -272,13 +337,13 @@ The proof:
 
 1. Each post in ring T to C was pushed while the ring held fewer than 224 messages. So the posts
    in it are at most 224.
-2. Each return in ring T to C answers a call that C counts in `calls_out` until C drains it. So
-   while T pushes one return, the others are at most 31.
+2. Each return in ring T to C answers a call that C counts in `calls_out` until its `finish` runs.
+   So while T pushes one return, the others are at most 31.
 3. So a return push sees at most 255 used slots. A failed return push halts (class B).
 
 | error | meaning | what the caller does |
 |---|---|---|
-| `CallsFull` | 32 calls are out to that target | send again from a later `finish`, or answer its client "busy" |
+| `CallsFull` | 32 calls to that target have not yet run their `finish` | send again from a later `finish`, or answer its client "busy" |
 | `MailboxFull` | the ring holds 224 messages | send again in a later tick, from its own task |
 | `LoopNotFound` | the target has no loop, or it left | the stop order below |
 
@@ -287,62 +352,72 @@ W9's exact counts of refusals count these errors on the slow path.
 
 ### The task queue and the fair tick
 
-- Each call lane has one task, which the drain schedules only when it is not queued. So a group
-  holds at most one call task, for all the services of the loop.
-- A call task is pushed to its group with the limit `tasks_queued_max` + 1. Decision 30 makes
-  `tasks_queued_max` a cap for each group, so a program that fills that group cannot make a drain
-  fail.
-- The first link of a service on a loop sets `attached` in its station, and adds 1 to a new byte
-  `stations` in decision 30's `Groups` header, in its padding. Above `services_max` it halts
-  (class B, cold). So too many services halt at the first call, and not only under load.
-- A lane run takes at most `task_budget_left() + 1` links, and counts as one start of
-  `tasks_per_tick_max`. Its charge is at most `task_budget_left()`, which is at most
-  `tasks_per_tick_max`. A comptime assert holds `tasks_per_tick_max <= task_charge_max` (64 and 64),
-  so the charge never passes decision 30's bound. Call and return messages take no slot of `events`,
-  and W3's cursor pops them inside the mailbox share. So a flood of calls cannot starve I/O or
-  another sender.
-- A lane's task has core's one static `Task.Call`, "calls", whose `function` is `calls_run`. Each
-  `Service` type has its own static `Task.Call`, named after its handler, in its stations. Before
-  each link, the lane's task calls decision 28's `Heartbeat.enter(&entry.name)`. That is one store
-  of `running` with release order for each link: an `stlr` on arm64, a plain store on x86-64.
-- At the end of the turn, `forget_running` copies the last name to `turn_name`, as it does today.
-  So a watch that reads `running` during a stall names the service whose call runs at that time.
-  The stall record of a turn with one lane run names the service of the last link of that run. A
-  run mixes services, so that is not always the slow one. In the proposal, one task for each
-  service named the slow service exactly. "Left for Camilo", item 2, weighs this cost.
-- `discard_tasks` halts on a call lane whose list holds links (class C, cold). It reads each lane's
-  `head`. A call cannot be discarded, because its caller waits for `finish`.
+Camilo chose a task for each call on 2026-11-07, as Seastar's `work_item` is a task. The task is
+`CallLink.task`, in the caller's record. Each run of it is one task of decision 30.
+
+- **A call's task is queued only while its loop owns the record.** On the target it waits from
+  the drain until the handler runs. On the caller it waits from the drain of the return until
+  `finish` runs. A call to self waits once for each of the two runs.
+- **The calls bound the queued tasks of calls.** `calls_out` counts a call from `send` until its
+  `finish` runs (step 7). So on one loop L, at one time, these tasks can wait:
+  - calls from each other loop to L: at most `calls_per_pair_max` each, so (`loops_max` - 1) x 32
+    = 8,160;
+  - calls of L that came back to L: at most `calls_per_pair_max` for each other loop, so 8,160
+    more;
+  - calls to self: at most `calls_per_pair_max` for each station, `self_out`, and at most
+    `services_max` stations, so 16 x 32 = 512.
+- So `call_tasks_max` = (2 x (`loops_max` - 1) + `services_max`) x `calls_per_pair_max` =
+  (510 + 16) x 32 = 16,832, a new constant derived at comptime. It is about a quarter of
+  `tasks_queued_max` (65,536), so the calls alone never fill a group.
+- **A full group cannot make a drain fail.** The program's own tasks can fill a group to its cap,
+  and a drain cannot refuse a call that it popped. So the drain pushes a call's task with the limit
+  `tasks_queued_max + call_tasks_max` = 82,368. The cap refuses only `schedule` and `schedule_in`. A
+  group's `u32` count holds the sum. Each bound of a queue's length reads the sum too (decision 30,
+  "A queue cap for each group"). Camilo ruled this limit on 2026-11-07 (ruling item 11).
+- The first `serve` or `send` of a service on a loop sets `attached` in its station. It also adds 1
+  to a new byte `stations`, in the padding of decision 30's `Groups` header. Above `services_max` it
+  halts (class B, cold). So too many services halt at the first call, and not only under load.
+- A call's task counts as one start of `tasks_per_tick_max`, as any task does. Call and return
+  messages take no slot of `events`, and W3's cursor pops them inside the mailbox share. So a flood
+  of calls cannot starve I/O or another sender. Decision 30's DRR shares each group's starts
+  between its calls and its other tasks.
+- **The stall record names the exact call.** Decision 28's run stores the name of each task's
+  static entry in `running` before the call. On the target, the entry is the service's static
+  `Task.Call`, named after its handler. On the caller, it is the record's `finish` entry, named
+  after the caller's field. So a stall of one call's task names that call, with its group (decision
+  30). This adds no store: the store of `running` is the one that each task run makes.
+- `discard_tasks` halts on a queued task whose static entry has `call_record` set (class C, cold).
+  It reads each task's entry in the walk that it makes anyway. A call cannot be discarded, because
+  its caller waits for `finish`. Camilo ruled the flag on 2026-11-07 (ruling item 12).
 
 ### Scheduling groups (decision 30)
 
-The caller chooses the scheduling group, by Camilo's ruling of 2026-11-07. The design in this
-section is new with named groups, and not ruled ("Left for Camilo"). Seastar does the same: a
-`work_item` takes `current_scheduling_group()` on the caller's shard (read in `smp.hh`, see
-"Seastar"). A reserved group id belongs to one loop. So a call names a `NamedSchedulingGroup`,
-which decision 30's declaration makes the same group on every loop.
+The caller chooses the scheduling group, by Camilo's ruling of 2026-11-07. Seastar does the same:
+its `work_item` is a task, built with `current_scheduling_group()` on the caller's shard (read in
+`smp.hh`, see "Seastar"). A reserved group id belongs to one loop. So a call names a
+`NamedSchedulingGroup`, which decision 30's declaration makes the same group on every loop.
 
-- **The group crosses in the link.** `send` writes the group in a byte of `CallLink`'s padding.
-  The target reads the link in the drain anyway, so the 16-byte `Message` does not change, and
-  `reserved` keeps the generation. The ring's push and pop make the byte visible, as they do for
-  the request.
-- **The target runs the handler in that group.** Each loop has one call lane for each id of a
-  group, after the `end_mark` of decision 30's `Groups`. Calls use the lanes of `.default` and of
-  ids 1 to n, and the others stay empty. The drain links a call to
-  the lane of its group. It schedules the lane's task with `schedule_in(group.scheduling_group(),
-  &lane.task)`.
-- **The caller runs `finish` in the same group.** The drain on the caller links a return to its
-  own lane of the call's group. So a loop that calls and does not serve runs `finish` in a group
-  that its source names. This answers open question 9.
+- **The group crosses in the link.** `send` writes the group in a byte of `CallLink`. The target
+  reads the link in the drain anyway, so the 16-byte `Message` does not change, and `reserved`
+  keeps the generation. The ring's push and pop make the byte visible, as they do for the request.
+- **The target runs the handler in that group.** The drain schedules the record's task in the
+  group `group.scheduling_group()`, on the target's own thread. No thread writes the queue of
+  another loop.
+- **The caller runs `finish` in the same group.** The drain on the caller schedules the same task
+  in the call's group on its own loop. So a loop that calls and does not serve runs `finish` in a
+  group that its source names. Camilo ruled this answer to open question 9 on 2026-11-07.
 - **A forged id halts.** Core's `call` compares the id with the caller's `Groups.named`, and halts
   above it (class B). The check reads the loop and not the root, so a test with its own table
   reaches it. `take_reserved` checks the id again on the target against its own `Groups.named`, with
   the other checks of the link. A target cannot lack a named group, because every loop reserves the
-  declaration at init.
+  declaration at init. Decision 30's check in `schedule_in` compares the id with `reserved`. So it
+  does not catch a forged id that names a group of the target's own reserve.
 - **The target sets no default.** `ServeOptions` is gone. A call that wants no group of its own
   writes `.default`, as decision 30, rule 3 asks of `schedule_in`.
-- **A loop that makes no calls pays nothing new on the hot path.** It reads no lane. A call adds
-  a load and a compare at `call`, and an index at each drain: about 4 instructions. The load reads
-  the `Groups` header, a line that `call` touches for nothing else, so a cold one costs C3.
+- **A loop that makes no calls pays nothing new on the hot path.** No tick reads a structure of
+  this record. A call adds a load and a compare at `call`, and the group's index at each drain:
+  about 4 instructions. The load reads the `Groups` header, a line that `call` touches for nothing
+  else, so a cold one costs C3.
 
 ### A target that stops (W4)
 
@@ -388,58 +463,54 @@ a plain `Message`.
 
 | structure | change | size, alignment |
 |---|---|---|
-| `CallLink` | new, in the caller's record | 48 B, 8 (comptime assert) |
-| `CallStation` | new, in the program's `Service` | 128 B, 128 (comptime assert) |
+| `CallLink` | new, in the caller's record. `task: Task` takes the place of the lane's `next`, and `calls_out: *u32` is added (ruling items 6 and 9) | 64 B, 8 (comptime assert); the proposal had 48 B, and 56 B without the pointer |
+| `CallStation` | new, in the program's `Service`. With the per-call task it holds `loop` in place of `run` and `entry`, and `self_out` is a `u32` | 128 B, 128 (comptime assert) |
 | `Service` | new, in program memory | 32 KiB at `loops_max` 256 |
 | `Mailbox` | `calls_out: u32` after `tail` | 4352 B, 128: no change (comptime assert) |
-| `CallLane` | new with named groups; not ruled. In decision 30's `Groups`, one for each group id | 32 B, 8 (comptime assert) |
-| `Groups` (decision 30) | `stations: u8`, `serving: u8`, in 2 B of its padding. New with named groups; not ruled: `call_lanes: [scheduling_groups_max]CallLane` after `end_mark` | 536 B + 512 B = 1048 B, 8 (comptime assert) |
+| `Groups` (decision 30) | `stations: u8`, `serving: u8`, in 2 B of its padding; no call lanes | 536 B, 8: no change |
 | `Message` | none: the group crosses in `CallLink`, and `reserved` keeps the generation | 16 B: no change |
 | `Dispatch`, `Tasks`, `Inbox`, `Tables` | none. Decision 30 leaves no padding in `Dispatch` | no change |
-| `Task.Call` | one static entry for each `Service` type | static data |
+| `Task.Call` | one static entry for each `Service` type and one for each `finish`. `call_record: bool` in its padding (ruling item 12) | 32 B (decision 30): no change; static data |
 
-The overflow assert of `callbacks_outstanding` (decision 30) gains the call tasks and the calls:
-`scheduling_groups_max + 2 * (loops_max - 1 + services_max) * calls_per_pair_max`, which is 17,360.
-Its first term is new with named groups, and not ruled: the proposal had `services_max`, also 16.
-A loop holds at most one call task for each group. It counts a call it sent and a call it holds,
-and `self_out` bounds the calls to self at `calls_per_pair_max` for each station.
+The overflow assert of `callbacks_outstanding` (decision 30) gains the calls and their tasks. The
+term is `2 * (loops_max - 1 + services_max) * calls_per_pair_max + call_tasks_max`, which is
+17,344 + 16,832 = 34,176. A loop counts a call that it sent until its return reaches the drain,
+and a call that it holds until it answers. A queued call's task counts as any task does.
+`self_out` bounds the calls to self at `calls_per_pair_max` for each station. The proposal's first
+term, `services_max` call tasks, is gone.
 
 ```zig
-/// The part of a call that the loops link and post (decision 32). Size 48 B, alignment 8.
+/// The part of a call that the loops schedule and post (decision 32). Size 64 B, alignment 8.
 pub const CallLink = struct {
-    next: ?*CallLink, // the list of the call lane that holds it; its owner writes it
+    task: Task, // 16 B; its `call` is the service's entry on the target, `finish` on the caller
     stations: *[constants.loops_max]CallStation, // the service's stations; `send` writes it
-    finish: *const Finish, // a static entry, as `Task.Call` is; `init` writes it
+    finish: *const Task.Call, // a static entry named after the caller's field; `init` writes it
+    calls_out: *u32, // the count of ring origin to target, or the station's `self_out`
     deadline_ns: u64, // 0: none
     generation: u32, // plus 1 for each `send`; the message's `reserved` carries it
     origin: LoopId,
     target: LoopId,
     state: State, // idle, out, held, answered, back
     outcome: u8, // replied, expired, target_stopped; `answer` writes it
-    group: NamedSchedulingGroup, // the caller's choice; `send` writes it (not ruled)
+    group: NamedSchedulingGroup, // the caller's choice; `send` writes it
     // 5 B of padding
 };
 
 /// One service on one loop. Only that loop's thread writes it. Size 128 B, alignment 128.
 pub const CallStation = struct {
     context: ?*anyopaque, // `serve` writes it
-    run: *const fn (station: *CallStation, link: *CallLink) void, // the service's trampoline
-    entry: *const Task.Call, // the service's static entry, named after its handler
+    loop: ?*SharedLoop, // `serve` writes it; a call's task reads `now_ns` and answers through it
     held: u32, // calls answered `.later` and not yet answered
-    self_out: u16,
+    self_out: u32, // calls to self that have not yet run their `finish`
     state: enum(u8) { unused, serving, stopped },
     attached: bool,
-    // 96 B of padding to 128
-};
-
-/// The calls and returns of one group on one loop (new with named groups; not ruled). Only that
-/// loop's thread writes it. Size 32 B, alignment 8.
-pub const CallLane = struct {
-    task: Task, // 16 B: core's static entry "calls", whose function is `calls_run`
-    head: ?*CallLink, // the links to run, oldest first
-    tail: ?*CallLink,
+    // 102 B of padding to 128
 };
 ```
+
+Before the ruling, each loop held 16 call lanes of 32 B in `Groups`, 512 B, which every service
+shared. The per-call task removes them. In their place each call pays 16 B in its record. The
+`Task` takes 8 B more than the lane's `next`, and `calls_out` takes 8 B.
 
 The 128 B is `mailbox_index_alignment`, so two loops' stations never share a line on Apple
 silicon. 64 B is enough on x86-64 (open question 6).
@@ -450,7 +521,8 @@ New constants in `src/core/constants.zig`, each with a doc comment:
 |---|---|---|
 | `calls_per_pair_max` | 32, a prior | `< mailbox_messages` |
 | `mailbox_posts_max` | `mailbox_messages - calls_per_pair_max` = 224 | `>= messages_per_drain` |
-| `services_max` | 16, a prior | `tasks_queued_max + services_max` fits in u32 |
+| `services_max` | 16, a prior | `<= maxInt(u8)`, the byte `stations` |
+| `call_tasks_max` | `(2 * (loops_max - 1) + services_max) * calls_per_pair_max` = 16,832; ruling item 11 | `tasks_queued_max + call_tasks_max` fits in u32 |
 | `message_tag_max` | `0x7fff_effd` (decision 29: `0x7fff_efff`) | `< message_tag_call` |
 | `message_tag_call` | `0x7fff_effe` | `< message_tag_return` |
 | `message_tag_return` | `0x7fff_efff` | `< message_tag_wake` |
@@ -471,7 +543,7 @@ Every number is a prior. The baselines are the `macos-aarch64-kqueue` section of
 | each drained message | 0: `tag > message_tag_max` replaces decision 29's `== message_tag_wake` |
 | each post | 0: `push_post` compares with 224 where `push` compares with 256 |
 | a wake | 1 compare at the post |
-| memory | 0 in `Mailbox` and `Dispatch`; 2 B of padding in decision 30's `Groups`; 512 B of call lanes in `Groups`, which no tick reads (new with named groups; not ruled) |
+| memory | 0 in `Mailbox`, `Dispatch` and `Groups`: the two counts use 2 B of the padding of decision 30's `Groups`. The per-call task adds no structure to a loop. |
 
 So each row of the work gate is expected to stay inside its 2 percent. The gate must show it
 before the build lands. The one change of behaviour: a post gets `MailboxFull` at 224 messages in
@@ -479,30 +551,36 @@ a ring, where it got it at 256.
 
 | one call round trip, both loops awake | instructions |
 |---|---|
-| `send` and `call`: owner, the load of `Groups.named` and the group compare, state, the registry's decision 21 flag, `calls_out`, `push_post`, the wake note | about 42 |
-| drain on T: the cold branch, 5 compares, the lane index, the link, the schedule | about 32 |
-| lane task on T: the task run, the heartbeat's release store, the state, the deadline, the trampoline (C5); a run of several links shares the task run | about 31, and the release store's order on arm64 |
+| `send` and `call`: owner, the load of `Groups.named` and the group compare, state, the registry's decision 21 flag, `calls_out` and the link's pointer to it, the entry in `task.call`, `push_post`, the wake note | about 44 |
+| drain on T: the cold branch, 5 compares, the state, the group's index, one push of the record's task (decision 30's `schedule_in(g)` row, about 12) | about 30 |
+| the record's task on T: one task run on the groups path (decision 30, about 16, with the heartbeat's store that each task run makes), then the trampoline: the station, its state, the deadline, the handler (C5) | about 28 |
 | `answer`: state, `push`, the wake note | about 25 |
-| drain on C: compares, `calls_out`, the lane index, the link, the schedule | about 31 |
-| lane task on C: the task run, the heartbeat's release store, `finish` (C5) | about 26, and the release store's order on arm64 |
-| **sum** | **about 187** |
+| drain on C: compares, the state, the `finish` entry in `task.call`, one push of the record's task | about 28 |
+| the record's task on C: one task run, the state, `calls_out` through the link's pointer, `finish` (C5) | about 24 |
+| **sum** | **about 179** |
+| a visit of decision 30 on each side, when the group is not `.default` and the visit runs only the call's task | up to 2 x 13 more |
 
-- In the shape of the `post` row, 1247 instructions, a call round trip is about 1,440.
+- In the shape of the `post` row, 1247 instructions, a call round trip is about 1,430, or about
+  1,450 with the two visits.
+- So each call costs one push and one task run on each loop. A loop that makes no calls and
+  serves none runs none of these paths.
 - Latency awake: two messages, 2 x C19 (97.0 ns on `mac`), and the record's lines, about 2 x C3
   (128 ns on `mac`): about 450 ns.
 - A target that sleeps adds what a post's wake adds: C18 (18,125 ns on `mac`) on kqueue, C17 on
   io_uring, sent at the sender's next flush (F19).
-- A target holds at most (`loops_max` - 1) x 32 = 8,160 calls in its call lanes. That is a
-  bound, and not a memory cost: the records are the callers'.
+- A loop queues at most `call_tasks_max` = 16,832 tasks of calls. That is a bound, and not a
+  memory cost: the records and their tasks are the callers'. Each call costs 16 B more in its
+  record than in the proposal (see "Layout").
 
 ## Determinism
 
-- A call lane runs its links in the order its loop popped them, which is W3's cursor order. Decision
-  30's DRR order chooses when each lane's task runs, from the call sequence.
+- A loop queues the tasks of calls in the order that it popped the calls, which is W3's cursor
+  order. Inside a group they run in that order. Decision 30's DRR order chooses when each group
+  runs, from the call sequence.
 - The deadline is compared with the tick's cached `now_ns`, so no new clock read happens (decision
   9, rule 4). A replay twin supplies `now_ns`, as it does for timers.
-- `discard_tasks` reads each lane's `head`. No decision depends on the order or the value of a
-  pointer.
+- `discard_tasks` reads the static entry of each queued task. No decision depends on the order or
+  the value of a pointer.
 - When a call arrives depends on another thread, as for any post (decision 4).
 
 ## Where it meets the records
@@ -518,18 +596,21 @@ a ring, where it got it at 256.
   changes, best in the same bump as decision 29's.
 - **Decision 26.** Open question 2 left a record in a post to a later record. This is that record.
   `callbacks_outstanding`, and P7, also count calls out and calls held.
-- **Decision 27.** Open question 14 stands: the drain schedules a call task that the loop that
-  receives it owns, and links the caller's record to it. `discard_tasks` halts on a call lane with
-  links. A call task has its own bound above `tasks_queued_max`: one for each group.
-- **Decision 28.** `SharedLoop.library_calls` gains `call` and `answer`. The heartbeat names the
-  service of each link, through one store of `running` with release order. A stall record of a lane
-  run names the service of its last link.
+- **Decision 27.** Open question 14 says that a post carries no task, and that a library
+  schedules its own task. A call message carries the address of a record that holds a task.
+  Camilo's choice of 2026-11-07 amends the question for calls only. The target's own thread
+  schedules the task, after the pop gives its loop the record. No thread writes the queue of
+  another loop, and a plain post still carries no task. `discard_tasks` halts on the queued task
+  of a call. The task of a call has its own limit above `tasks_queued_max`, `call_tasks_max` more
+  (ruling item 11).
+- **Decision 28.** `SharedLoop.library_calls` gains `call` and `answer`. The heartbeat names each
+  call's task as it names any task: the service's handler on the target, `finish` on the caller.
 - **Decision 29.** `message_tag_max` falls by two. The drain's compare becomes `>`.
-- **Decision 30.** It is built first, with named groups (new; not ruled). The caller's named group
-  runs the handler on the target and `finish` on the caller. A lane run follows decision 30's rule
-  for a cost that varies, and charges each link after the first. `stations` and `serving` sit in
-  the padding of its `Groups` header, and the call lanes follow `end_mark`. Its overflow assert
-  gains the call tasks and the calls. `discard_tasks` halts on a call lane with links.
+- **Decision 30.** It is built first, with named groups. The caller's named group runs the handler
+  on the target and `finish` on the caller, each in one task of cost 1. `stations` and `serving`
+  sit in the padding of its `Groups` header. Its overflow assert gains the calls and their tasks.
+  `discard_tasks` halts on the queued task of a call, through a flag in `Task.Call` (ruling item
+  12). The bounds of a queue's length read `tasks_queued_max + call_tasks_max` (ruling item 11).
 - **Decision 31.** A handler that answers `.later` after a file operation keeps its call `held`
   while the I/O queue holds that operation. The call's deadline does not reach the operation.
 
@@ -539,9 +620,15 @@ a ring, where it got it at 256.
 |---|---|
 | a future, as Seastar returns | it needs memory for each call, and rotor allocates nothing |
 | a second ring for each pair, for replies, as Seastar has | it doubles the registry, which grows as N squared (F14) |
-| the caller's task scheduled on the target's queue | it carries a task across threads, which decision 27, open question 14 rules out |
+| the caller's thread schedules a task on the target's queue | it writes the queue of another loop from another thread, which decision 27, open question 14 rules out; here the target's own thread schedules the record's task |
 | the target chooses the group, at `serve` | Camilo ruled for the caller's choice on 2026-11-07, as Seastar does |
-| a task for each service and group, in each station | 32 B for each group in each station, and 256 stations for each service; one call lane for each group serves every service |
+| one call lane for each group id on each loop, which every service shares (the design before the ruling) | 512 B in each loop's `Groups`, and a limit of `tasks_queued_max` + 1 in each group. A lane run mixes services, so its stall record named only the service of its last link. It also added one store of `running` for each link. Camilo chose a task for each call on 2026-11-07. |
+| a task for each service and group, in each station | 32 B for each group in each station, and 256 stations for each service; Camilo chose a task for each call on 2026-11-07 |
+| a `CallLink` of 56 B, with no pointer `calls_out` | the task on the caller finds the ring's count through the station of its loop. That station must hold a pointer to the loop, and each call makes several dependent loads. Camilo ruled for 64 B with the pointer on 2026-11-07 (ruling item 9). |
+| `calls_out` falls when the drain pops the return, as the proposal said | the tasks of returns that wait for `finish` then have no bound. A group with small shares can hold many of them while another group sends new calls. Under the ruled answer, a caller whose `finish` waits gets `CallsFull` sooner. The return proof holds under both (ruling item 10). |
+| `schedule` and `schedule_in` refuse at `tasks_queued_max - call_tasks_max`, so the cap holds for every push | a library gets `TasksFull` at 48,704 tasks. That changes the meaning of a named limit for every program. The calls alone reach at most 16,832 tasks, about a quarter of `tasks_queued_max` (ruling item 11). |
+| the drain stops popping a ring while the call at its head names a full group, so the call waits in the ring and the cap holds | one full group on T blocks every message behind the call in ring C to T (head-of-line). Posts, calls in other groups and the returns of T's own calls wait there. So the tasks of one group delay the work of every group. The drain also pops in batches today (`pop_into`), and this needs a read of the head before the pop (ruling item 11). |
+| a count of the queued tasks of calls in the 2 B left in the `Groups` header, for `discard_tasks` | a write at each push and each run of a call's task. The flag `call_record` costs nothing on any path (ruling item 12). |
 | the group in `Message.reserved`, beside a 24-bit generation | the target reads the link anyway; the link has room, and the generation keeps 32 bits |
 | the handler called inline in the drain | its work is bounded by the mailbox share and not by `tasks_per_tick_max` |
 | a state word with a CAS, and a `closed` bit read after the push | the sender that wins the CAS frees the record while the target may sit between its pop and its CAS; it also changes the sleep handshake |
@@ -555,11 +642,11 @@ a ring, where it got it at 256.
 
 ## How it would be checked
 
-**How tests name groups** (new with named groups; not ruled). For a test, root is Zig's own test
+**How tests name groups** (decision 30, ruled on 2026-11-07). For a test, root is Zig's own test
 runner, which declares no `rotor_scheduling_groups`. So every test, scenario and mutation below that
 needs n > 0 uses decision 30's generic machinery, as its "How tests name groups" says:
 
-- Unit tests 3 and 5, and the random groups of property test 6, call
+- Unit tests 3, 5 and 6, and the random groups of property test 8, call
   `core.scheduling.Named(.{ .low = 100, .high = 300 })` and pass its `table` to
   `Groups.reserve_named`.
 - The conformance scenario at shares 100 and 300 passes that table in the backend's
@@ -567,7 +654,7 @@ needs n > 0 uses decision 30's generic machinery, as its "How tests name groups"
 - The halt scenario of a forged group id goes through the public module's `send`. Its file is the
   root of its executable, so it declares `rotor_scheduling_groups` itself, and `call` compares the
   forged id with that declaration's n.
-- The mutations that point at tests 3 and 5 are measured with these tables, so n > 0 there.
+- The mutations that point at tests 3, 5 and 6 are measured with these tables, so n > 0 there.
 
 No custom test runner is added, and no file under `build/` changes.
 
@@ -575,18 +662,24 @@ No custom test runner is added, and no file under `build/` changes.
 
 1. A ring with 224 posts and 31 returns takes one more return. `push_post` refuses at 224, and
    `push` takes 256.
-2. `calls_out` refuses the 33rd call, and a drained return lowers it.
-3. The drain takes a call and a return, writes no event, and links each to the lane of the
-   call's group.
-4. A lane run takes at most `task_budget_left() + 1` links, and charges the rest. It answers
-   `expired` and `target_stopped` with no handler run, and sets `idle` before `finish`.
+2. `calls_out` refuses the 33rd call. A drained return does not lower it, and its `finish` does.
+3. The drain takes a call and a return, and writes no event. It schedules the record's task in the
+   call's group: with the service's entry on the target, and with the `finish` entry on the caller.
+4. The record's task on the target answers `expired` and `target_stopped` with no handler run. On
+   the caller it sets `idle` and lowers the count before `finish`.
 5. A call in a named group runs its handler in that group on the target, and `finish` in that
    group on the caller. A loop that only calls runs `finish` in the call's group.
-6. A property test seeded from `core.random`, which prints its seed: two model loops in one
+6. A group that holds `tasks_queued_max` tasks of the program refuses `schedule_in`, and its drain
+   still takes the task of a call.
+7. A fabricated stall in a call's task names the call's group. On the target it names the
+   service's handler, and on the caller it names the caller's `finish` field.
+8. A property test seeded from `core.random`, which prints its seed: two model loops in one
    thread make a random mix of posts, calls in random groups, calls to self, `.now` and `.later`
    answers, deadlines, `stop_serving` and drains with small event arrays. Invariants: a return push
-   never fails; `calls_out` stays at 32 or less; each accepted call gets one `finish` and at most
-   one handler run, both in the call's group; `callbacks_outstanding` is 0 at the end.
+   never fails; `calls_out` stays at 32 or less; the queued tasks of calls on each loop stay at or
+   below the bound of "The task queue and the fair tick" for two loops; each accepted call gets one
+   `finish` and at most one handler run, both in the call's group; `callbacks_outstanding` is 0 at
+   the end.
 
 **Conformance scenarios** on each backend, and again with the spin budget: 10,000 calls between
 two loops with checked replies; the 33rd call to one target gives `CallsFull`; ring T to C holds
@@ -594,7 +687,7 @@ two loops with checked replies; the 33rd call to one target gives `CallsFull`; r
 `.later` answer after a timer; a past deadline gives `expired` with no handler run; a call to self
 uses no ring; a loop releases its id, a second loop claims it and serves the call that waited;
 calls in two named groups at shares 100 and 300 run their handlers in decision 30's ratio, within
-its G3 bound (new with named groups; not ruled).
+its G3 bound.
 
 **Race gate.** Four loops call each other with deadlines while one stops serving. The oracle: for
 each loop, calls accepted = `replied` + `expired` + `target_stopped`, and every `calls_out` is 0.
@@ -602,9 +695,10 @@ each loop, calls accepted = `replied` + `expired` + `target_stopped`, and every 
 **Model.** `spec/tla/call/Call.tla`, checked by `zig build tla`: two loops, one record reused, a
 bounded ring with posts, `.later`, and `stop_serving`. Invariants: one result for each send; no
 write by the target while the caller owns the record; the return push never fails; `calls_out`
-equals the records `out`, `held` or `answered`. Mutants, which must fail: posts ignore the
-reserve; the drain does not lower `calls_out`; `idle` is set after `finish`; a `stopped` station
-runs the handler.
+equals the records `out`, `held`, `answered` or `back`; the record's task is queued on at most one
+loop, and only on the loop that owns the record. Mutants, which must fail: posts ignore the
+reserve; `finish` does not lower `calls_out`; `idle` is set after `finish`; a `stopped` station
+runs the handler; the target schedules the task again after its return push.
 
 **Compile-fail tests** (`zig build test-compile-fail`): a handler that returns `void`; `.now` with
 no reply; a `finish` that takes a reply of another type; a `send` with a `Remote`; a `CallOptions`
@@ -621,31 +715,33 @@ with no group, or with a `SchedulingGroup`.
 | `serve` on a station that serves | station state | C |
 | `serve` or `call` in a group registry | `registry.group` | B |
 | `take_reserved` with a wrong origin, target, generation or group, through its parameters | the link | B |
-| a return with `calls_out` at 0, through its parameters | `calls_out` | B |
+| a call's task on the caller whose count is 0, through a made-up record | `calls_out` | B |
 | more than `services_max` stations on one loop | `stations` | B |
-| `discard_tasks` with a call lane that holds links | the list | C |
+| `discard_tasks` with the task of a call queued | the entry's `call_record` | C |
 | `deinit` with a call out, or a station that serves | `assert_empty` | C |
 
 **Mutations,** each against the narrowest target, each expected `CAUGHT`:
 
 | mutation | target |
 |---|---|
-| `push_post` uses 256 | `test-core`, tests 1 and 6 |
+| `push_post` uses 256 | `test-core`, tests 1 and 8 |
 | `answer` uses `push_post` | `test-core`, test 1, and the 224-post scenario |
-| `call` does not raise `calls_out`, or the drain does not lower it | `test-core`, test 2 |
+| `call` does not raise `calls_out`, or the task on the caller does not lower it | `test-core`, test 2 |
+| the drain on the caller lowers `calls_out`, and `finish` does not | `test-core`, test 2, and the bound of test 8 |
 | the drain writes a call as an event | `test-core`, test 3 |
-| the lane runs every link in one run | `test-core`, test 4 |
-| the lane does not call `charge_task` | `test-core`, test 4 |
-| the drain links a call to the `.default` lane and not to the link's group | `test-core`, tests 3 and 5 |
-| the caller's drain links a return to the `.default` lane | `test-core`, test 5 |
+| the drain schedules a call in `.default` and not in the link's group | `test-core`, tests 3 and 5 |
+| the caller's drain schedules the `finish` in `.default` | `test-core`, test 5 |
+| `send` does not write the service's entry in `task.call` | `test-core`, tests 3 and 7 |
+| the caller's drain does not write the `finish` entry | `test-core`, tests 3 and 5 |
+| the drain pushes a call's task with the cap of `schedule_in` | `test-core`, test 6 |
 | `Loop.init` does not reserve the table of its options | conformance, the scenario at shares 100 and 300: `call` halts, because `Groups.named` stays 0 |
 | `send` does not check the group id | `halt-check` |
-| the lane's task does not store the service's entry | `test-core`, a fabricated stall |
 | the deadline check or the `stopped` check removed | `test-core`, test 4 |
 | `idle` set after `finish` | `test-core`, test 4 |
-| `callbacks_outstanding` not raised for a call out | `test-core`, test 6, and `halt-check` |
+| `callbacks_outstanding` not raised for a call out | `test-core`, test 8, and `halt-check` |
 | `answer` does not wake a target that sleeps | conformance, each backend |
-| a call to self goes through a ring | `test-core`, test 6 |
+| a call to self goes through a ring | `test-core`, test 8 |
+| `discard_tasks` ignores `call_record` | `halt-check` |
 | each halt deleted | `halt-check`, or the Linux gate where a Linux call follows it |
 
 **The work gate** holds every row within 2 percent, and gains a `call` row. `conformance_cost.zig`
@@ -654,15 +750,17 @@ gains a bound for a call round trip, at 10 times the measured value.
 ## Open questions
 
 Camilo ruled on each one on 2026-11-07. Questions 1 to 8 take the proposed answer. Question 10
-takes the other answer. This record reads that as the answer to question 9, and says so there.
+takes the other answer, and he then ruled question 9 to follow it.
 
 1. **`calls_per_pair_max`.** (a) 32. (b) 64, which leaves 192 slots for posts. *Ruled: (a), until
    stompy measures the depth of its journal pipeline. `CallsFull` says when it is reached.*
 2. **The reserve.** (a) A constant 224 for every program. (b) A registry option that turns calls
    on, at one load for each post. *Ruled: (a). (b) is the fallback if the loss of 32 slots costs a
    consumer, for example a `Remote` or a decision 21 group.*
-3. **A call to self.** (a) Through the loop's own call lane, with no ring. (b) A halt, as a post to
-   self halts. *Ruled: (a). stompy's shard is a hash of the key, so about 1 call in N is local.*
+3. **A call to self.** (a) Through the loop's own task queue, with no ring. (b) A halt, as a post
+   to self halts. *Ruled: (a). stompy's shard is a hash of the key, so about 1 call in N is local.*
+   The proposal ran it through a call lane. With the per-call task, the loop schedules the record's
+   task in the call's group.
 4. **A call to a loop that never served.** (a) A halt on the target. (b) A `not_served` result.
    *Ruled: (a). It is a mistake of the program, and a halt stops the process at once.*
 5. **A target whose thread exits on a fatal tick error (F6).** (a) R7's end call answers its held
@@ -679,10 +777,8 @@ takes the other answer. This record reads that as the answer to question 9, and 
    in `.default`, which no library source names, against decision 30, rule 3. (a) Keep
    `.default`, and the guide says so. (b) Add `Service.attach(shared, options)`, which sets the
    caller's station group without `serve`. The proposed answer was (a), and Camilo accepted the
-   proposed answers except on the group. This record reads question 10 as the answer: the call
-   names its group, and `finish` runs in that group on the caller. No `Service.attach` is needed.
-   That is the editor's reading of the ruling, not his words, and "Left for Camilo", item 4, asks
-   it.
+   proposed answers except on the group. *Ruled on 2026-11-07, after question 10: `finish` runs in
+   the call's group on the caller's loop.* No `Service.attach` is needed.
 10. **Who chooses a call's group.** (a) The target, at `serve`, through `ServeOptions`. A group id
     then belongs to one loop. (b) The caller, in `CallOptions`, as Seastar does. A group id then
     names one group on every loop, so decision 30 gains named groups. *Ruled: (b), "B now, named
@@ -690,33 +786,9 @@ takes the other answer. This record reads that as the answer to question 9, and 
 
 ## Left for Camilo
 
-The design for question 10 adds these choices, which he has not ruled. Each item that the text
-above labels "new with named groups; not ruled" waits on them. Each choice has a proposed answer,
-and the text above follows it.
-
-1. **A default group on the target.** (a) None: `ServeOptions` is gone, and each call names its
-   group, `.default` included. (b) `ServeOptions` keeps a `NamedSchedulingGroup` for calls whose
-   `group` is null. *Proposed: (a).* With a default on the target, the group of a call depends on
-   the target again. Decision 30, rule 3 asks a library to name its group in each call.
-2. **Where a loop queues its calls.** (a) One call lane for each group id on each loop, in decision
-   30's `Groups`, which every service shares. (b) A task for each service and each group, in each
-   station. *Proposed: (a).* It holds the call tasks to one for each group, and the queue bound
-   becomes `tasks_queued_max` + 1 in each group. Its costs:
-   - Every loop's memory grows by 512 B, a lane for each of the 16 ids. The size then does not
-     depend on the program, so `Groups` keeps one comptime assert. Lanes for ids 0 to n only would
-     cost 32 B × (n + 1), which is 128 B at stompy's n = 3. But `Groups` would then take its size
-     from the table at init.
-   - Each link costs one store of the heartbeat's `running` with release order.
-   - The stall record of a lane run names the service of the last link, which is not always the
-     slow one. Under (b) the task named the service exactly. (b) grows each station by 32 B for
-     each group, and a service has 256 stations.
-3. **The declaration of the names, and how tests name groups.** Decision 30's "Left for Camilo",
-   items 1 and 3, ask these. This record follows the proposed answers. The public module reads the
-   root file, core is generic over a declaration, and a test passes its own table.
-4. **Open question 9.** (a) Read question 10 as its answer: `finish` runs in the call's group, and
-   no `Service.attach` is added. (b) Keep the accepted answer (a) of question 9, `.default`, for a
-   loop that calls and does not serve. *Proposed: (a).* Under (b), `finish` runs in a group that the
-   call did not name.
+Nothing. Camilo ruled every item of this list on 2026-11-07. Items 5 to 8 of "Ruling, 2026-11-07"
+hold the first list. Items 9 to 12 hold the four choices of the per-call task. "Alternatives it
+beat" holds the choices that lost.
 
 ## Ask before
 
@@ -728,25 +800,27 @@ These items of CLAUDE.md's "Ask before" apply:
 | a named limit: the room for a post | 256 of 256 | `mailbox_posts_max`, 224 of 256 |
 | a named limit: `message_tag_max` | `0x7fff_efff` (decision 29) | `0x7fff_effd` |
 | new named limits | | `calls_per_pair_max` 32, `services_max` 16, two tags |
+| a new derived limit | | `call_tasks_max` = 16,832; ruled 2026-11-07 (ruling item 11) |
 | the layout of a hot structure: `Mailbox` | | `calls_out` on the `tail` line; size unchanged; `header_version` + 1 |
-| the layout of decision 30's `Groups` | | `stations` and `serving`, 1 B each, in its padding |
-| the layout of decision 30's `Groups` (new with named groups; not ruled, "Left for Camilo", item 2) | 536 B | `call_lanes: [16]CallLane` after `end_mark`, 512 B, so 1048 B |
-| the bound of the task queue (new with named groups; not ruled, "Left for Camilo", item 2) | `tasks_queued_max` for each group (decision 30) | + 1 in each group, for its call task; the push's assert `queued_max <= tasks_queued_max` changes with it. The proposal had + `services_max`. |
-| the overflow assert of `callbacks_outstanding` | decision 30's sum | + 17,360 for call tasks and calls. Its first term, `scheduling_groups_max`, is new with named groups and not ruled ("Left for Camilo", item 2). |
+| the layout of decision 30's `Groups` | | `stations` and `serving`, 1 B each, in its padding; no call lanes |
+| the size of `CallLink`, in each caller's record | 48 B in the proposal | 64 B: `task: Task` in place of `next`, and `calls_out: *u32`; ruled 2026-11-07 (ruling items 6 and 9) |
+| the layout of decision 30's `Task.Call` | 32 B (decision 30) | `call_record: bool` in its padding; size unchanged; ruled 2026-11-07 (ruling item 12) |
+| the bound of the task queue | `tasks_queued_max` for each group (decision 30) | a call's task, a call to self included, is pushed with the limit `tasks_queued_max + call_tasks_max`. In `Tasks`, four bounds read that sum: the assert `queued_max <= tasks_queued_max` in `push`, the count check in `assert_shape`, the loop bound of `discard` and the walk bound of `assert_queue`. In decision 30's `Groups`, the same four of each lane read it. Ruled 2026-11-07 (ruling item 11). |
+| the overflow assert of `callbacks_outstanding` | decision 30's sum | + 34,176 for the calls and their tasks |
 
 - **New public names:** `Service`, `CallRecord`, `Answer`, `CallResult`, `CallOptions`, `CallError`,
   `CallLink`, `CallStation`, and `call` and `answer` on `SharedLoop` and on each `Loop`. `CallLink`
   and `CallStation` are public because the program's `CallRecord` and `Service` hold them.
-  `CallLane` is not public: it lives in core's `Groups`, in the loop's memory, and no program
-  declares one.
-- **New with named groups; not ruled:** `CallOptions.group`, which takes decision 30's
-  `NamedSchedulingGroup` and has no default. `ServeOptions` is gone ("Left for Camilo", item 1).
+- **`CallOptions.group`**, which takes decision 30's `NamedSchedulingGroup` and has no default.
+  `ServeOptions` is gone. Camilo ruled both on 2026-11-07.
 - **New halts** in `discard_tasks` and in `deinit`. They change decision 27's shutdown contract.
 - **Records not yet built:** W3 first, then decision 29, then decision 30, then this record. W4's
   `leave`, and R7 and R8 come later. This record states what it needs of each.
 
 It adds no dependency, no edge to the module graph, no file to decision 7's list, and no file
-under `build/`. It weakens no assertion, and moves none to a slower class.
+under `build/`. It moves no assertion to a slower class. The limit of ruling item 11 widens eight
+bounds by `call_tasks_max`. They are the four of `Tasks` above, and the same four of each lane of
+decision 30's `Groups`. Camilo ruled it on 2026-11-07. No other assertion is weakened.
 
 ## Sources
 
@@ -757,6 +831,8 @@ under `build/`. It weakens no assertion, and moves none to a slower class.
   of them. This record takes the first, with parts of the other two.
 - Seastar's `src/core/reactor.cc`, `smp_message_queue`, read in a local copy on 2026-11-07. The
   facts that the section "Seastar" marks as recalled were not checked.
+- Seastar's `include/seastar/core/smp.hh`, read on 2026-11-07: `work_item` derives from `task`, and
+  is built with `task(current_scheduling_group())`.
 - Decisions 2, 4, 5, 8, 9, 18, 21, 26, 27, 28 and 29.
 - `src/core/mailbox.zig`, `src/core/remote.zig`, `src/core/inbox.zig`, `src/core/tasks.zig`,
   `src/core/shared_loop.zig`, `src/core/operation.zig` and `src/core/constants.zig` at `5e9490d`.
