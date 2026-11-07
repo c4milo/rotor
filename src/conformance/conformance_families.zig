@@ -205,9 +205,31 @@ test "an IPv4 datagram carries its peer, its local address and its codepoint, an
     try question_and_answer(&loopback4);
 }
 
-/// `::`, port 0. A socket bound here takes IPv6 datagrams and, unless it is set IPv6-only, IPv4
-/// ones too, which the kernel names by their IPv4-mapped addresses (`::ffff:a.b.c.d`).
-const any6 = Address.ipv6(@splat(0), 0, 0);
+/// The most ports `open_dual_stack` tries before it gives up.
+const dual_stack_attempts_max = 8;
+
+/// A socket bound to `::`, which takes IPv6 datagrams and, unless it is set IPv6-only, IPv4 ones
+/// too, which the kernel names by their IPv4-mapped addresses (`::ffff:a.b.c.d`).
+///
+/// Its port is one that no other socket holds in either family. macOS gives a socket bound to
+/// `[::]:0` a port that a socket on 127.0.0.1 can already hold, and that socket then takes the
+/// IPv4 datagrams sent to the port. A bind to a named port checks both families, so the port comes
+/// from an IPv4 socket that is closed first. When another process takes the port before the bind,
+/// the bind fails and the next port is tried.
+fn open_dual_stack() !core.Descriptor {
+    var attempt: u32 = 0;
+    while (attempt < dual_stack_attempts_max) : (attempt += 1) {
+        const placeholder = try sync.open_datagram(.ipv4, &loopback4, .{});
+        const local = sync.local_address(placeholder);
+        sync.close_now(placeholder);
+        const any6 = Address.ipv6(@splat(0), (try local).port, 0);
+        return sync.open_datagram(.ipv6, &any6, .{}) catch |err| switch (err) {
+            error.AddressInUse => continue,
+            else => return err,
+        };
+    }
+    return error.AddressInUse;
+}
 
 /// Checks that `peer` is the IPv4-mapped form of 127.0.0.1 at `port`.
 fn expect_mapped_loopback(peer: *const Address, port: u16) !void {
@@ -233,7 +255,7 @@ test "a socket bound to :: carries an IPv4 peer's codepoint both ways" {
     try harness.init(0, null);
     defer harness.deinit();
     const groups = try Groups.provide(&harness);
-    const server = try sync.open_datagram(.ipv6, &any6, .{});
+    const server = try open_dual_stack();
     defer sync.close_now(server);
     const client = try sync.open_datagram(.ipv4, &loopback4, .{});
     defer sync.close_now(client);
