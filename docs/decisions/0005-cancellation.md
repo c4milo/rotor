@@ -93,6 +93,15 @@ operation that first cancels everything in flight for the descriptor
 (`IORING_ASYNC_CANCEL_FD` with `IORING_ASYNC_CANCEL_ALL`), and closes it when the last final
 event has been queued. The caller sees the cancelled operations' final events, then the close's.
 
+Amended on 2026-11-06 by Camilo's ruling (d) of decision 18. On kqueue and epoll, a file operation
+out on an offload's worker cannot be cancelled: its `pread` or `pwrite` runs until it returns. So a
+close of its descriptor waits. The loop keeps the close, and the descriptor stays open, until each
+operation out on the descriptor has its result. Then it closes the descriptor. The worker's call
+never runs on a closed descriptor, or on a file that took the number, and the close's event comes
+after the worker's event. A kept close is a queued operation: a cancel or its deadline ends it with
+`canceled` or `timeout`, and the descriptor then stays open, because the close did not happen.
+Decision 18, "Ruling (d)", sets out the rest.
+
 ### Rule 7: deinit requires an empty loop
 
 `deinit` asserts that nothing is in flight, as stompy's does. `cancel_all` cancels every

@@ -158,6 +158,7 @@ test {
     _ = @import("conformance_offload.zig");
     _ = @import("conformance_offload_limit.zig");
     _ = @import("conformance_offload_held.zig");
+    _ = @import("conformance_offload_close.zig");
     _ = @import("conformance_tcp.zig");
     _ = @import("conformance_file.zig");
     _ = @import("conformance_group.zig");

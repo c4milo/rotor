@@ -8,7 +8,8 @@ adds a row to the choice that record made.
 **Amended on 2026-11-06** by Camilo's ruling R1 (a): a loop has at most `offload_in_flight_max`
 operations out on its workers, and keeps a further file operation queued. Three more rulings of
 that day make the loop end a held operation as it ends a queued one: at a close of its descriptor,
-at its deadline, and at a cancel. "Amendment of 2026-11-06" below sets them out.
+at its deadline, and at a cancel. A fourth ruling of that day, (d), makes a close wait for the
+operations out on its descriptor. "Amendment of 2026-11-06" below sets them out.
 
 What is built: the three policies, the hand-off, the cancel of an offloaded operation, the
 conformance scenarios and the halt scenarios. What is not: the harness row, because measurement is
@@ -190,17 +191,74 @@ queued one.
   flush with no such cancel does not walk the list. Before this ruling, a cancelled operation behind
   one that waited for room ended only when that one went out.
 
-An operation out on a worker is not ended by a `close`. The worker owns it until its result comes
-back, and a `pread` or a `pwrite` that runs cannot be stopped. The descriptor can close before the
-worker's call starts, or while it runs. The call then fails with `EBADF`, or it reads or writes the
-file that took the number. Its event can come after the close's event. So rule 6 does not hold for
-such an operation. That was so before this amendment, and the amendment does not change it.
-`docs/using.md` tells a caller to take the final event of each such operation before a `close`.
+### Ruling (d): a close waits for the operations out on its descriptor
+
+The first build of rulings (a) to (c) left one gap. An operation out on a worker is the worker's
+until its result comes back, and a `pread` or a `pwrite` that runs cannot be stopped. A `close`
+closed the descriptor at once. So the worker's call could run on a closed descriptor and fail with
+`EBADF`. Or it could run on a file that took the number, and a `pwrite` then wrote into the wrong
+file. Its event could also come after the close's event, against decision 5, rule 6.
+
+Camilo ruled on 2026-11-06 that a close waits. The loop keeps the close until each operation out on
+its descriptor has its result, and then closes the descriptor. So rule 6 holds for those operations
+too: the close's event comes after their events.
+
+- **What the loop keeps.** `InFlight` keeps an out array: the slot and the descriptor of each
+  operation out, at most `offload_in_flight_max` entries, 8 bytes each. A hand-out adds an entry,
+  and `core.offload.drain` removes the entry of each result it takes. The loop carves the array
+  from its own memory at init, and only under the `offload` policy.
+- **What a close does.** A backend's `close` first ends the waiters and the held operations of the
+  descriptor, as before. Then `InFlight.keep_close` reads the out array. When an operation is out
+  on the descriptor, the close stays `queued` on the closing list of `InFlight`, and the descriptor
+  stays open. Otherwise the backend closes the descriptor at once.
+- **When it closes.** After a drain that took a result, the backend hands each kept close to its
+  `close` again, oldest first, through `InFlight.settle_closes`. That call ends what was submitted
+  on the descriptor since, and closes the descriptor when nothing is out on it. The close's event
+  then follows the results on the finished list. Only a result can end the wait, so no other step
+  looks at the closing list. A kept close always has an operation out, so a worker owes the loop a
+  result, and its push wakes a loop that sleeps. `settle_closes` asserts this when it returns.
+- **A deadline or a cancel.** A kept close is `queued`, so the loop ends it as it ends a queued
+  operation. Its deadline runs from the flush that keeps it. A cancel, or the deadline, ends it at
+  once with `canceled` or `timeout`, and the descriptor stays open: the close did not happen. The
+  operations it already ended stay ended. The caller owns the descriptor again, and closes it with
+  a new `close` or with `sync.close_now`.
+- **Several closes of one descriptor.** Each one waits, and they run in the order they came. The
+  first one closes the descriptor. A second one is a close of a closed descriptor, which is the
+  caller's mistake with or without an offload: `close_now` halts on `EBADF`, or it closes a file
+  that took the number. rotor does not find this mistake.
+- **A close in the same flush as the end of held operations.** A flush first ends each held
+  operation whose cancel or deadline came, with its own code. Then it hands out held operations
+  while there is room. Then it reaches the close on the pending list, which ends the rest of the
+  held operations on the descriptor with `canceled`. A held operation that went out in that flush is
+  now out, and the close waits for it. Each operation gets exactly one final event, before the
+  close's event.
+- **An operation submitted after the close.** It is the caller's mistake, as it is without an
+  offload. A file operation on the descriptor that goes out while the close waits makes the close
+  wait for it too. One that is held, or that waits for readiness, ends with `canceled` when the
+  close runs.
+- **No offload.** A loop with no offload has nothing out, so `keep_close` costs a close one compare.
+  The first build added 4 instructions to each `post` of the work gate on epoll: the drain's entry
+  saved more registers, though the loop holds no ring. So a tick now makes no drain call at all
+  when the loop holds no ring. The table below holds the counts, measured with cachegrind on arm64
+  Linux in Docker on 2026-11-06. The tick of such a loop now does less work than before ruling (d).
+
+| epoll workload | baseline | e27e526 | first build | with no drain call |
+|---|---:|---:|---:|---:|
+| `post` | 1,212 | 1,236 | 1,240 | 1,150 |
+| `post-operation` | 3,091 | 3,101 | 3,109 | 2,931 |
+| `wait` | 655 | 677 | 679 | 632 |
+| `record` | 1,215 | 1,218 | 1,220 | 1,175 |
 
 ### What it costs and what it changes
 
-- `InFlight` is 20 bytes, and a comptime assert holds it there: the count, the held list and the
-  flag of ruling (c). It adds 20 bytes to the `Inbox` of every loop, io_uring's included.
+- `InFlight` is 40 bytes, aligned to 8, and a comptime assert holds it there: the out array's
+  address, the count, the held list, the closing list of ruling (d) and the flag of ruling (c). It
+  adds 40 bytes to the `Inbox` of every loop, io_uring's included. It was 20 bytes before ruling
+  (d). A loop with an offload also carves the out array, 2 KiB, from its memory.
+- A hand-out writes one entry of the out array. A result looks for its entry among those in use, at
+  most 256, and moves the last entry into its place. A close reads at most 256 entries. A drain
+  that took a result while a close waits reads them again for each kept close.
+- A tick of a loop with no offload makes no drain call (ruling (d), "No offload").
 - A flush walks the held list only after a cancel that reached a queued operation while some were
   held. A cancel of an operation on the pending list can cause that walk, which then ends nothing.
   A `close` walks the list when it holds an operation. Each walk visits each held operation once.
@@ -223,11 +281,23 @@ such an operation. That was so before this amendment, and the amendment does not
   and close, with a pool that runs no work.
 - `src/core/offload_in_flight.zig` tests the count, the held list, the order, a cancel behind a held
   operation, a deadline, and a close.
+- `src/conformance/conformance_offload_close.zig` hands a read, and then a write, of a second
+  descriptor of a file to a worker that holds, and submits a close of that descriptor. The close
+  hands over no event while the worker holds. A file opened then takes another number. The worker's
+  event comes first with its whole transfer, and the close's event follows. The write leaves the
+  other file empty. A third scenario cancels the close while it waits: the close ends with
+  `canceled`, the read still ends with its bytes, and the descriptor is still open. It runs on
+  kqueue on macOS and on epoll in the Linux gate and the race gate.
+- `src/core/offload_in_flight_close.zig` tests a close with nothing out on its descriptor, a close
+  behind reads on its descriptor and on another one, a cancel and a deadline of a kept close, and
+  two closes of one descriptor.
 - Halt scenarios: a push into a full ring in `tools/halt/kqueue_scenarios.zig` and in
   `tools/halt/epoll_linux_scenarios.zig`. In `tools/halt/core_scenarios_offload.zig`: a hand-out
-  past the limit, more results taken than handed out, a sleep with an operation held and none out, a
-  hold with room, a cancel noted for an unmarked slot, a hand-out of a marked held operation, a
-  negative descriptor, and a held operation that is not queued.
+  past the limit, which the out array's bounds check halts, a result for an operation that is not
+  out, a sleep with an operation held and none out, a hold with room, a cancel noted for an unmarked
+  slot, a hand-out of a marked held operation, a negative descriptor, a held operation that is not
+  queued, a keep of an operation that is not a close, a settle that finds a kept close whose cancel
+  came, and a settle that leaves a close kept with nothing out.
 
 ## Alternatives it beat
 

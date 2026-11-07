@@ -167,7 +167,12 @@ pub const Loop = struct {
         // The rings are not here: the caller's threads write them, so the caller owns their
         // memory. `offload_module.memory_bytes` sizes those.
         // `Layout.add` takes at least one entry, so a loop with no offload adds nothing at all.
-        if (workers_of(options) != 0) _ = layout.add(core.offload.Work, options.operations);
+        if (workers_of(options) != 0) {
+            _ = layout.add(core.offload.Work, options.operations);
+            // The operations out, which a close reads to learn whether it must wait (decision 18,
+            // ruling (d) of 2026-11-06).
+            _ = layout.add(core.offload.Out, core.constants.offload_in_flight_max);
+        }
         return layout.bytes;
     }
 
@@ -220,9 +225,14 @@ pub const Loop = struct {
             &.{}
         else
             layout.take(memory, core.offload.Work, options.operations);
+        const out_max = core.constants.offload_in_flight_max;
+        const out: ?*core.offload.OutArray = if (workers == 0)
+            null
+        else
+            layout.take(memory, core.offload.Out, out_max)[0..out_max];
         assert(layout.bytes == memory_bytes(options));
         const completions = offload_module.init_rings(options.offload_memory, workers);
-        loop.inbox = core.inbox.Inbox.init(options.registry, completions);
+        loop.inbox = core.inbox.Inbox.init(options.registry, completions, out);
         loop.file_policy = options.file_policy;
         loop.offload = options.offload;
         loop.tables.init(slots, entries, starts, heartbeat_line, .{

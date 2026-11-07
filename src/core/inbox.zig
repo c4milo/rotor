@@ -36,18 +36,20 @@ pub const Inbox = struct {
     /// thread knows to wake it. The workers read it, so it is atomic, where `sleeping` is not
     /// (decision 18, and decision 12's point 6 for the race it settles).
     offload_asleep: std.atomic.Value(bool),
-    /// The operations out on the offload's workers, and the file operations that wait for room
-    /// (decision 18, amendment of 2026-11-06). Only the loop thread touches it. It stays empty
-    /// unless the loop's file policy is `offload`.
+    /// The operations out on the offload's workers, the file operations that wait for room, and the
+    /// closes that wait for a worker (decision 18, amendment of 2026-11-06). Only the loop thread
+    /// touches it. It stays empty unless the loop's file policy is `offload`.
     offload_in_flight: offload.InFlight,
 
-    pub fn init(registry: ?*Registry, completions: []Mailbox) Inbox {
+    /// `out` is the out array a loop with an offload carved from its memory, or null for one with
+    /// no offload (`offload.InFlight`).
+    pub fn init(registry: ?*Registry, completions: []Mailbox, out: ?*offload.OutArray) Inbox {
         return .{
             .registry = registry,
             .sleeping = false,
             .completions = completions,
             .offload_asleep = .init(false),
-            .offload_in_flight = .empty,
+            .offload_in_flight = .init(out),
         };
     }
 

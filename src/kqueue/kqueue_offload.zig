@@ -28,6 +28,7 @@ const assert = std.debug.assert;
 const core = @import("core");
 const queue_module = @import("kqueue_queue.zig");
 const file_call = @import("kqueue_file_call.zig");
+const submit_module = @import("kqueue_submit.zig");
 const kqueue = @import("kqueue.zig");
 
 const Loop = kqueue.Loop;
@@ -67,7 +68,7 @@ pub fn hand_out(loop: *Loop, index: u32, slot: *Slot) void {
     const bytes = if (core.file_call.is_sync(code)) &[_]u8{} else slot.bytes();
 
     loop.tables.hand_over(index, slot);
-    in_flight.note_handed_out();
+    in_flight.note_handed_out(index, slot.descriptor);
     const work = &loop.works[index];
     work.* = .{
         .run = run,
@@ -116,8 +117,8 @@ fn run(work: *Work, worker: u16) void {
     if (loop.inbox.offload_asleep.load(.seq_cst)) queue_module.Queue.wake(loop.queue.descriptor);
 }
 
-/// Moves every result the workers pushed into the loop's finished list, and gives back the room each
-/// one held: `core.offload.drain`.
+/// Moves every result the workers pushed into the loop's finished list, gives back the room each
+/// one held, and closes a descriptor whose close waited for those results: `core.offload.drain`.
 ///
 /// It does not check the owner. `tick` checks it first, before its flush and expiry touch the
 /// tables, and in the loop only `tick` calls this. A second check here halted the same tick, so no
@@ -125,7 +126,18 @@ fn run(work: *Work, worker: u16) void {
 pub fn drain(loop: *Loop) u32 {
     const inbox = &loop.inbox;
     const in_flight = &inbox.offload_in_flight;
-    return core.offload.drain(inbox.completions, in_flight, &loop.tables, loop.works.len);
+    const taken = core.offload.drain(inbox.completions, in_flight, &loop.tables, loop.works.len);
+    // A result can end the wait of a kept close (decision 18, ruling (d) of 2026-11-06). A loop
+    // with no offload takes no result, so it pays this one compare.
+    if (taken != 0) settle_closes(loop);
+    return taken;
+}
+
+/// Hands each kept close to `kqueue_submit.close` again, after a drain that took a result.
+fn settle_closes(loop: *Loop) void {
+    const in_flight = &loop.inbox.offload_in_flight;
+    if (in_flight.closing.count == 0) return;
+    in_flight.settle_closes(&loop.tables, loop, submit_module.close);
 }
 
 /// True when any worker has pushed a result the loop has not taken: `core.offload.pending`.

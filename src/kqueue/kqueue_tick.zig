@@ -37,8 +37,12 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     submit_module.flush(loop);
     tables.finish_due_timers();
     // Before the finished list is drained, so a result a worker pushed becomes its operation's
-    // final event in this tick and not the next (decision 18).
-    _ = offload_module.drain(loop);
+    // final event in this tick and not the next (decision 18). A loop with no offload holds no
+    // ring, and makes no call: the drain's entry alone cost each tick of such a loop about 40
+    // instructions on epoll, measured with cachegrind on 2026-11-06 (decision 18, ruling (d)). The
+    // check stays here, at the call: inside a helper, the compiler moved the drain's entry with it.
+    const offloads = loop.inbox.completions.len != 0;
+    if (offloads) _ = offload_module.drain(loop);
     var produced = tables.drain_finished(events);
     produced += loop.drain_mailboxes(events[produced..]);
 
@@ -84,13 +88,21 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
         return loop.kept_error.keep(&tables.dispatch, failure, produced);
+    return after_kernel(loop, events, produced, ready_count, offloads);
+}
 
+/// The tick's last steps, after a kernel call that succeeded: the reap, the results a worker pushed
+/// while the tick waited, the posted messages, and the deadlines. `before` events are already in
+/// `events`. Returns how many there are now.
+fn after_kernel(loop: *Loop, events: []Event, before: u32, ready_count: u32, offloads: bool) u32 {
+    const tables = &loop.tables;
+    var produced = before;
     const reaped = reap_module.reap(loop, loop.readiness[0..ready_count], events[produced..]);
     // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
     if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
     produced += reaped;
     // A worker may have answered while this tick waited, and the wake is what ended the wait.
-    if (offload_module.drain(loop) != 0) {
+    if (offloads and offload_module.drain(loop) != 0) {
         produced += tables.drain_finished(events[produced..]);
     }
     produced += loop.drain_mailboxes(events[produced..]);

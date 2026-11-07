@@ -246,7 +246,7 @@ pub const Loop = struct {
         loop.wait_timer_deadline_ns = 0;
         loop.kept_error = .none;
         loop.wait_timer_timespec = .{ .sec = 0, .nsec = 0 };
-        loop.inbox = core.inbox.Inbox.init(options.registry, &.{});
+        loop.inbox = core.inbox.Inbox.init(options.registry, &.{}, null);
         loop.wakes = .{};
         loop.deinit_dropped_wakes = 0;
         loop.group_wake = -1;

@@ -177,7 +177,8 @@ The rules every caller relies on (decision 5):
    one per period flagged `more` until cancelled, scheduled from the previous deadline and never
    from the clock.
 6. `close` cancels every operation on that descriptor first, then closes it. Its final event says
-   the descriptor is gone.
+   the descriptor is gone. A file operation out on an offload's worker cannot be cancelled, so the
+   close waits for its result (Files, below).
 7. `deinit` requires an empty loop.
 
 ## The operations
@@ -338,9 +339,19 @@ A queued file operation is the loop's alone, and the loop ends it as it ends any
 - A `close` of its descriptor ends it with `canceled`, and the caller gets that event before the
   close's event.
 
-An operation out on a worker is the worker's until its result comes back, and a `close` does not
-end it. The worker's call can then run on a closed descriptor, or on a file that took its number.
-So take the final event of each file operation on a descriptor before you submit its `close`.
+An operation out on a worker is the worker's until its result comes back, and a `close` cannot end
+it. So the close waits. The loop keeps the close, and the descriptor stays open, until each
+operation out on the descriptor has its result. Then the loop closes the descriptor. The worker's
+call always runs on the file it named, and you get its event before the close's event (decision 18,
+ruling (d) of 2026-11-06).
+
+- The close's deadline runs from the tick that keeps it. A `cancel`, or the deadline, ends a close
+  that waits with `canceled` or `timeout`. The descriptor then stays open, because the close did not
+  happen: close it again, or close it with `sync.close_now`.
+- Submit nothing on a descriptor after its `close`. A file operation that goes out while the close
+  waits makes the close wait for it too.
+- Close a descriptor once. With or without an offload, a second `close` halts when the descriptor
+  is closed, or closes a file that took its number.
 
 `offload` is required under `.offload` and must be null under the other two policies. io_uring
 checks the options as kqueue and epoll do, so options that halt on one backend halt on all of them,

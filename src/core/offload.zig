@@ -27,6 +27,9 @@ const in_flight_module = @import("offload_in_flight.zig");
 /// The count of operations out on the workers, and the file operations that wait for room
 /// (decision 18, amendment of 2026-11-06): `offload_in_flight.zig`.
 pub const InFlight = in_flight_module.InFlight;
+/// The out array a loop with an offload carves at init, which `InFlight` reads.
+pub const OutArray = in_flight_module.OutArray;
+pub const Out = in_flight_module.Out;
 
 const Descriptor = operation.Descriptor;
 const Mailbox = mailbox_module.Mailbox;
@@ -186,9 +189,12 @@ const drain_rounds_max = constants.mailbox_messages / constants.messages_per_dra
 /// produced the result. `works_len` is how many works the loop holds, one per slot. Each result
 /// taken leaves room in `in_flight` for one more hand-out.
 ///
+/// A result can end the wait of a kept close, so a backend that took one then calls
+/// `InFlight.settle_closes` (decision 5, rule 6, and decision 18, ruling (d) of 2026-11-06).
+///
 /// Returns how many operations it finished, which a tick uses to decide it has work to hand over.
 pub fn drain(completions: []Mailbox, in_flight: *InFlight, tables: *Tables, works_len: usize) u32 {
-    const finisher: Finisher = .{ .tables = tables, .works_len = works_len };
+    const finisher: Finisher = .{ .tables = tables, .in_flight = in_flight, .works_len = works_len };
     var finished: u32 = 0;
     for (completions) |*ring| {
         var round: u32 = 0;
@@ -196,18 +202,17 @@ pub fn drain(completions: []Mailbox, in_flight: *InFlight, tables: *Tables, work
             const moved = ring.pop_each(constants.messages_per_drain, &finisher, Finisher.finish);
             if (moved == 0) break;
             finished += moved;
-            // Here and not after the loop, so a loop with no offload, which holds no ring, pays
-            // nothing for the count on every tick.
-            in_flight.note_taken(moved);
         }
     }
     return finished;
 }
 
-/// What `drain` hands the ring: the loop's tables, and how many works the loop holds. Each result
-/// ends its operation where it lies in the ring, so no array of messages is copied or filled.
+/// What `drain` hands the ring: the loop's tables and count, and how many works the loop holds.
+/// Each result ends its operation where it lies in the ring, so no array of messages is copied or
+/// filled.
 const Finisher = struct {
     tables: *Tables,
+    in_flight: *InFlight,
     works_len: usize,
 
     fn finish(finisher: *const Finisher, message: operation.Message) void {
@@ -219,6 +224,9 @@ const Finisher = struct {
         // such an operation `submitted`. A slot in any other state means the ring carried something
         // this loop never sent.
         assert(finisher.tables.table.at(index).state == .submitted);
+        // The room comes back before the ring's `head` moves. No hand-out runs inside a drain, so
+        // no work can be handed out into the room before the worker sees it.
+        finisher.in_flight.note_back(index);
         finisher.tables.finish_local(index, result_of_tag(message.tag));
     }
 };
@@ -336,7 +344,6 @@ const dispatch = @import("dispatch/dispatch.zig");
 const Event = @import("event.zig").Event;
 const Heartbeat = @import("stall.zig").Heartbeat;
 const TimerHeap = @import("timer_heap.zig").TimerHeap;
-const Slot = @import("slot.zig").Slot;
 
 /// A record that no tick calls here: the drain only marks the events of its operations.
 fn ignore(completion: *dispatch.Completion, event: Event) void {
@@ -349,9 +356,11 @@ const ignore_call: dispatch.Completion.Call = .{ .name = "ignore", .function = &
 
 /// Slots of the test below: one operation that names a record, and one that does not.
 const test_slots = 2;
+/// The file the test reads name. No read is performed.
+const test_file = 3;
 
 test "a result a worker hands back reaches the record of its operation, and no other" {
-    var slots: [test_slots]Slot = undefined;
+    var slots: [test_slots]@import("slot.zig").Slot = undefined;
     var entries: [test_slots]TimerHeap.Entry = undefined;
     var starts: [test_slots]u64 = undefined;
     var heartbeat: Heartbeat = undefined;
@@ -363,17 +372,18 @@ test "a result a worker hands back reaches the record of its operation, and no o
     var bytes: [8]u8 = @splat(0);
     const plain_user_data = 9;
     const reads = [_]operation.Operation{
-        operation.Operation.read(0, 3, &bytes, 0).completion(&record),
-        operation.Operation.read(plain_user_data, 3, &bytes, 0),
+        operation.Operation.read(0, test_file, &bytes, 0).completion(&record),
+        operation.Operation.read(plain_user_data, test_file, &bytes, 0),
     };
     try testing.expectEqual(@as(u32, reads.len), tables.submit(&reads, &.{}));
     // What a backend's flush does to each: hands it out and counts it, and the slot is `submitted`.
-    var in_flight: InFlight = .empty;
+    var out: OutArray = undefined;
+    var in_flight: InFlight = .init(&out);
     for (0..reads.len) |_| {
         const index = tables.next_pending().?;
         tables.take_pending(index);
         tables.hand_over(index, tables.table.at(index));
-        in_flight.note_handed_out();
+        in_flight.note_handed_out(index, test_file);
         const result: operation.Message = .{ .tag = tag_of(@intCast(bytes.len)), .payload = index };
         try testing.expect(rings[0].push(result));
     }

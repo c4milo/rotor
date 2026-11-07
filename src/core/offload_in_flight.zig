@@ -19,6 +19,11 @@
 //! A held operation is the loop's alone, so the loop ends it, as it ends a queued one (Camilo's
 //! rulings of 2026-11-06): its deadline runs while it waits, a cancel ends it wherever it sits in
 //! the list, and a `close` of its descriptor ends it before the descriptor closes.
+//!
+//! An operation out is the worker's until its result comes back. So a `close` of its descriptor
+//! waits for that result, and closes after it (ruling (d) of 2026-11-06). The loop keeps the slot
+//! and the descriptor of each operation out, so a close can learn whether it must wait.
+//! `offload_in_flight_close.zig` holds the closes that wait.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("constants.zig");
@@ -26,44 +31,84 @@ const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 const slot_list = @import("slot_list.zig");
 const tables_module = @import("tables.zig");
+const close_module = @import("offload_in_flight_close.zig");
 
 const Descriptor = operation_module.Descriptor;
 const Slot = slot_module.Slot;
 const SlotList = slot_list.SlotList;
 const Tables = tables_module.Tables;
 
-/// 20 bytes, aligned to 4: the count, the held list's three words, and the flag. Each loop's
-/// `Inbox` holds one, and a tick reads it, so the size is held here.
+/// One operation out on a worker: its slot, and the descriptor its system call names. 8 bytes,
+/// aligned to 4, so the out array of a loop is 2 KiB.
+pub const Out = struct {
+    index: u32,
+    descriptor: Descriptor,
+};
+
+/// The out array of a loop with an offload: one entry for each operation the limit lets out.
+pub const OutArray = [constants.offload_in_flight_max]Out;
+
+/// 40 bytes, aligned to 8: the out array's address, the count, the two lists' three words each,
+/// and the flag. Each loop's `Inbox` holds one, and a tick reads it, so the size is held here.
 pub const InFlight = struct {
+    /// The operations out, in no order: the first `count` entries are in use. A close reads it to
+    /// learn whether a worker still has an operation on its descriptor. It is the loop's memory,
+    /// carved at init, and null for a loop with no offload, which hands nothing out.
+    out: ?*OutArray,
     /// Operations handed out whose result the loop has not taken off a ring. At most
     /// `constants.offload_in_flight_max`.
     count: u32,
     /// File operations that wait for room, oldest first. Each is `queued` and on no other list, and
     /// the next flush with room hands it out.
     held: SlotList,
+    /// Closes that wait for a worker's result on their descriptor, oldest first. Each is `queued`
+    /// and on no other list (`offload_in_flight_close.zig`).
+    closing: SlotList,
     /// A cancel reached a queued operation while some were held, so the next flush looks through
     /// the held list for the operations to end. A flush with no such cancel does not walk the list.
     canceled: bool,
 
-    pub const empty: InFlight = .{ .count = 0, .held = SlotList.empty, .canceled = false };
+    pub const empty: InFlight = .{
+        .out = null,
+        .count = 0,
+        .held = SlotList.empty,
+        .closing = SlotList.empty,
+        .canceled = false,
+    };
+
+    /// An empty count over the out array `out`, or over none for a loop with no offload.
+    pub fn init(out: ?*OutArray) InFlight {
+        var in_flight = empty;
+        in_flight.out = out;
+        return in_flight;
+    }
 
     /// True when the loop may hand out one more operation.
     pub fn has_room(in_flight: *const InFlight) bool {
         return in_flight.count < constants.offload_in_flight_max;
     }
 
-    /// Records one operation handed out. A backend asks `has_room` first, so a hand-out with no
-    /// room is rotor's own mistake, and a ring could then overflow.
-    pub fn note_handed_out(in_flight: *InFlight) void {
-        assert(in_flight.has_room());
+    /// Records one operation handed out: the slot in `index`, whose call names `descriptor`. A
+    /// backend asks `has_room` first, so a hand-out with no room is rotor's own mistake, and a ring
+    /// could then overflow. The bounds check of the out array halts it. An `assert` of the room
+    /// here cannot be proved by a halt scenario, because that check halts too.
+    pub fn note_handed_out(in_flight: *InFlight, index: u32, descriptor: Descriptor) void {
+        // Only a loop with an offload hands out, and only such a loop has an out array.
+        const out = in_flight.out.?;
+        out[in_flight.count] = .{ .index = index, .descriptor = descriptor };
         in_flight.count += 1;
     }
 
-    /// Records `taken` results the loop took off the rings. Each result belongs to an operation the
-    /// loop handed out, so `taken` is at most `count`. The subtraction's own overflow check halts
-    /// otherwise. An `assert` here cannot be proved by a halt scenario, because that check halts too.
-    pub fn note_taken(in_flight: *InFlight, taken: u32) void {
-        in_flight.count -= taken;
+    /// Records that the loop took the result of the operation in slot `index` off a ring, and moves
+    /// the last entry of the out array into its place. It visits at most `count` entries.
+    pub fn note_back(in_flight: *InFlight, index: u32) void {
+        const out = in_flight.out.?;
+        var position: u32 = 0;
+        while (position < in_flight.count and out[position].index != index) : (position += 1) {}
+        // Each result belongs to an operation the loop handed out, and a hand-out records it here.
+        assert(position < in_flight.count);
+        in_flight.count -= 1;
+        out[position] = out[in_flight.count];
     }
 
     /// Puts the queued file operation in `index` at the back of the held list, and arms its
@@ -80,18 +125,32 @@ pub const InFlight = struct {
     /// Records a cancel that `Tables.request_cancel` marked and left to the backend's flush. A
     /// queued operation may be on the held list, and the next flush ends it there (ruling (c) of
     /// 2026-11-06). A cancel of a queued operation on the pending list costs that flush one walk
-    /// of the held list, which finds nothing to end.
-    pub fn note_cancel(in_flight: *InFlight, slot: *const Slot) void {
+    /// of the held list, which finds nothing to end. A close is never held: a cancel of a close
+    /// that waits ends it now, and the descriptor stays open (ruling (d) of 2026-11-06).
+    pub fn note_cancel(in_flight: *InFlight, tables: *Tables, index: u32, slot: *const Slot) void {
         assert(slot.flags.cancel_requested);
-        if (slot.state == .queued and in_flight.held.count != 0) in_flight.canceled = true;
+        if (slot.state != .queued) return;
+        if (slot.code == .close) return in_flight.end_canceled_close(tables, index);
+        if (in_flight.held.count != 0) in_flight.canceled = true;
     }
 
     /// True when the loop may sleep with what it holds. Nothing is held, or a worker owes the loop
     /// a result, and the worker's push wakes it. A held operation with nothing out would wait with
-    /// nothing to end the wait.
+    /// nothing to end the wait. A kept close always has an operation out on its descriptor, which
+    /// `core.offload.drain` checks, so this check reads only the held list.
     pub fn may_sleep(in_flight: *const InFlight) bool {
         return in_flight.held.count == 0 or in_flight.count != 0;
     }
+
+    /// True when a worker has an operation on `descriptor`: `offload_in_flight_close.zig`.
+    pub const out_on = close_module.out_on;
+    /// Keeps a close while a worker has an operation on its descriptor:
+    /// `offload_in_flight_close.zig`.
+    pub const keep_close = close_module.keep;
+    /// Hands each kept close to the backend's close again: `offload_in_flight_close.zig`.
+    pub const settle_closes = close_module.settle;
+    /// Ends a kept close whose cancel came: `offload_in_flight_close.zig`.
+    pub const end_canceled_close = close_module.end_canceled;
 
     /// Ends with its cancel's code each held operation whose cancel came, and then hands out the
     /// held operations, oldest first, while there is room. A backend's flush calls it before it
@@ -148,8 +207,9 @@ pub const InFlight = struct {
 };
 
 comptime {
-    assert(@sizeOf(InFlight) == 20);
-    assert(@alignOf(InFlight) == 4);
+    assert(@sizeOf(InFlight) == 40);
+    assert(@alignOf(InFlight) == 8);
+    assert(@sizeOf(Out) == 8);
 }
 
 const testing = std.testing;
@@ -182,15 +242,29 @@ const Fixture = struct {
     heartbeat: Heartbeat,
     tables: Tables,
     in_flight: InFlight,
+    out: OutArray,
     handed: [test_slots]u32,
     handed_len: u32,
+    /// The hand-outs whose result came back, oldest first.
+    taken_len: u32,
     bytes: [test_bytes]u8,
 
     fn init(fixture: *Fixture) void {
         fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
-        fixture.in_flight = .empty;
+        fixture.in_flight = .init(&fixture.out);
         fixture.handed_len = 0;
+        fixture.taken_len = 0;
         fixture.bytes = @splat(0);
+    }
+
+    /// What `core.offload.drain` does with the count when the results of the `taken` oldest
+    /// hand-outs come back.
+    fn take_back(fixture: *Fixture, taken: u32) void {
+        var index: u32 = 0;
+        while (index < taken) : (index += 1) {
+            fixture.in_flight.note_back(fixture.handed[fixture.taken_len]);
+            fixture.taken_len += 1;
+        }
     }
 
     /// What a backend's `hand_out` does with the count: holds the operation at the limit, and
@@ -198,7 +272,7 @@ const Fixture = struct {
     fn hand_out(fixture: *Fixture, index: u32, slot: *Slot) void {
         if (!fixture.in_flight.has_room()) return fixture.in_flight.hold(&fixture.tables, index);
         fixture.tables.hand_over(index, slot);
-        fixture.in_flight.note_handed_out();
+        fixture.in_flight.note_handed_out(index, slot.descriptor);
         fixture.handed[fixture.handed_len] = index;
         fixture.handed_len += 1;
     }
@@ -208,7 +282,7 @@ const Fixture = struct {
     fn request(fixture: *Fixture, index: u32, slot: *Slot) void {
         const action = fixture.tables.request_cancel(index, slot);
         assert(action == .none);
-        fixture.in_flight.note_cancel(slot);
+        fixture.in_flight.note_cancel(&fixture.tables, index, slot);
     }
 
     /// Submits `count` reads of `test_descriptor` and flushes them as a backend does.
@@ -266,11 +340,11 @@ test "a loop hands out up to the limit, holds the rest, and hands them out as re
     try testing.expectEqual(constants.offload_in_flight_max, fixture.handed_len);
 
     // One result back, room for one: the oldest held operation goes, and the other still waits.
-    fixture.in_flight.note_taken(1);
+    fixture.take_back(1);
     fixture.flush();
     try testing.expectEqual(constants.offload_in_flight_max, fixture.in_flight.count);
     try testing.expectEqual(@as(u32, 1), fixture.in_flight.held.count);
-    fixture.in_flight.note_taken(1);
+    fixture.take_back(1);
     fixture.flush();
     try testing.expectEqual(@as(u32, 0), fixture.in_flight.held.count);
 
@@ -288,7 +362,7 @@ test "a file operation queued after a held one waits behind it, even when room c
     try fixture.submit_and_flush(constants.offload_in_flight_max + 1);
     try testing.expectEqual(@as(u32, 1), fixture.in_flight.held.count);
     // Room for one, and a new read queued: the held read is older, so it goes first.
-    fixture.in_flight.note_taken(1);
+    fixture.take_back(1);
     const late = Operation.read(test_slots, test_descriptor, &fixture.bytes, 0);
     try testing.expectEqual(@as(u32, 1), fixture.tables.submit(&.{late}, &.{}));
     fixture.flush();
@@ -325,7 +399,7 @@ test "a cancel ends a held operation behind another held one at the next flush, 
     try testing.expectError(error.Canceled, event.outcome());
 
     // Room for one: the first held read goes out, and nothing else ends.
-    fixture.in_flight.note_taken(1);
+    fixture.take_back(1);
     fixture.flush();
     try testing.expectEqual(@as(u32, 0), fixture.in_flight.held.count);
     try testing.expectEqual(handles[0].index, fixture.handed[fixture.handed_len - 1]);
@@ -372,7 +446,7 @@ test "a close ends the held operations on its descriptor, and keeps the others i
     try testing.expectError(error.Canceled, event.outcome());
 
     // The two left go out in the order they came.
-    fixture.in_flight.note_taken(test_held);
+    fixture.take_back(test_held);
     fixture.flush();
     try testing.expectEqual(handles[0].index, fixture.handed[fixture.handed_len - 2]);
     try testing.expectEqual(handles[2].index, fixture.handed[fixture.handed_len - 1]);

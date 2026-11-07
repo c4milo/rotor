@@ -1,10 +1,10 @@
-//! Halt scenarios for the offload's count of operations out, and for the file operations it holds
-//! (decision 18, amendment of 2026-11-06). Only rotor's own code can break these checks, and each
-//! scenario reaches its check through the function's own parameters: the count, the inbox that
-//! holds it, a slot, the tables, or a descriptor.
+//! Halt scenarios for the offload's count of operations out, for the file operations it holds, and
+//! for the closes it keeps (decision 18, amendment of 2026-11-06). Only rotor's own code can break
+//! these checks, and each scenario reaches its check through the function's own parameters: the
+//! count, the inbox that holds it, a slot, the tables, or a descriptor.
 //!
-//! With each check deleted, the scenario returns: the count goes past the limit, or wraps, or the
-//! inbox answers with the wait it was given, or the held list goes on with a slot it must not hold.
+//! With each check deleted, the scenario returns: the out array loses an entry, or the inbox
+//! answers with the wait it was given, or a list goes on with a slot it must not hold.
 const std = @import("std");
 const core = @import("core");
 const scenario = @import("scenario.zig");
@@ -20,32 +20,35 @@ var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = und
 var starts: [slots_count]u64 = undefined;
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
 var read_bytes: [16]u8 = undefined;
+var out: core.offload.OutArray align(@alignOf(core.offload.OutArray)) = undefined;
 
 /// The file the read of `queued_read` names. No read is performed.
 const read_descriptor: core.Descriptor = 3;
 
 /// A hand-out at the limit. The backend asks for room first, so this is rotor's own mistake, and
-/// a worker's ring could then overflow.
+/// a worker's ring could then overflow. The bounds check of the out array halts, and a mutation
+/// that wraps the position into the array returns.
 fn hand_out_past_the_limit() void {
-    var in_flight: InFlight = .empty;
+    var in_flight: InFlight = .init(&out);
     in_flight.count = core.constants.offload_in_flight_max;
     scenario.reached_violation();
-    in_flight.note_handed_out();
+    in_flight.note_handed_out(0, read_descriptor);
 }
 
-/// More results taken than operations out. The subtraction's overflow check halts, and a mutation
-/// to a wrapping subtraction returns.
-fn take_more_results_than_were_handed_out() void {
-    var in_flight: InFlight = .empty;
+/// A result for an operation the out array does not name. With the check deleted, the count falls
+/// by one and the array keeps its one entry.
+fn take_back_an_operation_that_is_not_out() void {
+    var in_flight: InFlight = .init(&out);
+    in_flight.note_handed_out(2, read_descriptor);
     scenario.reached_violation();
-    in_flight.note_taken(1);
+    in_flight.note_back(1);
 }
 
 /// A loop about to sleep with an operation held and none out: no worker would wake it, and the
 /// held operation would wait with nothing to end the wait. The held list names a slot it never
 /// links, which the check reads only by its count.
 fn sleep_with_an_operation_held_and_none_out() void {
-    var inbox = core.inbox.Inbox.init(null, &.{});
+    var inbox = core.inbox.Inbox.init(null, &.{}, null);
     inbox.offload_in_flight.held = .{ .head = 0, .tail = 0, .count = 1 };
     scenario.reached_violation();
     _ = inbox.settle_to_sleep(0, core.constants.ns_per_ms);
@@ -78,13 +81,14 @@ fn hold_an_operation_while_there_is_room() void {
     in_flight.hold(&tables, index);
 }
 
-/// A cancel noted for a slot that no cancel marked.
+/// A cancel noted for a slot that no cancel marked. The slot is a queued read, so with the check
+/// deleted the count reads only its own held list, which is empty.
 fn note_a_cancel_that_marked_nothing() void {
-    var slot = std.mem.zeroes(Slot);
-    slot.state = .queued;
+    var tables: core.Tables = undefined;
+    const index = queued_read(&tables);
     var in_flight: InFlight = .empty;
     scenario.reached_violation();
-    in_flight.note_cancel(&slot);
+    in_flight.note_cancel(&tables, index, tables.table.at(index));
 }
 
 /// A held operation whose cancel no one noted: the flush would hand it out. The read is held at
@@ -120,11 +124,64 @@ fn end_a_held_operation_that_is_not_queued() void {
     in_flight.end_descriptor(&tables, read_descriptor);
 }
 
+/// A read handed to the close's keep. With the check deleted, nothing is out, and the read is not
+/// kept.
+fn keep_an_operation_that_is_not_a_close() void {
+    var tables: core.Tables = undefined;
+    const index = queued_read(&tables);
+    var in_flight: InFlight = .init(&out);
+    scenario.reached_violation();
+    _ = in_flight.keep_close(&tables, index);
+}
+
+/// What a backend's close does in the scenario below: nothing.
+fn close_nowhere(tables: *core.Tables, index: u32, slot: *Slot) void {
+    _ = tables;
+    _ = index;
+    _ = slot;
+}
+
+/// A kept close whose cancel came, on the closing list at a drain. The cancel ends a kept close at
+/// once, so the drain must find none marked. With the check deleted, the backend's close runs.
+fn settle_a_kept_close_whose_cancel_came() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    _ = tables.submit(&.{core.Operation.close(1, read_descriptor)}, &.{});
+    const index = tables.next_pending().?;
+    tables.take_pending(index);
+    var in_flight: InFlight = .init(&out);
+    in_flight.closing.push(tables.table.slots, index);
+    tables.table.at(index).flags.cancel_requested = true;
+    scenario.reached_violation();
+    in_flight.settle_closes(&tables, &tables, close_nowhere);
+}
+
+/// What a backend's close does in the scenario below: keeps the close again, whatever is out.
+fn close_kept_again(in_flight: *InFlight, index: u32, slot: *Slot) void {
+    _ = slot;
+    in_flight.closing.push(&slots, index);
+}
+
+/// A drain that leaves a close kept with nothing out. No worker would wake a loop that sleeps, and
+/// the close would wait with nothing to end the wait. With the check deleted, the close stays on
+/// the list.
+fn settle_a_close_kept_with_nothing_out() void {
+    var tables: core.Tables = undefined;
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    _ = tables.submit(&.{core.Operation.close(1, read_descriptor)}, &.{});
+    const index = tables.next_pending().?;
+    tables.take_pending(index);
+    var in_flight: InFlight = .init(&out);
+    in_flight.closing.push(tables.table.slots, index);
+    scenario.reached_violation();
+    in_flight.settle_closes(&tables, &in_flight, close_kept_again);
+}
+
 pub const scenarios = [_]scenario.Scenario{
     .{ .name = "offload: hand out past the limit", .run = hand_out_past_the_limit },
     .{
-        .name = "offload: take more results than were handed out",
-        .run = take_more_results_than_were_handed_out,
+        .name = "offload: take back an operation that is not out",
+        .run = take_back_an_operation_that_is_not_out,
     },
     .{
         .name = "offload: sleep with an operation held and none out",
@@ -149,5 +206,17 @@ pub const scenarios = [_]scenario.Scenario{
     .{
         .name = "offload: end a held operation that is not queued",
         .run = end_a_held_operation_that_is_not_queued,
+    },
+    .{
+        .name = "offload: keep an operation that is not a close",
+        .run = keep_an_operation_that_is_not_a_close,
+    },
+    .{
+        .name = "offload: settle a kept close whose cancel came",
+        .run = settle_a_kept_close_whose_cancel_came,
+    },
+    .{
+        .name = "offload: settle a close kept with nothing out",
+        .run = settle_a_close_kept_with_nothing_out,
     },
 };

@@ -54,7 +54,7 @@ fn flush_one(loop: *Loop, index: u32, slot: *Slot, wakes: *core.remote.Wakes) vo
             const result = core.remote.post(loop.inbox.registry, tables.id, slot, wakes);
             tables.finish_local(index, result);
         },
-        .close => tables.finish_local(index, close(loop, slot)),
+        .close => close(loop, index, slot),
         else => start(loop, index, slot),
     }
 }
@@ -175,13 +175,21 @@ pub fn kernel_filter(filter: Filter) i16 {
 /// Ends with `canceled` every operation that waits on the descriptor, and every file operation
 /// held for the offload's room, then closes it. The finished list keeps their order, so the caller
 /// sees each of them before the close (decision 5, rule 6). Closing the descriptor removes its
-/// filters from the kqueue. An operation out on a worker is the worker's, and is not ended here
-/// (decision 18, amendment of 2026-11-06).
-fn close(loop: *Loop, slot: *const Slot) i32 {
-    loop.tables.end_waiters(&loop.waiters, slot.descriptor);
-    loop.inbox.offload_in_flight.end_descriptor(&loop.tables, slot.descriptor);
+/// filters from the kqueue.
+///
+/// An operation out on a worker is the worker's until its result comes back. While one is out on
+/// the descriptor, the loop keeps the close and does not close the descriptor. The drain that takes
+/// the last such result calls this again, and it closes then (decision 18, ruling (d) of
+/// 2026-11-06). So the worker's call never runs on a closed descriptor, or on a file that took its
+/// number, and its event comes before the close's event.
+pub fn close(loop: *Loop, index: u32, slot: *Slot) void {
+    const tables = &loop.tables;
+    const in_flight = &loop.inbox.offload_in_flight;
+    tables.end_waiters(&loop.waiters, slot.descriptor);
+    in_flight.end_descriptor(tables, slot.descriptor);
+    if (in_flight.keep_close(tables, index)) return;
     sync.close_now(slot.descriptor);
-    return 0;
+    tables.finish_local(index, 0);
 }
 
 const testing = std.testing;

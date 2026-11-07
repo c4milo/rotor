@@ -79,6 +79,7 @@ test {
     _ = @import("mailbox_registry_test.zig");
     _ = offload;
     _ = @import("offload_in_flight.zig");
+    _ = @import("offload_in_flight_close.zig");
     _ = operation;
     _ = @import("operation_test.zig");
     _ = random;
