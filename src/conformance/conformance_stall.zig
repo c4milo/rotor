@@ -427,12 +427,15 @@ test "a watch on another thread names the callback that holds the loop" {
     try testing.expectEqual(@as(u32, 1), fixture.loop.statistics().last_stall.callbacks);
 }
 
-/// A watch that checks while its loop waits in the kernel, and keeps the most checks in a row that
-/// it saw of one open turn.
+/// A watch that checks while its loop waits in the kernel, and keeps each report: the turn it named
+/// and the clock before the check that named it.
 const Sleeper = struct {
     heartbeat: *core.HeartbeatView,
     done: std.atomic.Value(bool) = .init(false),
-    checks_most: u32 = 0,
+    reports: [watch_checks_max]Report = undefined,
+    reports_len: u32 = 0,
+
+    const Report = struct { since_ns: u64, checked_ns: u64 };
 
     fn run(sleeper: *Sleeper) void {
         var watch = sleeper.heartbeat.watch();
@@ -440,17 +443,17 @@ const Sleeper = struct {
         for (0..watch_checks_max) |_| {
             if (sleeper.done.load(.acquire)) return;
             pause(watch_period_ns);
+            const checked_ns = clock_ns();
             const stuck = watch.check() orelse continue;
-            sleeper.checks_most = @max(sleeper.checks_most, stuck.checks);
+            const report: Report = .{ .since_ns = stuck.since_ns, .checked_ns = checked_ns };
+            sleeper.reports[sleeper.reports_len] = report;
+            sleeper.reports_len += 1;
         }
     }
 };
 
 /// The wait of a tick that a watch checks: many periods of the watch.
 const watched_wait_ns = 200 * ns_per_ms;
-/// The most checks in a row of one turn that a watch may see while its loop waits. A thread that
-/// loses its core for a period or two between the clock stamp and the wait can make one or two.
-const watched_checks_max = 3;
 
 test "a watch reports nothing while the loop waits in the kernel" {
     if (conformance.unsupported()) return error.SkipZigTest;
@@ -464,6 +467,16 @@ test "a watch reports nothing while the loop waits in the kernel" {
     sleeper.done.store(true, .release);
     thread.join();
     try testing.expectEqual(@as(u32, 0), try waited);
-    // A turn held for the whole wait would make a check in each period.
-    try testing.expect(sleeper.checks_most < watched_checks_max);
+    // The turn after the wait starts at the stamp after the wait. The test's code holds it until
+    // `done`, for as long as a busy machine makes, and a watch reports it, so the check skips it.
+    // The turn before the wait ends when the loop says it sleeps. kqueue and epoll arm the wait's
+    // bound after that, so that turn ends at least one wait before the stamp after the wait.
+    // io_uring arms the bound from the tick's first stamp. There that turn ends half a wait before
+    // the stamp, unless the thread loses its core for half a wait. A turn held through the wait is
+    // reported until the stamp after the wait.
+    const woken_ns = fixture.loop.now_ns();
+    for (sleeper.reports[0..sleeper.reports_len]) |report| {
+        if (report.since_ns == woken_ns) continue;
+        try testing.expect(report.checked_ns < woken_ns - watched_wait_ns / 2);
+    }
 }
