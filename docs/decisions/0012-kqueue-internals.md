@@ -122,9 +122,10 @@ Decision 4 settled the shape. The details:
   receiver's kqueue. That is one `kevent` call for a burst, made in the sender's tick.
 - The post's own final event is 0, or `mailbox_full` when the ring has no room, or
   `loop_not_found`. It is produced by the sender's `flush` with no wait.
-- The receiver drains the rings that name it twice in each tick, straight into the caller's
-  events: before the `kevent` call, inside the places that the kernel's reserve leaves, and after
-  it, into what is left (W3, amended 2026-11-07). Each drain starts at `Inbox.sender_cursor` and
+- The receiver drains the rings that name it straight into the caller's events, twice in each
+  tick that makes the `kevent` call: before the call, inside the places that the kernel's reserve
+  leaves, and after it, into what is left (W3, amended 2026-11-07). A tick that makes no call
+  keeps no kernel reserve and drains the rings once. Each drain starts at `Inbox.sender_cursor` and
   visits the senders in turn, at most `messages_per_drain` from each. When the events run out, the
   cursor moves to the first sender the drain did not visit. A ring that still holds messages is
   drained by a later tick, which does not wait while any ring is non-empty.
@@ -280,7 +281,9 @@ The shares of a tick, `core.tick_share.split`:
 Each backend names its own entries in `own_entries_max`: 3 on kqueue (the wake trigger, the wait
 timer and the group watch), 2 on epoll (the wake eventfd and the wait timer), and 0 on io_uring. A
 place that a reserve does not use goes back in the same tick: to the mailboxes, then to the lists
-when they filled their share. On kqueue the tick that makes no call gives the places back too.
+when they filled their share. The kqueue tick that makes no call is the exception. It keeps no
+kernel reserve, so its one drain of the mailboxes had every place the lists left, and it gives what
+is left to the lists only.
 
 What the build found, against the design of W3:
 

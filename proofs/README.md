@@ -59,9 +59,10 @@ tick hands over the final event.
 | `Timers.Defs`: `submit`, `armTimer`, `finishLocal`, `fireLocal`, `rearm`, `release`, `drain`, `drainFired`, `drainLists`, `requestCancel`, `cancellable` | `Tables.submit`, `arm`, `finish_local`, `fire`, `rearm`, `SlotTable.release`, the pops of `drain_lists` from each list, `drain_lists`, `request_cancel`, `cancellable` and `reachable` | Every slot holds a timer. A deadline on another kind of operation shares the heap, but its expiry goes to the backend's cancel. The slot table's free list is left out: `submit` takes the index a claim returns. The model's `Event` has no `dispatched` flag. Since decision 26, `drain_lists` copies that flag from the slot to the event. No theorem depends on it. Due timers wait on `fired` and the slots a cancel ends on `finished` (W3, ruled 2026-11-07). `drainFired` is `drain` with the two lists exchanged, so one proof covers the pops from both lists. The Zig `drain_lists` pops both lists in one loop, `fired` while it is under its share, and the model writes the same pops as `drainFired` and then `drain`. |
 | `Timers.Defs`: `flushOne`, `flush`, `expire`, `tick` | a backend's `flush_one`, `flush`, `expire` and `tick` | A tick is `flush`, `expire`, `drain_lists`, `expire` again, then `drain_lists` into the room that is left. The share `core.tick_share` gives the lists only bounds that room, so the model drains into any room. The Zig tick's first expiry is `finish_due_timers`, which stops at the first deadline that is not a timer's, and its second comes after its reap (issue 10). Every slot here holds a timer, so the first is `expire`. The Zig tick also drains mailboxes and the offload, and waits and reaps before its second expiry. None of that reaches a timer's slot. |
 
-Two fields of the model's slot are not in the Zig slot: `first`, the first deadline, and `fired`,
-the fires handed over. The model's `Tables.fired` is the list of due timers, as in the Zig tables. Nothing the model computes reads them. They exist so a theorem can say
-which deadline the k-th fire was for.
+Two fields of the model's slot are not in the Zig slot: `first`, the first deadline, and `handed`,
+the fires handed over. Nothing the model computes reads these two fields. They exist so a theorem
+can say which deadline the k-th fire was for. The model's `Tables.fired` is a different thing: the
+list of due timers, as in the Zig tables, which `fireLocal` appends to and `drainLists` reads.
 
 ## Keeping them true
 

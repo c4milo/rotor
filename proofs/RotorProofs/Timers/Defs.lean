@@ -23,7 +23,7 @@ What it leaves out, and why the omission changes nothing proved here:
   (W3, ruled 2026-11-07). `drainLists` hands over `fired` first, up to its share, then `finished`.
 
 Two fields are the proof's and not the Zig slot's: `first`, the first deadline a timer was armed
-for, and `fired`, how many of its fires have been handed over. Nothing the model computes reads
+for, and `handed`, how many of its fires have been handed over. Nothing the model computes reads
 them; they exist so a theorem can say which deadline the k-th fire was for.
 -/
 
@@ -59,7 +59,7 @@ structure Slot where
   /-- The proof's: the first deadline. -/
   first : Nat
   /-- The proof's: the fires handed over. -/
-  fired : Nat
+  handed : Nat
   deriving Repr
 
 /-- `event.result_of(.canceled)`: some negative number, which is all this model needs of it. -/
@@ -103,7 +103,7 @@ def submit (t : Tables) (i after period userData : Nat) : Tables :=
     { s with
       state := .queued, userData := userData, repeating := period != 0,
       cancelRequested := false, period := period, after := after, last := 0, result := 0,
-      first := 0, fired := 0 }
+      first := 0, handed := 0 }
   let t1 := t.set i filled
   { t1 with pending := t.pending ++ [i] }
 
@@ -158,7 +158,7 @@ def repeats (s : Slot) : Bool := s.repeating && !s.cancelRequested
 def rearm (t : Tables) (i : Nat) : Tables :=
   let s := t.slots i
   let due := s.last + s.period
-  let t1 := t.set i { s with state := .submitted, last := due, fired := s.fired + 1 }
+  let t1 := t.set i { s with state := .submitted, last := due, handed := s.handed + 1 }
   { t1 with timers := arm t.timers i due }
 
 /-- `SlotTable.release`: the slot is free, and its generation moves on. -/

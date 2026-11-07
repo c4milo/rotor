@@ -70,7 +70,7 @@ theorem rearm_slot (t : Tables) (i : Nat) :
     (rearm t i).slots i =
       { t.slots i with
         state := .submitted, last := (t.slots i).last + (t.slots i).period,
-        fired := (t.slots i).fired + 1 } := by
+        handed := (t.slots i).handed + 1 } := by
   simp [rearm]
 
 theorem rearm_other (t : Tables) {i j : Nat} (h : j ≠ i) : (rearm t i).slots j = t.slots j := by

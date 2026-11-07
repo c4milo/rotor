@@ -10,8 +10,8 @@ import RotorProofs.Timers.Local
 - the pending list holds distinct queued slots, and the finished and fired lists distinct
   finishing slots, no slot on both;
 - no submitted timer is marked cancelled: marking one finishes it at once;
-- every slot's deadline is its first deadline plus its fires times its period, and a queued slot
-  has fired none;
+- every slot's deadline is its first deadline plus its fires handed over times its period, and a
+  queued slot has handed over none;
 - a finishing slot nobody cancelled finished with 0, its fire, and that fire was due by the clock
   the tables last read.
 
@@ -34,8 +34,8 @@ structure Good (t : Tables) (m : Nat → Option Entry) : Prop where
   fired : ∀ s, s ∈ t.fired → (t.slots s).state = .finishing
   fired_nodup : t.fired.Nodup
   disjoint : ∀ s, s ∈ t.fired → s ∉ t.finished
-  schedule : ∀ s, (t.slots s).last = (t.slots s).first + (t.slots s).fired * (t.slots s).period
-  queued_fresh : ∀ s, (t.slots s).state = .queued → (t.slots s).fired = 0
+  schedule : ∀ s, (t.slots s).last = (t.slots s).first + (t.slots s).handed * (t.slots s).period
+  queued_fresh : ∀ s, (t.slots s).state = .queued → (t.slots s).handed = 0
   fired_result : ∀ s, (t.slots s).state = .finishing → (t.slots s).cancelRequested = false →
     (t.slots s).result = 0
   due : ∀ s, (t.slots s).state = .finishing → (t.slots s).result = 0 → (t.slots s).last ≤ t.now
@@ -60,7 +60,7 @@ theorem disarm_unarmed (h : Heap) (m : Nat → Option Entry) (hv : Valid h m) (s
 /-- The state every slot starts in: free, generation 1, and every number 0. -/
 def freshSlot : Slot :=
   { state := .free, generation := 1, userData := 0, repeating := false, cancelRequested := false,
-    period := 0, after := 0, last := 0, result := 0, first := 0, fired := 0 }
+    period := 0, after := 0, last := 0, result := 0, first := 0, handed := 0 }
 
 /-- The tables `init` makes: every slot fresh, the heap empty, every list empty. -/
 def initial (entries : Nat → Entry) : Tables :=

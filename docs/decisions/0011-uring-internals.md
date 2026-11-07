@@ -144,7 +144,9 @@ messages of other loops and the kernel's answer out of the tick.
 - Of `F` places, `fired` takes up to `F - min(finished.count, F / 2)`, and `finished` takes the
   rest. When both lists are full, each takes about half.
 - The places that a reserve does not use go back in the same tick: to the mailboxes, then to the
-  lists. The rest of the lists wait for the next tick.
+  lists. The kqueue tick that makes no call is the exception. It keeps no kernel reserve, drains
+  the mailboxes once, and gives what is left to the lists only. The rest of the lists wait for the
+  next tick.
 - When the lists hold `c` entries and `c + own_entries_max <= N / 2`, the tick drains them all and
   computes only `K`. They fit in `N - K - M`, so the tick writes the same events as with the share
   (decision 12, point 6, has the arithmetic).

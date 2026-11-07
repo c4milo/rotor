@@ -48,7 +48,7 @@ period. Nothing in that sum is the clock at which a fire was handed over. -/
 theorem armed_on_schedule {t : Tables} (r : Reachable t) (s : Nat)
     (hs : (t.slots s).state = .submitted) :
     ∃ m, Good t m ∧ ∃ x, m s = some x ∧
-      x.deadline = (t.slots s).first + (t.slots s).fired * (t.slots s).period := by
+      x.deadline = (t.slots s).first + (t.slots s).handed * (t.slots s).period := by
   obtain ⟨m, g⟩ := r.good
   obtain ⟨x, hx⟩ := g.submitted s hs
   exact ⟨m, g, x, hx, by rw [(g.armed s x hx).2, g.schedule s]⟩
@@ -60,9 +60,9 @@ is skipped, and never one read from the clock. It holds of every state a tick dr
 theorem handed_over_on_schedule (t : Tables) (m : Nat → Option Entry) (g : Good t m) (i : Nat)
     (rest : List Nat) (hfin : t.fired = i :: rest) (hrep : repeats (t.slots i) = true) :
     let s := t.slots i
-    s.last = s.first + s.fired * s.period ∧ s.last ≤ t.now ∧
+    s.last = s.first + s.handed * s.period ∧ s.last ≤ t.now ∧
       (drainFired t 1).2.map (·.more) = [true] ∧
-      ((drainFired t 1).1.slots i).last = s.first + (s.fired + 1) * s.period ∧
+      ((drainFired t 1).1.slots i).last = s.first + (s.handed + 1) * s.period ∧
       ((drainFired t 1).1.slots i).state = .submitted := by
   have hs : (t.slots i).state = .finishing := g.fired i (by rw [hfin]; simp)
   have hc : (t.slots i).cancelRequested = false := by
