@@ -209,6 +209,22 @@ pub const Ring = struct {
         return .submitted;
     }
 
+    /// Submits what `get_sqe` handed out, and waits for nothing. Only `Loop.deinit` calls it,
+    /// through `KernelEnter`. A call of `enter` there gave `enter_with` a second caller, and the
+    /// compiler stopped inlining it into the tick: 28 instructions a `post` on arm64
+    /// (docs/hot-path-ledger.md, row H4).
+    pub fn enter_now(ring: *Ring) EnterError!Entered {
+        const to_submit = ring.io.flush_sq();
+        var retry: u32 = 0;
+        while (retry <= constants.enter_retries_max) : (retry += 1) {
+            return ring.enter_once(to_submit, .none) catch |err| switch (err) {
+                error.Interrupted => continue,
+                error.Unexpected => return error.Unexpected,
+            };
+        }
+        return error.SystemResources;
+    }
+
     fn enter_with(ring: *Ring, wait: Wait) EnterError!Entered {
         const to_submit = ring.io.flush_sq();
         if (to_submit == 0 and wait == .none and !ring.completions_wait_behind_an_enter()) {

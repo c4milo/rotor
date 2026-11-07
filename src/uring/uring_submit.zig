@@ -48,7 +48,9 @@ pub fn flush(loop: *Loop) void {
         const index = tables.next_pending() orelse break;
         if (!flush_entry(loop, index, tables.table.at(index))) break;
     }
-    send_wakes(loop);
+    // Forced inline: with `deinit` as a second caller, the compiler stopped inlining it here, and
+    // each tick paid for the call (docs/hot-path-ledger.md, row H4).
+    @call(.always_inline, send_wakes, .{loop});
     group_wake.arm(loop);
     assert(tables.pending.count <= queued);
 }
@@ -225,13 +227,15 @@ fn send_wakes(loop: *Loop) void {
     }
 }
 
-/// What `Loop.deinit` enters the ring through when it sends the noted wakes: the kernel itself.
+/// What `Loop.deinit` enters the ring through when it sends the noted wakes: the kernel itself. It
+/// calls `Ring.enter_now` and not `Ring.enter`, so `enter_with` keeps the callers it had, and the
+/// compiler keeps it inline in the tick (docs/hot-path-ledger.md, row H4).
 pub const KernelEnter = struct {
     pub fn enter(
         _: KernelEnter,
         ring: *ring_module.Ring,
     ) ring_module.EnterError!ring_module.Entered {
-        return ring.enter(null);
+        return ring.enter_now();
     }
 };
 
