@@ -24,6 +24,7 @@ Accept the proposal, with four additions, two exclusions it did not name, and on
 | cross-core | post one message into another loop (`0004-threading.md`), in the same process or, since 2026-09-25, in another process of the same group (`0021-loops-in-several-processes.md`) |
 | registration | buffers and descriptors, once, before use (`0003-speed-sources.md`) |
 | tasks | since 2026-11-06, a library's task, which the loop runs once in the `end` of a tick, a FIFO with a budget in tasks (`0027-a-task-queue.md`) |
+| scheduling groups | since 2026-11-07, task queues with shares on one loop, served by deficit round robin in the cost units each task states, and named groups that are the same on every loop. A time quota and preemption stay out (`0030-scheduling-groups.md`) |
 | shared loop | since 2026-11-06, `SharedLoop`, the view of a loop that the program hands each library. The calls that only the program makes fail to compile on it (`0028-correct-use-and-stalls.md`) |
 | stalls | since 2026-11-06, an exact count of the loop's turns at or above a threshold, and a heartbeat that a thread of the program reads to name the callback that holds the loop (`0028-correct-use-and-stalls.md`) |
 

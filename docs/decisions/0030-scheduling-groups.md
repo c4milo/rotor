@@ -1,9 +1,75 @@
 # 30. Scheduling groups
 
-Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"). Nothing is built. Every cost here is a
-prior: a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic over
-the code at `5e9490d` and the counts of `bench/baseline/work.txt`. Nothing was measured for this
-record.
+Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), and built on 2026-11-07 on the branch
+`decision-30` (see "What was built"). The costs in the sections after "What was built" are
+priors: a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic over
+the code at `5e9490d` and the counts of `bench/baseline/work.txt`. "What was built" holds the
+measured counts.
+
+## What was built, 2026-11-07
+
+The groups are built on io_uring, epoll and kqueue, through `src/core/scheduling/` and the public
+module. These parts differ from the design below:
+
+1. **The bulk credit adds `r - 1` visits of credit, not `r`.** So the first group of the next pass
+   that reaches a credit above 0 starts a task, as `r` passes of skips would do. With `r` visits
+   the first group of that pass would take one visit too many. The property test holds the run to
+   a model of plain DRR with no bulk credit (G1). The class A check after a bulk credit therefore
+   asks for a start within one pass, not at the next visit. `proofs/RotorProofs/Drr.lean` proves
+   that the pass starts a task (`bulk_then_start`).
+2. **`turn_group` is stored once in each run, by `leave_tasks`, with the group of the last task.**
+   A stall names a group only when its turn called one task, and then the last task is that task.
+3. **`task_budget_left` on the groups path** reads the ready mask at the call. With no other group
+   ready, it answers the starts left in the tick.
+4. **The class B check of a ready lane** holds its count, its head and tail, and the sum of the
+   counts. `startable <= count` moved to `Groups.assert_lanes` (class D), because the run's snapshot
+   writes `startable` again before it reads it.
+5. **`Task.Call.cost` has a default of 1**, so a `Call` written by hand compiles unchanged. The
+   groups path halts on a cost outside 1 to `task_charge_max` (class A).
+6. **`charge_task` on the path with one group** checks that one call charges at most
+   `task_charge_max`. It cannot check the sum of a task's charges there without a write for each
+   task.
+7. **The compile-fail cases of the named groups are programs.** A test's root is Zig's test runner,
+   so `build/compile_fail.zig` builds those five files as executables, with a `program` flag on
+   each case. "How tests name groups" said that no file under `build/` changes.
+8. **`Loop.memory_bytes` is no longer a multiple of 64 bytes**, because `Groups` is 536 B. The
+   echo server rounds each loop's block of its array up to `memory_alignment`.
+9. **`Dispatch` stays 104 B**, not 96 B: decision 29's `until_ns` is in it.
+10. **Not built, because their records are not built:** the limit `tasks_queued_max +
+    call_tasks_max`, `Task.Call.call_record` and the halt of `discard_tasks` on a call's task
+    (decision 32), and the count of `TasksFull` for each group (W9).
+
+Two class A checks have no halt scenario, because no parameter reaches them (decision 8): a run
+ends within `visits_per_run_max` visits, and a bulk credit is followed by a start. A mutation that
+removes the bulk credit makes the first halt in `zig build test-core`.
+
+**The default shares and `task_charge_max` are not fixed yet** (open question 9). The build uses
+the proposed 100 and 64. The work gate's new rows, with every group at one value of the shares, on
+`mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of about 20) and on arm64 Linux
+(cachegrind of Valgrind 3.25.1 in an arm64 container on `mac`):
+
+| row | shares | `mac` kqueue | arm64 io_uring | arm64 epoll |
+|---|---|---|---|---|
+| `tasks-64`, for comparison | none | 4555 | 3922 | 3954 |
+| `tasks-groups-4` | 100 | 12939 | 12328 | 12359 |
+| `tasks-groups-4` | 200 | 10721 | not measured | not measured |
+| `tasks-groups-4` | 400 | 9630 | 9004 | 9035 |
+| `tasks-groups-4` | 1000 | 9085 | not measured | not measured |
+| `tasks-groups-16` | 100 | 13622 | 13012 | 13043 |
+| `tasks-groups-16` | 400 | 10309 | 9697 | 9728 |
+
+At the default shares a visit starts one task, and `tasks-groups-4` counts about 2.8 times
+`tasks-64` on `mac`, against the prior of 1.3 times. A visit costs about 69 instructions on `mac`,
+from the rows at 100 and 400. The other 60 or so for each task are `schedule_in` and the start of
+a task on the groups path, which ReleaseSafe checks. No line of `bench/baseline/work.txt` changed.
+
+The older rows on `mac` stay within their lines. On arm64 Linux the path with one group counts more
+than the base commit `cb38fef`: io_uring `post` +2, `post-operation` +4, `task` +8, `record` +7
+and `poller` +6, and epoll `task` +10, `record` +9 and `poller` +8. That path gains a store of
+`turn_group` in `leave` and `leave_tasks` and a store of `phase` before a run, and no count
+separates the two. At `cb38fef`,
+io_uring `post`, `task` and `poller` were already over their lines with Valgrind 3.25.1. With the
+change, `post-operation` and `record` are over too.
 
 ## Ruling, 2026-11-07
 

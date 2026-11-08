@@ -468,11 +468,12 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
 
 - The program calls `loop.shared()` and hands each library the `*SharedLoop` it returns, which the
   library keeps. Its address is the loop's, and each call on it is the `Loop` call of the same name:
-  `submit`, `cancel`, `post`, `now_ns`, `schedule`, `is_scheduled`, `task_budget_left`,
-  `add_poller`, `remove_poller`, `reserve_buffer_group`, and the buffer group calls. `tick`,
-  `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a message that
-  states the rule (decision 28). A library that casts the view back to a `*Loop` and ticks inside a
-  callback still halts.
+  `submit`, `cancel`, `post`, `now_ns`, `schedule_in`, `charge_task`, `is_scheduled`,
+  `task_budget_left`, `add_poller`, `remove_poller`, `reserve_buffer_group`, and the buffer group
+  calls. `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a
+  message that states the rule (decision 28). So do `schedule`, `reserve_scheduling_group` and
+  `set_scheduling_group_shares` (decision 30). A library that casts the view back to a `*Loop` and
+  ticks inside a callback still halts.
 
 - Each operation of the library names a `Completion`, a record inside the library's own struct:
   `Operation.receive_from(0, socket, group).completion(&endpoint.receive)`. The tick calls the
@@ -498,20 +499,42 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
 - A library reserves its buffer group with `shared.reserve_buffer_group()` once, at init, and keeps
   the `BufferGroup` until the loop's `deinit`.
 - Work that continues later, such as the caller's callback after an exchange ends, goes in a
-  `Task`, declared with `Task.init(Client, "done", Client.on_done)`. `loop.schedule(&client.done)`
-  queues it, and the loop calls it once. A task queued by the program, a poller or a record runs in
-  the same tick, after the records; a task queued by a task runs in the next tick. One tick runs at
-  most `tasks_per_tick_max` (64) tasks, in the order of the `schedule` calls, and does not block
-  while a task is queued. A long task splits its work: it reads `loop.task_budget_left()`, does at
-  most that many slices plus one, and schedules itself again. A task is queued on one loop at a
-  time, and `loop.is_scheduled` says whether it is. At most `tasks_queued_max` (65,536) are queued;
-  one more returns `error.TasksFull`.
+  `Task`, declared with `Task.init(Client, "done", Client.on_done)`. The library queues it in its
+  scheduling group with `shared.schedule_in(client.group, &client.done)`, and the loop calls it
+  once. A task queued by the program, a poller or a record runs in the same tick, after the
+  records; a task queued by a task runs in the next tick. One tick runs at most
+  `tasks_per_tick_max` (64) tasks, and does not block while a task is queued. A long task splits
+  its work: it reads `loop.task_budget_left()`, does at most that many slices plus one, calls
+  `charge_task` with the slices less one when there were more than one, and schedules itself
+  again. A task is queued on one loop at a time, and `loop.is_scheduled` says whether it is. Each
+  group holds at most `tasks_queued_max` (65,536) tasks; one more returns `error.TasksFull`, and
+  the other groups can still schedule.
+- The program owns the scheduling groups (decision 30). A group is a task queue with shares, and
+  the loop serves the groups by deficit round robin in cost units: a task costs 1 unit, or the cost
+  that `Task.init_cost` states, plus what it adds with `charge_task`. Shares are in hundredths of a
+  unit, from 1 to `scheduling_shares_max` (1000), and the default of 100 gives a group one unit at
+  each visit. So two groups at 100 and 300 are served units 1 to 3. The program reserves a group
+  with `loop.reserve_scheduling_group(shares)`, sets shares with
+  `loop.set_scheduling_group_shares`, and hands each library its group at init. `.default` is the
+  group of `loop.schedule`, and a library names it as `.default` in `schedule_in`. A program that
+  uses no group other than `.default` runs decision 27's queue, in the order of the calls.
+- A group that a cross-core call names must be the same group on every loop, so it has a name. The
+  program declares its named groups once, in its root source file:
+  `pub const rotor_scheduling_groups = .{ .quic = 400, .dns = 100 };`. Every loop reserves them at
+  init as ids 1 to n, in that order, at those shares, and `reserve_scheduling_group` then returns
+  n + 1. `rotor.named_scheduling_group(.quic)` returns the `NamedSchedulingGroup`, which the program
+  hands to a library that makes cross-core calls; the library calls its `scheduling_group()` for
+  its own `schedule_in`. A name the root does not declare fails to compile. Shares belong to each
+  loop: `set_scheduling_group_shares` changes them on the loop that makes the call.
+- Records and pollers are in no group. A record or a poller does a small, fixed amount of work, and
+  puts the rest in a task in its library's group. A stall of one task names its group
+  (`Stall.group`).
 - A callback, a poller or a task may submit, cancel, give buffers back and schedule a task. A
   callback or a task may add or remove a poller; a poller may not. Any of them that calls `tick`
   or `deinit` halts. Remove every poller, and let every task run, before `deinit`, which halts on
   either.
-  `drain` runs the queued tasks; when a task never stops, it fails with `TasksStillQueued`, and
-  `loop.discard_tasks()` unlinks the tasks without a call.
+  `drain` runs the queued tasks of every group; when a task never stops, it fails with
+  `TasksStillQueued`, and `loop.discard_tasks()` unlinks the tasks of every group without a call.
 - An event of an operation that names no record, and a message another loop posted, go to the
   caller of `tick`, as before.
 - The library submits on the loop's thread only. A caller on another thread reaches it through a
