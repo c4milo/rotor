@@ -93,6 +93,12 @@
 # `mac` (562, 562, 559) at the fix for `enter_with`. x86-64 epoll `task` rose to 668, CI's count
 # at `fd67aac`, run 42407660335: the fair tick order, the split check and decision 29 each added a
 # few instructions there.
+# `tasks-groups-4`, `tasks-groups-16` and `call` were added on 2026-11-08 for decisions 30 and 32,
+# by Camilo's ruling 4 of that day: 64 tasks in 4 and in 16 scheduling groups at the default
+# shares, and one round trip of a cross-core call. The macOS rows are the median of three runs on
+# `mac` at a load average of about 11 (12943, 12942 and 12978; 13639, 13638 and 13639; 2529 each
+# time). The linux-aarch64 rows are from cachegrind of Valgrind 3.25.1 in an arm64 container on
+# `mac`. The x86-64 sections hold no line for them, so CI prints them after the push.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -104,6 +110,9 @@ task 615
 tasks-64 4558
 record 1283
 poller 562
+tasks-groups-4 12943
+tasks-groups-16 13639
+call 2529
 section linux-x86_64-uring
 post-operation 3169
 timer 1165
@@ -132,6 +141,9 @@ task 545
 tasks-64 3910
 record 1199
 poller 505
+tasks-groups-4 12313
+tasks-groups-16 13009
+call 2307
 section linux-aarch64-epoll
 post 1150
 post-operation 3039
@@ -142,3 +154,6 @@ task 593
 tasks-64 3985
 record 1228
 poller 557
+tasks-groups-4 12360
+tasks-groups-16 13056
+call 2442
