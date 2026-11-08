@@ -10,6 +10,7 @@ const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
+const post_scenarios = @import("conformance_post.zig");
 const tcp = @import("conformance_tcp.zig");
 
 const Harness = conformance.Harness;
@@ -77,6 +78,9 @@ test "two libraries at shares 100 and 300 are served 1 to 3 beside a receive and
     var high: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(300) };
     var lows: [tasks_per_library]Forever(1) = @splat(.{ .library = &low });
     var highs: [tasks_per_library]Forever(1) = @splat(.{ .library = &high });
+    // A failed check returns with tasks queued, and `deinit` halts on them: the test must fail
+    // and not halt.
+    errdefer _ = harness.loop.discard_tasks();
     for (&lows) |*one| try harness.loop.schedule_in(low.group, &one.task);
     for (&highs) |*one| try harness.loop.schedule_in(high.group, &one.task);
 
@@ -104,27 +108,58 @@ test "two libraries at shares 100 and 300 are served 1 to 3 beside a receive and
     try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
 }
 
-test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a timer its tick" {
+/// What a tick of the tested loop handed over in one round: the timer, and the post of the peer.
+const Arrivals = struct {
+    timer: bool = false,
+    post: bool = false,
+
+    fn note(arrivals: *Arrivals, events: []const Event, round: u64) void {
+        for (events) |event| {
+            if (event.flags.message) {
+                const ping = event.result == post_scenarios.tag_ping;
+                arrivals.post = arrivals.post or (ping and event.user_data == round);
+            } else {
+                arrivals.timer = arrivals.timer or event.user_data == round;
+            }
+        }
+    }
+};
+
+test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a timer and a post their tick" {
     if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const registry_alignment = core.layout.memory_alignment;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
     var harness: Harness = undefined;
-    try harness.init(0, null);
+    try harness.init(0, &registry);
     defer harness.deinit();
+    // A peer loop on this thread posts to the tested loop once in each round.
+    var peer: Harness = undefined;
+    try peer.init(1, &registry);
+    defer peer.deinit();
     var costly: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(100) };
     var unit: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(100) };
     var costlies: [tasks_per_library]Forever(constants.task_charge_max) = @splat(.{ .library = &costly });
     var units: [tasks_per_library]Forever(1) = @splat(.{ .library = &unit });
+    errdefer _ = harness.loop.discard_tasks();
     for (&costlies) |*one| try harness.loop.schedule_in(costly.group, &one.task);
     for (&units) |*one| try harness.loop.schedule_in(unit.group, &one.task);
     var events: [8]Event = undefined;
     for (0..8) |round| {
-        // A timer that is due at once arrives within 2 ticks, whatever the groups hold.
+        // A timer that is due at once, and a post, arrive within 2 ticks, whatever the groups
+        // hold. The peer's tick carries the wake that a post on io_uring leaves for it.
         try harness.submit(&.{Operation.timer(round, 0, 0)}, &.{});
-        var arrived = false;
+        try peer.loop.post(0, .{ .payload = round, .tag = post_scenarios.tag_ping });
+        _ = try peer.tick(&events, 0);
+        var arrivals: Arrivals = .{};
         for (0..2) |_| {
             const count = try harness.tick(&events, long_wait_ns);
-            for (events[0..count]) |event| arrived = arrived or event.user_data == round;
+            arrivals.note(events[0..count], round);
         }
-        try testing.expect(arrived);
+        try testing.expect(arrivals.timer);
+        try testing.expect(arrivals.post);
     }
     // Each costly start buys 63 rounds of debt, in which the unit group takes one start each, so
     // in 16 ticks the unit group has at least 63 starts for each costly one, less one tick's.
@@ -163,6 +198,7 @@ test "drain runs the tasks of every group, and discard_tasks unlinks every group
     var library: Library = .{ .harness = &harness, .group = first };
     var other: Library = .{ .harness = &harness, .group = second };
     var forevers: [2]Forever(1) = .{ .{ .library = &library }, .{ .library = &other } };
+    errdefer _ = harness.loop.discard_tasks();
     try harness.loop.schedule_in(first, &forevers[0].task);
     try harness.loop.schedule_in(second, &forevers[1].task);
     try testing.expectError(error.TasksStillQueued, harness.drain(&scratch));
