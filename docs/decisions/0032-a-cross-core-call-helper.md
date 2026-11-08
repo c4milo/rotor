@@ -68,7 +68,8 @@ The call is built on io_uring, epoll and kqueue, through `src/core/call/` and th
     call. The drain then wakes the caller through its backend's wake. `spec/tla/call/` models it.
 16. **The tags of a call and of its return are `message_tag_wake + 1` and `+ 2`.**
     `message_tag_max` stays decision 29's `0x7fff_efff`, and a post checks its tag with one
-    compare. No result carries a call's tag, because the drain writes no event for it.
+    compare. No result carries a call's tag, because the drain writes no event for it. Camilo
+    accepted these tags on 2026-11-08 ("Finish, 2026-11-08", ruling item 4).
 17. **`send` takes `*const Request`, and `CallRecord.answer` takes `*const Reply`**, as the API
     rule of the Zig projects asks for an argument that may be above 16 bytes. A handler still
     returns `Answer(Reply)` by value: that rule is about arguments, and `.now` with no reply must
@@ -84,13 +85,18 @@ statement after the writes.
 
 ## Finish, 2026-11-08
 
-Camilo ruled on two items for the finish:
+Camilo ruled on two items for the finish, and on two more on 2026-11-08 after its review:
 
 1. **Decision 7 is amended** to admit `noinline` and `@branchHint(.cold)` on `take_reserved` in
    `src/uring/uring_reap.zig`, `src/epoll/epoll.zig` and `src/kqueue/kqueue_reap.zig`, one use
    each, with the counts of ledger rows H6 to H8. No file joins decision 7's list.
 2. **"Cut first, then show rows."** Cut what this record adds to a loop that makes no call (rule
    6 of "The decision"), then report every row. No baseline is raised.
+3. **Rule 6 admits one cost.** A dispatched tick on arm64 pays 2 instructions for the read of
+   `task_queue_length_max` (82,368) in `Tasks.assert_shape`. The limit stays (open question 11).
+4. **The tags of a call above the wake are accepted** (item 16 of "What was built"). The `call`
+   row gains its lines in `bench/baseline/work.txt` for `mac` and arm64, beside decision 30's two
+   rows. The x86-64 sections get them from CI after the push.
 
 The review of the branch `decision-32` found eight things. What was done:
 
@@ -115,6 +121,10 @@ on `mac`), all on 2026-11-08. "line" is the row of `bench/baseline/work.txt`, wh
 holds, and which no commit changed. `cb38fef` is `main` before decision 30, `5e2dbfc` is the fixed
 decision 30, and `0ce36b5` is this branch's code. OVER marks a count more than 2 percent above its
 line. "none" is a row with no line, or a workload that the tree does not have.
+
+The tables below are the counts of the branch before its rebase. The branch `v0-10-0` puts this
+work on `main` at `80339fc`, and decision 30, "The rows against main", holds every row of that
+tree against `main`.
 
 On `mac`:
 
@@ -182,7 +192,8 @@ What is left:
 - `Tasks.assert_shape` reads `task_queue_length_max`, 82,368, which arm64 builds in two
   instructions where `tasks_queued_max` took one. Each dispatched tick pays 2 instructions for it.
   The cuts above hide it. A `task_queue_length_max` of 86,016, 21 times 4096, would take one
-  instruction, but that changes a named limit (open question 11).
+  instruction, but that changes a named limit. Camilo ruled on 2026-11-08 to keep the limit and
+  admit the cost (open question 11, and rule 6).
 
 Mutations of the finish, each `CAUGHT`:
 
@@ -337,7 +348,10 @@ heap, the admission wait, and the second queue.
    `target_stopped`.
 5. **A return never meets a full ring.** A post sees 224 of 256 slots, and at most 32 calls are
    out on each pair. Above that, `send` returns `CallsFull` at once.
-6. **A loop that makes no calls pays nothing** on any path that the work gate counts.
+6. **A loop that makes no calls pays nothing** on any path that the work gate counts, with one
+   exception. On arm64, each dispatched tick pays 2 instructions for the read of
+   `task_queue_length_max` (82,368) in `Tasks.assert_shape`. Camilo ruled on 2026-11-08 to admit
+   that cost and keep the limit (open question 11).
 
 ### The surface
 
@@ -366,7 +380,7 @@ pub fn Service(
         /// Sends `request` to loop `target`. On an error nothing was sent, and `finish` does
         /// not run. It halts when `call` is out already, and on a forged group id.
         pub fn send(service: *@This(), shared: *SharedLoop, target: LoopId, call: *Call,
-            request: Request, options: CallOptions) CallError!void;
+            request: *const Request, options: CallOptions) CallError!void;
     };
 }
 
@@ -386,7 +400,7 @@ pub fn CallRecord(comptime Request: type, comptime Reply: type) type {
         /// Target side: the request, from the handler's start until the answer.
         pub fn request_of(call: *const @This()) *const Request;
         /// Target side, after `.later`: answers once, on the target's thread.
-        pub fn answer(call: *@This(), shared: *SharedLoop, reply: Reply) void;
+        pub fn answer(call: *@This(), shared: *SharedLoop, reply: *const Reply) void;
     };
 }
 
@@ -425,7 +439,7 @@ const Writer = struct {
         switch (result) { .replied => |reply| ..., .expired => ..., .target_stopped => ... }
     }
 };
-try append.send(shared, journal_core, &writer.append_call, .{ .bytes = ... },
+try append.send(shared, journal_core, &writer.append_call, &.{ .bytes = ... },
     .{ .group = writer.group });
 ```
 
@@ -952,7 +966,7 @@ gains a bound for a call round trip, at 10 times the measured value.
 
 ## Open questions
 
-Camilo ruled on questions 1 to 10 on 2026-11-07, and question 11 waits. Questions 1 to 8 take the proposed answer. Question 10
+Camilo ruled on questions 1 to 10 on 2026-11-07, and on question 11 on 2026-11-08. Questions 1 to 8 take the proposed answer. Question 10
 takes the other answer, and he then ruled question 9 to follow it.
 
 1. **`calls_per_pair_max`.** (a) 32. (b) 64, which leaves 192 slots for posts. *Ruled: (a), until
@@ -991,11 +1005,13 @@ takes the other answer, and he then ruled question 9 to follow it.
     dispatched tick pays 2 more than with `tasks_queued_max`. (a) Keep it: the cuts of the finish
     hide it, and every arm64 row is at or below decision 30's. (b) Round `call_tasks_max` up to
     20,480, so the sum is 86,016, 21 times 4096, one instruction, at the cost of a larger bound
-    than the calls need. Proposed: (a).
+    than the calls need. Proposed: (a). *Ruled on 2026-11-08: (a). Rule 6 admits the cost of 2
+    instructions for each dispatched tick on arm64, and the limit stays 82,368.*
 
 ## Left for Camilo
 
-Open question 11. Camilo ruled every other item of this list on 2026-11-07. Items 5 to 8 of
+Nothing. Camilo ruled open question 11 on 2026-11-08, and every other item of this list on
+2026-11-07. Items 5 to 8 of
 "Ruling, 2026-11-07" hold the first list. Items 9 to 12 hold the four choices of the per-call task. "Alternatives it
 beat" holds the choices that lost.
 
@@ -1007,7 +1023,7 @@ These items of CLAUDE.md's "Ask before" apply:
 |---|---|---|
 | building what decision 2 leaves out | no cross-core call | a new row; accepted 2026-11-07 |
 | a named limit: the room for a post | 256 of 256 | `mailbox_posts_max`, 224 of 256 |
-| a named limit: `message_tag_max` | `0x7fff_efff` (decision 29) | `0x7fff_effd` |
+| a named limit: `message_tag_max` | `0x7fff_efff` (decision 29) | unchanged: the tags of a call are `message_tag_wake + 1` and `+ 2`, above the wake. The proposal was `0x7fff_effd`. Ruled 2026-11-08 (item 16) |
 | new named limits | | `calls_per_pair_max` 32, `services_max` 16, two tags |
 | a new derived limit | | `call_tasks_max` = 16,832; ruled 2026-11-07 (ruling item 11) |
 | the layout of a hot structure: `Mailbox` | | `calls_out` on the `tail` line; size unchanged; `header_version` + 1 |
