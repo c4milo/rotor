@@ -5,6 +5,12 @@ Status: **accepted** by Camilo on 2026-11-06, with the proposed answer to each o
 kept callbacks as a helper: the batch stays the default, and an operation may now name a record.
 "What was built" at the end says where the code differs from the proposal, and what it measured.
 
+Amended on 2026-11-08 by decision 32. `callbacks_outstanding` also counts the cross-core calls: a
+call that the loop sent, until its return reaches the loop's drain, and a call that the loop
+holds, until it answers. The queued task of a call counts as any task does. So the count is 0
+only when the loop owes no callback, a call included. `drain` ticks while it is above 0, and
+`deinit` halts while a call is out or held, or while a station of the loop serves.
+
 ## Context
 
 colibri asked for this in rotor issue 14. colibri's client and server and cocuyo's resolver will

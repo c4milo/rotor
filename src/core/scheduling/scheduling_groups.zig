@@ -63,8 +63,8 @@ pub const Groups = struct {
     visit_open: bool,
     /// n, the named groups of the program, which hold ids 1 to n on every loop.
     named: u8,
-    /// The services that this loop serves or calls (decision 32): each station that a `serve` or
-    /// a `send` attached. At most `services_max`.
+    /// The stations that this loop counts (decision 32): each one that serves, or that holds a
+    /// call to self. At most `services_max`. A loop ends with none.
     stations: u8,
     /// The stations of this loop that serve. `deinit` halts while it is above 0 (decision 32).
     serving: u8,

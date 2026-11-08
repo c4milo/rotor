@@ -9,6 +9,12 @@ replaced by tests that hand the backend fabricated completions in each order rul
 buffer poisoning of rule 3 is dropped, and the mutations under "How it is checked" run against
 those tests and the conformance suite.
 
+Amended on 2026-11-08 by decision 32. A cross-core call has a rule of the same kind as rule 1:
+each `send` that returns success ends with exactly one result at the caller, `replied`, `expired`
+or `target_stopped`, in one run of `finish`. The call's record belongs to the target from the
+push of the call until the target answers, and to the caller again when its `finish` runs. A
+`send` that returns an error sent nothing, and its `finish` does not run.
+
 ## Context
 
 An operation submitted to io_uring is in the kernel. Cancelling it is a request, and the kernel

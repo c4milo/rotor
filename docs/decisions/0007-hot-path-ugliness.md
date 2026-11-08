@@ -12,6 +12,11 @@ Amended on 2026-11-06 by Camilo: `src/core/stall.zig` joins the table, for one u
 `Heartbeat.check_turn` (decision 28). Ledger row H5 holds the numbers. The lint does not report
 `noinline`.
 
+Amended on 2026-11-08 by Camilo: `src/uring/uring_reap.zig`, `src/epoll/epoll.zig` and
+`src/kqueue/kqueue_reap.zig` may hold `noinline` and `@branchHint(.cold)` on `take_reserved`, one
+use each: the slow path of the mailbox drain (decision 32). No file joins the table, because each
+file is in it already. Ledger rows H6 to H8 hold the counts with the hints and without them.
+
 ## The collision
 
 The Performance Hints favour hand-unrolled loops, raw pointers in place of spans, and hot

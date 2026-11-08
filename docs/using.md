@@ -432,17 +432,17 @@ ring between the two loops carries its address. What that needs:
   `var append: Append = .init;` with `const Append = rotor.Service(Journal, Request, Reply,
   Journal.append);`. The handler takes the context and a `*rotor.CallRecord(Request, Reply)`, and
   returns `rotor.Answer(Reply)`: `.{ .now = reply }`, or `.later`, after which the handler's own
-  code calls `call.answer(shared, reply)` once, on the target's thread.
+  code calls `call.answer(shared, &reply)` once, on the target's thread.
 - Each loop that serves the call calls `append.serve(shared, &journal)` before its first tick, and
   `append.stop_serving(shared)` before its `deinit`, which halts while a station serves. A call
   that reaches a loop that never served halts on that loop. A call that reaches a loop that stopped
-  ends with `target_stopped`.
+  ends with `target_stopped`, and so does a call to a later loop of that id that does not serve.
 - The caller keeps a record in its own struct:
   `append_call: rotor.CallRecord(Request, Reply) = .init(Writer, "append_call", on_appended)`.
   `on_appended` takes the struct and a `rotor.CallResult(Reply)`, and switches on it: `replied`
   with a pointer to the reply, `expired` or `target_stopped`. It runs exactly once for each `send`
   that returns success, and it may send the same record again.
-- `append.send(shared, target, &writer.append_call, request, .{ .group = group })` sends. The
+- `append.send(shared, target, &writer.append_call, &request, .{ .group = group })` sends. The
   group is a `NamedSchedulingGroup`, from `rotor.named_scheduling_group(.journal)` or `.default`,
   and it has no default. The handler runs in that group on the target, and `on_appended` runs in
   it on the caller. A `deadline_ns` on the loop clock ends a call that reaches the target late
@@ -728,10 +728,10 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 | file operations out on the offload per loop; more stay queued | `offload_in_flight_max`, 256 |
 | registered descriptors, registered buffers | 1,024 each |
 | provided-buffer groups, buffers per group | 16, 32,768 |
-| a message's tag | `message_tag_max`, 0x7fff_effd |
+| a message's tag | `message_tag_max`, 0x7fff_efff |
 | messages a post sees of one ring | `mailbox_posts_max`, 224 |
 | cross-core calls of one pair of loops out at once | `calls_per_pair_max`, 32 |
-| services one loop serves or calls | `services_max`, 16 |
+| services one loop serves or calls itself through | `services_max`, 16 |
 | the tag of `Message.wake` | `message_tag_wake`, 0x7fff_f000 |
 | messages queued from one loop to another (kqueue) | `mailbox_messages`, 256 |
 | registrations in, readiness out, per tick (kqueue) | `changes_max`, `readiness_max`, 256 |

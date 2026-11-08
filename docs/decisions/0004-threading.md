@@ -19,6 +19,13 @@ consumer's own simulator, which can reproduce one queue's order and cannot repro
 between threads. The simulator test under "How it is checked" is replaced by a test that posts
 between two loops on two real threads.
 
+Amended on 2026-11-08 by decision 32. A post sees `mailbox_posts_max`, 224 of the 256 slots of a
+ring, and gets `MailboxFull` when the ring holds 224 messages. The other 32 slots hold the returns
+of the cross-core calls, at most `calls_per_pair_max` for each ordered pair, so a return never
+meets a full ring. A return and an offload worker's result use `push`, which sees every slot. The
+two tags above `message_tag_wake` belong to the calls, and only rotor pushes them. A post still
+accepts a tag up to `message_tag_wake`, so no program changes its tags.
+
 ## Context
 
 The position under review: the loop is shared-nothing and single-threaded by construction. It

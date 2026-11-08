@@ -7,6 +7,19 @@ Status: proposed on 2026-11-06, **accepted** by Camilo the same day, with the pr
 - decision 23, for a host that sleeps in its own wait;
 - decision 13, at the spin window and at its point 2.
 
+Amended on 2026-11-08 by decision 32, for the task of a cross-core call:
+
+- The task of a call is pushed with the limit `task_queue_length_max`, which is
+  `tasks_queued_max + call_tasks_max`, 82,368. So a queue that the program filled still takes it.
+  `schedule` and `schedule_in` keep the cap `tasks_queued_max`. Each bound of a queue's length
+  reads `task_queue_length_max`.
+- `discard_tasks` halts on the queued task of a call, which `Task.Call.call_record` marks: its
+  caller waits for its `finish`.
+- P7 also counts the calls out and the calls held (decision 26, amendment of 2026-11-08).
+- Open question 14 stays as ruled for a post: a post carries no task. A call's message carries
+  the address of a record that holds a task, and only the loop that owns the record queues it,
+  on its own queue.
+
 ## Ruling, 2026-11-06
 
 Camilo ruled on these points:

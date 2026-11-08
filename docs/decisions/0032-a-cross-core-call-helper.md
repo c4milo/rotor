@@ -1,25 +1,30 @@
 # 32. A cross-core call
 
-Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), and built on 2026-11-07 on the branch
-`decision-32` (see "What was built"). Every cost in the sections after "What was built" is a
-prior: a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, or an instruction count from
-arithmetic. "What was built" holds the measured counts.
+Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), built on 2026-11-07 on the branch
+`decision-32`, and finished on 2026-11-08 on the branch `decision-32b`, on top of the fixed
+decision 30 (see "What was built" and "Finish, 2026-11-08"). Every cost in the sections after
+those two is a prior: a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, or an
+instruction count from arithmetic. Those two sections hold the measured counts.
 
 ## What was built, 2026-11-07
 
 The call is built on io_uring, epoll and kqueue, through `src/core/call/` and the public module's
-`rotor.Service` and `rotor.CallRecord`. These parts differ from the design below:
+`rotor.Service` and `rotor.CallRecord`. These parts differ from the design below. Items 1, 8 and
+10 say what the finish of 2026-11-08 changed, and items 15 to 18 came with it:
 
 1. **The drain keeps one loop with no branch for each message.** A branch to a cold function in
    the write of each message made the work gate's `post` row count 1,321 instructions on `mac`,
    against 1,217. So a reserved tag writes an event of tag 0 that the next message takes, as the
    wake did. After each ring's visit, the drain compares the events it wrote with the messages it
-   read. When they differ, a slow path reads the ring's slots again, before the ring takes them
-   back. `Mailbox` gains `peek_each`, `message_at` and `release` for it, and `pop_each` is
-   `peek_each` and `release`. The drain takes the slow path as a function from its backend, which
-   keeps it out of the tick with `noinline` and `@branchHint(.cold)` in a file that decision 7
-   names: `docs/hot-path-ledger.md`, rows H6 to H8. The visit of one ring is written out in both
-   loops of the drain, because a function for it stayed out of line on `mac`.
+   read. When they differ, the drain returns what its backend's slow path returns. The slow path
+   visits that ring again, before the ring takes its slots back, takes each reserved tag in the
+   order of the ring, and then visits the senders that the drain did not visit yet. The first
+   build called the slow path inside the drain's loop, and every drain then saved more registers.
+   `Mailbox` gains `peek_each`, `message_at` and `release`, and `pop_each` is `peek_each` and
+   `release`. Each backend keeps the slow path out of the tick with `noinline` and
+   `@branchHint(.cold)`, in a file that decision 7 names: `docs/hot-path-ledger.md`, rows H6 to
+   H8. The visit of one ring is written out in both loops of the drain, because a function for it
+   stayed out of line on `mac`.
 2. **A tick that takes a call does not block.** Only the drain queues a task inside a tick, so
    `Tables.wait_bound` answers "do not block" while a task is queued. A loop with nothing
    outstanding takes a call on the fast path, which runs no `end`. Its next tick runs the handler.
@@ -27,21 +32,28 @@ The call is built on io_uring, epoll and kqueue, through `src/core/call/` and th
    stations. A station is indexed by the loop's id, which `SharedLoop` does not name, and `serve`
    counts in the loop's `Groups`. Each backend's `Loop` also has `wake_target`, its own wake after
    a call or an answer, and `callbacks_outstanding`, which `drain` reads. Neither is surface.
+   `wake_target` halts on a wake of the loop itself.
 4. **`drain` ticks while `callbacks_outstanding` is above 0**, and answers `StillInFlight` when a
    callback that is not a queued task stays. `deinit` checks that the count is 0, or 1 for a kept
-   tick error, and that no station serves (`Tables.assert_calls_ended`).
+   tick error, that no station serves, and that the loop counts no station
+   (`Tables.assert_calls_ended`).
 5. **A handler names `*rotor.CallRecord(Request, Reply)`.** `*Service.Call` is the same type, but
    Zig refuses the handler's type when it depends on the service that takes the handler.
 6. **`CallStation.held` counts the calls from the drain's take until the answer**, and not only
    the calls that answered `.later`.
 7. **The service's static entry is named `@typeName` of the service type**, which holds the
    handler's name. Zig gives no name of a function.
-8. **A station stays attached to its id.** A later loop that claims the id does not count the
-   station in its `Groups.stations`.
+8. **A station counts in the `Groups.stations` of one loop while it serves or holds a call to
+   self.** Its `attached` names that loop's groups. A station that stops serving and holds no call
+   to self leaves the count. So a loop ends with a count of 0, and a later loop of the id counts
+   the station at its own `serve` or call to self. A call to another loop counts no station. The
+   first build counted a station at the first `serve` or `send` and kept it counted for good, so a
+   later loop of the id took stations that it did not count.
 9. **Each count that an assertion holds falls with a wrapping subtraction** (`-%=`), so the
    assertion is the one check, and a halt scenario proves it.
 10. **`task_queue_length_max` names the sum `tasks_queued_max + call_tasks_max`**, which each
-    bound of a queue's length reads.
+    bound of a queue's length reads. `Tasks.push` and `Groups.push` take their limit at comptime,
+    so the cap check of a lane stays two instructions on arm64.
 11. **`CallLink.sent` is a byte of the caller's own**, in the link's padding. `is_out` and the
     check of `send` read it, and not `state`, which the target writes while it owns the record.
     The race gate found the read of `state` from the caller's thread in the scenario of four loops.
@@ -50,45 +62,146 @@ The call is built on io_uring, epoll and kqueue, through `src/core/call/` and th
 13. **`build/compile_fail.zig` gains the six cases** of the compile-fail tests.
 14. **Not built, because their records are not built:** W4's `leave`, R7's end call, and W9's
     counts of refusals. The guide states the stop order.
+15. **A stopped station answers `target_stopped` in the drain, and a call to self on it answers at
+    once.** A station keeps the view of the loop that served it, and that loop may have ended. So
+    the record's task runs on the target only for a station that serves when the drain takes the
+    call. The drain then wakes the caller through its backend's wake. `spec/tla/call/` models it.
+16. **The tags of a call and of its return are `message_tag_wake + 1` and `+ 2`.**
+    `message_tag_max` stays decision 29's `0x7fff_efff`, and a post checks its tag with one
+    compare. No result carries a call's tag, because the drain writes no event for it.
+17. **`send` takes `*const Request`, and `CallRecord.answer` takes `*const Reply`**, as the API
+    rule of the Zig projects asks for an argument that may be above 16 bytes. A handler still
+    returns `Answer(Reply)` by value: that rule is about arguments, and `.now` with no reply must
+    fail to compile.
+18. **`CallRecord.answer` checks the owner and the state before it writes the reply.** It reads
+    `is_scheduled` of its view, which checks the owner, and a held call's task is not queued. So a
+    view also has `is_scheduled`.
 
-Two checks are proved by no halt scenario. `CallRecord.answer` checks that the call is held before
-it writes the reply, and the loop's `answer` makes the same check one statement later. The class
-A check that a call's task is not queued twice in `.default` is `Tasks.push`'s own.
+One check is proved by no halt scenario: the class A check that a call's task is not queued twice
+in `.default` is `Tasks.push`'s own. The order of the checks in `CallRecord.answer` is not a halt
+that a scenario can tell apart: with its owner check deleted, the loop's `answer` still halts, one
+statement after the writes.
 
-The work gate on `mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of 40 to 70)
-and on arm64 Linux (cachegrind of Valgrind 3.25.1 in an arm64 container on `mac`), with the base
-`4eb8bfb` measured on the same machine on the same day:
+## Finish, 2026-11-08
 
-| row | `mac` base | `mac` branch | io_uring base | io_uring branch | epoll base | epoll branch |
-|---|---|---|---|---|---|---|
-| `post` | 1203 to 1222 | 1222 to 1228 | 1075 | 1091 | 1150 | 1172 |
-| `post-operation` | 3127 to 3140 | 3130 to 3154 | 2967 | 2997 | 3033 | 3064 |
-| `timer` | 1152 | 1152 to 1160 | 1095 | 1099 | 1100 | 1104 |
-| `batch` | 24836 | 24861 to 24991 | 24025 | 24091 | 24034 | 24100 |
-| `wait` | 5329 to 5368 | 5324 to 5409 | none | none | 630 | 640 |
-| `task` | 617 to 622 | 620 to 625 | 571 | 577 | 603 | 609 |
-| `tasks-64` | 4574 | 4561 to 4605 | 3922 | 3928 | 3954 | 3960 |
-| `record` | 1297 to 1307 | 1299 to 1308 | 1225 | 1231 | 1239 | 1245 |
-| `poller` | 569 to 570 | 573 to 575 | 528 | 534 | 561 | 567 |
-| `tasks-groups-4` | 13010 | 12991 to 13113 | 12328 | 12382 | 12359 | 12413 |
-| `tasks-groups-16` | 13682 | 13708 to 13793 | 13012 | 13078 | 13043 | 13109 |
-| `call`, new | none | 2285 to 2293 | none | 2171 | none | 2259 |
+Camilo ruled on two items for the finish:
 
-On arm64 Linux each tick counts about 6 instructions more. The count check of `Tasks.assert_shape`
-reads `task_queue_length_max`, which arm64 builds in two instructions where `tasks_queued_max`
-took one, and each drain counts 2 more. The groups rows count about 54 and 66 more, which
-`schedule_in` takes: the compiler inlines its pushes less, now that the push of a call's task calls
-them too. `post` counts 16 and 22 more, from the drains of its four ticks. On `mac` the counts
-include the kernel's, and a row moves by up to 20 between two runs of one build at a load average
-of 30 to 70. There, `post`, `task`, `record` and `wait` are near their lines of `work.txt`, and a
-busy run can pass them. No line of `bench/baseline/work.txt` changed. At the base `4eb8bfb`, the
-io_uring rows `post`, `post-operation`, `task`, `record` and `poller` were already over their
-lines with Valgrind 3.25.1.
+1. **Decision 7 is amended** to admit `noinline` and `@branchHint(.cold)` on `take_reserved` in
+   `src/uring/uring_reap.zig`, `src/epoll/epoll.zig` and `src/kqueue/kqueue_reap.zig`, one use
+   each, with the counts of ledger rows H6 to H8. No file joins decision 7's list.
+2. **"Cut first, then show rows."** Cut what this record adds to a loop that makes no call (rule
+   6 of "The decision"), then report every row. No baseline is raised.
 
-The prior of a call round trip was about 1,430 instructions in the shape of the `post` row. The
-`call` row, which also makes three ticks, counts 2,171 on io_uring and about 2,290 on `mac`.
-`conformance_cost.zig` measured one round trip with the ticks of both loops at 1,284 to 1,299 ns in
-Debug on `mac`, and bounds it at 13,000 ns.
+The review of the branch `decision-32` found eight things. What was done:
+
+1. A call to a later loop of an id ran on the freed view of the loop before it. Item 15 fixes it.
+   A conformance scenario and a unit test claim the id at another address and do not serve.
+2. The amendments to decisions 4, 5, 21, 26, 27 and 29 were not written. Each record now holds
+   its amendment of 2026-11-08, and decision 7 holds Camilo's.
+3. Rule 6 was not met. The cuts are items 1, 10 and 16. The tables below show every row.
+4. The request and the reply went by value. Item 17.
+5. `CallRecord.answer` wrote before its checks. Item 18, with a halt scenario for its state check
+   through a made-up view.
+6. A later loop of an id took stations that it did not count. Item 8.
+7. Three mutations ran on kqueue only or were not reported. "Mutations" below has them on each
+   backend.
+8. Several functions held no assertion. `give_back`, `schedule_link`, `Service.send`, `serve` and
+   `run`, `Inbox.take_reserved` and each backend's `wake_target` now hold one or two, each with a
+   halt scenario.
+
+The work gate on `mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of 30 to 50,
+the median of three runs) and on arm64 Linux (cachegrind of Valgrind 3.25.1 in an arm64 container
+on `mac`), all on 2026-11-08. "line" is the row of `bench/baseline/work.txt`, which `cb38fef`
+holds, and which no commit changed. `cb38fef` is `main` before decision 30, `5e2dbfc` is the fixed
+decision 30, and `0ce36b5` is this branch's code. OVER marks a count more than 2 percent above its
+line. "none" is a row with no line, or a workload that the tree does not have.
+
+On `mac`:
+
+| row | line | `cb38fef` | `5e2dbfc` | `0ce36b5` |
+|---|---|---|---|---|
+| `post` | 1217 | 1202 | 1203 | 1202 |
+| `post-operation` | 3114 | 3112 | 3110 | 3112 |
+| `timer` | 1151 | 1147 | 1147 | 1146 |
+| `batch` | 24624 | 24791 | 24767 | 24789 |
+| `wait` | 5296 | 5290 | 5292 | 5295 |
+| `task` | 615 | 606 | 615 | 613 |
+| `tasks-64` | 4558 | 4536 | 4548 | 4585 |
+| `record` | 1283 | 1284 | 1296 | 1295 |
+| `poller` | 573 | 560 | 569 | 568 |
+| `tasks-groups-4` | none | none | 12942 | 12980 |
+| `tasks-groups-16` | none | none | 13637 | 13644 |
+| `call` | none | none | none | 2533 |
+
+On arm64 Linux, io_uring:
+
+| row | line | `cb38fef` | `5e2dbfc` | `0ce36b5` |
+|---|---|---|---|---|
+| `post` | 1039 | 1073 OVER | 1075 OVER | 1067 OVER |
+| `post-operation` | 2905 | 2963 | 2967 OVER | 2943 |
+| `timer` | 1082 | 1094 | 1095 | 1087 |
+| `batch` | 23757 | 24024 | 24025 | 24017 |
+| `task` | 545 | 563 OVER | 568 OVER | 562 OVER |
+| `tasks-64` | 3910 | 3914 | 3919 | 3913 |
+| `record` | 1199 | 1218 | 1222 | 1216 |
+| `poller` | 505 | 522 OVER | 526 OVER | 520 OVER |
+| `tasks-groups-4` | none | none | 12335 | 12329 |
+| `tasks-groups-16` | none | none | 13031 | 13025 |
+| `call` | none | none | none | 2355 |
+
+On arm64 Linux, epoll:
+
+| row | line | `cb38fef` | `5e2dbfc` | `0ce36b5` |
+|---|---|---|---|---|
+| `post` | 1150 | 1150 | 1150 | 1142 |
+| `post-operation` | 3039 | 3033 | 3033 | 3009 |
+| `timer` | 1104 | 1100 | 1100 | 1092 |
+| `batch` | 23845 | 24034 | 24034 | 24026 |
+| `wait` | 632 | 630 | 630 | 628 |
+| `task` | 593 | 593 | 600 | 594 |
+| `tasks-64` | 3985 | 3944 | 3951 | 3945 |
+| `record` | 1228 | 1230 | 1236 | 1230 |
+| `poller` | 557 | 553 | 559 | 553 |
+| `tasks-groups-4` | none | none | 12366 | 12360 |
+| `tasks-groups-16` | none | none | 13062 | 13056 |
+| `call` | none | none | none | 2442 |
+
+On arm64 Linux every row of this branch is at or below `5e2dbfc`. Only epoll's `task` and
+`tasks-64` are above `cb38fef`, by 1 instruction each. The three OVER rows of io_uring were OVER at
+`cb38fef` already, with Valgrind 3.25.1. On `mac` a row moves by up to 40 between runs of one
+build at this load: `tasks-64` counted 4542 to 4588 on this branch, and `tasks-groups-4` 12968 to
+12989. Those two medians sit above `5e2dbfc`. No cut in this branch touches their paths on a loop
+that makes no call, so that is taken as the noise of `mac`, and it is not shown to be so.
+
+What is left:
+
+- The `call` row rose from 2,172 to 2,355 on io_uring, from 2,260 to 2,442 on epoll, and from
+  about 2,285 to 2,533 on `mac`, against the branch `decision-32`. The slow path now visits the
+  ring again and the senders after it, and item 15 adds a compare on the target. A loop that makes
+  no call does not pay it.
+- `Tasks.assert_shape` reads `task_queue_length_max`, 82,368, which arm64 builds in two
+  instructions where `tasks_queued_max` took one. Each dispatched tick pays 2 instructions for it.
+  The cuts above hide it. A `task_queue_length_max` of 86,016, 21 times 4096, would take one
+  instruction, but that changes a named limit (open question 11).
+
+Mutations of the finish, each `CAUGHT`:
+
+| mutation | target |
+|---|---|
+| the drain, or a call to self, schedules the task of a call to a stopped station | `test-core`; the drain also `test-conformance-kqueue` |
+| `detach` is left out of `stop_serving` or `end_call`, or keeps `attached` | `test-core` |
+| a call to another loop counts a station | `test-core` |
+| each drain keeps a reserved tag; the slow path stops after one ring; it skips a tag | `test-core` |
+| a post accepts a call's tag; the drain takes a tag above the return | `halt-check` |
+| each new check deleted: `attach`, `detach`, `assert_calls_ended`, `give_back`, `schedule_link`, `Inbox.take_reserved` (2), `assert_wake` (2), `Service.serve` (2), `Service.send`, `Service.run`, `CallRecord.answer` (2) | `halt-check` |
+| each backend's call of `assert_wake` deleted | `halt-check` on kqueue; the Linux gate's halt check on io_uring and epoll |
+| a call to self goes through a ring | `test-core`, and the conformance suite of kqueue, io_uring and epoll |
+| `answer` does not wake a caller that sleeps | the conformance suite of kqueue, io_uring and epoll |
+| `Tables.wait_bound` lets a tick block with a call's task queued | the conformance suite of kqueue, io_uring and epoll |
+| a drain runs the handler of a call to a stopped station | `zig build tla`: `mutants/drain_runs_handler_when_stopped.cfg` is violated |
+
+The decision 30 bounds that a call's task passes, `tasks_queued` and `Groups.queued`, now add
+`call_tasks_max`. Deleting either is `CAUGHT` by `halt-check`.
 
 ## Ruling, 2026-11-07
 
@@ -150,7 +263,8 @@ records:
 - decision 26, at the count `callbacks_outstanding` and its property P7;
 - decision 27, at `discard_tasks`, at the bound of the task queue, and at open question 14 for a
   call;
-- decision 29, at `message_tag_max` and at the compare in the drain;
+- decision 29, at the compare in the drain. The finish of 2026-11-08 put the tags of a call above
+  the wake, so `message_tag_max` keeps decision 29's value;
 - decision 30, which gains named groups for this record, two counts in its `Groups`, and a limit
   for the push of a call's task.
 
@@ -345,6 +459,7 @@ try append.send(shared, journal_core, &writer.append_call, .{ .bytes = ... },
    function, `Inbox.take_reserved`. It checks the link, the group included, sets `held`, and adds 1
    to `callbacks_outstanding`. It schedules the record's task in the link's group on T, as
    `schedule_in` does, with the limit of "The task queue and the fair tick". It writes no event.
+   Since the finish, a station that stopped answers `target_stopped` here, and no task waits.
 4. **The record's task on T.** Its entry is the service's static `Task.Call`, named after the
    handler. When the service's station on T has stopped, it answers `target_stopped`. When the
    deadline is at or before the cached `now_ns` of the station's loop, it answers `expired`. In
@@ -588,9 +703,9 @@ pub const CallStation = struct {
     loop: ?*SharedLoop, // `serve` writes it; a call's task reads `now_ns` and answers through it
     held: u32, // calls answered `.later` and not yet answered
     self_out: u32, // calls to self that have not yet run their `finish`
+    attached: ?*Groups, // the loop's groups while it serves or holds a call to self (finish)
     state: enum(u8) { unused, serving, stopped },
-    attached: bool,
-    // 102 B of padding to 128
+    // 95 B of padding to 128
 };
 ```
 
@@ -609,14 +724,15 @@ New constants in `src/core/constants.zig`, each with a doc comment:
 | `mailbox_posts_max` | `mailbox_messages - calls_per_pair_max` = 224 | `>= messages_per_drain` |
 | `services_max` | 16, a prior | `<= maxInt(u8)`, the byte `stations` |
 | `call_tasks_max` | `(2 * (loops_max - 1) + services_max) * calls_per_pair_max` = 16,832; ruling item 11 | `tasks_queued_max + call_tasks_max` fits in u32 |
-| `message_tag_max` | `0x7fff_effd` (decision 29: `0x7fff_efff`) | `< message_tag_call` |
-| `message_tag_call` | `0x7fff_effe` | `< message_tag_return` |
-| `message_tag_return` | `0x7fff_efff` | `< message_tag_wake` |
+| `message_tag_call` | `message_tag_wake + 1`, since the finish (the proposal: `0x7fff_effe`) | `> message_tag_wake` |
+| `message_tag_return` | `message_tag_wake + 2`, since the finish (the proposal: `0x7fff_efff`) | `< 1 << 31` |
 
-`message_tag_wake` stays `0x7fff_f000`, the highest tag. So decision 29's errno margin assert, on
-the wake tag, covers the two new tags: `(1 << 31) - 0x7fff_f000` is 4096, against `errno_max`
-4095. The five checks of a tag at a post (decision 29's list) become `tag <= message_tag_max or
-tag == message_tag_wake`. A caller's message passes at the first compare.
+`message_tag_max` stays `0x7fff_efff` and `message_tag_wake` stays `0x7fff_f000`, the highest tag
+that a post accepts. A post still checks `tag <= message_tag_wake`, one compare. The tags of a call
+are above the wake, so no post sends them. No result carries them, because the drain writes no
+event for them, so decision 29's errno margin does not apply to them. The proposal put them below
+the wake, and the post's check became two compares, which cost the work gate's `batch` row 62
+instructions on arm64.
 
 ## What it costs
 
@@ -626,7 +742,7 @@ Every number is a prior. The baselines are the `macos-aarch64-kqueue` section of
 | path, on a loop that makes no calls | added |
 |---|---|
 | each tick | 0 |
-| each drained message | 0: `tag > message_tag_max` replaces decision 29's `== message_tag_wake` |
+| each drained message | 0: `tag > message_tag_max` replaces decision 29's `== message_tag_wake`. The finish measured it: see "Finish, 2026-11-08" |
 | each post | 0: `push_post` compares with 224 where `push` compares with 256 |
 | a wake | 1 compare at the post |
 | memory | 0 in `Mailbox`, `Dispatch` and `Groups`: the two counts use 2 B of the padding of decision 30's `Groups`. The per-call task adds no structure to a loop. |
@@ -691,7 +807,8 @@ a ring, where it got it at 256.
   (ruling item 11).
 - **Decision 28.** `SharedLoop.library_calls` gains `call` and `answer`. The heartbeat names each
   call's task as it names any task: the service's handler on the target, `finish` on the caller.
-- **Decision 29.** `message_tag_max` falls by two. The drain's compare becomes `>`.
+- **Decision 29.** The drain's compare becomes `>`. Since the finish, `message_tag_max` keeps
+  its value, and the tags of a call are above the wake.
 - **Decision 30.** It is built first, with named groups. The caller's named group runs the handler
   on the target and `finish` on the caller, each in one task of cost 1. `stations` and `serving`
   sit in the padding of its `Groups` header. Its overflow assert gains the calls and their tasks.
@@ -835,7 +952,7 @@ gains a bound for a call round trip, at 10 times the measured value.
 
 ## Open questions
 
-Camilo ruled on each one on 2026-11-07. Questions 1 to 8 take the proposed answer. Question 10
+Camilo ruled on questions 1 to 10 on 2026-11-07, and question 11 waits. Questions 1 to 8 take the proposed answer. Question 10
 takes the other answer, and he then ruled question 9 to follow it.
 
 1. **`calls_per_pair_max`.** (a) 32. (b) 64, which leaves 192 slots for posts. *Ruled: (a), until
@@ -869,11 +986,17 @@ takes the other answer, and he then ruled question 9 to follow it.
     then belongs to one loop. (b) The caller, in `CallOptions`, as Seastar does. A group id then
     names one group on every loop, so decision 30 gains named groups. *Ruled: (b), "B now, named
     groups". See "Scheduling groups (decision 30)".*
+11. **The bound of `Tasks.assert_shape` on arm64** (finish of 2026-11-08, not ruled). The check
+    reads `task_queue_length_max`, 82,368, which arm64 builds in two instructions, so each
+    dispatched tick pays 2 more than with `tasks_queued_max`. (a) Keep it: the cuts of the finish
+    hide it, and every arm64 row is at or below decision 30's. (b) Round `call_tasks_max` up to
+    20,480, so the sum is 86,016, 21 times 4096, one instruction, at the cost of a larger bound
+    than the calls need. Proposed: (a).
 
 ## Left for Camilo
 
-Nothing. Camilo ruled every item of this list on 2026-11-07. Items 5 to 8 of "Ruling, 2026-11-07"
-hold the first list. Items 9 to 12 hold the four choices of the per-call task. "Alternatives it
+Open question 11. Camilo ruled every other item of this list on 2026-11-07. Items 5 to 8 of
+"Ruling, 2026-11-07" hold the first list. Items 9 to 12 hold the four choices of the per-call task. "Alternatives it
 beat" holds the choices that lost.
 
 ## Ask before

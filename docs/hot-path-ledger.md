@@ -14,9 +14,9 @@ names no record and adds no poller, with the hint and without it. The tree is d1
 | H3 | `src/epoll/epoll.zig`, `tick_dispatched` | `@branchHint(.cold)` | work gate: post, post-operation, timer, batch | 1265, 3163, 1115, 23870 | 1217, 3070, 1092, 23845 | arm64 container on `mac`, cachegrind | d1657ce | 2026-11-06 |
 | H4 | `src/uring/uring_submit.zig`, `flush`, its call of `send_wakes` | `@call(.always_inline, ...)` | work gate on io_uring: post, post-operation, task, record, poller | 1061, 2823, 544, 1143, 510 | 1043, 2787, 535, 1134, 501 | arm64 container on `mac`, cachegrind | this commit | 2026-11-06 |
 | H5 | `src/core/stall.zig`, `Heartbeat.check_turn` | `noinline` | work gate on io_uring, then epoll: post, post-operation, task, record, poller | 1067, 2835, 559, 1156, 519; 1234, 3103, 634, 1218, 598 | 1061, 2823, 556, 1153, 516; 1228, 3091, 631, 1215, 595 | arm64 container on `mac`, cachegrind | this commit | 2026-11-06 |
-| H6 | `src/uring/uring_reap.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on io_uring: post, post-operation, timer, task, record, poller | 1111, 3037, 1109, 587, 1241, 544 | 1091, 2997, 1099, 577, 1231, 534 | arm64 container on `mac`, cachegrind | this commit | 2026-11-07 |
-| H7 | `src/epoll/epoll.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on epoll: post, post-operation, wait, task, record, poller | 1192, 3103, 650, 619, 1255, 577 | 1172, 3064, 640, 609, 1245, 567 | arm64 container on `mac`, cachegrind | this commit | 2026-11-07 |
-| H8 | `src/kqueue/kqueue_reap.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on kqueue: post, post-operation, task, record, poller | 1229 and 1238, 3156 and 3167, 625 and 630, 1304 and 1315, 579 and 581 | 1226, 3151, 624, 1303, 574 | `mac`, `/usr/bin/time -l`, a load average of about 30 | this commit | 2026-11-07 |
+| H6 | `src/uring/uring_reap.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on io_uring: post, post-operation, timer, task, record, poller | 1099, 3007, 1103, 578, 1232, 536 | 1067, 2943, 1087, 562, 1216, 520 | arm64 container on `mac`, cachegrind | 0ce36b5 | 2026-11-08 |
+| H7 | `src/epoll/epoll.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on epoll: post, post-operation, wait, task, record, poller | 1174, 3073, 644, 610, 1246, 569 | 1142, 3009, 628, 594, 1230, 553 | arm64 container on `mac`, cachegrind | 0ce36b5 | 2026-11-08 |
+| H8 | `src/kqueue/kqueue_reap.zig`, `take_reserved` | `noinline` and `@branchHint(.cold)` | work gate on kqueue: post, post-operation, task, record, poller | 1239, 3174, 631, 1312, 585 | 1202, 3112, 613, 1295, 568 | `mac`, `/usr/bin/time -l`, the median of three runs each | 0ce36b5 | 2026-11-08 |
 
 Without the hint the compiler inlines `tick_dispatched` into `tick`, and every tick saves more
 registers, also when it skips the dispatch. The counts are the same on every run, so the gain is
@@ -31,7 +31,8 @@ the run-to-run spread of 2 instructions: `post` counted 1247 and `poller` 588, w
 without it, each the median of three runs.
 
 Rows H6 to H8: the slow path of a drain's reserved tags, a call, a return or a wake (decision 32).
-`core.inbox` hands it to the drain as a function, and each backend hands it its own, from a file
-that decision 7 names. Without the hint the compiler inlines it into the drain, and each tick
-counts more instructions. On `mac` the gain is near the run-to-run spread: row H8 gives the two
-runs with no hint, and the median of three runs with it.
+Each backend hands it to `core.inbox`'s drain as a function, from a file that decision 7 names.
+The drain returns what the slow path returns, so no value of the drain lives across the call.
+Without the hints the compiler inlines the slow path into the drain, and each tick counts 16 to 64
+instructions more. Camilo amended decision 7 for these rows on 2026-11-08, and they were
+measured again that day, on the tree of decision 32's finish.

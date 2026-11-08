@@ -9,6 +9,13 @@ measured for this record before the ruling.
 in the code, and `GroupsFull` is `BufferGroupsFull`. The sections before "What was built" keep the
 old names.
 
+Amended on 2026-11-08 by decision 32. `message_tag_max` stays `0x7fff_efff`, and a post still
+accepts a tag up to `message_tag_wake`, with one compare. The tags of a call and of its return
+are `message_tag_wake + 1` and `message_tag_wake + 2`, which no post accepts. The drain's compare
+is `tag > message_tag_max`, which finds the wake, a call and a return. A ring whose visit read
+such a tag hands the rest of the drain to its backend's slow path, which takes each one in the
+order of its ring. A drain that took a wake still tells the dispatch.
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"

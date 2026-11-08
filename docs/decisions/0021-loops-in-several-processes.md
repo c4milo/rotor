@@ -5,6 +5,14 @@ day. "Ruling" below says what Camilo decided, and the design after it follows th
 "Built" at the end says what was built, where it differs from the design, and how it is checked.
 Decision 2 is amended the same day to put posts between processes in version one.
 
+Amended on 2026-11-08 by decision 32. `Mailbox` gains `calls_out`, the count of the calls of the
+producer to the consumer. Only the producer's thread reads or writes it, and it sits in bytes of
+the `tail` line that were padding, so a ring stays 4352 bytes. `message_tag_call` and
+`message_tag_return`, the two tags above `message_tag_wake`, are reserved. `header_version` is 3:
+decision 29 made it 2 for the tag of the wake, and decision 32 made it 3. So a process of an
+older build refuses the registry. A call does not cross a process: `send` and `serve` halt in a
+registry of a decision 21 group, because a pointer means nothing in another process.
+
 ## Context
 
 On 2026-09-25 Camilo ruled that loops talk through shared memory, and io_uring's posts moved onto

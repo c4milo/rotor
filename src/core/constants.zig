@@ -153,8 +153,8 @@ pub const calls_per_pair_max: u32 = 32;
 /// need (decision 32). `push_post` refuses at it, and `push` keeps every slot.
 pub const mailbox_posts_max: u32 = mailbox_messages - calls_per_pair_max;
 
-/// The most services one loop serves or calls (decision 32, open question 7). A prior: stompy plans
-/// fewer than 8. The byte `Groups.stations` counts them.
+/// The most services one loop serves or calls itself through (decision 32, open question 7). A
+/// prior: stompy plans fewer than 8. The byte `Groups.stations` counts them.
 pub const services_max: u32 = 16;
 
 /// The most tasks of calls that one loop can hold queued at one time (decision 32, "The task queue
