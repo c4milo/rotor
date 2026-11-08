@@ -17,6 +17,7 @@ const call_take = @import("call/call_take.zig");
 const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
 const Groups = @import("scheduling/scheduling_groups.zig").Groups;
 const Event = event.Event;
+const Waker = call_take.Waker;
 const LoopId = operation.LoopId;
 const Mailbox = mailbox.Mailbox;
 const Message = operation.Message;
@@ -46,44 +47,93 @@ const Visit = struct {
     }
 };
 
-/// The slow path of `drain_mailboxes`, which a backend hands it: `take_reserved`, or a function
-/// that calls it. Decision 7 confines `noinline` and `@branchHint` to its named files, so a
-/// backend keeps the slow path out of its tick there, and this file stays plain.
+/// The slow path of `drain_mailboxes`, which a backend hands it: a function that calls
+/// `take_reserved` with the loop's dispatch, groups and wake. Decision 7 confines `noinline` and
+/// `@branchHint` to its named files, so a backend keeps the slow path out of its tick there, and
+/// this file stays plain. The drain returns what the slow path returns, so no value of the drain
+/// lives across the call, and the drain saves no register for it.
 pub const TakeReserved = fn (
-    ring: *const Mailbox,
-    peeked: Mailbox.Peeked,
-    registry: *Registry,
-    dispatch: *Dispatch,
-    groups: *Groups,
-    sender: LoopId,
+    inbox: *Inbox,
     receiver: LoopId,
-) void;
+    events: []Event,
+    first: LoopId,
+    written: u32,
+) u32;
 
-/// The slow path of the reserved tags of one ring's visit: each wake, call and return that the
-/// visit read, in the order of the ring (decisions 29 and 32). The slots are the drain's until the
-/// ring takes them back, so it reads them again here.
+/// The slow path of a drain whose visit of the ring of `first` read a reserved tag, with `written`
+/// events before that visit. The ring has not taken the visit's slots back, so this visits it
+/// again. Then it visits each sender that the drain did not visit yet, up to the cursor, as the
+/// drain would. It takes each wake, call and return in the order of its ring (decisions 29 and 32),
+/// and returns the events of the whole drain.
 pub fn take_reserved(
-    ring: *const Mailbox,
-    peeked: Mailbox.Peeked,
-    registry: *Registry,
+    inbox: *Inbox,
+    receiver: LoopId,
+    events: []Event,
+    first: LoopId,
+    written: u32,
     dispatch: *Dispatch,
     groups: *Groups,
-    sender: LoopId,
-    receiver: LoopId,
-) void {
+    waker: ?Waker,
+) u32 {
+    const registry = inbox.registry.?;
+    const loops = registry.loop_count();
     var taker: call_take.Taker = .{
         .registry = registry,
         .dispatch = dispatch,
         .groups = groups,
+        .waker = waker,
         .receiver = receiver,
-        .sender = sender,
+        .sender = first,
         .woke = false,
     };
-    for (0..peeked.count) |offset| {
-        const message = ring.message_at(peeked, @intCast(offset));
-        if (message.tag > constants.message_tag_max) call_take.take_reserved(&taker, message);
+    var visit: Visit = .{ .out = events, .written = written };
+    const cursor = inbox.sender_cursor;
+    var sender: usize = first;
+    for (0..loops) |_| {
+        if (sender != receiver) {
+            const room = @min(events.len - visit.written, constants.messages_per_drain);
+            if (room == 0) {
+                inbox.sender_cursor = @intCast(sender);
+                break;
+            }
+            taker.sender = @intCast(sender);
+            take_visit(registry.mailbox(@intCast(sender), receiver), &visit, @intCast(room), &taker);
+        }
+        sender += 1;
+        if (sender == loops) sender = 0;
+        if (sender == cursor) break;
     }
-    if (taker.woke) taker.dispatch.note_wake();
+    if (taker.woke) dispatch.note_wake();
+    assert(visit.written <= events.len);
+    return visit.written;
+}
+
+/// The visit of one ring on the slow path: each message of a caller's tag writes an event, and each
+/// reserved tag goes to `call_take`. The slots are the drain's until the ring takes them back, so
+/// the reserved ones are read again before the release.
+fn take_visit(ring: *Mailbox, visit: *Visit, room: u32, taker: *call_take.Taker) void {
+    const before = visit.written;
+    const peeked = ring.peek_each(room, visit, Visit.write);
+    if (peeked.count == 0) return;
+    if (visit.written - before != peeked.count) {
+        for (0..peeked.count) |offset| {
+            const message = ring.message_at(peeked, @intCast(offset));
+            if (message.tag > constants.message_tag_max) call_take.take_reserved(taker, message);
+        }
+    }
+    ring.release(peeked);
+}
+
+/// The slow path for a test's loop: a `Container` with the fields `inbox`, `dispatch` and `groups`.
+/// It wakes no other loop.
+pub fn TestTake(comptime Container: type) type {
+    return struct {
+        pub fn take(inbox: *Inbox, receiver: LoopId, events: []Event, first: LoopId, written: u32) u32 {
+            const container: *Container = @alignCast(@fieldParentPtr("inbox", inbox));
+            const dispatch = &container.dispatch;
+            return take_reserved(inbox, receiver, events, first, written, dispatch, &container.groups, null);
+        }
+    };
 }
 
 pub const Inbox = struct {
@@ -132,20 +182,12 @@ pub const Inbox = struct {
     /// only the cursor's load. Any other cursor takes `drain_from_cursor`.
     ///
     /// A `Message.wake` writes no event. It counts in its ring's visit, and a drain that took one
-    /// tells `dispatch` (decision 29). A call or a return writes no event either: the drain queues
-    /// its record's task in `dispatch` and `groups` (decision 32).
-    pub fn drain_mailboxes(
-        inbox: *Inbox,
-        receiver: LoopId,
-        events: []Event,
-        dispatch: *Dispatch,
-        groups: *Groups,
-        comptime take: TakeReserved,
-    ) u32 {
+    /// tells the loop's dispatch (decision 29). A call or a return writes no event either: the
+    /// drain queues its record's task (decision 32). A ring that holds a reserved tag hands the
+    /// rest of the drain to `take`.
+    pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, comptime take: TakeReserved) u32 {
         const registry = inbox.registry orelse return 0;
-        if (inbox.sender_cursor != 0) {
-            return inbox.drain_from_cursor(registry, receiver, events, dispatch, groups, take);
-        }
+        if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, take);
         var visit: Visit = .{ .out = events };
         for (0..registry.loop_count()) |sender| {
             if (sender == receiver) continue;
@@ -162,9 +204,7 @@ pub const Inbox = struct {
             const peeked = ring.peek_each(@intCast(room), &visit, Visit.write);
             if (peeked.count == 0) continue;
             // A ring that gave more messages than events holds a reserved tag.
-            if (visit.written - before != peeked.count) {
-                take(ring, peeked, registry, dispatch, groups, @intCast(sender), receiver);
-            }
+            if (visit.written - before != peeked.count) return take(inbox, receiver, events, @intCast(sender), before);
             ring.release(peeked);
         }
         assert(visit.written <= events.len);
@@ -179,8 +219,6 @@ pub const Inbox = struct {
         registry: *Registry,
         receiver: LoopId,
         events: []Event,
-        dispatch: *Dispatch,
-        groups: *Groups,
         comptime take: TakeReserved,
     ) u32 {
         const loops = registry.loop_count();
@@ -201,9 +239,7 @@ pub const Inbox = struct {
                 const before = visit.written;
                 const peeked = ring.peek_each(@intCast(room), &visit, Visit.write);
                 if (peeked.count != 0) {
-                    if (visit.written - before != peeked.count) {
-                        take(ring, peeked, registry, dispatch, groups, @intCast(sender), receiver);
-                    }
+                    if (visit.written - before != peeked.count) return take(inbox, receiver, events, @intCast(sender), before);
                     ring.release(peeked);
                 }
             }

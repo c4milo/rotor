@@ -457,8 +457,7 @@ pub const Loop = struct {
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        const tables = &loop.tables;
-        return loop.inbox.drain_mailboxes(tables.id, events, &tables.dispatch, tables.groups, reap_module.take_reserved);
+        return loop.inbox.drain_mailboxes(loop.tables.id, events, reap_module.take_reserved);
     }
 
     /// Tells the registry this loop is about to sleep, and looks at its mailboxes once more:

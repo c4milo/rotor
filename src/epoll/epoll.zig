@@ -442,8 +442,7 @@ pub const Loop = struct {
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        const tables = &loop.tables;
-        return loop.inbox.drain_mailboxes(tables.id, events, &tables.dispatch, tables.groups, take_reserved);
+        return loop.inbox.drain_mailboxes(loop.tables.id, events, take_reserved);
     }
 
     /// Tells the registry and the offload's workers this loop is about to sleep: `core.inbox`'s.
@@ -460,16 +459,14 @@ pub const Loop = struct {
 /// The slow path of a drain's reserved tags (decision 32), kept out of the tick. Decision 7 allows
 /// the hint in this file, and `docs/hot-path-ledger.md`, row H7, holds the numbers.
 pub noinline fn take_reserved(
-    ring: *const core.mailbox.Mailbox,
-    peeked: core.mailbox.Mailbox.Peeked,
-    registry: *core.mailbox.Registry,
-    dispatch: *core.dispatch.Dispatch,
-    groups: *core.scheduling.Groups,
-    sender: core.LoopId,
+    inbox: *core.inbox.Inbox,
     receiver: core.LoopId,
-) void {
+    events: []core.Event,
+    first: core.LoopId,
+    written: u32,
+) u32 {
     @branchHint(.cold);
-    core.inbox.take_reserved(ring, peeked, registry, dispatch, groups, sender, receiver);
+    return core.call.loop.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
 }
 
 comptime {

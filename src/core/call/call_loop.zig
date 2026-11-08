@@ -6,10 +6,17 @@ const std = @import("std");
 const constants = @import("../constants.zig");
 const call_module = @import("call.zig");
 const call_take = @import("call_take.zig");
+const event = @import("../event.zig");
+const inbox_module = @import("../inbox.zig");
+const operation = @import("../operation.zig");
 
 const CallError = call_module.CallError;
 const CallLink = call_module.CallLink;
 const CallStation = call_module.CallStation;
+const Descriptor = operation.Descriptor;
+const Event = event.Event;
+const Inbox = inbox_module.Inbox;
+const LoopId = operation.LoopId;
 
 pub fn Calls(comptime Loop: type) type {
     return struct {
@@ -44,6 +51,22 @@ pub fn Calls(comptime Loop: type) type {
         pub fn stop_serving(loop: *Loop, stations: *[constants.loops_max]CallStation) void {
             loop.tables.assert_owner();
             call_module.stop_serving(loop.tables.id, loop.tables.groups, stations);
+        }
+
+        /// The slow path of the loop's drain (`Inbox.TakeReserved`): `Inbox.take_reserved` with the
+        /// loop's dispatch, groups and wake. A backend calls it from its own `take_reserved`, which
+        /// keeps it out of the tick (decision 7).
+        pub fn take_reserved(inbox: *Inbox, receiver: LoopId, events: []Event, first: LoopId, written: u32) u32 {
+            const loop: *Loop = @alignCast(@fieldParentPtr("inbox", inbox));
+            const tables = &loop.tables;
+            const waker: call_take.Waker = .{ .context = loop, .wake = wake_erased };
+            return inbox_module.take_reserved(inbox, receiver, events, first, written, &tables.dispatch, tables.groups, waker);
+        }
+
+        /// `wake_target`, through a `Waker`'s context.
+        fn wake_erased(context: *anyopaque, target: LoopId, descriptor: Descriptor) void {
+            const loop: *Loop = @ptrCast(@alignCast(context));
+            loop.wake_target(target, descriptor);
         }
 
         /// The callbacks that the loop still owes: operations with a record, tasks queued, calls out

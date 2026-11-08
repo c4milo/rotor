@@ -9,7 +9,6 @@ const call_module = @import("call.zig");
 const call_take = @import("call_take.zig");
 const event = @import("../event.zig");
 const inbox_module = @import("../inbox.zig");
-const take_reserved = inbox_module.take_reserved;
 const layout = @import("../layout.zig");
 const mailbox = @import("../mailbox.zig");
 const operation = @import("../operation.zig");
@@ -83,13 +82,25 @@ pub const Model = struct {
         return model.clock_ns;
     }
 
+    /// The slow path of the model's drain. A call that the drain answers at once counts a wake.
+    pub fn take(inbox: *inbox_module.Inbox, receiver: LoopId, events: []Event, first: LoopId, written: u32) u32 {
+        const model: *Model = @alignCast(@fieldParentPtr("inbox", inbox));
+        const waker: call_take.Waker = .{ .context = model, .wake = count_wake };
+        return inbox_module.take_reserved(inbox, receiver, events, first, written, &model.dispatch, &model.groups, waker);
+    }
+
+    fn count_wake(context: *anyopaque, _: LoopId, _: operation.Descriptor) void {
+        const model: *Model = @ptrCast(@alignCast(context));
+        model.wakes += 1;
+    }
+
     /// One tick with no kernel: the drain of the mailboxes into `events`, then the tasks. Returns
     /// the events that the drain wrote.
     pub fn tick(model: *Model, events: []Event) u32 {
         // A loop's first stamp of a tick zeroes the turn, and a run of tasks adds to its counts.
         model.heartbeat.turn = .zero;
         _ = model.dispatch.begin(&model.heartbeat, 0);
-        const produced = model.inbox.drain_mailboxes(model.id, events, &model.dispatch, &model.groups, take_reserved);
+        const produced = model.inbox.drain_mailboxes(model.id, events, take);
         const kept = model.dispatch.end(&model.heartbeat, &model.groups, events[0..produced]);
         model.groups.assert_lanes(model.dispatch.groups_ready);
         model.dispatch.tasks.assert_queue();

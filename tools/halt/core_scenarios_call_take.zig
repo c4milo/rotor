@@ -17,6 +17,7 @@ fn taker_of(sender: core.LoopId, receiver: core.LoopId) take.Taker {
         .registry = &fixture.registry,
         .dispatch = &fixture.dispatch,
         .groups = &fixture.groups,
+        .waker = null,
         .receiver = receiver,
         .sender = sender,
         .woke = false,

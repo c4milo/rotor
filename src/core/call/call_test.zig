@@ -15,7 +15,6 @@ const EchoService = fixture.EchoService;
 const EchoCall = fixture.EchoCall;
 const Event = fixture.Event;
 const Pair = fixture.Pair(2);
-const take_reserved = @import("../inbox.zig").take_reserved;
 
 const caller: fixture.LoopId = 0;
 const target: fixture.LoopId = 1;
@@ -69,7 +68,7 @@ test "the 33rd call to one target is refused, and finish lowers the count where 
     // The caller's drain takes every return, and the count stays: no `finish` has run.
     const model = &pair.loops[caller];
     _ = model.dispatch.begin(&model.heartbeat, 0);
-    try testing.expectEqual(@as(u32, 0), model.inbox.drain_mailboxes(caller, &events, &model.dispatch, &model.groups, take_reserved));
+    try testing.expectEqual(@as(u32, 0), model.inbox.drain_mailboxes(caller, &events, fixture.Model.take));
     try testing.expectEqual(constants.calls_per_pair_max, pair.calls_out(caller, target));
     try testing.expectError(error.CallsFull, send(&pair, extra, 7, .default));
     // Each `finish` lowers it, in the task run of the same tick.
@@ -94,7 +93,7 @@ test "the drain takes a call and a return as tasks, with the service's entry and
     const tasks_before = pair.loops[target].dispatch.tasks.count;
     const owner = &pair.loops[target];
     _ = owner.dispatch.begin(&owner.heartbeat, 0);
-    try testing.expectEqual(@as(u32, 0), owner.inbox.drain_mailboxes(target, &events, &owner.dispatch, &owner.groups, take_reserved));
+    try testing.expectEqual(@as(u32, 0), owner.inbox.drain_mailboxes(target, &events, fixture.Model.take));
     try testing.expectEqual(tasks_before + 1, owner.dispatch.tasks.count);
     try testing.expect(owner.dispatch.tasks.holds(&link.task));
     try testing.expectEqual(&EchoService.entry, link.task.call);
@@ -102,7 +101,7 @@ test "the drain takes a call and a return as tasks, with the service's entry and
     // The return comes back as a task with the `finish` entry, and no event.
     const back = &pair.loops[caller];
     _ = back.dispatch.begin(&back.heartbeat, 0);
-    try testing.expectEqual(@as(u32, 0), back.inbox.drain_mailboxes(caller, &events, &back.dispatch, &back.groups, take_reserved));
+    try testing.expectEqual(@as(u32, 0), back.inbox.drain_mailboxes(caller, &events, fixture.Model.take));
     try testing.expect(back.dispatch.tasks.holds(&link.task));
     try testing.expectEqual(link.finish, link.task.call);
     try testing.expect(link.task.call.call_record);

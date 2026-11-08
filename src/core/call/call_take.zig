@@ -19,12 +19,21 @@ const Message = operation.Message;
 const Outcome = call_module.Outcome;
 const Registry = mailbox.Registry;
 
+/// How the drain wakes the caller of a call that it answers at once: the backend's own wake of a
+/// loop that sleeps, as its `post` makes it (decision 32).
+pub const Waker = struct {
+    context: *anyopaque,
+    wake: *const fn (context: *anyopaque, target: LoopId, descriptor: Descriptor) void,
+};
+
 /// What one drain hands the cold path of its reserved tags. The drain writes `sender` before each
 /// ring it visits.
 pub const Taker = struct {
     registry: *Registry,
     dispatch: *Dispatch,
     groups: *Groups,
+    /// Null for a test's loop, which wakes no other loop.
+    waker: ?Waker,
     receiver: LoopId,
     sender: LoopId,
     /// True when the drain took a `Message.wake` (decision 29).

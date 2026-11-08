@@ -11,7 +11,6 @@ const operation = @import("operation.zig");
 
 const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
 const Groups = @import("scheduling/scheduling_groups.zig").Groups;
-const take_reserved = inbox_module.take_reserved;
 const Event = event.Event;
 const Inbox = inbox_module.Inbox;
 const Message = operation.Message;
@@ -52,7 +51,7 @@ const TestInbox = struct {
 
     /// One drain into `events`. It writes the sender of each event, its tag, to `senders`.
     fn drain(fixture: *TestInbox, receiver: LoopId, events: []Event, senders: []u8) !u32 {
-        const count = fixture.inbox.drain_mailboxes(receiver, events, &fixture.dispatch, &fixture.groups, take_reserved);
+        const count = fixture.inbox.drain_mailboxes(receiver, events, inbox_module.TestTake(TestInbox).take);
         for (events[0..count], senders[0..count]) |message, *sender| {
             try testing.expect(message.flags.message);
             sender.* = '0' + @as(u8, @intCast(message.result));
@@ -197,6 +196,11 @@ fn visit_bound(loops: u32, room: u32) u32 {
     return (std.math.divCeil(u32, loops - 2, visits) catch unreachable) + 1;
 }
 
+/// The slow path of a drain that reads no reserved tag: the visit tests post none.
+fn take_none(_: *Inbox, _: LoopId, _: []Event, _: LoopId, _: u32) u32 {
+    unreachable;
+}
+
 /// The most events a mailbox reserve holds: a quarter of a batch.
 const reserve_events_max = constants.batch_max / constants.mailbox_share_divisor;
 
@@ -205,11 +209,8 @@ const reserve_events_max = constants.batch_max / constants.mailbox_share_divisor
 fn expect_visits(inbox: *Inbox, receiver: LoopId, loops: u32, room: u32, holds: []const bool) !void {
     var events: [reserve_events_max]Event = undefined;
     var seen: [constants.loops_max]bool = @splat(false);
-    var dispatch: Dispatch = .empty;
-    var groups: Groups = undefined;
-    groups.init(&.empty);
     for (0..visit_bound(loops, room)) |_| {
-        const count = inbox.drain_mailboxes(receiver, events[0..room], &dispatch, &groups, take_reserved);
+        const count = inbox.drain_mailboxes(receiver, events[0..room], take_none);
         for (events[0..count]) |message| seen[@intCast(message.result)] = true;
     }
     for (holds[0..loops], seen[0..loops]) |held, visited| try testing.expect(!held or visited);

@@ -173,14 +173,12 @@ fn should_retry(slot: *const Slot, errno: linux.E) bool {
 /// The slow path of a drain's reserved tags (decision 32), kept out of the tick. Decision 7 allows
 /// the hint in this file, and `docs/hot-path-ledger.md`, row H6, holds the numbers.
 pub noinline fn take_reserved(
-    ring: *const core.mailbox.Mailbox,
-    peeked: core.mailbox.Mailbox.Peeked,
-    registry: *core.mailbox.Registry,
-    dispatch: *core.dispatch.Dispatch,
-    groups: *core.scheduling.Groups,
-    sender: core.LoopId,
+    inbox: *core.inbox.Inbox,
     receiver: core.LoopId,
-) void {
+    events: []core.Event,
+    first: core.LoopId,
+    written: u32,
+) u32 {
     @branchHint(.cold);
-    core.inbox.take_reserved(ring, peeked, registry, dispatch, groups, sender, receiver);
+    return core.call.loop.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
 }
