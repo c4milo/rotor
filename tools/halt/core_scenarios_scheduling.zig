@@ -423,4 +423,6 @@ pub const scenarios = [_]scenario.Scenario{
         .name = "scheduling: note a stall of a group past the table",
         .run = note_a_stall_of_a_group_past_the_table,
     },
-};
+} ++
+    // The cross-core call of decision 32 runs in the groups, and its scenarios follow theirs.
+    @import("core_scenarios_call.zig").scenarios;

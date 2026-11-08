@@ -322,6 +322,13 @@ fn set_the_shares_on_this_thread() void {
     loop.set_scheduling_group_shares(.default, core.constants.scheduling_shares_default);
 }
 
+/// A loop with tables and no kernel, for the owner checks of the cross-core call (decision 32).
+fn start_tables() void {
+    loop.init_tables(&memory, &options);
+}
+
+const owner_calls = @import("owner_calls.zig").Scenarios(Loop, &loop, start_tables, options.id);
+
 pub const scenarios = [_]scenario.Scenario{
     .{ .name = "owner: schedule in a group from another thread", .run = schedule_in_a_group_from_another_thread },
     .{ .name = "owner: charge a task from another thread", .run = charge_a_task_from_another_thread },
@@ -373,4 +380,4 @@ pub const scenarios = [_]scenario.Scenario{
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "owner: end a remote from another thread", .run = end_a_remote_from_another_thread },
-};
+} ++ owner_calls.scenarios;
