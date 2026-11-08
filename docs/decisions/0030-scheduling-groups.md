@@ -1,7 +1,8 @@
 # 30. Scheduling groups
 
 Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), and built on 2026-11-07 on the branch
-`decision-30` (see "What was built"). The costs in the sections after "What was built" are
+`decision-30` (see "What was built"). Finished on 2026-11-08 on the branch `decision-30b` (see
+"Finish, 2026-11-08"). The costs in the sections after "What was built" are
 priors: a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic over
 the code at `5e9490d` and the counts of `bench/baseline/work.txt`. "What was built" holds the
 measured counts.
@@ -19,6 +20,7 @@ module. These parts differ from the design below:
    that the pass starts a task (`bulk_then_start`).
 2. **`turn_group` is stored once in each run, by `leave_tasks`, with the group of the last task.**
    A stall names a group only when its turn called one task, and then the last task is that task.
+   On 2026-11-08 only the groups' run stores it (see "Finish, 2026-11-08").
 3. **`task_budget_left` on the groups path** reads the ready mask at the call. With no other group
    ready, it answers the starts left in the tick.
 4. **The class B check of a ready lane** holds its count, its head and tail, and the sum of the
@@ -43,8 +45,8 @@ Two class A checks have no halt scenario, because no parameter reaches them (dec
 ends within `visits_per_run_max` visits, and a bulk credit is followed by a start. A mutation that
 removes the bulk credit makes the first halt in `zig build test-core`.
 
-**The default shares and `task_charge_max` are not fixed yet** (open question 9). The build uses
-the proposed 100 and 64. The work gate's new rows, with every group at one value of the shares, on
+**The default shares and `task_charge_max` were fixed on 2026-11-08** at 100 and 64 (open question
+9, and "Finish, 2026-11-08"). The work gate's new rows, with every group at one value of the shares, on
 `mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of about 20) and on arm64 Linux
 (cachegrind of Valgrind 3.25.1 in an arm64 container on `mac`):
 
@@ -65,11 +67,151 @@ a task on the groups path, which ReleaseSafe checks. No line of `bench/baseline/
 
 The older rows on `mac` stay within their lines. On arm64 Linux the path with one group counts more
 than the base commit `cb38fef`: io_uring `post` +2, `post-operation` +4, `task` +8, `record` +7
-and `poller` +6, and epoll `task` +10, `record` +9 and `poller` +8. That path gains a store of
-`turn_group` in `leave` and `leave_tasks` and a store of `phase` before a run, and no count
-separates the two. At `cb38fef`,
-io_uring `post`, `task` and `poller` were already over their lines with Valgrind 3.25.1. With the
-change, `post-operation` and `record` are over too.
+and `poller` +6, and epoll `task` +10, `record` +9 and `poller` +8. At `cb38fef`, io_uring
+`post`, `task` and `poller` were already over their lines with Valgrind 3.25.1. "Finish,
+2026-11-08" says what was cut and what is left.
+
+## Finish, 2026-11-08
+
+Camilo ruled on 2026-11-08:
+
+- The default shares are 100, and `task_charge_max` is 64 (open question 9).
+- The cost on the path with one group is cut first, and then every row is shown. No line of
+  `bench/baseline/work.txt` is raised.
+
+These parts changed on the branch `decision-30b`:
+
+1. **The rule for a cost that varies counts the static cost.** The old rule did
+   `task_budget_left() + 1` slices and charged `slices - 1`. A task of static cost 2 or more that
+   followed it could halt at the floor of the deficit on the groups path, and ran with no halt on
+   the path with one group. Example: one ready group at shares 100 and a deficit of 0. The visit
+   gives 100, a cost of 2 takes 200, the budget is 63, and a charge of 63 leaves -6,400, below
+   `deficit_min` (-6,399). The rule now does at most `@max(c, task_budget_left() + 1)` slices and
+   charges `slices - c`, so one run costs at most `task_charge_max` units. The Lean model
+   already assumed that bound (`Costs`), so it does not change.
+2. **One charge is below `task_charge_max`** (class B, on both paths). Every task costs at least 1,
+   so a charge of `task_charge_max` always passes the bound of one run.
+3. **Decision 27's run stores no phase.** `Phase.tasks` is gone. That run stays in `records`.
+   `Tasks.left` drops after each call, not before it, so it is at least 1 inside a call and 0
+   outside a run. `charge_task` checks `left != 0`, and `task_budget_left` answers `left - 1`.
+4. **The path with one group stores no group.** `Turn.ended` counts the records of an `end` from
+   bit 0, the tasks of decision 27's run from bit 32, and the tasks of the groups' run from bit 48.
+   On arm64 an `add` with a shift adds the count, as before. Only the groups' run stores
+   `turn_group`. A stall of one callback reads the bit of the count to tell a record, a task of
+   `.default` and a task of a group apart.
+5. **The property test draws the whole range a caller may use.** A job charges a fixed count up to
+   `task_charge_max` units in all, the largest included, or follows the rule above up to all the
+   slices it allows. Costs include 64. The budget each job reads equals the model's. G3 is now the
+   window bound: while a group drops no credit, its units served differ from its credit by less
+   than `task_charge_max` units. The accounting identity moved to G2.
+6. **The cost-64 conformance scenario sends a post** from a second loop in each round, and checks
+   that the timer and the post arrive within 2 ticks.
+7. **New checks:** the snapshot (bit 0 of the ready mask clear, a mask not 0, a ready lane not
+   empty), an open visit holds credit, `budget_left` (`left` within the bound, bit 0 clear),
+   `Groups.queued` (names within the reserved groups, the sum within the caps),
+   `Dispatch.tasks_queued`, `Dispatch.task_budget_left`, `NamedSchedulingGroup.scheduling_group`,
+   `leave_group_tasks` and the group of a stall. Each has a halt scenario.
+
+### What the path with one group still costs
+
+Cachegrind's counts for each function, arm64 io_uring, for each iteration:
+
+| row | function | `cb38fef` | `4eb8bfb` | `decision-30b` | cause |
+|---|---|---|---|---|---|
+| `task` | `tick_dispatched` | 121 | 128 | 125 | `end` tests `groups_ready`: 2 |
+| `task` | `tick_backend` | 188 | 189 | 189 | `Tables` grew by 8 B |
+| `post` | `tick_backend`, 2 ticks | 382 | not measured | 384 | `Tables` grew by 8 B |
+| `post-operation` | `tick_backend`'s lines of `std.bit_set`, 4 ticks | 120 | not measured | 124 | `Tables` grew by 8 B |
+
+The pointer `Tables.groups` moves `wakes` of the io_uring `Loop` from offset 0xa98 to 0xaa0, and
+the copy of its bit set then takes one instruction more in each tick. An experiment that put the
+pointer on the heartbeat's line counted `post` 1073 and `post-operation` 2963, the counts of
+`cb38fef`. It is a change of a hot structure's layout, so it waits for Camilo (open questions below).
+
+On epoll, `begin` also reads `groups_ready` beside `tasks.count`: `task` +3 there. A form that
+reads it only when `.default` is empty counted more on `mac`, so it was not kept.
+
+On `mac`, the compiler puts the whole groups' run inside each backend's `tick_dispatched`, which
+grew from 279 to 657 instructions. An experiment with that run kept out of line counted `task` 4,
+`record` 5 and `poller` 6 fewer on `mac`, and `task` 1 fewer on arm64. It needs a hint that
+decision 7 does not list, so it waits for Camilo too.
+
+### The rows
+
+Every row of the work gate. "line" is the line of `bench/baseline/work.txt`. `mac` is the median
+of three runs of `zig build work-gate` at a load average of 52 to 72, so its counts move by a few
+instructions from run to run. Arm64 is cachegrind of Valgrind 3.25.1 in an arm64 container on
+`mac`, the same on every run. OVER marks a count above its line by more than 2 percent.
+
+| row | `mac` line | `mac` `cb38fef` | `mac` `4eb8bfb` | `mac` `decision-30b` | uring line | uring `cb38fef` | uring `4eb8bfb` | uring `decision-30b` | epoll line | epoll `cb38fef` | epoll `4eb8bfb` | epoll `decision-30b` |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `post` | 1217 | 1204 | 1209 | 1212 | 1039 | 1073 OVER | 1075 OVER | 1075 OVER | 1150 | 1150 | 1150 | 1150 |
+| `post-operation` | 3114 | 3109 | 3126 | 3123 | 2905 | 2963 | 2967 OVER | 2967 OVER | 3039 | 3033 | 3033 | 3033 |
+| `timer` | 1151 | 1147 | 1152 | 1151 | 1082 | 1094 | 1095 | 1095 | 1104 | 1100 | 1100 | 1100 |
+| `batch` | 24624 | 24757 | 24905 | 24830 | 23757 | 24024 | 24025 | 24025 | 23845 | 24034 | 24034 | 24034 |
+| `wait` | 5296 | 5292 | 5341 | 5312 | none | none | none | none | 632 | 630 | 630 | 630 |
+| `task` | 615 | 606 | 617 | 619 | 545 | 563 OVER | 571 OVER | 568 OVER | 593 | 593 | 603 | 600 |
+| `tasks-64` | 4558 | 4533 | 4553 | 4549 | 3910 | 3914 | 3922 | 3919 | 3985 | 3944 | 3954 | 3951 |
+| `record` | 1283 | 1284 | 1299 | 1300 | 1199 | 1218 | 1225 OVER | 1222 | 1228 | 1230 | 1239 | 1236 |
+| `poller` | 573 | 561 | 571 | 572 | 505 | 522 OVER | 528 OVER | 526 OVER | 557 | 553 | 561 | 559 |
+| `tasks-groups-4` | none | none | 13011 | 13008 | none | none | 12328 | 12335 | none | none | 12359 | 12366 |
+| `tasks-groups-16` | none | none | 13720 | 13722 | none | none | 13012 | 13031 | none | none | 13043 | 13062 |
+
+Against `cb38fef`, `decision-30b` counts on arm64 io_uring `post` +2, `post-operation` +4, `task`
++5, `tasks-64` +5, `record` +4 and `poller` +4, and on epoll `task` +7, `tasks-64` +7, `record` +6
+and `poller` +6. On `mac` it counts `task` +13, `record` +16 and `poller` +11 at that load. At a
+load of 15 to 23 the same tree counted `task` 615, `record` 1296 and `poller` 569 against 606, 1284
+and 560 for `cb38fef`. No row on `mac` or on epoll is over its line. On io_uring, `cb38fef` was
+already over in `post`, `task` and `poller`, and `decision-30b` adds `post-operation`.
+
+### Mutations
+
+Each deletion of a check below made its halt scenario report DID NOT HALT in `zig build
+halt-check`: CAUGHT. The checks: `charge_task` outside a call, one charge of `task_charge_max`, the
+floor of the deficit, the forged named id, `budget_left`'s bound and its bit 0, the dispatch's
+budget, the three checks of the snapshot, the open visit, both checks of `Groups.queued`,
+`tasks_queued`, `leave_group_tasks`, the group of a stall, and `charge_task`'s owner check.
+
+In `zig build test-core`, each of these is CAUGHT:
+
+- decision 27's run counts its tasks at bit 0;
+- the groups' run stores no group;
+- a stall of one task of `.default` names no group;
+- the run lowers `left` before the call;
+- either budget counts the task that runs;
+- the property test charges by the old rule (the floor halts, the bug of item 1);
+- G3's window is kept across a close that drops credit (G3 fails);
+- debt cleared when a group empties (G2);
+- ties broken by address order.
+
+The last was the record's G7 mutation. The class A check of the bulk credit caught it first: an
+order by address skipped a group with credit. G1 and G7 run after that check, and the model holds
+no addresses, so G1 would fail before G7 in any case.
+
+In `zig build test-conformance-kqueue`, a peer that posts nothing is CAUGHT.
+
+### A failure of the shares scenario under load
+
+Decision 32's work saw the scenario of shares 100 and 300 fail once at a load of 70. It failed
+here too, at a load of about 35: `drain` returned `CallbackStalled` and not `TasksStillQueued`.
+The stall check of the scenarios times each handler by the wall clock, and its handlers only count
+and queue a task. So the thread lost its core for 50 ms inside a handler. The scenario is right,
+and the wall clock is the cause, which `283a0e6` on main corrects with the thread's CPU clock. That
+commit is not copied here. The failure also halted in `deinit`, because the failed check returned
+with tasks queued. Each scheduling scenario now discards its tasks on that path, so it fails and
+does not halt.
+
+### Open questions
+
+1. **The groups' run out of line.** `@call(.never_inline, ...)` on `scheduling_run.run`: `mac`
+   `task` -4, `record` -5, `poller` -6, arm64 `task` -1. Recommended: yes, as a row of decision 7's
+   ledger.
+2. **`Tables.groups` on the heartbeat's line.** `Tables` keeps its size of `cb38fef`, and io_uring
+   `post` and `post-operation` count what `cb38fef` counted. The pointer is read only on the groups
+   path, and only the loop's thread reads it. Recommended: yes, or a change to the io_uring `Loop`
+   that keeps `wakes` at its offset.
+3. **x86-64 is not measured.** On x86-64 the add at bit 32 takes a shift, about one instruction more
+   in each run of tasks (a prior). CI's x86-64 runner shows it.
 
 ## Ruling, 2026-11-07
 
@@ -438,8 +580,12 @@ other than `.default` holds a task.
   above `task_charge_max`. The groups path reads `call.cost` from the static `Call`, on the line of
   `function`.
 - **A cost that varies:** the task calls `charge_task(units)` before it returns. Decision 27's
-  guidance becomes a count that the loop keeps: do at most `task_budget_left() + 1` slices, then
-  call `charge_task(slices - 1)` when there were more than one, then schedule again if work is left.
+  guidance becomes a count that the loop keeps. The static cost `c` pays for the first `c` slices,
+  and `c` is 1 for `Task.init`. Do at most `@max(c, task_budget_left() + 1)` slices, then call
+  `charge_task(slices - c)` when there were more than `c`, then schedule again if work is left.
+  So one run costs at most `task_charge_max` units, its cost and its charges together. The rule
+  read `charge_task(slices - 1)` until 2026-11-08, and a task of static cost 2 or more that
+  followed it could halt at the floor of the deficit (see "Finish, 2026-11-08").
 - **A task that understates its cost** takes more CPU than its shares. The stall record names it,
   with its group (below).
 
@@ -464,10 +610,11 @@ and operations.
 - **`Stall.group: ?SchedulingGroup`** fills 2 B of the 4 B of padding after `callbacks`, so `Stall`
   stays 32 B. `note_stall` writes it when `callbacks == 1` and that callback was a task. It is part
   of the stall record of decision 9, rule 7, and no control flow reads it.
-- **`Heartbeat.turn_group: u8`** fills padding after `watchers`. `end` stores "none" before its
-  records. The groups path stores the group once at each visit, and the path with one group stores
-  0 once in each run. So a stall of one task names its group, and a stall of one record names no
-  group.
+- **`Heartbeat.turn_group: u8`** fills padding after `watchers`. Only the groups' run stores it,
+  once in each run. `Turn.ended` counts the records of an `end` from bit 0, the tasks of decision
+  27's run from bit 32 and the tasks of the groups' run from bit 48. So a stall of one task names
+  its group, a stall of one record names no group, and the path with one group stores nothing
+  more than decision 28 did (as built on 2026-11-08).
 - **No count on the hot path.** An exact count of the units or tasks of each group is a write for
   each task. CLAUDE.md's rule is that statistics are sampled, and rule 7 is the one exception, for a
   stall. Open question 6 asks about a count of `TasksFull` for each group on the refusal path, which
@@ -480,7 +627,7 @@ and operations.
 | `SchedulingGroup` | new, `u8` | 1 B | the caller's |
 | `NamedSchedulingGroup` | new, `u8`; ids 1 to n are the declaration's | 1 B | the caller's |
 | `NamedTable` | new: `count: u8`, `shares: [15]u16`, in the backends' `Loop.Options` | 32 B, 2 | the options, read once at init |
-| `Dispatch` | `ticking: bool` and `polling: bool` become `phase: Phase` (`u8`: idle, polling, records, tasks, group_tasks). `groups_ready: u16`, the ready mask of groups 1 to 15, takes the freed byte and the 1 B of padding | **stays 96 B, 8** (64 + 24 + 4 + 2 + 1 + 1). A build confirms it. | `Tables` |
+| `Dispatch` | `ticking: bool` and `polling: bool` become `phase: Phase` (`u8`: idle, polling, records, group_tasks; decision 27's run stays in `records`, as built on 2026-11-08). `groups_ready: u16`, the ready mask of groups 1 to 15, takes the freed byte and the 1 B of padding | **stays 96 B, 8** (64 + 24 + 4 + 2 + 1 + 1). A build confirms it. | `Tables` |
 | `Tasks` | no field changes. `count` stays the count of `.default` only, so `run` stays true. By ruling item 9, a call's task in `.default` can take `count` above `tasks_queued_max`. So four bounds read `tasks_queued_max + call_tasks_max`. They are the assert in `push`, the count check in `assert_shape`, the loop bound of `discard`, and the walk bound of `assert_queue` | 24 B, 8 | `Dispatch` |
 | `Lane` | `head`, `tail` (8 + 8), `count: u32`, `startable: u32`, `deficit: i32`, `shares: u16`, 2 B pad. Lane 0 keeps its queue in `Dispatch.tasks` and uses only `startable`, `deficit` and `shares` | 32 B, 8 | `Groups` |
 | `Groups` | `lanes: [16]Lane` (512 B), `end_mark: Task` (16 B), `reserved: u8`, `cursor: u8`, `visit_open: bool`, 5 B pad. Decision 32 puts its cold counts `stations: u8` and `serving: u8` in 2 B of the pad. `named: u8`, n, takes 1 B more of the pad, and `reserved` is n after init. Decision 32 adds nothing else: a call carries its own task, and `Groups` holds no call lanes. | 536 B, 8 | carved from the loop's memory by `Layout.take`, as decision 28's heartbeat is |
@@ -524,7 +671,7 @@ program is then not reached, and `discard_tasks` does not halt on it by name.
 
 - **`begin`** returns a wait of 0 when `worked or tasks.count != 0 or groups_ready != 0`. The mask
   is on `Dispatch`'s line, beside `tasks`.
-- **`end`** stores "none" in `turn_group`, calls the records, then runs
+- **`end`** calls the records, then runs
   `if (groups_ready == 0) tasks.run(heartbeat) else groups.run(dispatch, heartbeat)`, and subtracts
   the starts from `callbacks_outstanding`, as today.
 - **`idle()`** does not change. `callbacks_outstanding` already counts the tasks of every group.
@@ -656,7 +803,7 @@ other addresses. A reference model in `dispatch_test_model.zig` runs plain DRR w
 |---|---|
 | the group id is at most `reserved` | A, one compare |
 | shares in 1 to `scheduling_shares_max` | B |
-| `charge_task` inside a task's run (`phase` is tasks or group_tasks) | B |
+| `charge_task` inside a task's call (`tasks.left` above 0, as built on 2026-11-08), and one charge below `task_charge_max` | B |
 | a deficit at or above `1 - task_charge_max * 100` after a charge | A, one compare |
 | a bulk credit is followed by a start | A |
 | the end mark is never popped as a task | A |
@@ -738,7 +885,7 @@ decision 32, and its answer says how.
    cocuyo's slices for each turn, and fix them from the `tasks-groups-4` row.* The proposed answer
    fixed them before the record was accepted. Camilo accepted the record before that row exists.
    So the step moves: *ruled on 2026-11-07, the defaults are fixed from that row before the build
-   lands.*
+   lands.* *Ruled on 2026-11-08: the default shares are 100, and `task_charge_max` is 64.*
 10. **stompy's design note** refuses weighted DRR (decision 27, "How groups could come later").
     *Ruled: stompy's note changes in the same release, with one group for each purpose: foreground,
     journal, compaction.*
