@@ -52,9 +52,11 @@ pub fn take_reserved(taker: *Taker, message: Message) void {
 }
 
 /// The drain on the target (decision 32, "The flow", step 3): the target holds the call, and its
-/// task waits in the call's group to run the handler. Halts on a link that the message does not
-/// match, on a group id above the target's named groups, on a station that never served, and in a
-/// registry of a decision 21 group (class B).
+/// task waits in the call's group to run the handler. A station that stopped answers
+/// `target_stopped` here, and the task does not run on this loop: a station that an earlier loop
+/// of this id stopped still names that loop. Halts on a link that the message does not match, on a
+/// group id above the target's named groups, on a station that never served, and in a registry of
+/// a decision 21 group (class B).
 pub fn take_call(taker: *Taker, message: Message) void {
     assert(!taker.registry.group);
     const link: *CallLink = @ptrFromInt(message.payload);
@@ -68,7 +70,11 @@ pub fn take_call(taker: *Taker, message: Message) void {
     link.state = .held;
     station.held += 1;
     taker.dispatch.callbacks_outstanding += 1;
-    schedule_link(taker.dispatch, taker.groups, link);
+    if (station.state == .serving) return schedule_link(taker.dispatch, taker.groups, link);
+    link.outcome = .target_stopped;
+    const wake = answer(taker.registry, taker.receiver, taker.dispatch, taker.groups, link) orelse return;
+    const waker = taker.waker orelse return;
+    waker.wake(waker.context, taker.sender, wake);
 }
 
 /// The drain on the caller (step 6): the caller's loop owns the record again, and its task waits in

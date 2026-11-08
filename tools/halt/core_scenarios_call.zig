@@ -192,4 +192,4 @@ pub const scenarios = [_]scenario.Scenario{
     .{ .name = "call: end a call whose count is zero", .run = end_a_call_whose_count_is_zero },
     .{ .name = "call: discard a queued task of a call", .run = discard_a_queued_task_of_a_call },
     .{ .name = "call: discard a task of a call in a group", .run = discard_a_task_of_a_call_in_a_group },
-} ++ @import("core_scenarios_call_take.zig").scenarios;
+} ++ @import("core_scenarios_call_take.zig").scenarios ++ @import("core_scenarios_call_view.zig").scenarios;

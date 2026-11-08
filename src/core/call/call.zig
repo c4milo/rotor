@@ -173,9 +173,12 @@ pub const CallStation = struct {
     held: u32,
     /// The calls to self that have not yet run their `finish`.
     self_out: u32,
+    /// The groups of the loop that counts this station in `Groups.stations`, from its `serve` or
+    /// its first call to self, until it stops serving and its last call to self ends. Null while
+    /// no loop counts it. So a loop that ends counts none, and a later loop of the id starts from
+    /// none (decision 32).
+    attached: ?*Groups,
     state: StationState,
-    /// True once `serve` or `send` counted the station in `Groups.stations`.
-    attached: bool,
 
     pub const StationState = enum(u8) { unused, serving, stopped };
 
@@ -184,8 +187,8 @@ pub const CallStation = struct {
         .loop = null,
         .held = 0,
         .self_out = 0,
+        .attached = null,
         .state = .unused,
-        .attached = false,
     };
 };
 
@@ -212,7 +215,6 @@ pub fn call(
     assert(link.state == .out);
     assert(@intFromEnum(link.group) <= groups.named);
     if (registry) |known| assert(!known.group);
-    attach(groups, &link.stations[id]);
     link.origin = id;
     if (link.target == id) return call_self(dispatch, groups, link);
     errdefer link.refuse();
@@ -237,7 +239,8 @@ pub fn call(
 }
 
 /// A call to the caller's own loop, through no ring. The station's `self_out` bounds it, and the
-/// loop counts it twice: out, and held.
+/// loop counts it twice: out, and held. A station that stopped answers `target_stopped` at once,
+/// and the call's task runs `finish` (decision 32, "What was built", item 15).
 fn call_self(dispatch: *Dispatch, groups: *Groups, link: *CallLink) CallError!?Descriptor {
     const station = &link.stations[link.origin];
     // A call to a loop that never served halts on the target (class B), here the caller itself.
@@ -246,22 +249,44 @@ fn call_self(dispatch: *Dispatch, groups: *Groups, link: *CallLink) CallError!?D
         link.refuse();
         return error.CallsFull;
     }
+    attach(groups, station);
     link.calls_out = &station.self_out;
     station.self_out += 1;
     dispatch.callbacks_outstanding += self_call_callbacks;
     link.state = .held;
     station.held += 1;
+    if (station.state == .stopped) {
+        link.outcome = .target_stopped;
+        const wake = take.answer(null, link.origin, dispatch, groups, link);
+        assert(wake == null);
+        return null;
+    }
     take.schedule_link(dispatch, groups, link);
     return null;
 }
 
-/// Counts `station` in `groups.stations` the first time a `serve` or a `send` reaches it. Halts
-/// above `services_max` (class B, cold), so too many services halt at the first call.
-fn attach(groups: *Groups, station: *CallStation) void {
-    if (station.attached) return;
-    station.attached = true;
+/// Counts `station` in `groups.stations` when its `serve` or its first call to self reaches it.
+/// Halts above `services_max` (class B, cold), and on a station that another loop's groups count
+/// (class B): a loop that ends counts no station.
+pub fn attach(groups: *Groups, station: *CallStation) void {
+    if (station.attached) |counted| {
+        assert(counted == groups);
+        return;
+    }
+    station.attached = groups;
     groups.stations += 1;
     assert(groups.stations <= constants.services_max);
+}
+
+/// Takes `station` out of the count of its loop's groups once it neither serves nor holds a call
+/// to self. Halts on a count of 0 (class B).
+pub fn detach(station: *CallStation) void {
+    if (station.state == .serving or station.self_out != 0) return;
+    const groups = station.attached.?;
+    assert(groups.stations >= 1);
+    // Wrapping, so the assertion above is the one check of the count.
+    groups.stations -%= 1;
+    station.attached = null;
 }
 
 /// Loop `id` serves the service of `stations`. Returns its station, whose `context` and `loop`
@@ -290,6 +315,7 @@ pub fn stop_serving(id: LoopId, groups: *Groups, stations: *[constants.loops_max
     station.state = .stopped;
     // Wrapping, so the assertion above is the one check of the count.
     groups.serving -%= 1;
+    detach(station);
 }
 
 /// The caller's part of the record's last task, before `finish` (decision 32, "The flow", step 7):
@@ -303,6 +329,7 @@ pub fn end_call(link: *CallLink) Outcome {
     count.* -%= 1;
     link.state = .idle;
     link.sent = false;
+    if (link.origin == link.target) detach(&link.stations[link.origin]);
     return link.outcome;
 }
 
@@ -310,5 +337,6 @@ test {
     _ = take;
     _ = service;
     _ = @import("call_test.zig");
+    _ = @import("call_test_claim.zig");
     _ = @import("call_test_model.zig");
 }

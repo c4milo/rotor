@@ -348,3 +348,30 @@ test "a call that waits in the ring of a loop that left is served by the loop th
     try testing.expectEqual(@as(u32, 1), tally.replied);
     try testing.expectEqual(@as(u32, 1), two.echoes[1].handled);
 }
+
+test "a loop that claims the id of a loop that stopped serving, and does not serve, answers stopped" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var two: Two = undefined;
+    const life = try two.start(&.empty);
+    defer life.end();
+    // Loop 1 stops serving and ends. Its station still names it.
+    two.service.stop_serving(two.shared(1));
+    two.harnesses[1].deinit();
+    // A second loop, at another address, claims id 1 and does not serve.
+    var claimer: Harness = undefined;
+    try init_loop(&claimer, 1, &two.registry, &.empty);
+    defer claimer.deinit();
+    defer {
+        two.service.stop_serving(two.shared(0));
+        two.harnesses[0].deinit();
+    }
+    var tally: Tally = .{};
+    var client = client_of(&two, &tally, 1);
+    try client.send();
+    var ticks: u32 = 0;
+    while (tally.stopped == 0 and ticks < ticks_max) : (ticks += 1) _ = try tick_all(&.{ &two.harnesses[0], &claimer });
+    try testing.expectEqual(@as(u32, 1), tally.stopped);
+    try testing.expectEqual(@as(u32, 0), two.echoes[1].handled);
+    // The claimer owes nothing: its drain answered the call, and no task of it is queued.
+    try testing.expectEqual(@as(u32, 0), claimer.loop.callbacks_outstanding());
+}

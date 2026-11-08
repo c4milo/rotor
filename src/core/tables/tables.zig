@@ -215,10 +215,12 @@ pub const Tables = struct {
     }
 
     /// The part of `assert_ended` that decision 32 adds, which a halt scenario reaches through its
-    /// parameters: no call out or held, and no station that serves (class C).
+    /// parameters: no call out or held, no station that serves, and no station that the groups
+    /// count, which a later loop of the id would find (class C).
     pub fn assert_calls_ended(dispatch: *const Dispatch, groups: *const Groups, kept: bool) void {
         assert(dispatch.callbacks_outstanding == @intFromBool(kept));
         assert(groups.serving == 0);
+        assert(groups.stations == 0);
     }
 
     /// Halts when an operation has not had its final event (decision 5, rule 7).

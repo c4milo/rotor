@@ -10,8 +10,8 @@
 \*
 \* The invariants: one result for each send; the record's task waits only on the loop that owns
 \* the record; a return push never fails; `calls_out` counts the record from `send` until its
-\* `finish`; and a station that stopped runs no handler. CallMutants.tla breaks one step each, and
-\* TLC must find the violation.
+\* `finish`; and a station that stopped runs no handler, in the drain or in the record's task.
+\* CallMutants.tla breaks one step each, and TLC must find the violation.
 EXTENDS Naturals, Sequences
 
 CONSTANTS
@@ -75,16 +75,6 @@ PostTC ==
     /\ tc' = Append(tc, "post")
     /\ UNCHANGED <<ct, rec, callsOut, task, station, sends, finishes, failed, stray>>
 
-\* T's drain pops the head of ring C to T. A call becomes held, and its task waits on T.
-DrainT ==
-    /\ ct # <<>>
-    /\ ct' = Tail(ct)
-    /\ IF Head(ct) = "call"
-       THEN /\ rec' = "held"
-            /\ task' = "T"
-       ELSE UNCHANGED <<rec, task>>
-    /\ UNCHANGED <<tc, callsOut, station, sends, finishes, failed, stray>>
-
 \* T's answer: the record is answered, and the return goes through `push`, which sees every slot.
 \* The push is T's last write of the record.
 Answer ==
@@ -94,6 +84,22 @@ Answer ==
             /\ UNCHANGED failed
        ELSE /\ failed' = TRUE
             /\ UNCHANGED tc
+
+\* T's drain pops the head of ring C to T. A call to a station that serves becomes held, and its
+\* task waits on T. A call to a station that stopped is answered in the drain, and no task waits:
+\* the station may still name a loop of T's id that ended (decision 32, finish of 2026-11-08).
+DrainT ==
+    /\ ct # <<>>
+    /\ ct' = Tail(ct)
+    /\ IF Head(ct) = "call"
+       THEN IF station = "serving"
+            THEN /\ rec' = "held"
+                 /\ task' = "T"
+                 /\ UNCHANGED <<tc, failed>>
+            ELSE /\ Answer
+                 /\ UNCHANGED task
+       ELSE UNCHANGED <<rec, task, tc, failed>>
+    /\ UNCHANGED <<callsOut, station, sends, finishes, stray>>
 
 \* The record's task on T: a stopped station answers with no handler run. A station that serves
 \* runs the handler, which answers now or keeps the call held.

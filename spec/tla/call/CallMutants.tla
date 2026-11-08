@@ -40,6 +40,21 @@ RunTIgnoresStop ==
     /\ stray' = (station = "stopped")
     /\ UNCHANGED <<ct, callsOut, station, sends, finishes>>
 
+\* M6: T's drain runs the handler of a call to a station that stopped, and then answers.
+DrainTRunsHandlerWhenStopped ==
+    /\ ct # <<>>
+    /\ ct' = Tail(ct)
+    /\ IF Head(ct) = "call"
+       THEN IF station = "serving"
+            THEN /\ rec' = "held"
+                 /\ task' = "T"
+                 /\ UNCHANGED <<tc, failed, stray>>
+            ELSE /\ Answer
+                 /\ stray' = TRUE
+                 /\ UNCHANGED task
+       ELSE UNCHANGED <<rec, task, tc, failed, stray>>
+    /\ UNCHANGED <<callsOut, station, sends, finishes>>
+
 \* M5: T schedules the record's task again after its return push, while C owns the record.
 AnswerLaterSchedulesAgain ==
     /\ rec = "held"
