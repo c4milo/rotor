@@ -109,7 +109,10 @@ const four = 4;
 const clients_per_loop = 12;
 /// The calls each loop sends in all.
 const calls_per_loop = 1500;
-/// The loop that stops serving, after it has handled this many calls.
+/// The loop that stops serving. It stops after it has handled `stop_after` calls, or after it has
+/// sent half its own calls. A record sends its next call to the same target, so the order of the
+/// threads decides how many calls reach this loop. The second bound makes the stop happen in every
+/// order.
 const stopping_loop: LoopId = 3;
 const stop_after = 200;
 const ticks_max = 1_000_000;
@@ -122,6 +125,8 @@ const Four = struct {
     arrived: [3]std.atomic.Value(u32) = @splat(.init(0)),
     /// For each loop: true while it has no call out and no task queued, after it stopped sending.
     settled: [four]std.atomic.Value(bool) = @splat(.init(false)),
+    /// True once the loop `stopping_loop` stopped serving.
+    stopped: std.atomic.Value(bool) = .init(false),
 
     fn barrier(shared: *Four, index: usize) void {
         _ = shared.arrived[index].fetchAdd(1, .acq_rel);
@@ -141,6 +146,9 @@ const Member = struct {
     echo: Echo = .{},
     tally: Tally = .{ .left = calls_per_loop },
     clients: [clients_per_loop]Client = undefined,
+    /// The call that the loop sends to the loop `stopping_loop` after that loop stops serving.
+    late: Client = undefined,
+    late_tally: Tally = .{},
     random: core.random.Random = .init(0),
     serving: bool = false,
     failure: ?anyerror = null,
@@ -174,22 +182,44 @@ const Member = struct {
             member.stop_when_due(shared);
         }
         member.tally.left = 0;
-        // Settle: each loop ticks until no loop has a call out or a task queued.
+        // Settle: each loop ticks until every loop sent its late call, and no loop has a call out
+        // or a task queued.
         while (!member.four.all_settled() and ticks < ticks_max) : (ticks += 1) {
             _ = try harness.tick(&events, 0);
             member.stop_when_due(shared);
-            const out = member.tally.accepted - member.tally.replied - member.tally.expired - member.tally.stopped;
-            member.four.settled[member.id].store(out == 0 and harness.loop.tasks_queued() == 0, .release);
+            try member.send_late(shared);
+            const out = calls_out(&member.tally) + calls_out(&member.late_tally);
+            const settled = member.late_tally.accepted == 1 and out == 0 and harness.loop.tasks_queued() == 0;
+            member.four.settled[member.id].store(settled, .release);
         }
         member.four.barrier(1);
         if (!member.four.all_settled()) return error.CallsNotSettled;
     }
 
-    /// The loop `stopping_loop` stops serving once it handled `stop_after` calls.
+    /// The loop `stopping_loop` stops serving once it handled `stop_after` calls, or once it sent
+    /// half its own calls.
     fn stop_when_due(member: *Member, shared: *View) void {
-        if (!member.serving or member.id != stopping_loop or member.echo.handled < stop_after) return;
+        if (!member.serving or member.id != stopping_loop) return;
+        if (member.echo.handled < stop_after and member.tally.left > calls_per_loop / 2) return;
         member.four.service.stop_serving(shared);
         member.serving = false;
+        member.four.stopped.store(true, .release);
+    }
+
+    /// Sends one call to the loop `stopping_loop` after that loop stopped serving. The call must
+    /// end `target_stopped`: the loop `stopping_loop` takes it through no ring, and every other
+    /// loop through its ring. A full ring refuses the send, and the next tick sends it again.
+    fn send_late(member: *Member, shared: *View) !void {
+        if (member.late_tally.accepted != 0 or !member.four.stopped.load(.acquire)) return;
+        member.late = .{ .service = member.four.service, .shared = shared, .target = stopping_loop, .tally = &member.late_tally };
+        member.late.send() catch |err| switch (err) {
+            error.MailboxFull => return,
+            else => return err,
+        };
+    }
+
+    fn calls_out(tally: *const Tally) u32 {
+        return tally.accepted - tally.replied - tally.expired - tally.stopped;
     }
 
     /// Sends a call from each idle record to a random loop, with a deadline now and then.
@@ -224,19 +254,21 @@ test "four loops on four threads call each other with deadlines while one stops 
         thread.* = try std.Thread.spawn(.{}, Member.run, .{member});
     }
     for (&threads) |*thread| thread.join();
-    var stopped: u32 = 0;
+    for (&members) |*member| try testing.expectEqual(@as(?anyerror, null), member.failure);
     try testing.expect(!members[stopping_loop].serving);
     for (&members) |*member| {
-        try testing.expectEqual(@as(?anyerror, null), member.failure);
+        // Each loop's late call reached a station that had stopped. How many of the other calls
+        // got `target_stopped` depends on the order of the threads, so the test does not count them.
+        try testing.expectEqual(@as(u32, 1), member.late_tally.accepted);
+        try testing.expectEqual(@as(u32, 1), member.late_tally.stopped);
+        try testing.expect(!member.late.call.is_out());
         const tally = member.tally;
         // Each accepted call ended once: replied, expired or stopped.
         try testing.expectEqual(tally.accepted, tally.replied + tally.expired + tally.stopped);
         try testing.expectEqual(@as(u32, 0), tally.wrong);
         try testing.expectEqual(@as(u32, calls_per_loop), tally.accepted);
         for (&member.clients) |*client| try testing.expect(!client.call.is_out());
-        stopped += tally.stopped;
     }
-    try testing.expect(stopped >= 1);
 }
 
 /// The callers of the scenario at shares 100 and 300, and the calls each keeps out.
