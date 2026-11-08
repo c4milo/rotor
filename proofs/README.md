@@ -2,7 +2,8 @@
 
 Machine-checked proofs, in [Lean 4](https://lean-lang.org), of rotor's timers: the timer heap in
 `src/core/timer_heap.zig`, and what `src/core/tables/tables.zig` and a backend's `flush` and `tick`
-do to a timer. Each proof is about a model of the Zig code, written to be read beside it. Every
+do to a timer. Also the deficit of a scheduling group, which `src/core/scheduling/scheduling_run.zig`
+keeps (decision 30). Each proof is about a model of the Zig code, written to be read beside it. Every
 definition names the Zig function it mirrors.
 
 ```bash
@@ -28,6 +29,9 @@ Every theorem rests only on Lean's three standard axioms (`propext`, `Classical.
 | a cancel of an armed timer disarms it at once, and its next event is final and says canceled | decision 5, rules 2 and 5 | `cancel_stops` |
 | a cancel of a repeating timer whose fire is queued and not yet handed over makes that queued event its final one, and it says canceled | decision 5, rule 2; decision 14, rule 5 | `cancel_ends_queued`, `cancel_not_lost`, `cancel_not_lost_fired` |
 | after an operation's final event, no later event carries its handle | decision 5, rule 1 | `final_is_last` |
+| a group's deficit stays in `[1 - task_charge_max * 100, 0]` between visits, and at most its shares inside one | decision 30, "Bounds", G2 | `visit_bounds`, `visit_open_le` |
+| the bulk credit leaves a debt, never takes credit away, and the next visit after it starts a task | decision 30, rule 5; the class A check that follows a bulk credit | `bulk_le_zero`, `le_bulk`, `bulk_then_start` |
+| over `n` visits of a group that stays startable, its units served times 100 differ from `n` times its shares by less than `task_charge_max` units | decision 30, "Bounds", G3 | `runAll_eq`, `window` |
 
 ## What the proofs found
 
@@ -58,6 +62,7 @@ tick hands over the final event.
 | `Heap.Defs` | `TimerHeap` | The capacity: the Zig `arm` asserts room, and the model has room everywhere. The array is a function from positions to entries. `sequence` does not wrap; `zigBefore_eq` covers the wrap. |
 | `Timers.Defs`: `submit`, `armTimer`, `finishLocal`, `fireLocal`, `rearm`, `release`, `drain`, `drainFired`, `drainLists`, `requestCancel`, `cancellable` | `Tables.submit`, `arm`, `finish_local`, `fire`, `rearm`, `SlotTable.release`, the pops of `drain_lists` from each list, `drain_lists`, `request_cancel`, `cancellable` and `reachable` | Every slot holds a timer. A deadline on another kind of operation shares the heap, but its expiry goes to the backend's cancel. The slot table's free list is left out: `submit` takes the index a claim returns. The model's `Event` has no `dispatched` flag. Since decision 26, `drain_lists` copies that flag from the slot to the event. No theorem depends on it. Due timers wait on `fired` and the slots a cancel ends on `finished` (W3, ruled 2026-11-07). `drainFired` is `drain` with the two lists exchanged, so one proof covers the pops from both lists. The Zig `drain_lists` pops both lists in one loop, `fired` while it is under its share, and the model writes the same pops as `drainFired` and then `drain`. |
 | `Timers.Defs`: `flushOne`, `flush`, `expire`, `tick` | a backend's `flush_one`, `flush`, `expire` and `tick` | A tick is `flush`, `expire`, `drain_lists`, `expire` again, then `drain_lists` into the room that is left. The share `core.tick_share` gives the lists only bounds that room, so the model drains into any room. The Zig tick's first expiry is `finish_due_timers`, which stops at the first deadline that is not a timer's, and its second comes after its reap (issue 10). Every slot here holds a timer, so the first is `expire`. The Zig tick also drains mailboxes and the offload, and waits and reaps before its second expiry. None of that reaches a timer's slot. |
+| `Drr` | `scheduling_run.zig`: `start`, `close`, `visit` and `bulk_credit` | The tick's bound of 64 starts: a visit it cuts resumes with no second credit, so its starts are one list. The other groups, which do not change this group's deficit. `charge_task`: a task's units are its cost and its charges together, which the class A check of `charge` holds to `task_charge_max`. A change of shares: the window bound holds for visits at one value. |
 
 Two fields of the model's slot are not in the Zig slot: `first`, the first deadline, and `handed`,
 the fires handed over. Nothing the model computes reads these two fields. They exist so a theorem
@@ -85,3 +90,4 @@ fails to check, and names the theorem.
 | `RotorProofs/Timers/Expire.lean` | expiry keeps the invariant and queues every due timer |
 | `RotorProofs/Timers/Ops.lean` | flush, both drains, cancel and tick keep it, and generations only grow |
 | `RotorProofs/Timers/Reach.lean` | the theorems about every reachable state |
+| `RotorProofs/Drr.lean` | the deficit of one scheduling group: its bounds, the bulk credit and the window bound |
