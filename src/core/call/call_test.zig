@@ -154,6 +154,48 @@ test "a past deadline and a stopped station answer with no handler run, and fini
     pair.service.stop_serving(&pair.loops[caller]);
 }
 
+test "a station that stops after its drain took a call answers target_stopped with no handler run" {
+    var pair: Pair = undefined;
+    pair.init(&.empty);
+    defer pair.service.stop_serving(&pair.loops[caller]);
+    var client: Client = .{};
+    try send(&pair, &client, 6, .default);
+    // The target's drain takes the call while the station serves, so the call's task is queued.
+    const owner = &pair.loops[target];
+    var events: [events_len]Event = undefined;
+    _ = owner.dispatch.begin(&owner.heartbeat, 0);
+    try testing.expectEqual(@as(u32, 0), owner.inbox.drain_mailboxes(target, &events, fixture.Model.take));
+    try testing.expect(owner.dispatch.tasks.holds(&client.call.link.task));
+    // The station stops before the task runs, so the task's verdict answers the call.
+    pair.service.stop_serving(owner);
+    _ = owner.dispatch.end(&owner.heartbeat, &owner.groups, events[0..0]);
+    try testing.expectEqual(@as(u32, 0), pair.echoes[target].handled);
+    _ = pair.loops[caller].tick(&events);
+    try testing.expectEqual(@as(u32, 1), client.stopped);
+    try testing.expectEqual(@as(u32, 0), client.replied);
+    try testing.expectEqual(@as(u32, 0), pair.calls_out(caller, target));
+    try testing.expectEqual(@as(u32, 0), owner.dispatch.callbacks_outstanding);
+}
+
+test "a call to self whose station stops before its task runs answers target_stopped" {
+    var pair: Pair = undefined;
+    pair.init(&.empty);
+    defer pair.service.stop_serving(&pair.loops[target]);
+    const model = &pair.loops[caller];
+    var client: Client = .{};
+    // The station serves at the send, so the call's task is queued.
+    try pair.service.send(model, caller, &client.call, &@as(u64, 6), .{ .group = .default });
+    try testing.expect(model.dispatch.tasks.holds(&client.call.link.task));
+    pair.service.stop_serving(model);
+    var events: [events_len]Event = undefined;
+    _ = model.tick(&events);
+    _ = model.tick(&events);
+    try testing.expectEqual(@as(u32, 0), pair.echoes[caller].handled);
+    try testing.expectEqual(@as(u32, 1), client.stopped);
+    try testing.expectEqual(@as(u32, 0), client.replied);
+    try testing.expectEqual(@as(u32, 0), model.dispatch.callbacks_outstanding);
+}
+
 test "a call in a named group runs the handler and finish in that group, on a loop that only calls" {
     var pair: Pair = undefined;
     pair.init(&Declared.table);
