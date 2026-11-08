@@ -218,14 +218,14 @@ pub const Ring = struct {
     /// `empty_wakes_max` times (decision 6, amendment of 2026-11-07). A test gives its own clock.
     fn enter_for(ring: *Ring, bound_ns: u64, comptime clock: fn () u64) EnterError!Entered {
         const deadline_ns = clock() + bound_ns;
-        const entered = try ring.enter_with(.{ .bounded = bound_ns });
+        const entered = try ring.enter_always(.{ .bounded = bound_ns });
         if (entered != .submitted) return entered;
         var empty_wakes: u32 = 0;
         while (ring.cq_ready() == 0 and empty_wakes < constants.empty_wakes_max) {
             const now_ns = clock();
             if (now_ns >= deadline_ns) break;
             // No entry was handed out since the first enter, so this one only waits.
-            _ = try ring.enter_with(.{ .bounded = deadline_ns - now_ns });
+            _ = try ring.enter_always(.{ .bounded = deadline_ns - now_ns });
             empty_wakes += 1;
         }
         return .submitted;
@@ -241,13 +241,13 @@ pub const Ring = struct {
     /// a moment later. So an enter that returns with none ready enters again, at most
     /// `empty_wakes_max` times (decision 6, amendment of 2026-11-06).
     pub fn enter_until_completion(ring: *Ring) EnterError!Entered {
-        const entered = try ring.enter_with(.until_completion);
+        const entered = try ring.enter_always(.until_completion);
         if (entered != .submitted) return entered;
         var empty_wakes: u32 = 0;
         while (ring.cq_ready() == 0 and empty_wakes < constants.empty_wakes_max) {
             // No entry was handed out since the first enter, so this one only waits. A wait that
             // submits nothing has no `overcommitted` answer to give.
-            _ = try ring.enter_with(.until_completion);
+            _ = try ring.enter_always(.until_completion);
             empty_wakes += 1;
         }
         return .submitted;
@@ -258,10 +258,18 @@ pub const Ring = struct {
     /// compiler stopped inlining it into the tick: 28 instructions a `post` on arm64
     /// (docs/hot-path-ledger.md, row H4).
     pub fn enter_now(ring: *Ring) EnterError!Entered {
+        return ring.enter_always(.none);
+    }
+
+    /// Submits what `get_sqe` handed out, enters the kernel also with nothing to submit, and waits
+    /// as `wait` says. `enter_now` and every enter that waits call it, so the poll of `enter` is the
+    /// one caller of `enter_with`. When the waits of decision 6's amendment of 2026-11-07 called
+    /// `enter_with`, it stopped being inlined into the tick: 15 to 16 instructions a tick on arm64.
+    fn enter_always(ring: *Ring, wait: Wait) EnterError!Entered {
         const to_submit = ring.io.flush_sq();
         var retry: u32 = 0;
         while (retry <= constants.enter_retries_max) : (retry += 1) {
-            return ring.enter_once(to_submit, .none) catch |err| switch (err) {
+            return ring.enter_once(to_submit, wait) catch |err| switch (err) {
                 error.Interrupted => continue,
                 error.Unexpected => return error.Unexpected,
             };
