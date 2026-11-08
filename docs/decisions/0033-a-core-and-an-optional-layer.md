@@ -1,6 +1,6 @@
 # 33. A core for the loop, and an optional layer for tasks and callbacks
 
-Status: **proposed** on 2026-11-08, and revised the same day after four reviews. Camilo ruled
+Status: **proposed** on 2026-11-08, and revised the same day after five reviews. Camilo ruled
 open questions 1, 5, 6 and 9 the same day; the others are open. Nothing is built, and nothing is
 built before Camilo accepts this record. Every number here is a row of
 `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an earlier record measured, or a
@@ -42,7 +42,8 @@ names must not repeat:
 
 Zig's style guide says the same: a name does not repeat its namespace (`json.Value`, not
 `json.JsonValue`). This record applies that rule to each name it proposes. "The names, checked"
-lists them.
+lists them. The rule also covers the name that the compiler prints for a type, because a user
+reads it in each compile error. "Where each type is declared" gives those names.
 
 ## Context
 
@@ -136,7 +137,8 @@ fewer lines for a reader to read and a twin to carry.
    the loop, and no callback, needs.
 2. **The layer is a new module, `layer`, under `src/layer/`.** It holds the records with their
    callbacks, the pollers, the tasks, the scheduling groups, the calls and `SharedLoop`. It
-   imports `core` and nothing else.
+   imports `core` and nothing else. Its root file, `src/layer/layer.zig`, declares each type that
+   a program can see. So the compiler prints `layer.Reactor(kqueue.Loop)`, with no repeat.
 3. **The layer wraps a loop.** `layer.Reactor(Loop)` holds one `Loop` by value and its own
    state. `Loop` is any type that carries the core's surface and the port below.
 4. **The core gains a port of nine names.** Each backend's `Loop` declares them. The public
@@ -166,7 +168,7 @@ inside a tick, or exists only to order or name such calls.** Every other piece s
 | the `dispatched` bit of an operation, a slot and an event | core | one bit that the slot keeps from submit to the event. The core copies it and never reads it. It holds no callback and no address. See open question 5 |
 | `Completion`, `Completion.Call`, and the call that names a record in an operation, today `Operation.completion` | layer | a completion record with a callback, which the ruling names. The layer's `Completion.mark(record, operation)` writes the record's address in `user_data` and sets the bit. See open question 5 |
 | timers, repeating timers, and the deadline of an operation | core | decisions 5 and 14 |
-| `WaitLimit` and the new `wait_until` | core | a deadline that bounds a wait. Decision 29 put `WaitLimit` in the core already. It moves from `dispatch_callbacks.zig` to `src/core/wait_limit.zig` |
+| `WaitLimit` and the new `wait_until` | core | a deadline that bounds a wait. Decision 29 put `WaitLimit` in the core already. Its declaration moves from `dispatch_callbacks.zig` to `core.zig`, the module's root |
 | the id `SchedulingGroup`, an `enum(u8)` with no behaviour | core | the stall line names the group of a stuck task with it (`Statistics.Stall.group`). `Groups`, the shares and DRR are the layer's |
 | `post`, `Registry`, `Remote`, the mailbox rings | core | decision 4 |
 | `Message.wake`, the reserved tags, the drain's slow path, `calls_out` and the 32 slots kept for returns | core | the transport. The layer sends and takes calls through the port |
@@ -178,7 +180,7 @@ inside a tick, or exists only to order or name such calls.** Every other piece s
 | the drain of operations, `StillInFlight` | core | `core/shutdown.zig` keeps it, over `in_flight` alone |
 | the call of each record, `Dispatch.call_records` | layer | it calls the user's code |
 | `Poller`, `add_poller`, `remove_poller`, the pollers' limit, `pollers_max` | layer | it calls the user's code |
-| `Task`, `Tasks`, `schedule`, `discard_tasks`, `TasksStillQueued`, the drain's wait for tasks and calls | layer | it calls the user's code. The layer's drain moves to `src/layer/reactor_shutdown.zig` |
+| `Task`, `Tasks`, `schedule`, `discard_tasks`, `TasksStillQueued`, the drain's wait for tasks and calls | layer | it calls the user's code. The layer's drain moves to `src/layer/layer_shutdown.zig` |
 | `NamedSchedulingGroup`, `Groups`, the shares, DRR, `charge_task`, the root's `rotor_scheduling_groups` | layer | it orders the tasks |
 | `Service`, `CallRecord`, `CallLink`, `CallStation`, `call`, `answer`, `serve`, `stop_serving` | layer | a handler and a `finish` run as tasks |
 | `SharedLoop` | layer | it exists so that several libraries share one loop, which needs records |
@@ -206,14 +208,14 @@ leaves the core file, or its type stays in the core. This list was read from the
 |---|---|---|
 | `operation.zig` | `Completion`, for `Operation.completion` | nothing. The builder moves to the layer as `Completion.mark`, and `Operation` keeps the bit |
 | `tables/tables.zig` | `Dispatch`, `Groups`, `NamedTable` | nothing. `Tables` keeps `outstanding`, the stored limit and the hook |
-| `tables/tables_deadline.zig` | `WaitLimit`; `Completion` in its tests | `WaitLimit` from `src/core/wait_limit.zig`. The tests set the bit and `user_data` by hand |
+| `tables/tables_deadline.zig` | `WaitLimit`; `Completion` in its tests | `WaitLimit` from `core.zig`, which declares it. The tests set the bit and `user_data` by hand |
 | `tick_error.zig` | `Dispatch`, for `callbacks_outstanding` | a `*u32`, the `outstanding` word |
 | `inbox.zig` | `call_take`, `Dispatch`, `Groups` | the hook. `take_reserved` keeps its switch on the tag in the core: a wake sets the drain's bit, and a call or a return goes to the hook. `take_call`, `take_return`, `answer`, `schedule_link` and `verdict` move to the layer, which runs them inside its hook |
-| `stall.zig` | `Poller`, `SchedulingGroup`, `pollers_max`; a poller and `WaitLimit` in its tests | `name_of_one` reads the heartbeat's new `poller_name`, and not the pollers' table. The layer writes that field at each `add_poller` and `remove_poller`: the name of its first poller, or null. The field sits in the padding of the 128 B line, so the size does not change. `SchedulingGroup` comes from the core's new `scheduling_group.zig` |
-| `statistics.zig` | `SchedulingGroup` | the same id, from the core |
+| `stall.zig` | `Poller`, `SchedulingGroup`, `pollers_max`; a poller and `WaitLimit` in its tests | `name_of_one` reads the heartbeat's new `poller_name`, and not the pollers' table. The layer writes that field at each `add_poller` and `remove_poller`, through the line's `name_poller`: the name of its first poller, or null. The field sits in the padding of the 128 B line, so the size does not change. `SchedulingGroup` comes from `core.zig`, which declares it |
+| `statistics.zig` | `SchedulingGroup` | the same id, from `core.zig` |
 | `stall_watch.zig` | `Poller`, in its tests | the tests that need a poller move to the layer |
 | `offload.zig`, `offload_in_flight.zig`, `offload_in_flight_close.zig`, `tick_share.zig`, `tables/tables_finish.zig` | `Groups` or `Completion`, in their test fixtures | the fixtures lose the field, or set the bit by hand |
-| `core.zig` | `call`, `dispatch`, `scheduling`, `shared_loop`, `tasks`, and their tests | `wait_limit` and `scheduling_group` only |
+| `core.zig` | `call`, `dispatch`, `scheduling`, `shared_loop`, `tasks`, and their tests | none of them. It declares `WaitLimit` and `SchedulingGroup` itself, so the compiler prints `core.WaitLimit` and `core.SchedulingGroup` |
 
 `scheduling_groups_max` stays in the core's `constants.zig`, because `stall.zig` asserts a group
 id against it. The layer reads it from the core.
@@ -258,20 +260,44 @@ The layer needs nine things from a backend's `Loop` that a plain caller must not
 backend declares them, and `core/surface.zig` lists them as `port_declarations`, beside today's
 `loop_declarations` and `remote_declarations`. The list is the tree's: the public module does not
 export it. `layer.Reactor(Loop)` checks it at comptime, as "How a twin's author learns the port"
-says. The public `rotor.Loop` does not declare the port's names. Decision 1's amendment
-of 2026-11-07, item 6, keeps the heartbeat's writer out of the public API, and the port holds it.
+says. The public `rotor.Loop` does not declare the port's names.
 
-| name | what | today |
+A twin in a dependent package can name only the module `rotor` (decision 1). So each type in the
+port is one of three kinds: a Zig type, a type that the public module exports today, or a type of
+the twin's own. The port adds no export. In particular, the heartbeat's writer, `core.Heartbeat`,
+stays out of the public API, as decision 1's amendment of 2026-11-07, item 6, rules. A backend
+returns that writer from `heartbeat_line`, and a twin returns a line type of its own.
+
+Each signature below follows the receiver, `loop: *Loop`. `E` is the loop's own error set for a
+tick, which the layer reads from the function's type. Step 1 fixes each signature over today's
+code, and `docs/using.md` lists them (step 4).
+
+| name | signature | what | today |
+|---|---|---|---|
+| `tick_backend` | `(events: []rotor.Event, wait_ns: u64) E!u32` | the backend's tick, with no check of a kept error | the private function of each backend with this name |
+| `take_kept_error` | `() E!void` | returns the kept error once, and lowers `outstanding` | `kept_error.take` |
+| `outstanding` | `() *u32` | a pointer to the word that takes a tick off the fast path | `Dispatch.callbacks_outstanding` |
+| `stored_limit` | `() *rotor.WaitLimit` | a pointer to the stored limit, which only the layer writes on a reactor | `Dispatch.until_ns` |
+| `heartbeat_line` | `() *Line`, where `Line` is any type that declares the six calls of the next table | the line on which the layer names each callback | `tables.heartbeat` |
+| `attach_reserved` | `(context: *anyopaque, take: *const fn (context: *anyopaque, sender: rotor.LoopId, message: rotor.Message) void) void` | the function and the context that the drain hands each wake, call and return. It also marks the loop in its registry as one that takes calls | `call_take.take_reserved` and `Dispatch.note_wake`, called directly |
+| `push_reserved` | `(target: rotor.LoopId, message: rotor.Message) error{ LoopNotFound, CallsFull, MailboxFull }!*u32` | a call or a return into a ring's kept slots. It returns the pair's count of calls out, which the layer keeps in the call's link | inside `core.call.loop.Calls` |
+| `wake_target` | `(target: rotor.LoopId, descriptor: rotor.Descriptor) void` | the wake after a call or an answer | the non-surface function of each backend with this name |
+| `assert_owner` | `() void` | the owner check (class B) | `tables.assert_owner` |
+
+The calls that the layer makes on the line take only Zig types. The first five are the calls of
+today's writer. The sixth is new.
+
+| call on `Line` | signature, after `line: *Line` | when the layer makes it |
 |---|---|---|
-| `tick_backend(events, wait_ns)` | the backend's tick, with no check of a kept error | the private function of each backend with this name |
-| `take_kept_error()` | returns the kept error once, and lowers `outstanding` | `kept_error.take` |
-| `outstanding()` | a pointer to the word that takes a tick off the fast path | `Dispatch.callbacks_outstanding` |
-| `stored_limit()` | a pointer to the stored limit, which only the layer writes on a reactor | `Dispatch.until_ns` |
-| `heartbeat_line()` | the heartbeat's writer, so the layer names each callback | `tables.heartbeat` |
-| `attach_reserved(hook)` | the function and the context that the drain hands each wake, call and return. It also marks the loop in its registry as one that takes calls | `call_take.take_reserved` and `Dispatch.note_wake`, called directly |
-| `push_reserved(target, message, calls_out)` | a call or a return into a ring's kept slots | inside `core.call.loop.Calls` |
-| `wake_target(target, descriptor)` | the wake after a call or an answer | the non-surface function of each backend with this name |
-| `assert_owner()` | the owner check (class B) | `tables.assert_owner` |
+| `enter` | `(name: *const [:0]const u8) void` | before each callback |
+| `leave` | `(called: u64) void` | after the records of a tick's `end` |
+| `leave_polling` | `(polled: u32) void` | after the pollers of a tick's `begin` |
+| `leave_tasks` | `(ran: u64) void` | after the run of tasks of decision 27 |
+| `leave_group_tasks` | `(ran: u64, group: u8) void` | after the run of the groups of decision 30 |
+| `name_poller` | `(name: ?*const [:0]const u8) void` | at each `add_poller` and `remove_poller` |
+
+A twin's line can store nothing. Its watch then names no callback, which a twin for replay does
+not need.
 
 A Zig field is always reachable. A program can reach a backend through `rotor.Loop`'s `inner`
 field and call a port name there, as it can reach every private field of a backend today.
@@ -352,8 +378,11 @@ a forged message, or the W4 window.
 | `rotor.Loop` | 43 surface names, 10 error sets | 28 surface names, 6 error sets |
 | `rotor.Reactor(Loop)` | none | a function that returns a type. `rotor.Reactor(rotor.Loop)` is the host's reactor, which "How the host's reactor reaches the port" describes. `rotor.Reactor(Twin)` is `layer.Reactor(Twin)`, for a twin of decision 10 |
 | `rotor.SharedLoop` | the view of `rotor.Loop` | the view of `rotor.Reactor(rotor.Loop)`, with the same 21 library calls, and 9 refused calls: today's 8 and `wait_until`. Each reactor type declares its own view as `SharedLoop`, and `rotor.SharedLoop` is `rotor.Reactor(rotor.Loop).SharedLoop` |
-| `rotor.Completion`, `rotor.Task`, `rotor.Poller`, `rotor.NamedSchedulingGroup`, `rotor.SchedulingGroupName`, `rotor.named_scheduling_group`, `rotor.Service`, `rotor.CallRecord`, `rotor.Answer`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError`, `rotor.CallLink`, `rotor.CallStation` | from `core` | the same names, from `layer`. `Completion` gains `mark` in place of `Operation.completion` |
-| `rotor.WaitLimit`, `rotor.SchedulingGroup`, `rotor.BufferGroup`, `rotor.Heartbeat` | from `core` | no change |
+| `rotor.Completion`, `rotor.Task`, `rotor.Poller`, `rotor.NamedSchedulingGroup`, `rotor.Answer`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError`, `rotor.CallLink`, `rotor.CallStation` | from `core` | the same names, from `layer`, whose root declares each. `Completion` gains `mark` in place of `Operation.completion`. None of these types names a view, so a twin's program writes them as a host's program does |
+| `rotor.Service`, `rotor.CallRecord` | from `src/rotor/rotor_service.zig`, which binds each to the host's `SharedLoop` | `rotor.Reactor(rotor.Loop).Service` and `rotor.Reactor(rotor.Loop).CallRecord`. Each reactor type declares `Service` and `CallRecord` over its own view, as it declares `SharedLoop`. A twin's program writes `rotor.Reactor(Twin).Service` and `rotor.Reactor(Twin).CallRecord`. `rotor_service.zig` goes |
+| `rotor.SchedulingGroupName`, `rotor.named_scheduling_group` | from the root's groups, through `root_groups` of `src/rotor/rotor_loop.zig` | no change in name. They name the groups of the root's `rotor_scheduling_groups`, which each reactor type takes by default, the host's and a twin's alike. `root_groups` moves to `layer` |
+| `rotor.WaitLimit`, `rotor.SchedulingGroup` | from `core` | no change in name. `core.zig` declares each |
+| `rotor.BufferGroup`, `rotor.Heartbeat` | from `core` | no change |
 
 There is no `rotor.reactor` namespace, and the public module exports no list of the port's names
 (open question 6).
@@ -424,7 +453,18 @@ cannot reach it through a declaration.
 /// The layer over a loop (decision 33). `Reactor(Loop)` is the host's reactor. Any other type is
 /// a twin of decision 10, which declares the core's surface and the port.
 pub fn Reactor(comptime Base: type) type {
-    if (Base == Loop) return reactor_module.Reactor;
+    if (Base == Loop) return struct {
+        inner: reactor_calls.Inner,
+
+        const calls = reactor_calls.Calls(@This());
+        // One alias for each call of the reactor, as `tick` is. The function is in
+        // `rotor_reactor.zig`, and takes `*@This()` first.
+        pub const tick = calls.tick;
+        // ...
+        pub const SharedLoop = struct {
+            // The view, with one alias for each of its calls, in the same way.
+        };
+    };
     return layer.Reactor(Base);
 }
 ```
@@ -432,12 +472,40 @@ pub fn Reactor(comptime Base: type) type {
 The parameter is `Base`, because Zig refuses a parameter that has the name of a declaration of
 its file, and the file declares `Loop`.
 
-`reactor_module.Reactor`, in `src/rotor/rotor_reactor.zig`, holds a tagged union as `rotor.Loop`
-does: `layer.Reactor(uring.Loop)` and `layer.Reactor(epoll.Loop)` on Linux, and
-`layer.Reactor(kqueue.Loop)` on Darwin. Its `init` picks the member of the process's backend, as
-`rotor.Loop.init` does. Each member reaches its backend's port directly. So the host's reactor
-holds no `rotor.Loop`: the argument `rotor.Loop` names the loop whose core calls the reactor
-carries. The port is never a declaration of `rotor.Loop`, so decision 1's rule holds.
+The struct is declared inside the function, so the compiler prints the host's reactor as
+`rotor.Reactor(rotor_loop.Loop)`, and its view as `rotor.Reactor(rotor_loop.Loop).SharedLoop`.
+`rotor_loop.Loop` is how the compiler prints `rotor.Loop` today. This record does not propose
+that name, and open question 15 asks whether v0.11.0 changes it. The functions of the host's
+reactor are in `src/rotor/rotor_reactor.zig`. That file declares no type that a program can see,
+so its name is in no message. An alias of a function that takes `*@This()` first is a method:
+`reactor.tick(events, 0)` compiles. A test of `@typeName` on Zig 0.16 showed both facts on
+2026-11-08.
+
+The struct holds a tagged union, `inner`, as `rotor.Loop` does: `layer.Reactor(uring.Loop)` and
+`layer.Reactor(epoll.Loop)` on Linux, and `layer.Reactor(kqueue.Loop)` on Darwin. Its `init` picks
+the member of the process's backend, as `rotor.Loop.init` does. Each member reaches its backend's
+port directly. The port is never a declaration of `rotor.Loop`, so decision 1's rule holds.
+
+**What the argument means.** A Zig programmer reads `Reactor(T)` as `std.ArrayList(T)`: a
+container that holds a `T`. `layer.Reactor(uring.Loop)` and `rotor.Reactor(Twin)` hold their
+argument by value. The host's reactor holds the backend loop that a `rotor.Loop` would hold, in a
+union of the same members. It does not hold a value of the type `rotor.Loop`. The consequences:
+
+- No reactor gives out its loop as API, the host's or the layer's. A plain call on the loop
+  inside, such as `tick` or `wait_until`, would skip the layer's records and pollers. It would
+  also write the stored limit that only the layer writes on a reactor ("The core's surface after
+  the split"). The host's reactor has no `*rotor.Loop` to give out in any case.
+- So code that takes a `*rotor.Loop` does not run on a reactor. colibri's adapter over a plain
+  loop runs on a plain loop, and its adapter over `*rotor.SharedLoop` runs on a reactor ("colibri's
+  interface"). A function that serves both takes the loop's type as a comptime parameter.
+- `rotor.Reactor(W)`, where `W` wraps `rotor.Loop`, makes a twin's reactor. The build then stops
+  with the error of "How a twin's author learns the port", whose last line says to pass
+  `rotor.Loop`.
+
+The argument names the loop that the reactor runs, and each call of the reactor does what the
+same call of that loop does, plus the layer's part. The reactor takes no `rotor.Loop` and returns
+none. The record judges that a Zig programmer can learn this from the doc comment above. Open
+question 16 asks Camilo to rule on it, with the other choices.
 
 The costs of this choice:
 
@@ -449,9 +517,12 @@ The costs of this choice:
   names, the 16 names of the layer, and the seven calls that wrap. The forwarders of the 16 names
   move from `rotor_loop_scheduling.zig` and `rotor_loop_calls.zig`, 109 lines today. The 28 core
   names add about as many lines as their forwarders in `rotor_loop.zig`. Those were not counted
-  for this record.
+  for this record. The forwarders are in `rotor_reactor.zig`. If that file passes 500 lines, it
+  splits by the file-length rule, and no type changes its printed name.
 - `src/rotor/rotor.zig` holds 500 lines at `e05a549`, the limit of `tools/lint/file_length.zig`.
-  The function and its doc comment take 7 lines, so step 2 moves lines out of `rotor.zig` first.
+  The struct holds one alias line for each of 51 calls of the reactor and 30 calls of its view,
+  the union and the doc comments. That is about 100 lines by arithmetic, not counted. So step 2
+  moves at least that many lines out of `rotor.zig` first.
 
 Two other choices were weighed:
 
@@ -472,7 +543,8 @@ Open question 13 asks Camilo to rule on the choice.
 The public module exports no list of the port's names. So `layer.Reactor(Loop)` checks `Loop` at
 comptime, before it makes anything. The check reads `core/surface.zig`'s `loop_declarations`,
 which hold the core's 28 names after step 3, and its `port_declarations`. It collects each name that `Loop` does not
-declare, and stops the build with one compile error that names them all. Today's `surface.check`
+declare, and the six calls of the line that `heartbeat_line` returns. It stops the build with one
+compile error that names them all. Today's `surface.check`
 stops at the first missing name. The layer's check names each one, so the author adds them in one
 pass. The message, as a sketch:
 
@@ -489,8 +561,10 @@ The costs of this choice:
 - It costs compile time only, and no instruction at run time.
 - The check sees names, not signatures. A wrong signature fails where the layer calls it, and the
   error names the layer's line, not the twin's. So `docs/using.md` gains a section for a twin's
-  author with the nine signatures (step 4). Its Zig block is an excerpt of a twin in the tests,
-  which `tools/readme_examples.zig` holds to a file that compiles.
+  author with the nine signatures and the six calls of the line (step 4). Its Zig block is an
+  excerpt of `examples/twin.zig`, which `tools/readme_examples.zig` holds to a file that
+  compiles. That example imports only the module `rotor`, as a dependent package does. So the
+  build shows that a twin outside the tree can write each type of the port.
 - The words of the message are part of the port's documentation. A change to the port changes
   them in the same commit, and the release names the change.
 - A program that passes its own wrapper of `rotor.Loop` gets this error too. The last line of the
@@ -509,20 +583,66 @@ the API rules of `~/.claude/CLAUDE.md`:
 | `rotor.reactor`, `rotor.reactor.Reactor`, `rotor.reactor.port_declarations` | struck by the ruling. `rotor.Reactor(Loop)` is the one export |
 | the module `reactor`, `src/reactor/`, `reactor.Reactor(Loop)` | struck by the ruling: `layer`, `src/layer/` and `layer.Reactor(Loop)` |
 | `tools/halt/reactor_*`, `reactor_scenarios`, `zig build test-reactor` | renamed after the module: `tools/halt/layer_scenarios*.zig`, `layer_scenarios` and `zig build test-layer`, as `core_scenarios*.zig` and `test-core` are named |
-| `rotor.Reactor(Loop)` | a generic type with the name of the thing, as `std.ArrayList(T)`. Its `init` starts it in place through an out-pointer, takes `*const Options`, and has a `deinit` |
+| `rotor.Reactor(Loop)` | a generic type with the name of the thing, as `std.ArrayList(T)`. Its `init` starts it in place through an out-pointer, takes `*const Options`, and has a `deinit`. The host's reactor holds the backend loop of a `rotor.Loop`, not a value of that type ("How the host's reactor reaches the port", open question 16) |
 | `rotor.Reactor(rotor.Loop).Options`, with the fields `loop` and `named_groups` | each field has a default, and the reactor copies what it keeps |
 | `rotor.Reactor(rotor.Loop).SharedLoop`, `rotor.SharedLoop` | no repeat: a reactor's view is a shared loop |
+| `rotor.Reactor(rotor.Loop).Service`, `rotor.Reactor(rotor.Loop).CallRecord`, and the same names of `rotor.Reactor(Twin)` | no repeat. `rotor.Service` and `rotor.CallRecord` name the host's, as `rotor.SharedLoop` does |
 | `rotor.Reactor(rotor.Loop).AddPollerError`, `ScheduleError`, `ReserveSchedulingGroupError`, `CallError` | today's names of `rotor.Loop`, moved. None repeats `Reactor` |
-| `src/layer/reactor.zig`, `src/layer/reactor_shutdown.zig`, `src/layer/shared_loop.zig`, `src/layer/constants.zig` | file names. The module's root, `src/layer/layer.zig`, exports `Reactor` and `SharedLoop`, so the tree reads `layer.Reactor`, not `layer.reactor.Reactor` |
-| `src/rotor/rotor_reactor.zig` and its `Reactor` | not exported. The public module returns it from `rotor.Reactor(rotor.Loop)`, as `rotor_loop.zig`'s `Loop` is `rotor.Loop` |
+| `src/layer/layer.zig`, `layer_tick.zig`, `layer_shutdown.zig`, `layer_shared.zig`, `constants.zig` | the root and the files split from it, named after it by CLAUDE.md's rule. The root declares each type that a program can see. The other files hold functions, so no type's printed name holds their names |
+| `src/rotor/rotor_reactor.zig` | the functions of the host's reactor and its view. It declares no type that a program can see. `rotor.zig` declares the struct ("How the host's reactor reaches the port") |
 | `wait_until` | snake_case. No repeat |
 | `Completion.mark(record, operation)` | a method of the record, with the record first |
 | the port: `tick_backend`, `take_kept_error`, `outstanding`, `stored_limit`, `heartbeat_line`, `attach_reserved`, `push_reserved`, `wake_target`, `assert_owner` | snake_case. None repeats `Loop` or a backend's name |
+| `name_poller`, a call on the heartbeat's line | snake_case. No repeat |
 | `port_declarations` | in `core/surface.zig` beside `loop_declarations` and `remote_declarations`, and not exported |
 | `poller_name` in the heartbeat line, `outstanding` in `Tables` | fields. No repeat |
-| `src/core/wait_limit.zig`, `src/core/scheduling_group.zig` | files that each hold one type, as `statistics.zig` holds `Statistics`. The core's root exports `core.WaitLimit` and `core.SchedulingGroup` |
-| `examples/two_adapters.zig` | no repeat |
+| `WaitLimit`, `SchedulingGroup` in the core | declared in `core.zig`, the root, and printed `core.WaitLimit` and `core.SchedulingGroup`. The draft put each in a file of its own name, which prints `wait_limit.WaitLimit`, the repeat that the ruling strikes |
+| `examples/two_adapters.zig`, `examples/twin.zig` | no repeat |
 | `NamedSchedulingGroup.scheduling_group()` | a name of decision 30 that this record moves and does not propose. It repeats its type's name. Open question 14 asks whether v0.11.0 renames it |
+
+### Where each type is declared
+
+Zig 0.16 prints a type by the path of the file that declares it, from the module's root, then the
+type's name. A type in the root file takes the module's name. A test of `@typeName` showed this on
+2026-11-08. `build/compile_fail.zig` at `d786659` shows the same:
+`scheduling.scheduling.SchedulingGroup`, `call.call.Answer(u64)` and
+`*shared_loop.SharedLoop(rotor_loop.Loop)`.
+
+So the file that declares a type decides the name that a user reads in each compile error. A type
+in a subdirectory's entry file prints its directory twice, as `call.call.Answer` does. CLAUDE.md's
+rule for split files makes such entry files. A type in a file of its own name prints the repeat
+that the ruling strikes, as `wait_limit.WaitLimit` would.
+
+The rule of this record: **each type that a program can see is declared in its module's root
+file, or inside another such type.** Its methods are aliases of functions in the root's split
+files, one line each, as "How the host's reactor reaches the port" shows. The code of the moved
+directories stays in its files, and only the declarations of the types move.
+
+| type | declared in | the compiler prints |
+|---|---|---|
+| the layer's generic | `src/layer/layer.zig` | `layer.Reactor(kqueue.Loop)`, and `layer.Reactor(twin.Loop)` for a twin in a file `twin.zig` |
+| a reactor's view | inside its reactor | `layer.Reactor(kqueue.Loop).SharedLoop` |
+| a reactor's call types | inside its reactor | `layer.Reactor(kqueue.Loop).Service(...)` and `layer.Reactor(kqueue.Loop).CallRecord(...)` |
+| the host's reactor, its view and its call types | inside `rotor.Reactor`, in `src/rotor/rotor.zig` | `rotor.Reactor(rotor_loop.Loop)`, `rotor.Reactor(rotor_loop.Loop).SharedLoop`, and the same for `Service` and `CallRecord` |
+| `Completion`, `Task`, `Poller`, `NamedSchedulingGroup`, `Answer`, `CallResult`, `CallOptions`, `CallLink`, `CallStation` | `src/layer/layer.zig` | `layer.Completion`, `layer.Answer(u64)`, `layer.CallResult(u64)`, and so on |
+| `WaitLimit`, `SchedulingGroup` | `src/core/core.zig` | `core.WaitLimit`, `core.SchedulingGroup` |
+
+A program writes `rotor.Completion` and reads `layer.Completion` in an error, as a program writes
+`std.ArrayList` and reads `array_list.Aligned`. The module's name differs, and nothing repeats.
+
+The costs:
+
+- The two root files grow. The root of `layer` holds about 60 aliases of the reactor and its
+  view, and the fields of nine types. The fields of `CallLink` and `CallStation` take about 70
+  lines today. This record did not count the total. If a root passes 500 lines, open question 15
+  asks where the rest goes.
+- The tree has two places for a type: its declaration in the root, and its code in a split
+  file. A reader of the code goes from the alias to the function.
+- The public module's other types keep the names they print today, which this record does not
+  propose: `rotor_loop.Loop`, `rotor_loop.Remote`, `statistics.Statistics`,
+  `buffer_group.BufferGroup`, `handle.Handle` and `stall_watch.HeartbeatView`. Some repeat their
+  file's name. The host's reactor prints `rotor_loop.Loop` as its argument. Open question 15 asks
+  whether v0.11.0 moves them too.
 
 ### The module graph
 
@@ -552,10 +672,14 @@ in the core, because the stall line checks a group id against it. No value chang
 
 ### `SharedLoop` and the conformance suite
 
-`SharedLoop` moves to `src/layer/shared_loop.zig`. It is generic over the type it views. Each
-reactor type declares its view as `SharedLoop`, and the public module exports the view of
-`rotor.Reactor(rotor.Loop)` as `rotor.SharedLoop`. A twin's program names
-`rotor.Reactor(Twin).SharedLoop`. A library that takes `*rotor.SharedLoop` does not take a twin's
+Each reactor type declares its view as `SharedLoop`, inside its own struct. The view's calls are
+functions of `src/layer/layer_shared.zig`, generic over the reactor type, and today's
+`src/core/shared_loop.zig` moves there. The public module exports the view of
+`rotor.Reactor(rotor.Loop)` as `rotor.SharedLoop`. Each reactor type also declares `Service` and
+`CallRecord` over its own view, because a handler and a `finish` take the view. The public module
+exports the host's as `rotor.Service` and `rotor.CallRecord`. A twin's program names
+`rotor.Reactor(Twin).SharedLoop`, `rotor.Reactor(Twin).Service` and
+`rotor.Reactor(Twin).CallRecord`. A library that takes `*rotor.SharedLoop` does not take a twin's
 view, as today, where a twin carries a `SharedLoop` of its own. Its list of library calls does not
 change. Its list of refused calls gains `wait_until`, with a compile error that states the rule: a
 library bounds the wait with a poller. `zig build test-compile-fail` keeps each case, and gains
@@ -672,7 +796,7 @@ instructions, `poller` counted 562, 562 and 559, and `tasks-groups-4` counted 12
   `Completion.mark`, and only the layer calls the record.
 - **Decision 2.** The rows "tasks", "cross-core calls", "scheduling groups" and "shared loop" stay
   in version one, and each row names the layer. The row "stalls" stays the core's.
-- **Decision 7.** `tick_dispatched` moves from the three backend files to `src/layer/reactor.zig`,
+- **Decision 7.** `tick_dispatched` moves from the three backend files to `src/layer/layer_tick.zig`,
   with its cold hint. The list gains that file, with a new ledger row for that hint. The plain
   tick's branch to `take_kept_error` takes a cold hint in the same three backend files, so those
   files stay on the list. H1 to H3 then name `take_kept_error`, with new numbers. Step 3
@@ -681,8 +805,10 @@ instructions, `poller` counted 562, 562 and 559, and `tasks-groups-4` counted 12
   struck. This is an ask-before item. H4 to H8 stay where they are.
 - **Decision 10.** A twin carries the 28 names and the port, and gets the layer from
   `rotor.Reactor(Twin)`. The compile error of "How a twin's author learns the port" names each
-  declaration that the twin lacks. A twin no longer carries `shared` or `SharedLoop`: the layer
-  makes them. Decision 24, proposed, gains the same.
+  declaration that the twin lacks. Each type of the port is a Zig type, an export of today or the
+  twin's own ("The port"), so a twin in a dependent package can write it. A twin no longer
+  carries `shared` or `SharedLoop`: the layer makes them, with `Service` and `CallRecord` over the
+  twin's view. Decision 24, proposed, gains the same.
 - **Decision 23.** A host that sleeps reads `wait_limit` on the type it ticks: the loop or the
   reactor.
 - **Decisions 26 to 30, and 32.** The code moves, and the behaviour does not. Each record gains
@@ -805,18 +931,20 @@ same day. A step lands on `main` only after its x86-64 counts pass, from CI on i
    every row within 2 percent of its line, and the layer's rows at or below `9339858`.
 2. **The module `layer`, as a forwarder.** `layer.Reactor(Loop)` wraps a backend loop and
    forwards each layer call to today's backend call, inline. Its comptime check names each
-   declaration that a type lacks. The public module exports the generic `rotor.Reactor(Loop)`, and
-   `src/rotor/rotor_reactor.zig` holds the host's reactor. `rotor.zig` is at its limit of 500
-   lines, so lines move out of it first. `rotor.Loop` keeps its names. The layer's conformance
+   declaration that a type lacks. `src/layer/layer.zig` declares it. The public module exports
+   the generic `rotor.Reactor(Loop)`. `rotor.zig` declares the host's reactor inside it, and
+   `src/rotor/rotor_reactor.zig` holds its functions. `rotor.zig` is at its limit of 500 lines,
+   so about 100 lines move out of it first. `rotor.Loop` keeps its names. The layer's conformance
    scenarios, the layer's rows of `bench/work/work.zig` and `examples/stall_watch.zig` move to the
    reactor. The wiring of the gates changes as the table below says. Gate: the layer's rows at or
    below `9339858`. A forwarder adds no instruction, so a rise here is a fault of the step.
 3. **The move.** `dispatch/`, `tasks.zig`, `scheduling/`, `call/` and `shared_loop.zig` move from
-   `src/core/` to `src/layer/`, with their tests. The core keeps what "What the core keeps from
-   the files that move" lists: `WaitLimit` in `src/core/wait_limit.zig`, the id `SchedulingGroup`
-   in `src/core/scheduling_group.zig`, the switch of `take_reserved` on the tag, and the
-   heartbeat's `poller_name`. The drain's wait for tasks and calls moves from `core/shutdown.zig`
-   to `src/layer/reactor_shutdown.zig`. `Tables` loses `Dispatch` and `groups`, and gains
+   `src/core/` to `src/layer/`, with their tests. The declaration of each type that a program
+   can see moves to `src/layer/layer.zig`, and its functions stay in their files ("Where each
+   type is declared"). The core keeps what "What the core keeps from the files that move" lists:
+   `WaitLimit` and the id `SchedulingGroup`, declared in `core.zig`, the switch of
+   `take_reserved` on the tag, and the heartbeat's `poller_name`. The drain's wait for tasks and
+   calls moves from `core/shutdown.zig` to `src/layer/layer_shutdown.zig`. `Tables` loses `Dispatch` and `groups`, and gains
    `outstanding`, the stored limit and the hook. The backends lose `tick_dispatched`, the layer's
    calls and `named_groups`, and gain `take_kept_error` with its cold hint. The hook replaces the
    direct calls in the drain. `call` gains the check of open question 12. `rotor.Loop` loses the
@@ -833,7 +961,8 @@ same day. A step lands on `main` only after its x86-64 counts pass, from CI on i
    `zig build proofs`, with the new path of `scheduling_run.zig` in `proofs/README.md`.
 4. **The records and the documents.** Decision 7 and the ledger, the amendments of each record
    in "Where it meets the records", `docs/using.md` in two parts, "A loop" and "A reactor",
-   CLAUDE.md's Layout, and the README. Gate: `zig build test`, whose README check holds each Zig
+   CLAUDE.md's Layout, the README, and `examples/twin.zig`, the twin that the section for a
+   twin's author quotes. Gate: `zig build test`, whose README check holds each Zig
    block to a file that runs.
 5. **An example of colibri's shape.** `examples/two_adapters.zig`: one library written against
    three functions of its own, run once on a plain loop that the program owns and ticks, and once
@@ -853,7 +982,7 @@ step's first build, so each step changes these files in the same commit:
 | `build/race.zig` | no change. Its comment says that `core` and `layer` start no thread | the comment is checked again: a test of the layer that starts a thread adds `layer` to the race manifest |
 | `build/halt.zig` | no change | the list of scenario files gains `layer_scenarios`, which takes the `layer` import. The Linux scenarios gain the import where a scenario names the layer |
 | `build/bench_work.zig` | `bench/work/work.zig` takes the `layer` import for the layer's rows | no change |
-| `build/compile_fail.zig` | one new case: `rotor.Reactor` of a type that lacks names of the port, whose message must name each one | each message that spells a moved type changes: `dispatch.dispatch_callbacks.WaitLimit` in `poller`, `scheduling.scheduling.SchedulingGroup` in `scheduling_group_literal` and `call_scheduling_group`, `scheduling.scheduling.NamedSchedulingGroup` in `call_scheduling_group`, `call.call.Answer(u64)` in `call_handler_void` and `call_now_no_reply`, `call.call.CallResult` in `call_finish_type`, and `shared_loop.SharedLoop(rotor_loop.Loop)` in `call_from_remote`, which names `rotor_reactor.Reactor` after the step. The two cases for `wait_until` are new |
+| `build/compile_fail.zig` | one new case: `rotor.Reactor` of a type that lacks names of the port, whose message must name each one | each message that spells a moved type changes to the name of "Where each type is declared": `dispatch.dispatch_callbacks.WaitLimit` becomes `core.WaitLimit` in `poller`; `scheduling.scheduling.SchedulingGroup` becomes `core.SchedulingGroup` in `scheduling_group_literal` and `call_scheduling_group`; `scheduling.scheduling.NamedSchedulingGroup` becomes `layer.NamedSchedulingGroup` in `call_scheduling_group`; `call.call.Answer(u64)` becomes `layer.Answer(u64)` in `call_handler_void` and `call_now_no_reply`; `call.call.CallResult` becomes `layer.CallResult` in `call_finish_type`; and `*shared_loop.SharedLoop(rotor_loop.Loop)` becomes `*rotor.Reactor(rotor_loop.Loop).SharedLoop` in `call_from_remote`. No message holds a repeat. The two cases for `wait_until` are new |
 
 The mutations of step 3, each against the narrowest target:
 
@@ -868,7 +997,7 @@ The mutations of step 3, each against the narrowest target:
 - `end` that stores `.now` with no poller added: the scenario of a reactor with no poller that
   takes a call, then blocks;
 - the layer's drain that does not wait for tasks: `zig build test-layer`, the tests of
-  `reactor_shutdown.zig`;
+  `layer_shutdown.zig`;
 - the check of open question 12 removed: the call scenario to a plain loop;
 - the halt on a call with no hook removed: its halt scenario;
 - the layer's store of `poller_name` removed: the scenario of `conformance_stall` that counts a
@@ -907,7 +1036,12 @@ The mutations of step 3, each against the narrowest target:
 - The work gate, as "How a layer row is compared" and "Build order" say: arm64 and x86-64 Linux by
   cachegrind before a step lands, and `mac` by five counts of each tree.
 - The ledger: the cold hint of `take_kept_error` in each backend file, and of `tick_dispatched` in
-  `src/layer/reactor.zig`, each counted with and without.
+  `src/layer/layer_tick.zig`, each counted with and without.
+- A test of the layer holds the `@typeName` of each type in "Where each type is declared" to the
+  name in that table, so a moved declaration that brings back a repeat fails `zig build test`.
+- `examples/twin.zig` imports only the module `rotor`, declares the core's names, the port and a
+  line, and runs one record and one task on `rotor.Reactor(Twin)`. `zig build test` builds and
+  runs it.
 
 ## Open questions
 
@@ -952,8 +1086,13 @@ The mutations of step 3, each against the narrowest target:
    `rotor.reactor` namespace, and the public module exports no `port_declarations`.* A twin's
    author learns the port's names from the compile error of "How a twin's author learns the port",
    and its signatures from `docs/using.md`. The rest stands as proposed: the port is API for a
-   twin's author, and a change to it is a breaking change, named in the release.
-7. **How do decision 7's list and the ledger change?** Proposed: `src/layer/reactor.zig` joins
+   twin's author, and a change to it is a breaking change, named in the release. That API is the
+   nine names, their signatures, and the six calls of the line, all in "The port". Each of their
+   types is a Zig type, an export of today, or the twin's own, so the port adds no export and
+   keeps the heartbeat's writer out of the API. The names that a twin's program writes are
+   `rotor.Reactor(Twin)` and its `Options`, `SharedLoop`, `Service`, `CallRecord` and error sets,
+   and the exports that name no view, such as `rotor.Completion` and `rotor.Task`.
+7. **How do decision 7's list and the ledger change?** Proposed: `src/layer/layer_tick.zig` joins
    the list, for the cold hint of `tick_dispatched` alone, with a new row. The three backend files
    stay on the list for a cold hint on the plain tick's branch to `take_kept_error`, and H1 to H3
    name that function. No row changes on arithmetic alone: step 3 counts each hint with and
@@ -1001,6 +1140,29 @@ The mutations of step 3, each against the narrowest target:
     question 10). The call returns the loop's `SchedulingGroup` for the named group, and `group`
     says that. The cost is one more line of the migration. The name came with decision 30 in
     v0.10.0, and each consumer pins an older tree ("What the code does today"), so none calls it.
+15. **Where are the types declared that print a repeat today?** "Where each type is declared"
+    puts each type of this record in a root file. The public module's other types print the file
+    that declares them: `rotor_loop.Loop`, `rotor_loop.Remote`, `statistics.Statistics`,
+    `buffer_group.BufferGroup`, `handle.Handle` and `stall_watch.HeartbeatView`. So the host's
+    reactor prints as `rotor.Reactor(rotor_loop.Loop)`. Proposed: v0.11.0 moves the declarations
+    of the core's types to `core.zig`, by the same rule, so the compiler prints `core.Statistics`.
+    `rotor.Loop`, `rotor.Remote` and the other types of the public module keep their places,
+    because `rotor.zig` is at its 500 lines and this record already moves about 100 out. A later
+    release can declare them in `rotor.zig` too. The same question holds for a root that passes
+    500 lines: proposed, a type then goes in a file whose name, followed by the type's name,
+    repeats nothing, as `view.zig` with `SharedLoop` would. The cost of the move is lines in each
+    root, and one more change to the messages of `build/compile_fail.zig`.
+16. **Is `rotor.Reactor(rotor.Loop)` strange to a Zig programmer, when it holds no
+    `rotor.Loop`?** "What the argument means" gives the consequences. Proposed: keep it, as the
+    ruling on the names wrote it. The argument names the loop that the reactor runs, and no call of
+    the reactor takes or returns a `rotor.Loop`. The other choices:
+    - The host's reactor holds a `rotor.Loop` by value, and the layer's state beside it. Each call
+      switches once on `loop.inner`, as in the proposal, so the cost is the same. It needs the
+      layer's state apart from the backend's type, which this record has not checked. It still
+      gives out no `*rotor.Loop`, for the reasons of "What the argument means".
+    - A host's reactor with no argument, beside the generic. Zig refuses two declarations with one
+      name, so it needs a second name, such as the `rotor.reactor.Reactor` that the ruling struck
+      ("Alternatives it beat", item 6).
 
 ## Ask before
 
@@ -1009,13 +1171,17 @@ The mutations of step 3, each against the narrowest target:
 - The layout of two hot structures: `Tables` loses `Dispatch` and `groups`, and gains
   `outstanding`, the stored limit and the hook. A loop's memory loses `Groups`. The heartbeat line
   gains `poller_name` in its padding, and stays 128 B.
-- A file on decision 7's list: `src/layer/reactor.zig`. The three backend files keep their place
+- A file on decision 7's list: `src/layer/layer_tick.zig`. The three backend files keep their place
   for a different function, `take_kept_error` (open question 7).
 - An accepted record changes: decision 31's scheduler moves into the layer (open question 9).
 - The ruling's words: the `dispatched` bit of the layer stays in the core (open question 5).
 - The named limits of the layer move to `src/layer/constants.zig`. No value changes.
 - The surface of decision 1: 16 names leave `rotor.Loop`, and `wait_until` joins it. The public
-  module gains the generic `rotor.Reactor(Loop)` (open questions 1, 6 and 13).
+  module gains the generic `rotor.Reactor(Loop)` (open questions 1, 6, 13 and 16).
+  `rotor.Service` and `rotor.CallRecord` become the host's reactor's, and each reactor type
+  declares its own.
+- The declarations of the layer's types and the core's `WaitLimit` and `SchedulingGroup` move to
+  their modules' root files, so the compiler prints no repeat (open question 15).
 - `SharedLoop`'s refused calls gain `wait_until`, which changes the list of decision 28.
 - The registry gains a mark for each loop that takes calls (open question 12).
 
@@ -1023,6 +1189,13 @@ The mutations of step 3, each against the narrowest target:
 
 - Seastar's reactor, as decision 26 describes it from Seastar's published design.
 - The style guide of Zig's language reference, on names that repeat their namespace.
+- A test of `@typeName` on Zig 0.16.0, on 2026-11-08: a type in a module's root file prints as
+  `layer.Reactor(core.Loop)`, a type in `call/call.zig` as `call.call.Answer(u64)`, a type
+  declared inside a generic as `layer.Reactor(core.Loop).SharedLoop`, and an alias of a function
+  is a method. The messages of `build/compile_fail.zig` at `d786659` agree.
+- `src/rotor/rotor.zig`, `src/rotor/rotor_service.zig` and `src/core/stall.zig` at `d786659`, for
+  the public module's exports, the binding of `Service` to the host's view, and the calls of the
+  heartbeat's writer.
 - `src/rotor/rotor.zig` and `src/rotor/rotor_loop.zig` at `adc1adb`, for how `rotor.Loop` holds
   its backend. Neither file changed since `e05a549`.
 - The work gate's lines, their history and their spread: `bench/baseline/work.txt` at `e05a549`.
