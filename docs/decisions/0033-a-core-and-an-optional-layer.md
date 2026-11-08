@@ -1146,7 +1146,8 @@ The mutations of step 3, each against the narrowest target:
     forwarders in `src/rotor/`. The other answers are a reactor that holds a `rotor.Loop` and
     switches on its union at each port call, which costs about 2 instructions for each switch on
     each tick, and a port declared `pub` on `rotor.Loop`, which makes it API for a program. "How
-    the host's reactor reaches the port" gives the costs of each.
+    the host's reactor reaches the port" gives the costs of each. *Ruled on 2026-11-08 with open
+    question 16: step 2 builds both forms, and Camilo chooses with the counts.*
 14. **Does v0.11.0 rename `NamedSchedulingGroup.scheduling_group()`?** It is a name of decision
     30, and it repeats its type's name, as `json.JsonValue` does. Proposed: yes, to
     `NamedSchedulingGroup.group()`, in the same release, so each consumer moves once (open
@@ -1176,6 +1177,12 @@ The mutations of step 3, each against the narrowest target:
     - A host's reactor with no argument, beside the generic. Zig refuses two declarations with one
       name, so it needs a second name, such as the `rotor.reactor.Reactor` that the ruling struck
       ("Alternatives it beat", item 6).
+
+    *Ruled on 2026-11-08: the host's reactor holds a `rotor.Loop`, so that `Reactor(T)` holds a
+    `T`, as a Zig programmer reads it. The earlier prior of about 2 instructions for each switch
+    was never measured. Step 2 builds the private union too, counts both forms on the work gate's
+    layer rows, and Camilo rules with the counts. The layer's state apart from the backend's type
+    is checked at the same step.*
 
 ## Ask before
 
