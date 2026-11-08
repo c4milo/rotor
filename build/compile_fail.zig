@@ -1,15 +1,19 @@
 //! `zig build test-compile-fail`: proves that a library cannot tick, drain, end or cancel
 //! everything on a loop it shares (decision 28), and cannot name a buffer group by a literal or
 //! answer a poller with a `bool` (decision 29). It also proves that a caller cannot make a call of
-//! decision 1's amendment of 2026-11-07 in its old shape. Each file of `tools/compile_fail/` makes
+//! decision 1's amendment of 2026-11-07 in its old shape, and that a library cannot schedule with
+//! no group or set the groups, nor a program declare a named group that `Named` refuses
+//! (decision 30). Each file of `tools/compile_fail/` makes
 //! one such call, and its compile must fail with the message that states the rule or names the
 //! type. A compile that succeeds, or that fails with another message, fails the step.
 //! `zig build test` depends on it.
 const std = @import("std");
 const modules = @import("modules.zig");
 
-/// One file that must not compile, and the end of the error line its compile must print.
-const Case = struct { file: []const u8, message: []const u8 };
+/// One file that must not compile, and the end of the error line its compile must print. A
+/// `program` is the root of its own executable, so the public module reads the file's
+/// `rotor_scheduling_groups` (decision 30). The others are tests, whose root is Zig's test runner.
+const Case = struct { file: []const u8, message: []const u8, program: bool = false };
 
 /// One case for each name of `core.shared_loop.refused_calls`, with the message of its declaration
 /// in `src/core/shared_loop.zig`, then the two types of decision 29, with the compiler's message.
@@ -45,6 +49,48 @@ pub const cases = [_]Case{
     },
     // Zig 0.16 prints both types as `T` in this message.
     .{ .file = "options_by_value", .message = "expected type '*const T', found 'T'" },
+    // Decision 30: the refused calls of the groups, the type of a group id, the cost of a task,
+    // and the program's declaration of its named groups.
+    .{ .file = "schedule", .message = "a library names its group: schedule_in(group, task) (decision 30)" },
+    .{
+        .file = "reserve_scheduling_group",
+        .message = "only the program sets the groups and their shares (decision 30)",
+    },
+    .{
+        .file = "set_scheduling_group_shares",
+        .message = "only the program sets the groups and their shares (decision 30)",
+    },
+    .{
+        .file = "scheduling_group_literal",
+        .message = "expected type 'scheduling.scheduling.SchedulingGroup', found 'comptime_int'",
+    },
+    .{ .file = "task_cost_zero", .message = "a task costs at least 1 unit" },
+    .{ .file = "task_cost_above", .message = "a task costs at most task_charge_max units" },
+    .{
+        .file = "named_undeclared",
+        .message = "enum 'meta.FieldEnum(named_undeclared.Declared)' has no member named 'dns'",
+        .program = true,
+    },
+    .{
+        .file = "named_default",
+        .message = "the name 'default' is the group every loop has: name the group otherwise",
+        .program = true,
+    },
+    .{
+        .file = "named_shares_zero",
+        .message = "the shares of the named group 'quic' are not in 1 to scheduling_shares_max",
+        .program = true,
+    },
+    .{
+        .file = "named_shares_above",
+        .message = "the shares of the named group 'quic' are not in 1 to scheduling_shares_max",
+        .program = true,
+    },
+    .{
+        .file = "named_too_many",
+        .message = "a program declares at most scheduling_groups_max - 1 named groups",
+        .program = true,
+    },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.
@@ -65,7 +111,10 @@ pub fn add(
             .optimize = optimize,
         });
         module.addImport("rotor", graph.rotor);
-        const compile = b.addTest(.{ .name = case.file, .root_module = module });
+        const compile = if (case.program)
+            b.addExecutable(.{ .name = case.file, .root_module = module })
+        else
+            b.addTest(.{ .name = case.file, .root_module = module });
         compile.expect_errors = .{ .contains = b.fmt("error: {s}", .{case.message}) };
         step.dependOn(&compile.step);
     }
