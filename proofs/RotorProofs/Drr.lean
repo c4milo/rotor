@@ -18,7 +18,8 @@ What it leaves out, and why the omission changes nothing proved here:
   resumes in the next run with no second credit, so its starts are one list here.
 - The other groups. A group's deficit changes only in its own visits and in the bulk credit.
 - `charge_task`. A charge subtracts more credit during a task's run. Here a task's units are its
-  cost and its charges together, and the class A check of `charge` holds them to `C`.
+  cost and its charges together, at most `C` (`Costs`). That total is the caller's rule: the code
+  checks each charge alone, and the floor check of `charge` halts a large excess.
 - `set_scheduling_group_shares`. The window bound holds for a run of visits at one value of the
   shares.
 -/

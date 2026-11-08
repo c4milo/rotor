@@ -549,9 +549,11 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
   its work. Its cost pays for its first slices: 1 for `Task.init`, `cost` for `Task.init_cost`.
   It reads `loop.task_budget_left()`, and does at most that budget plus one slices, or its cost
   when that is more. When it did more slices than its cost, it calls `charge_task` with the
-  slices less its cost. Then it schedules itself again if work is left. So one run costs at most
-  `task_charge_max` (64) units, its cost and its charges together, and a run that costs more
-  halts. A task is queued on one loop at a time, and `loop.is_scheduled` says whether it is. Each
+  slices less its cost. Then it schedules itself again if work is left. Keep the total of one
+  run, its cost and its charges together, at or under `task_charge_max` (64) units: that rule is
+  the caller's. The loop checks only that each charge is below `task_charge_max`. While it serves
+  more than one group, a run far over the total can take its group's deficit below the floor, and
+  the loop then halts. A task is queued on one loop at a time, and `loop.is_scheduled` says whether it is. Each
   group holds at most `tasks_queued_max` (65,536) tasks; one more returns `error.TasksFull`, and
   the other groups can still schedule.
 - The program owns the scheduling groups (decision 30). A group is a task queue with shares, and

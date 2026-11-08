@@ -55,8 +55,9 @@ pub fn Calls(comptime Loop: type) type {
 
         /// Inside a task's call only: adds `units`, less than `task_charge_max`, to the cost of the
         /// task that runs now (decision 30). A task whose work varies calls it before it returns,
-        /// so its group pays for what it did. One run costs at most `task_charge_max` units, the
-        /// task's static cost included (`Task.init_cost`). Halts outside a task's call.
+        /// so its group pays for what it did. The caller keeps one run's total at or under
+        /// `task_charge_max` units, the task's static cost included (`Task.init_cost`). The loop
+        /// checks each charge alone. Halts outside a task's call.
         pub fn charge_task(loop: *Loop, units: u16) void {
             loop.tables.assert_owner();
             loop.tables.dispatch.charge_task(loop.tables.groups, units);

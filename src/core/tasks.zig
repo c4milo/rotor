@@ -49,10 +49,12 @@ pub const Task = struct {
     }
 
     /// As `init`, with a cost of `cost` units for each run (decision 30). The compiler refuses 0
-    /// and a cost above `task_charge_max`. One run costs at most `task_charge_max` units, `cost`
-    /// and every `charge_task` together. So a task whose work varies counts its first `cost`
-    /// slices as paid: it does at most `@max(cost, task_budget_left() + 1)` slices, and charges
-    /// the slices less `cost` when they are more.
+    /// and a cost above `task_charge_max`. The caller keeps one run's total, `cost` and every
+    /// `charge_task` together, at or under `task_charge_max` units. The loop checks each charge
+    /// alone, and on the groups path the floor of the deficit halts a large excess. So a task
+    /// whose work varies counts its first `cost` slices as paid: it does at most
+    /// `@max(cost, task_budget_left() + 1)` slices, and charges the slices less `cost` when they
+    /// are more.
     pub fn init_cost(
         comptime Parent: type,
         comptime field: []const u8,

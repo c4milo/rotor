@@ -87,8 +87,9 @@ These parts changed on the branch `decision-30b`:
    the path with one group. Example: one ready group at shares 100 and a deficit of 0. The visit
    gives 100, a cost of 2 takes 200, the budget is 63, and a charge of 63 leaves -6,400, below
    `deficit_min` (-6,399). The rule now does at most `@max(c, task_budget_left() + 1)` slices and
-   charges `slices - c`, so one run costs at most `task_charge_max` units. The Lean model
-   already assumed that bound (`Costs`), so it does not change.
+   charges `slices - c`, so a run that follows it costs at most `task_charge_max` units. The
+   Lean model already assumed that bound (`Costs`), so it does not change. The bound is the
+   caller's rule, and the loop does not check it ("How a task states its cost").
 2. **One charge is below `task_charge_max`** (class B, on both paths). Every task costs at least 1,
    so a charge of `task_charge_max` always passes the bound of one run.
 3. **Decision 27's run stores no phase.** `Phase.tasks` is gone. That run stays in `records`.
@@ -583,9 +584,15 @@ other than `.default` holds a task.
   guidance becomes a count that the loop keeps. The static cost `c` pays for the first `c` slices,
   and `c` is 1 for `Task.init`. Do at most `@max(c, task_budget_left() + 1)` slices, then call
   `charge_task(slices - c)` when there were more than `c`, then schedule again if work is left.
-  So one run costs at most `task_charge_max` units, its cost and its charges together. The rule
-  read `charge_task(slices - 1)` until 2026-11-08, and a task of static cost 2 or more that
-  followed it could halt at the floor of the deficit (see "Finish, 2026-11-08").
+  A task that follows this rule costs at most `task_charge_max` units in one run, its cost and
+  its charges together. The rule read `charge_task(slices - 1)` until 2026-11-08, and a task of
+  static cost 2 or more that followed it could halt at the floor of the deficit (see "Finish,
+  2026-11-08").
+- **The total of one run is the caller's rule.** The loop checks each charge alone: it is below
+  `task_charge_max` (class B). It does not check the sum of a run's cost and charges. On the
+  groups path, a large excess takes the deficit below `deficit_min`, and the class A check of
+  `charge` halts. A smaller excess, or any excess on the path with one group, does not halt.
+  Camilo ruled on 2026-11-08 to state this, and to add no check.
 - **A task that understates its cost** takes more CPU than its shares. The stall record names it,
   with its group (below).
 
