@@ -32,6 +32,10 @@
 //! - `tasks-groups-4`: the 64 tasks of `tasks-64`, 16 in each of 4 scheduling groups at the
 //!   default shares, `.default` among them (decision 30): the groups path, one visit per task.
 //! - `tasks-groups-16`: the same 64 tasks, 4 in each of 16 groups.
+//! - `call`: loop 0 calls loop 1 in `.default`, whose handler answers at once (decision 32). Loop 1
+//!   ticks twice: its first tick takes the call on the fast path, and its second runs the
+//!   handler. Then loop 0 ticks once, which takes the return and runs `finish`. One iteration is
+//!   that round trip.
 //!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
@@ -55,6 +59,7 @@ pub const Workload = enum {
     poller,
     tasks_groups_4,
     tasks_groups_16,
+    call,
 };
 
 /// The groups `tasks-groups-4` and `tasks-groups-16` spread their tasks over: `.default`, then
@@ -139,6 +144,40 @@ const Calls = struct {
 
 var counted: Calls align(@alignOf(Calls)) = .{};
 
+/// The service of `call`: loop 1's handler answers with the request plus one.
+const Echo = struct {
+    fn handle(_: *Echo, call: *EchoCall) core.call.Answer(u64) {
+        return .{ .now = call.request_of().* + 1 };
+    }
+};
+
+const View = core.shared_loop.SharedLoop(Loop);
+const EchoCall = core.call.CallRecord(View, u64, u64);
+const EchoService = core.call.Service(View, Echo, u64, u64, Echo.handle);
+
+/// The caller of `call`, on loop 0: each `finish` counts one reply.
+const Caller = struct {
+    call: EchoCall = .init(Caller, "call", finished),
+    replies: u64 = 0,
+
+    fn finished(caller: *Caller, result: core.call.CallResult(u64)) void {
+        switch (result) {
+            .replied => |reply| caller.replies += reply.*,
+            .expired, .target_stopped => {},
+        }
+    }
+
+    /// Fails unless one reply of 2 came since the last check.
+    fn expect_one(caller: *Caller) !void {
+        if (caller.replies != 2) return error.ReplyMissing;
+        caller.replies = 0;
+    }
+};
+
+var service: EchoService align(@alignOf(EchoService)) = .init;
+var echo: Echo align(@alignOf(Echo)) = .{};
+var calling: Caller align(@alignOf(Caller)) = .{};
+
 /// True when this backend's loop can wake itself, which `wait` needs: kqueue and epoll, whose loop
 /// holds the descriptor a post's wake would reach.
 const can_wake_itself = @hasField(Loop, "queue");
@@ -177,6 +216,8 @@ pub fn main(init: std.process.Init) !void {
 noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
     if (workload == .poller) try first.loop.add_poller(&counted.poller);
     defer if (workload == .poller) first.loop.remove_poller(&counted.poller);
+    if (workload == .call) service.serve(second.loop.shared(), &echo);
+    defer if (workload == .call) service.stop_serving(second.loop.shared());
     const spread = groups_of(workload);
     for (groups[1..spread]) |*group| {
         group.* = try first.loop.reserve_scheduling_group(core.constants.scheduling_shares_default);
@@ -244,6 +285,13 @@ fn run(comptime workload: Workload) !void {
             try counted.expect_one();
         },
         .tasks_groups_4, .tasks_groups_16 => try run_groups(groups_of(workload)),
+        .call => {
+            try service.send(first.loop.shared(), second_id, &calling.call, 1, .{ .group = .default });
+            try second.expect(0);
+            try second.expect(0);
+            try first.expect(0);
+            try calling.expect_one();
+        },
     }
 }
 
@@ -275,5 +323,6 @@ pub fn workload_of(name: []const u8) ?Workload {
     if (std.mem.eql(u8, name, "poller")) return .poller;
     if (std.mem.eql(u8, name, "tasks-groups-4")) return .tasks_groups_4;
     if (std.mem.eql(u8, name, "tasks-groups-16")) return .tasks_groups_16;
+    if (std.mem.eql(u8, name, "call")) return .call;
     return null;
 }
