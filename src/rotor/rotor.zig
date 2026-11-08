@@ -100,16 +100,16 @@ pub const Backend = loop_module.Backend;
 /// gives one, `epoll` where it refuses, as Docker's default seccomp profile does. On Darwin it is
 /// `kqueue`. Whatever needs the choice first makes it, so `sync`, a `Registry` and a `Loop` all
 /// agree.
-/// The named group `name` of the program's root declaration, `rotor_scheduling_groups`. The program
-/// calls it, and hands each library its group at init. An undeclared name fails to compile.
-pub fn named_scheduling_group(comptime name: SchedulingGroupName) NamedSchedulingGroup {
-    return loop_module.named_scheduling_group(name);
-}
-
 pub fn backend() Backend {
     return switch (loop_module.chosen()) {
         inline else => |tag| @field(Backend, @tagName(tag)),
     };
+}
+
+/// The named group `name` of the program's root declaration, `rotor_scheduling_groups`. The program
+/// calls it, and hands each library its group at init. An undeclared name fails to compile.
+pub fn named_scheduling_group(comptime name: SchedulingGroupName) NamedSchedulingGroup {
+    return loop_module.named_scheduling_group(name);
 }
 
 /// Why `require_backend` left the process's backend as it was: `Unsupported` when this host cannot
