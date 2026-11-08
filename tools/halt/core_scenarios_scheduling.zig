@@ -85,13 +85,14 @@ fn charge_a_task_outside_its_run() void {
 
 fn charge_too_much(_: *Task) void {
     scenario.reached_violation();
-    dispatch.charge_task(&groups, core.constants.task_charge_max + 1);
+    dispatch.charge_task(&groups, core.constants.task_charge_max);
 }
 
 const charge_too_much_call: Task.Call = .{ .name = "charge_too_much", .function = charge_too_much };
 
-/// A charge above `task_charge_max`, in a run of `.default` alone. With the check deleted, the run
-/// keeps no account, and the tick returns.
+/// A charge of `task_charge_max`, in a run of `.default` alone: with the task's cost of 1, the run
+/// costs more than `task_charge_max`. With the check deleted, the run keeps no account, and the
+/// tick returns.
 fn charge_more_than_the_most_units() void {
     start(0);
     tasks[0] = .{ .call = &charge_too_much_call };
@@ -101,7 +102,7 @@ fn charge_more_than_the_most_units() void {
 
 fn charge_past_the_floor(_: *Task) void {
     scenario.reached_violation();
-    dispatch.charge_task(&groups, core.constants.task_charge_max);
+    dispatch.charge_task(&groups, core.constants.task_charge_max - 1);
 }
 
 const charge_past_the_floor_call: Task.Call = .{
@@ -110,7 +111,7 @@ const charge_past_the_floor_call: Task.Call = .{
     .cost = core.constants.task_charge_max,
 };
 
-/// A task of the largest cost that charges the largest count again, on the groups path: its
+/// A task of the largest cost that charges the largest charge again, on the groups path: its
 /// group's deficit goes below the least one. With the check deleted, the deficit holds the debt
 /// and the tick returns.
 fn charge_a_group_past_its_least_deficit() void {
@@ -187,6 +188,133 @@ fn end_a_loop_with_a_task_queued_in_a_group() void {
     dispatch.assert_empty();
 }
 
+/// A forged named id, above the ids a table can hold. With the check deleted, the call returns
+/// the id as a `SchedulingGroup`.
+fn take_the_group_of_a_forged_name() void {
+    var forged: core.scheduling.NamedSchedulingGroup = @enumFromInt(core.constants.scheduling_groups_max);
+    scenario.reached_violation();
+    forged = @enumFromInt(@intFromEnum(forged.scheduling_group()));
+}
+
+/// The budget of a run whose `left` is above the tick's bound. With the check deleted, the call
+/// returns the starts it reads.
+fn read_the_budget_of_a_run_past_its_bound() void {
+    start(1);
+    dispatch.tasks.left = core.constants.tasks_per_tick_max + 1;
+    scenario.reached_violation();
+    _ = core.scheduling.rule.budget_left(&groups, &dispatch.tasks, 0);
+}
+
+/// As above, through the dispatch on the path with one group. With the check deleted, the call
+/// returns.
+fn read_the_task_budget_past_its_bound() void {
+    start(0);
+    dispatch.tasks.left = core.constants.tasks_per_tick_max + 1;
+    scenario.reached_violation();
+    _ = dispatch.task_budget_left(&groups);
+}
+
+/// The budget with bit 0 of the ready mask set, which only `tasks.count` may say. With the check
+/// deleted, the call returns.
+fn read_the_budget_with_the_default_bit_ready() void {
+    start(1);
+    dispatch.tasks.left = 1;
+    scenario.reached_violation();
+    _ = core.scheduling.rule.budget_left(&groups, &dispatch.tasks, 1);
+}
+
+/// A run of the groups with bit 0 of the ready mask set. Lane 0's count is set too, so the next
+/// check of the snapshot holds. With the check deleted, the run starts `.default`'s task and
+/// returns.
+fn run_the_groups_with_the_default_bit_ready() void {
+    start(0);
+    dispatch.schedule(&tasks[0]) catch return;
+    groups.lanes[0].count = 1;
+    var ready: u16 = 1;
+    scenario.reached_violation();
+    _ = core.scheduling.rule.run(&groups, &dispatch.tasks, &ready, &heartbeat);
+}
+
+/// A run of the groups with no group ready. With the check deleted, the run starts `.default`'s
+/// task and returns.
+fn run_the_groups_with_none_ready() void {
+    start(0);
+    dispatch.schedule(&tasks[0]) catch return;
+    var ready: u16 = 0;
+    scenario.reached_violation();
+    _ = core.scheduling.rule.run(&groups, &dispatch.tasks, &ready, &heartbeat);
+}
+
+/// A run of the groups whose ready mask names an empty lane, past the class B shape check of the
+/// dispatch. With the check deleted, the run closes that lane, starts `.default`'s task and
+/// returns.
+fn run_the_groups_with_an_empty_lane_ready() void {
+    start(1);
+    dispatch.schedule(&tasks[0]) catch return;
+    var ready: u16 = 1 << 1;
+    scenario.reached_violation();
+    _ = core.scheduling.rule.run(&groups, &dispatch.tasks, &ready, &heartbeat);
+}
+
+/// An open visit whose group holds no credit, which only the tick's bound may leave open, and
+/// then with credit. With the check deleted, the run closes the visit, starts the task and
+/// returns.
+fn resume_an_open_visit_with_no_credit() void {
+    start(1);
+    dispatch.schedule_in(&groups, @enumFromInt(1), &tasks[0]) catch return;
+    groups.visit_open = true;
+    groups.cursor = 1;
+    scenario.reached_violation();
+    tick();
+}
+
+/// Groups with more named groups than reserved ones. With the check deleted, the sum returns.
+fn count_the_tasks_of_more_names_than_groups() void {
+    start(1);
+    groups.named = 2;
+    scenario.reached_violation();
+    _ = groups.queued();
+}
+
+/// A lane that holds more tasks than its cap. With the check deleted, the sum returns.
+fn count_the_tasks_of_a_lane_past_its_cap() void {
+    start(1);
+    groups.lanes[1].count = core.constants.tasks_queued_max + 1;
+    scenario.reached_violation();
+    _ = groups.queued();
+}
+
+/// `.default` with more tasks than its cap. With the check deleted, the count returns.
+fn count_the_tasks_of_default_past_its_cap() void {
+    start(0);
+    dispatch.tasks.count = core.constants.tasks_queued_max + 1;
+    scenario.reached_violation();
+    _ = dispatch.tasks_queued(&groups);
+}
+
+/// A run of the groups that names a group past the table as its last. With the check deleted,
+/// the heartbeat stores it and returns.
+fn leave_a_run_with_a_group_past_the_table() void {
+    heartbeat = .init(null);
+    scenario.reached_violation();
+    heartbeat.leave_group_tasks(1, core.constants.scheduling_groups_max);
+}
+
+var stall_starts: [1]u64 = .{0};
+var stall_statistics: core.statistics.Statistics align(@alignOf(core.statistics.Statistics)) = undefined;
+
+/// A stall of one task of the groups' run whose stored group is past the table. With the check
+/// deleted, the stall names that id and the stamp returns.
+fn note_a_stall_of_a_group_past_the_table() void {
+    stall_statistics.init(.{}, &stall_starts);
+    heartbeat = .init(10);
+    heartbeat.note_clock(&stall_statistics, &dispatch.pollers, 100);
+    heartbeat.turn.ended = @as(u64, 1) << core.Heartbeat.Turn.group_task_shift;
+    heartbeat.turn_group = core.constants.scheduling_groups_max;
+    scenario.reached_violation();
+    heartbeat.note_clock(&stall_statistics, &dispatch.pollers, 200);
+}
+
 /// A loop of no backend: the fields that `dispatch_calls.Calls(Host)` reads.
 const Host = struct {
     tables: core.Tables,
@@ -251,5 +379,48 @@ pub const scenarios = [_]scenario.Scenario{
     .{
         .name = "scheduling: end a loop with a task queued in a group",
         .run = end_a_loop_with_a_task_queued_in_a_group,
+    },
+    .{ .name = "scheduling: take the group of a forged name", .run = take_the_group_of_a_forged_name },
+    .{
+        .name = "scheduling: read the budget of a run past its bound",
+        .run = read_the_budget_of_a_run_past_its_bound,
+    },
+    .{ .name = "scheduling: read the task budget past its bound", .run = read_the_task_budget_past_its_bound },
+    .{
+        .name = "scheduling: read the budget with the default bit ready",
+        .run = read_the_budget_with_the_default_bit_ready,
+    },
+    .{
+        .name = "scheduling: run the groups with the default bit ready",
+        .run = run_the_groups_with_the_default_bit_ready,
+    },
+    .{ .name = "scheduling: run the groups with none ready", .run = run_the_groups_with_none_ready },
+    .{
+        .name = "scheduling: run the groups with an empty lane ready",
+        .run = run_the_groups_with_an_empty_lane_ready,
+    },
+    .{
+        .name = "scheduling: resume an open visit with no credit",
+        .run = resume_an_open_visit_with_no_credit,
+    },
+    .{
+        .name = "scheduling: count the tasks of more names than groups",
+        .run = count_the_tasks_of_more_names_than_groups,
+    },
+    .{
+        .name = "scheduling: count the tasks of a lane past its cap",
+        .run = count_the_tasks_of_a_lane_past_its_cap,
+    },
+    .{
+        .name = "scheduling: count the tasks of default past its cap",
+        .run = count_the_tasks_of_default_past_its_cap,
+    },
+    .{
+        .name = "scheduling: leave a run with a group past the table",
+        .run = leave_a_run_with_a_group_past_the_table,
+    },
+    .{
+        .name = "scheduling: note a stall of a group past the table",
+        .run = note_a_stall_of_a_group_past_the_table,
     },
 };

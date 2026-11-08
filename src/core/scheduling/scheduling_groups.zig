@@ -150,8 +150,11 @@ pub const Groups = struct {
 
     /// The tasks queued in the groups other than `.default`.
     pub fn queued(groups: *const Groups) u32 {
+        // The named groups are the first of the reserved ones (decision 30, "Named groups").
+        assert(groups.named <= groups.reserved);
         var sum: u32 = 0;
         for (groups.lanes[1 .. @as(usize, groups.reserved) + 1]) |*lane| sum += lane.count;
+        assert(sum <= @as(u32, groups.reserved) * constants.tasks_queued_max);
         return sum;
     }
 

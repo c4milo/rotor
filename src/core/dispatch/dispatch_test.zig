@@ -465,8 +465,11 @@ test "the heartbeat names each callback while it runs, and counts the callbacks 
     try testing.expectEqual(Heartbeat.Turn{ .ended = 0, .polled = 1 }, heartbeat.turn);
     try testing.expectEqual(@as(u32, 1), dispatch.end(&heartbeat, &groups, &events));
     try testing.expectEqual(@as(?*const Name, null), heartbeat.running.load(.monotonic));
-    // The poller, the record and the task, in one turn: no clock stamp came between them.
-    try testing.expectEqual(Heartbeat.Turn{ .ended = 2, .polled = 1 }, heartbeat.turn);
+    // The poller, the record and the task, in one turn: no clock stamp came between them. The task
+    // counts at its own bit of `ended` (decision 30).
+    const ended = 1 + (@as(u64, 1) << Heartbeat.Turn.task_shift);
+    try testing.expectEqual(Heartbeat.Turn{ .ended = ended, .polled = 1 }, heartbeat.turn);
+    try testing.expectEqual(@as(u32, 3), heartbeat.turn.callbacks());
     const prefix = @typeName(Naming) ++ ".";
     try testing.expectEqualStrings(prefix ++ "completion", naming.seen[0].?.*);
     try testing.expectEqualStrings(prefix ++ "poller", naming.seen[1].?.*);

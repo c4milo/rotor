@@ -53,9 +53,10 @@ pub fn Calls(comptime Loop: type) type {
             return loop.tables.dispatch.schedule_in(loop.tables.groups, group, task);
         }
 
-        /// Inside a task's run only: adds `units`, at most `task_charge_max`, to the cost of the
+        /// Inside a task's call only: adds `units`, less than `task_charge_max`, to the cost of the
         /// task that runs now (decision 30). A task whose work varies calls it before it returns,
-        /// so its group pays for what it did. Halts outside a task's run.
+        /// so its group pays for what it did. One run costs at most `task_charge_max` units, the
+        /// task's static cost included (`Task.init_cost`). Halts outside a task's call.
         pub fn charge_task(loop: *Loop, units: u16) void {
             loop.tables.assert_owner();
             loop.tables.dispatch.charge_task(loop.tables.groups, units);
@@ -95,10 +96,10 @@ pub fn Calls(comptime Loop: type) type {
 
         /// `tasks_per_tick_max` less the tasks the current run started, the task that reads it
         /// included, and 0 outside a run. A long task that splits its work does at most this many
-        /// slices plus one in one call, calls `charge_task` with the slices less one, then
-        /// schedules itself again. It counts, and never reads the clock. While another group holds
-        /// a task, it is at most the whole units left in the visit of the task's group
-        /// (decision 30).
+        /// slices plus one in one call, or its static cost when that is more. It calls
+        /// `charge_task` with the slices less its cost when they are more, then schedules itself
+        /// again. It counts, and never reads the clock. While another group holds a task, it is at
+        /// most the whole units left in the visit of the task's group (decision 30).
         pub fn task_budget_left(loop: *const Loop) u32 {
             loop.tables.assert_owner();
             return loop.tables.dispatch.task_budget_left(loop.tables.groups);

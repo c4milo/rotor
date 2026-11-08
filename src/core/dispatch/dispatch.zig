@@ -52,11 +52,10 @@ pub const Phase = enum(u8) {
     /// `begin` calls the pollers: a poller that adds or removes a poller halts, because the loop
     /// is walking the table.
     polling,
-    /// From the end of the pollers to the end of the records. A callback may add or remove a
-    /// poller.
+    /// From the end of the pollers to the end of `end`, decision 27's run of `.default` included.
+    /// A callback may add or remove a poller. That run stores no phase of its own: `tasks.left`
+    /// is above 0 only inside a task's call, which is what `charge_task` checks.
     records,
-    /// The run of `.default` alone, decision 27's run.
-    tasks,
     /// The run of the groups by DRR (decision 30).
     group_tasks,
 };
@@ -169,24 +168,27 @@ pub const Dispatch = struct {
         dispatch.callbacks_outstanding += 1;
     }
 
-    /// Adds `units` to the cost of the task that runs now (decision 30). Halts outside a task's run
-    /// and on a charge above `task_charge_max` (class B). On the path with one group it changes no
-    /// deficit: no other group waits.
+    /// Adds `units` to the cost of the task that runs now (decision 30). Halts outside a task's
+    /// call, and on a charge that no task may make: every task costs at least 1, so one charge is
+    /// below `task_charge_max` (class B). On the path with one group it changes no deficit: no
+    /// other group waits.
     pub fn charge_task(dispatch: *const Dispatch, groups: *Groups, units: u16) void {
-        assert(dispatch.phase == .tasks or dispatch.phase == .group_tasks);
-        assert(units <= constants.task_charge_max);
+        assert(dispatch.tasks.left != 0);
+        assert(units < constants.task_charge_max);
         if (dispatch.phase == .group_tasks) scheduling_run.charge(groups, units);
     }
 
     /// `tasks_per_tick_max` less the tasks the run started, and on the groups path at most the
     /// whole units left in the group's visit (decision 30). 0 outside a run.
     pub fn task_budget_left(dispatch: *const Dispatch, groups: *const Groups) u32 {
-        if (dispatch.phase != .group_tasks) return dispatch.tasks.left;
+        assert(dispatch.tasks.left <= constants.tasks_per_tick_max);
+        if (dispatch.phase != .group_tasks) return dispatch.tasks.left -| 1;
         return scheduling_run.budget_left(groups, &dispatch.tasks, dispatch.groups_ready);
     }
 
     /// The tasks queued in every group.
     pub fn tasks_queued(dispatch: *const Dispatch, groups: *const Groups) u32 {
+        assert(dispatch.tasks.count <= constants.tasks_queued_max);
         if (dispatch.groups_ready == 0) return dispatch.tasks.count;
         return dispatch.tasks.count + groups.queued();
     }
@@ -253,7 +255,7 @@ pub const Dispatch = struct {
         // after: a task that schedules a task adds to the count during the run, and a compound
         // `-=` would read the count before the call and lose that addition.
         const ran = if (dispatch.groups_ready == 0)
-            dispatch.run_default(heartbeat)
+            dispatch.tasks.run(heartbeat)
         else
             dispatch.run_groups(groups, heartbeat);
         dispatch.callbacks_outstanding -= ran;
@@ -269,12 +271,6 @@ pub const Dispatch = struct {
     pub fn abandon(dispatch: *Dispatch) void {
         assert(dispatch.phase != .idle);
         dispatch.phase = .idle;
-    }
-
-    /// The run of `.default` alone: decision 27's run, unchanged.
-    fn run_default(dispatch: *Dispatch, heartbeat: *Heartbeat) u32 {
-        dispatch.phase = .tasks;
-        return dispatch.tasks.run(heartbeat);
     }
 
     /// The run of the groups by DRR, in a tick where a group other than `.default` holds a task

@@ -35,6 +35,8 @@ pub const NamedSchedulingGroup = enum(u8) {
     /// The same id as a `SchedulingGroup` of the loop that calls it, for `schedule_in`. Every loop
     /// reserves the named groups at init, so the id names that group on each loop.
     pub fn scheduling_group(group: NamedSchedulingGroup) SchedulingGroup {
+        // Only `Named(...).group` makes an id other than `.default`, and its ids fit the table.
+        assert(@intFromEnum(group) < constants.scheduling_groups_max);
         return @enumFromInt(@intFromEnum(group));
     }
 };

@@ -37,10 +37,11 @@ pub fn schedule_in(loop: *Loop, group: SchedulingGroup, task: *core.Task) Loop.S
     };
 }
 
-/// Inside a task's run only: adds `units`, at most `constants.task_charge_max`, to the cost of
-/// the task that runs now. A task whose work varies does at most `task_budget_left() + 1` slices,
-/// calls this with the slices less one when there were more than one, and schedules itself again
-/// when work is left. Halts outside a task's run.
+/// Inside a task's call only: adds `units`, less than `constants.task_charge_max`, to the cost of
+/// the task that runs now. Its static cost, 1 for `Task.init`, pays for its first slices. A task
+/// whose work varies does at most `@max(cost, task_budget_left() + 1)` slices, calls this with the
+/// slices less its cost when they are more, and schedules itself again when work is left. One run
+/// costs at most `task_charge_max` units. Halts outside a task's call.
 pub fn charge_task(loop: *Loop, units: u16) void {
     switch (loop.inner) {
         inline else => |*inner| inner.charge_task(units),

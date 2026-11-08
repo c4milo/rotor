@@ -39,13 +39,6 @@ pub const Name = [:0]const u8;
 /// A threshold that no span reaches: what `stall_turn_ns = null` stores.
 const never: u64 = std.math.maxInt(u64);
 
-/// What `Heartbeat.turn_group` holds when the last `end` ran no task: no group has this id.
-pub const turn_group_none: u8 = std.math.maxInt(u8);
-
-comptime {
-    assert(turn_group_none >= constants.scheduling_groups_max);
-}
-
 /// What the loop's thread writes so that another thread can see that it is stuck (decision 28).
 /// Another thread reads `beat_ns`, `running` and `watchers`. The loop's own fields share the line.
 /// Each loop carves one from its caller's memory (`Layout.take`), and `Tables` holds a pointer to
@@ -67,9 +60,9 @@ pub const Heartbeat = struct {
     /// stall of one poller takes the poller's name from the table of pollers instead, so `begin`
     /// stores no name.
     turn_name: ?*const Name,
-    /// The scheduling group of the last task of the open turn's `end`, or `turn_group_none` when
-    /// that `end` called records and ran no task (decision 30). Only the loop's thread reads it,
-    /// for a stall of one task.
+    /// The scheduling group of the last task of the groups' run (decision 30). Only that run
+    /// stores it, and a stall reads it only when the turn's `ended` counts a task of that run, so
+    /// a store of an earlier turn is never read. Only the loop's thread reads it.
     turn_group: u8,
 
     /// The callbacks of the open turn, in two counts that one instruction zeroes at each first
@@ -79,16 +72,28 @@ pub const Heartbeat = struct {
     /// zeroed it, and `begin` writes `polled` before the stamp that reads it. Each count is a word,
     /// so `end` stores the count it computes in a word with no conversion. Size 16 B, alignment 8.
     pub const Turn = extern struct {
-        /// The records and the tasks of the last `end`.
+        /// The callbacks of the last `end`, in three fields of one word (decision 30): its records
+        /// from bit 0, the tasks of decision 27's run from bit `task_shift`, and the tasks of the
+        /// groups' run from bit `group_task_shift`. `leave` stores the records, and a run of tasks
+        /// adds its count at its own bit. On arm64 one `add` with a shift does that, so a stall
+        /// can tell a record from a task with no store more than decision 28 made.
         ended: u64,
         /// The pollers of the last `begin`.
         polled: u64,
 
         pub const zero: Turn = .{ .ended = 0, .polled = 0 };
 
+        /// The bit of `ended` where the tasks of decision 27's run start.
+        pub const task_shift = 32;
+        /// The bit of `ended` where the tasks of the groups' run start (decision 30).
+        pub const group_task_shift = 48;
+
         /// The callbacks of the turn. A turn holds one `end` and one `begin`, so it fits a `u32`.
         pub fn callbacks(turn: Turn) u32 {
-            return @intCast(turn.ended + turn.polled);
+            const records: u32 = @truncate(turn.ended);
+            const tasks: u16 = @truncate(turn.ended >> task_shift);
+            const group_tasks: u16 = @truncate(turn.ended >> group_task_shift);
+            return @intCast(@as(u64, records) + tasks + group_tasks + turn.polled);
         }
     };
 
@@ -102,7 +107,7 @@ pub const Heartbeat = struct {
             .turn = .zero,
             .turn_ns = stall_turn_ns orelse never,
             .turn_name = null,
-            .turn_group = turn_group_none,
+            .turn_group = 0,
         };
     }
 
@@ -146,12 +151,14 @@ pub const Heartbeat = struct {
         heartbeat.note_stall(statistics, heartbeat.name_of_one(pollers), now_ns, span_ns);
     }
 
-    /// The group of the one task of the open turn, or null when the turn called no task, or more
-    /// than one callback (decision 30). A record's `leave` stores `turn_group_none`, so a turn of
-    /// one record names no group.
+    /// The group of the one task of the open turn, or null when the turn called a record, a
+    /// poller or more than one callback (decision 30). A task of decision 27's run is in
+    /// `.default`, and a task of the groups' run is in the group that run stored.
     fn group_of_one(heartbeat: *const Heartbeat) ?SchedulingGroup {
-        if (heartbeat.turn.callbacks() != 1 or heartbeat.turn.ended != 1) return null;
-        if (heartbeat.turn_group == turn_group_none) return null;
+        if (heartbeat.turn.callbacks() != 1) return null;
+        if (heartbeat.turn.ended == @as(u64, 1) << Turn.task_shift) return .default;
+        if (heartbeat.turn.ended != @as(u64, 1) << Turn.group_task_shift) return null;
+        assert(heartbeat.turn_group < constants.scheduling_groups_max);
         return @enumFromInt(heartbeat.turn_group);
     }
 
@@ -192,16 +199,24 @@ pub const Heartbeat = struct {
     pub fn leave(heartbeat: *Heartbeat, called: u64) void {
         assert(called != 0);
         heartbeat.turn.ended = called;
-        heartbeat.turn_group = turn_group_none;
         heartbeat.forget_running();
     }
 
-    /// `end` ran `ran` tasks, at least one, after its records, and runs none now. As `leave`, but
-    /// it adds to the count, because the records of the same `end` may have counted first. `group`
-    /// is the group of the last task it ran: 0 on the path with one group (decision 30).
-    pub fn leave_tasks(heartbeat: *Heartbeat, ran: u64, group: u8) void {
+    /// Decision 27's run in `end` ran `ran` tasks, at least one, after its records, and runs none
+    /// now. As `leave`, but it adds to the count at `Turn.task_shift`, because the records of the
+    /// same `end` may have counted first.
+    pub fn leave_tasks(heartbeat: *Heartbeat, ran: u64) void {
         assert(ran != 0);
-        heartbeat.turn.ended += ran;
+        heartbeat.turn.ended += ran << Turn.task_shift;
+        heartbeat.forget_running();
+    }
+
+    /// The groups' run in `end` ran `ran` tasks, at least one, and the last was in `group`
+    /// (decision 30). As `leave_tasks`, at `Turn.group_task_shift`, and it stores the group.
+    pub fn leave_group_tasks(heartbeat: *Heartbeat, ran: u64, group: u8) void {
+        assert(ran != 0);
+        assert(group < constants.scheduling_groups_max);
+        heartbeat.turn.ended += ran << Turn.group_task_shift;
         heartbeat.turn_group = group;
         heartbeat.forget_running();
     }
@@ -260,6 +275,12 @@ comptime {
     const turn_callbacks_max = constants.pollers_max + constants.batch_max +
         constants.tasks_per_tick_max;
     assert(turn_callbacks_max < std.math.maxInt(u32));
+    // The three fields of `Turn.ended` hold their counts: the records of one batch, and the tasks
+    // of one run in each of the other two (decision 30).
+    const task_bits = Heartbeat.Turn.group_task_shift - Heartbeat.Turn.task_shift;
+    assert(constants.batch_max < @as(u64, 1) << Heartbeat.Turn.task_shift);
+    assert(constants.tasks_per_tick_max < @as(u64, 1) << task_bits);
+    assert(Heartbeat.Turn.group_task_shift + task_bits == @bitSizeOf(u64));
     assert(@sizeOf(Heartbeat) == constants.heartbeat_alignment);
     assert(@alignOf(Heartbeat) == constants.heartbeat_alignment);
     // The turn check loads the stamp and the threshold together.

@@ -197,9 +197,10 @@ pub const scheduling_groups_max: u8 = 16;
 /// The most shares one group may hold (decision 30). Seastar's header recommends 1 to 1000.
 pub const scheduling_shares_max: u16 = 1000;
 
-/// The shares of `.default`, and of each group the program gives no other value. A prior from
-/// decision 30, and not ruled: decision 30, open question 9, fixes it from the `tasks-groups-4`
-/// row of the work gate.
+/// The shares of `.default`, and of each group the program gives no other value: one unit at each
+/// visit. Camilo fixed it on 2026-11-08 (decision 30, open question 9). At it each visit starts one
+/// task, so `tasks-groups-4` counts more than `tasks-64` (decision 30, "Finish, 2026-11-08"). A
+/// program that wants fewer visits gives its groups more shares.
 pub const scheduling_shares_default: u16 = 100;
 
 /// The credit of one task unit, in hundredths (decision 30). A share is a hundredth of a unit, so
@@ -207,7 +208,8 @@ pub const scheduling_shares_default: u16 = 100;
 pub const scheduling_unit_credit: u16 = 100;
 
 /// The most units one run of a task may cost: its static cost, and the units it adds with
-/// `charge_task` (decision 30). A prior, as `scheduling_shares_default` is.
+/// `charge_task` (decision 30). Camilo fixed it on 2026-11-08 (decision 30, open question 9). It
+/// is `tasks_per_tick_max`, so a task that follows the rule of `Task.init_cost` stays within it.
 pub const task_charge_max: u16 = 64;
 
 /// The most visits one run of the groups takes (decision 30, "The rule"). Each start uses at most
@@ -221,8 +223,9 @@ comptime {
     std.debug.assert(scheduling_shares_default <= scheduling_shares_max);
     std.debug.assert(scheduling_unit_credit >= 1);
     std.debug.assert(task_charge_max >= 1);
-    // The charge of the guidance for a cost that varies is at most `task_budget_left()`, so it
-    // never passes `task_charge_max` (decision 30, ruling item 11).
+    // A task that follows the rule for a cost that varies costs at most its static cost, or
+    // `task_budget_left() + 1` units, which is at most `tasks_per_tick_max`. So it never passes
+    // `task_charge_max` (decision 30, ruling item 11).
     std.debug.assert(tasks_per_tick_max <= task_charge_max);
     // A deficit stays in [1 - task_charge_max * 100, scheduling_shares_max], an `i32`.
     std.debug.assert(@as(i64, task_charge_max) * scheduling_unit_credit < std.math.maxInt(i32));

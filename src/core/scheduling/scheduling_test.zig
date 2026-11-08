@@ -6,12 +6,18 @@
 //!
 //! - G1: the tasks of each tick, in order, equal the model's, and so do the cursor and the visit.
 //! - G2: each deficit equals the model's, and stays in [1 - task_charge_max * 100, shares_max].
-//! - G3: each group's units served are its credit less the credit dropped and its deficit.
+//!   Each group's units served are its credit less the credit dropped and its deficit.
+//! - G3: the window bound. While a group drops no credit, the units it is served differ from the
+//!   credit it was given by less than `task_charge_max` units (decision 30, "Bounds").
 //! - G4: a tick starts at most `tasks_per_tick_max` tasks.
 //! - G5: for each group, scheduled = run + discarded + queued, and the queue lengths agree.
 //! - G6: `callbacks_outstanding` is the sum of the queue lengths.
 //! - G7: the same seed gives the same trace with every task at another address.
 //! - G8: `begin` waits 0 if and only if a group holds a task, and the ready mask agrees.
+//!
+//! A job charges a fixed count, up to all that `task_charge_max` leaves past its cost, or follows
+//! the rule of `Task.init_cost`: it reads `task_budget_left` and does up to all the slices the rule
+//! allows. The budget each job read equals the model's.
 const std = @import("std");
 const testing = std.testing;
 const constants = @import("../constants.zig");
@@ -23,6 +29,8 @@ const model_module = @import("scheduling_test_model.zig");
 
 const Bench = unit.Bench;
 const Model = model_module.Model;
+const Charge = model_module.Charge;
+const budget_unread = model_module.budget_unread;
 const Task = tasks_module.Task;
 const SchedulingGroup = @import("scheduling.zig").SchedulingGroup;
 const jobs_pool = model_module.jobs_pool;
@@ -31,8 +39,8 @@ const groups_used_max = model_module.groups_used_max;
 const seeds = 64;
 const steps = 300;
 
-/// The costs a job's static `Call` may hold.
-const costs = [_]u16{ 1, 2, 3, 8 };
+/// The costs a job's static `Call` may hold, the largest included.
+const costs = [_]u16{ 1, 2, 3, 8, constants.task_charge_max };
 
 fn job_function(task: *Task) void {
     const job: *Job = @alignCast(@fieldParentPtr("task", task));
@@ -45,21 +53,26 @@ const calls = calls: {
     break :calls made;
 };
 
-/// A library's task: its id, its charge for each run, and the runs left in which it schedules
-/// itself again.
+/// A library's task: its id, its cost and charge for each run, and the runs left in which it
+/// schedules itself again.
 const Job = struct {
     task: Task,
     id: u32,
     group: SchedulingGroup,
-    charge: u16,
+    cost: u16,
+    charge: Charge,
     again: u32,
     fixture: *Fixture,
 
     fn ran(job: *Job) void {
         const fixture = job.fixture;
+        const bench = &fixture.bench;
         fixture.trace[fixture.trace_len] = job.id;
+        const read = if (job.charge == .rule) bench.dispatch.task_budget_left(&bench.groups) else budget_unread;
+        fixture.budgets[fixture.trace_len] = read;
         fixture.trace_len += 1;
-        if (job.charge != 0) fixture.bench.dispatch.charge_task(&fixture.bench.groups, job.charge);
+        const units = job.charge.units(job.cost, read);
+        if (units != 0) bench.dispatch.charge_task(&bench.groups, units);
         if (job.again == 0) return;
         job.again -= 1;
         fixture.bench.schedule(job.group, &job.task) catch unreachable;
@@ -72,6 +85,7 @@ const Fixture = struct {
     jobs: [jobs_pool]Job,
     reversed: bool,
     trace: [model_module.trace_max]u32,
+    budgets: [model_module.trace_max]u32,
     trace_len: u32,
 
     fn job(fixture: *Fixture, id: u32) *Job {
@@ -111,22 +125,31 @@ const Run = struct {
         const group: u8 = @intCast(run.random.below(@as(u64, run.model.reserved) + 1));
         const cost_index = run.random.below(costs.len);
         const cost = costs[cost_index];
-        const charge: u16 = if (run.random.chance(1, 4))
-            @intCast(run.random.between(0, constants.task_charge_max - cost))
-        else
-            0;
+        const charge = run.draw_charge(cost);
         const again: u32 = if (run.random.chance(1, 3)) @intCast(run.random.between(1, 20)) else 0;
-        run.model.schedule(id, group, cost + charge, again);
+        run.model.schedule(id, group, cost, charge, again);
         const job = run.fixture.job(id);
         job.* = .{
             .task = .{ .call = &calls[cost_index] },
             .id = id,
             .group = @enumFromInt(group),
+            .cost = cost,
             .charge = charge,
             .again = again,
             .fixture = run.fixture,
         };
         try run.fixture.bench.schedule(job.group, &job.task);
+    }
+
+    /// A charge in the whole range a caller may use: a fixed count up to `task_charge_max` units
+    /// in all, its largest value included, or the rule for a cost that varies, up to all the
+    /// slices it allows.
+    fn draw_charge(run: *Run, cost: u16) Charge {
+        const roll = run.random.below(8);
+        if (roll < 3) return .{ .fixed = 0 };
+        if (roll < 4) return .{ .fixed = constants.task_charge_max - cost };
+        if (roll < 6) return .{ .fixed = @intCast(run.random.between(0, constants.task_charge_max - cost)) };
+        return .{ .rule = @intCast(run.random.between(0, model_module.fraction_max)) };
     }
 
     fn set_shares(run: *Run) !void {
@@ -151,6 +174,7 @@ const Run = struct {
         // G1 and G4.
         try testing.expect(run.fixture.trace_len <= constants.tasks_per_tick_max);
         try testing.expectEqualSlices(u32, run.model.trace[0..run.model.trace_len], run.fixture.trace[0..run.fixture.trace_len]);
+        try testing.expectEqualSlices(u32, run.model.budgets[0..run.model.trace_len], run.fixture.budgets[0..run.fixture.trace_len]);
     }
 
     fn check(run: *Run) !void {
@@ -167,9 +191,13 @@ const Run = struct {
             try testing.expectEqual(model.deficit[group], lane.deficit);
             try testing.expect(lane.deficit >= scheduling_run.deficit_min);
             try testing.expect(lane.deficit <= constants.scheduling_shares_max);
-            // G3.
             const accounted = model.credited[group] - model.dropped[group] - model.served[group] * 100;
             try testing.expectEqual(model.deficit[group], accounted);
+            // G3, between visits: a visit the tick's bound cut holds credit that is not served yet.
+            if (!(model.visit_open and model.cursor == group)) {
+                const gap = model.window_gap(@intCast(group));
+                try testing.expect(@abs(gap) < @as(u64, constants.task_charge_max) * constants.scheduling_unit_credit);
+            }
             // G5.
             const count = if (group == 0) bench.dispatch.tasks.count else lane.count;
             try testing.expectEqual(model.queue_len[group], count);

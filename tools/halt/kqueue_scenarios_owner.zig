@@ -309,11 +309,12 @@ fn schedule_in_a_group_on_this_thread() void {
     loop.schedule_in(.default, &task) catch {};
 }
 
-/// `charge_task` from a second thread, while the loop's own thread is in a task's run (decision
-/// 30). With the check deleted, the charge on the path with one group changes nothing and returns.
+/// `charge_task` from a second thread, while the loop's own thread is in a task's call (decision
+/// 30): `tasks.left` is above 0 only there. With the check deleted, the charge on the path with
+/// one group changes nothing and returns.
 fn charge_a_task_from_another_thread() void {
     loop.init_tables(&memory, &options);
-    loop.tables.dispatch.phase = .tasks;
+    loop.tables.dispatch.tasks.left = 1;
     on_another_thread(charge_a_task_on_this_thread);
 }
 

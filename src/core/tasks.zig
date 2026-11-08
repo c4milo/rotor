@@ -46,7 +46,10 @@ pub const Task = struct {
     }
 
     /// As `init`, with a cost of `cost` units for each run (decision 30). The compiler refuses 0
-    /// and a cost above `task_charge_max`.
+    /// and a cost above `task_charge_max`. One run costs at most `task_charge_max` units, `cost`
+    /// and every `charge_task` together. So a task whose work varies counts its first `cost`
+    /// slices as paid: it does at most `@max(cost, task_budget_left() + 1)` slices, and charges
+    /// the slices less `cost` when they are more.
     pub fn init_cost(
         comptime Parent: type,
         comptime field: []const u8,
@@ -87,7 +90,9 @@ pub const Tasks = struct {
     tail: ?*Task,
     /// The tasks queued.
     count: u32,
-    /// `tasks_per_tick_max` less the tasks the current run started. 0 outside a run.
+    /// `tasks_per_tick_max` less the tasks the current run called and that returned. 0 outside a
+    /// run, and at least 1 inside a task's call, so `charge_task` reads it to halt outside a task
+    /// with no store of a phase (decision 30). `task_budget_left` is this less 1.
     left: u32,
 
     pub const empty: Tasks = .{ .head = null, .tail = null, .count = 0, .left = 0 };
@@ -127,11 +132,11 @@ pub const Tasks = struct {
             task.next = null;
             if (tasks.head == null) tasks.tail = null;
             tasks.count -= 1;
-            tasks.left -= 1;
             heartbeat.enter(&task.call.name);
             task.call.function(task);
+            tasks.left -= 1;
         }
-        if (started != 0) heartbeat.leave_tasks(started, 0);
+        if (started != 0) heartbeat.leave_tasks(started);
         return started;
     }
 
@@ -328,7 +333,7 @@ test "the queue never writes or reads a task after its run returns" {
     for (std.mem.asBytes(&freed.task)) |byte| try testing.expectEqual(freed_pattern, byte);
 }
 
-/// A task that records `left` as it runs.
+/// A task that records `left` as it runs: the starts left after it, plus 1.
 const Budget = struct {
     task: Task = .init(Budget, "task", ran),
     tasks: *const Tasks,
@@ -339,26 +344,27 @@ const Budget = struct {
     }
 };
 
-test "left counts the run's starts down from the budget, and is 0 outside a run" {
+test "left counts the run's returns down from the budget, is at least 1 in a call, and 0 outside" {
     var tasks: Tasks = .empty;
     var heartbeat: Heartbeat = .init(null);
     try testing.expectEqual(@as(u32, 0), tasks.left);
     var alone: Budget = .{ .tasks = &tasks };
     try tasks.push(&alone.task, constants.tasks_queued_max);
     _ = tasks.run(&heartbeat);
-    try testing.expectEqual(constants.tasks_per_tick_max - 1, alone.seen);
+    try testing.expectEqual(constants.tasks_per_tick_max, alone.seen);
     try testing.expectEqual(@as(u32, 0), tasks.left);
 
     var three: [3]Budget = @splat(.{ .tasks = &tasks });
     for (&three) |*budget| try tasks.push(&budget.task, constants.tasks_queued_max);
     _ = tasks.run(&heartbeat);
-    try testing.expectEqual(constants.tasks_per_tick_max - 1, three[0].seen);
-    try testing.expectEqual(constants.tasks_per_tick_max - 3, three[2].seen);
+    try testing.expectEqual(constants.tasks_per_tick_max, three[0].seen);
+    try testing.expectEqual(constants.tasks_per_tick_max - 2, three[2].seen);
 
     var full: [constants.tasks_per_tick_max]Budget = @splat(.{ .tasks = &tasks });
     for (&full) |*budget| try tasks.push(&budget.task, constants.tasks_queued_max);
     _ = tasks.run(&heartbeat);
-    try testing.expectEqual(@as(u32, 0), full[constants.tasks_per_tick_max - 1].seen);
+    try testing.expectEqual(@as(u32, 1), full[constants.tasks_per_tick_max - 1].seen);
+    try testing.expectEqual(@as(u32, 0), tasks.left);
 }
 
 test "the head that schedules itself again runs once in this run and once in the next" {

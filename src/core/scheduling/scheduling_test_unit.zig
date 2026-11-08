@@ -37,13 +37,14 @@ pub const Bench = struct {
 
     /// One tick with no events. Returns the tasks it ran.
     pub fn tick(bench: *Bench) u32 {
-        // `end` adds the tasks it ran to the turn, and no clock stamp zeroes the turn here.
-        const before = bench.heartbeat.turn.ended;
+        // `end` adds the tasks it ran to the turn. No clock stamp zeroes the turn here, so the
+        // bench does, as a tick's first stamp would.
+        bench.heartbeat.turn = .zero;
         _ = bench.dispatch.begin(&bench.heartbeat, 1);
         _ = bench.dispatch.end(&bench.heartbeat, &bench.groups, &.{});
         bench.groups.assert_lanes(bench.dispatch.groups_ready);
         bench.dispatch.tasks.assert_queue();
-        return @intCast(bench.heartbeat.turn.ended - before);
+        return bench.heartbeat.turn.callbacks();
     }
 
     pub fn schedule(bench: *Bench, group: SchedulingGroup, task: *Task) !void {
@@ -394,4 +395,43 @@ test "a stall of one task names its group, and a stall of one record names none"
     _ = bench.tick();
     bench.heartbeat.note_clock(&statistics, &bench.dispatch.pollers, 400);
     try testing.expectEqual(@as(?SchedulingGroup, .default), statistics.last_stall.group);
+}
+
+/// A task of cost 2 that follows the rule of `Task.init_cost` for a cost that varies: it does all
+/// the slices the rule allows, `@max(2, budget + 1)`, and charges the slices less its cost.
+const Varying = struct {
+    task: Task = .init_cost(Varying, "task", ran, 2),
+    bench: *Bench,
+    budget: u32 = 0,
+    charge: u16 = 0,
+
+    fn ran(varying: *Varying) void {
+        const bench = varying.bench;
+        varying.budget = bench.dispatch.task_budget_left(&bench.groups);
+        const slices = @max(2, varying.budget + 1);
+        varying.charge = @intCast(slices - 2);
+        if (varying.charge != 0) bench.dispatch.charge_task(&bench.groups, varying.charge);
+    }
+};
+
+test "a task of cost 2 that follows the rule for a cost that varies halts on no path" {
+    var bench: Bench = undefined;
+    bench.init(&.empty);
+    // The groups path, with one group ready at shares 100 and a deficit of 0: the visit gives 100,
+    // the cost takes 200, and the budget is the starts left, 63. So the task does 64 slices and
+    // charges 62, and the deficit is 100 - 200 - 6,200, above the least one.
+    const alone = try bench.groups.reserve(100);
+    var grouped: Varying = .{ .bench = &bench };
+    try bench.schedule(alone, &grouped.task);
+    try testing.expectEqual(@as(u32, 1), bench.tick());
+    try testing.expectEqual(constants.tasks_per_tick_max - 1, grouped.budget);
+    try testing.expectEqual(@as(u16, constants.task_charge_max - 2), grouped.charge);
+    try testing.expectEqual(@as(i32, 100 - 200 - 6_200), bench.deficit(alone));
+    try testing.expect(bench.deficit(alone) >= @import("scheduling_run.zig").deficit_min);
+    // The path with one group: the same budget and the same charge, and no account.
+    var plain: Varying = .{ .bench = &bench };
+    try bench.schedule(.default, &plain.task);
+    try testing.expectEqual(@as(u32, 1), bench.tick());
+    try testing.expectEqual(grouped.budget, plain.budget);
+    try testing.expectEqual(grouped.charge, plain.charge);
 }

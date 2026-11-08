@@ -2,6 +2,10 @@
 //! written from decision 30's rule and not from `scheduling_run.zig`. It has no bulk credit: a
 //! group in debt is skipped one visit at a time, which is what the bulk credit adds up in one
 //! pass. It keeps each queue as an array of job ids.
+//!
+//! A job charges a fixed count, or follows the rule of `Task.init_cost` for a cost that varies:
+//! it reads its budget, which the model computes as `task_budget_left` states it, and does a part
+//! of the slices that the rule allows.
 const std = @import("std");
 const assert = std.debug.assert;
 const constants = @import("../constants.zig");
@@ -21,6 +25,31 @@ const model_visits_max = constants.tasks_per_tick_max * groups_used_max * 6_400 
 
 const credit: i64 = constants.scheduling_unit_credit;
 
+/// The parts of the slices that a job of the rule does: `fraction` quarters of what the rule allows
+/// past its cost.
+pub const fraction_max = 4;
+
+/// What a job charges: a fixed count, or the slices of the rule past its cost.
+pub const Charge = union(enum) {
+    fixed: u16,
+    rule: u8,
+
+    /// The units a job of cost `cost` charges when it reads `budget`.
+    pub fn units(charge: Charge, cost: u16, budget: u32) u16 {
+        return switch (charge) {
+            .fixed => |fixed| fixed,
+            .rule => |fraction| {
+                const allowed: u32 = @max(cost, budget + 1);
+                const slices = cost + (allowed - cost) * fraction / fraction_max;
+                return @intCast(slices - cost);
+            },
+        };
+    }
+};
+
+/// What `budgets` holds for a run of a job with a fixed charge, which reads no budget.
+pub const budget_unread = std.math.maxInt(u32);
+
 pub const Model = struct {
     reserved: u8 = 0,
     shares: [groups_used_max]u16 = @splat(constants.scheduling_shares_default),
@@ -30,13 +59,21 @@ pub const Model = struct {
     queue_len: [groups_used_max]u32 = @splat(0),
     cursor: u8 = 0,
     visit_open: bool = false,
-    /// Each job's group, units in all, and runs left in which it schedules itself again.
+    /// Each job's group, static cost, charge, and runs left in which it schedules itself again.
     job_group: [jobs_pool]u8 = @splat(0),
-    job_units: [jobs_pool]u16 = @splat(1),
+    job_cost: [jobs_pool]u16 = @splat(1),
+    job_charge: [jobs_pool]Charge = @splat(.{ .fixed = 0 }),
     job_again: [jobs_pool]u32 = @splat(0),
     queued: [jobs_pool]bool = @splat(false),
     trace: [trace_max]u32 = undefined,
+    /// The budget each run of the tick read, or `budget_unread`.
+    budgets: [trace_max]u32 = undefined,
     trace_len: u32 = 0,
+    /// For each group, the window of G3: the units served and the credit given since the last
+    /// close that could drop credit. Within it no credit is dropped, so the two differ by the
+    /// change of the deficit alone (decision 30, "Bounds").
+    window_served: [groups_used_max]i64 = @splat(0),
+    window_credit: [groups_used_max]i64 = @splat(0),
     /// For each group: the tasks scheduled, run and discarded (G5), and the credit given, the
     /// units served and the credit dropped (G3), all since the run began.
     scheduled: [groups_used_max]u64 = @splat(0),
@@ -54,10 +91,11 @@ pub const Model = struct {
         return model.reserved;
     }
 
-    pub fn schedule(model: *Model, id: u32, group: u8, units: u16, again: u32) void {
+    pub fn schedule(model: *Model, id: u32, group: u8, cost: u16, charge: Charge, again: u32) void {
         assert(!model.queued[id]);
         model.job_group[id] = group;
-        model.job_units[id] = units;
+        model.job_cost[id] = cost;
+        model.job_charge[id] = charge;
         model.job_again[id] = again;
         model.queued[id] = true;
         model.push(group, id);
@@ -93,6 +131,8 @@ pub const Model = struct {
             model.dropped[group] += model.deficit[group];
             model.deficit[group] = 0;
             model.startable[group] = 0;
+            model.window_served[group] = 0;
+            model.window_credit[group] = 0;
         }
         model.queued = @splat(false);
         model.cursor = 0;
@@ -116,6 +156,7 @@ pub const Model = struct {
             if (!model.visit_open) {
                 model.deficit[group] += model.shares[group];
                 model.credited[group] += model.shares[group];
+                model.window_credit[group] += model.shares[group];
                 model.visit_open = true;
             }
             model.start(group);
@@ -131,6 +172,20 @@ pub const Model = struct {
         if (deficit > 0) model.dropped[group] += deficit;
         model.deficit[group] = @min(deficit, 0);
         model.visit_open = false;
+        // A close with credit left drops it, and only a group that may start no more task in the
+        // run has credit left at a close. Its window ends here, and the next one starts.
+        if (model.startable[group] == 0) {
+            model.window_served[group] = 0;
+            model.window_credit[group] = 0;
+        }
+    }
+
+    /// G3, the window bound: in a window that dropped no credit, the units served differ from the
+    /// credit given by less than `task_charge_max` units. Each visit's units are its credit and the
+    /// change of its deficit, and a deficit at a close is in [deficit_min, 0], so the sum
+    /// telescopes. Returns the gap, in hundredths of a unit, for the caller to hold.
+    pub fn window_gap(model: *const Model, group: u8) i64 {
+        return model.window_served[group] * credit - model.window_credit[group];
     }
 
     fn next_startable(model: *const Model) ?u8 {
@@ -147,16 +202,43 @@ pub const Model = struct {
         {
             const id = model.pop(group);
             model.startable[group] -= 1;
-            model.deficit[group] -= model.job_units[id] * credit;
-            model.served[group] += model.job_units[id];
-            model.run_job(group, id);
+            model.deficit[group] -= model.job_cost[id] * credit;
+            const charge = model.run_job(group, id, true);
+            model.deficit[group] -= charge * credit;
+            const units = model.job_cost[id] + charge;
+            model.served[group] += units;
+            model.window_served[group] += units;
         }
     }
 
-    fn run_job(model: *Model, group: u8, id: u32) void {
+    /// What `task_budget_left` answers inside the call of the run's latest task, in `group`: the
+    /// starts left in the tick, and on the groups path, while another group holds a task, at most
+    /// the whole units left in the visit.
+    fn budget(model: *const Model, group: u8, groups_path: bool) u32 {
+        const starts_left = constants.tasks_per_tick_max - model.trace_len;
+        if (!groups_path) return starts_left;
+        for (model.queue_len, 0..) |len, other| {
+            if (other == group or len == 0) continue;
+            const units: u32 = @intCast(@divFloor(@max(model.deficit[group], 0), credit));
+            return @min(starts_left, units);
+        }
+        return starts_left;
+    }
+
+    /// Runs the job `id` of `group` and returns the units it charged.
+    fn run_job(model: *Model, group: u8, id: u32, groups_path: bool) i64 {
         model.ran[group] += 1;
         model.trace[model.trace_len] = id;
         model.trace_len += 1;
+        const charge = model.job_charge[id];
+        const read = if (charge == .rule) model.budget(group, groups_path) else budget_unread;
+        model.budgets[model.trace_len - 1] = read;
+        const units = charge.units(model.job_cost[id], read);
+        defer model.reschedule(group, id);
+        return units;
+    }
+
+    fn reschedule(model: *Model, group: u8, id: u32) void {
         if (model.job_again[id] == 0) {
             model.queued[id] = false;
             return;
@@ -168,6 +250,6 @@ pub const Model = struct {
     /// Decision 27's run: `.default` alone, with no account.
     fn run_default(model: *Model) void {
         const startable = @min(model.queue_len[0], constants.tasks_per_tick_max);
-        for (0..startable) |_| model.run_job(0, model.pop(0));
+        for (0..startable) |_| _ = model.run_job(0, model.pop(0), false);
     }
 };

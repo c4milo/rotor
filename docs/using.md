@@ -504,9 +504,12 @@ calls `tick`: a library submits, returns, and finishes its work in records, poll
   once. A task queued by the program, a poller or a record runs in the same tick, after the
   records; a task queued by a task runs in the next tick. One tick runs at most
   `tasks_per_tick_max` (64) tasks, and does not block while a task is queued. A long task splits
-  its work: it reads `loop.task_budget_left()`, does at most that many slices plus one, calls
-  `charge_task` with the slices less one when there were more than one, and schedules itself
-  again. A task is queued on one loop at a time, and `loop.is_scheduled` says whether it is. Each
+  its work. Its cost pays for its first slices: 1 for `Task.init`, `cost` for `Task.init_cost`.
+  It reads `loop.task_budget_left()`, and does at most that budget plus one slices, or its cost
+  when that is more. When it did more slices than its cost, it calls `charge_task` with the
+  slices less its cost. Then it schedules itself again if work is left. So one run costs at most
+  `task_charge_max` (64) units, its cost and its charges together, and a run that costs more
+  halts. A task is queued on one loop at a time, and `loop.is_scheduled` says whether it is. Each
   group holds at most `tasks_queued_max` (65,536) tasks; one more returns `error.TasksFull`, and
   the other groups can still schedule.
 - The program owns the scheduling groups (decision 30). A group is a task queue with shares, and
@@ -661,8 +664,8 @@ of checks. A name is static data, so the program may read it after a library fre
 
 Three ways prevent a stall:
 
-- **Work split into slices.** A long task reads `task_budget_left()`, does that many slices, and
-  schedules itself again.
+- **Work split into slices.** A long task reads `task_budget_left()`, does at most that many
+  slices plus one, charges what it did past its cost, and schedules itself again (Libraries, above).
 - **Another loop.** CPU work that cannot be split goes to a loop on another thread, through `post`.
 - **The offload.** A file call that blocks goes to the program's threads (Files, above).
 

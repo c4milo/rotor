@@ -57,7 +57,7 @@ pub fn run(groups: *Groups, tasks: *Tasks, ready: *u16, heartbeat: *Heartbeat) u
     }
     // A run ends within `visits_per_run_max` visits (decision 8, class A).
     assert_class_a(ended);
-    if (run_state.started != 0) heartbeat.leave_tasks(run_state.started, run_state.last);
+    if (run_state.started != 0) heartbeat.leave_group_tasks(run_state.started, run_state.last);
     return run_state.started;
 }
 
@@ -125,9 +125,10 @@ fn start(groups: *Groups, index: u8, tasks: *Tasks, heartbeat: *Heartbeat, start
         lane.startable -= 1;
         lane.deficit -= @as(i32, cost) * unit_credit;
         started += 1;
-        tasks.left -= 1;
         heartbeat.enter(&task.call.name);
         task.call.function(task);
+        // After the call, as in decision 27's run: `left` is at least 1 inside a call.
+        tasks.left -= 1;
     }
     return started;
 }
@@ -173,6 +174,9 @@ fn bulk_credit(groups: *Groups, startable: u16) void {
 
 /// The run's snapshot: each ready group may start the tasks it holds now. Returns their mask.
 fn snapshot(groups: *Groups, tasks: *const Tasks, ready: u16) u16 {
+    // Bit 0 of the ready mask stays clear: `tasks.count` says whether `.default` holds a task.
+    assert(ready & 1 == 0);
+    assert(ready != 0);
     groups.lanes[0].startable = tasks.count;
     var startable: u16 = @intFromBool(tasks.count != 0);
     var mask = ready;
@@ -181,6 +185,8 @@ fn snapshot(groups: *Groups, tasks: *const Tasks, ready: u16) u16 {
         const index = @ctz(mask);
         mask &= mask - 1;
         const lane = &groups.lanes[index];
+        // A ready group holds a task.
+        assert(lane.count != 0);
         lane.startable = lane.count;
         startable |= @as(u16, 1) << @intCast(index);
     }
@@ -190,6 +196,9 @@ fn snapshot(groups: *Groups, tasks: *const Tasks, ready: u16) u16 {
 /// A visit that a run cut stays open. When its group may start nothing in this run, because the
 /// path with one group ran its tasks since, the visit closes here, with its credit dropped.
 fn close_stale_visit(groups: *Groups, startable: u16) void {
+    assert(startable != 0);
+    // Only the tick's bound leaves a visit open, and it leaves its credit above 0.
+    assert(!groups.visit_open or groups.lanes[groups.cursor].deficit > 0);
     if (!groups.visit_open) return;
     if ((startable >> @intCast(groups.cursor)) & 1 == 1) return;
     const lane = &groups.lanes[groups.cursor];
@@ -217,12 +226,17 @@ pub fn charge(groups: *Groups, units: u16) void {
 /// and the whole units left in the visit. With no other group ready, it is the starts left, as on
 /// the path with one group.
 pub fn budget_left(groups: *const Groups, tasks: *const Tasks, ready: u16) u32 {
+    // Inside a task's call `left` counts that task too, so the starts left are one fewer.
+    assert(tasks.left <= constants.tasks_per_tick_max);
+    // Bit 0 of the ready mask stays clear, as in `snapshot`.
+    assert(ready & 1 == 0);
+    const starts_left = tasks.left - 1;
     const all = ready | @intFromBool(tasks.count != 0);
     const others = all & ~(@as(u16, 1) << @intCast(groups.cursor));
-    if (others == 0) return tasks.left;
+    if (others == 0) return starts_left;
     const deficit = groups.lanes[groups.cursor].deficit;
     const units: u32 = @intCast(@divFloor(@max(deficit, 0), unit_credit));
-    return @min(tasks.left, units);
+    return @min(starts_left, units);
 }
 
 comptime {
