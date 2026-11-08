@@ -3,7 +3,8 @@
 //! answer a poller with a `bool` (decision 29). It also proves that a caller cannot make a call of
 //! decision 1's amendment of 2026-11-07 in its old shape, and that a library cannot schedule with
 //! no group or set the groups, nor a program declare a named group that `Named` refuses
-//! (decision 30). Each file of `tools/compile_fail/` makes
+//! (decision 30), nor a cross-core call take the wrong types or a group of one loop (decision 32).
+//! Each file of `tools/compile_fail/` makes
 //! one such call, and its compile must fail with the message that states the rule or names the
 //! type. A compile that succeeds, or that fails with another message, fails the step.
 //! `zig build test` depends on it.
@@ -90,6 +91,32 @@ pub const cases = [_]Case{
         .file = "named_too_many",
         .message = "a program declares at most scheduling_groups_max - 1 named groups",
         .program = true,
+    },
+    // Decision 32: the types of a cross-core call. Zig 0.16 prints the generic types of a function
+    // as `T` and `U` in these messages.
+    .{
+        .file = "call_handler_void",
+        .message = "expected type 'fn (T, U) call.call.Answer(u64)', found 'fn (T, U) void'",
+    },
+    .{
+        .file = "call_now_no_reply",
+        .message = "coercion from enum '@typeInfo(call.call.Answer(u64)).@\"union\".tag_type.?' " ++
+            "to union 'call.call.Answer(u64)' must initialize 'u64' field 'now'",
+    },
+    .{
+        .file = "call_finish_type",
+        .message = "expected type 'fn (T, call.call.CallResult(u64)) void', " ++
+            "found 'fn (T, call.call.CallResult(u32)) void'",
+    },
+    .{
+        .file = "call_from_remote",
+        .message = "expected type '*shared_loop.SharedLoop(rotor_loop.Loop)', found '*rotor_loop.Remote'",
+    },
+    .{ .file = "call_no_group", .message = "missing struct field: group" },
+    .{
+        .file = "call_scheduling_group",
+        .message = "expected type 'scheduling.scheduling.NamedSchedulingGroup', " ++
+            "found 'scheduling.scheduling.SchedulingGroup'",
     },
 };
 
