@@ -1,14 +1,15 @@
 # 33. A core for the loop, and an optional layer for tasks and callbacks
 
-Status: **proposed** on 2026-11-08, and revised the same day after three reviews. Nothing is
+Status: **proposed** on 2026-11-08, and revised the same day after four reviews. Nothing is
 built, and nothing is built before Camilo accepts this record. Every number here is a row of
 `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an earlier record measured, or a
 prior: an instruction count from arithmetic over the code at `e05a549`. Nothing was measured for
 this record. Each table says where its numbers come from.
 
-If it is accepted, it amends decisions 1, 2, 7, 10, 23, 26, 27, 28, 29, 30 and 32, and the Layout
-section of CLAUDE.md. "Ask before" lists the items that need Camilo's word first. Decision 31 is
-accepted and not built, and open question 9 asks where it goes.
+If it is accepted, it amends decisions 1, 2, 7, 10, 23, 26, 27, 28, 29, 30, 31 and 32, and the
+Layout section of CLAUDE.md. "Ask before" lists the items that need Camilo's word first. Decision
+31 is accepted and not built. This record moves its scheduler from each backend's flush into the
+layer, and open question 9 asks Camilo to rule on that move.
 
 ## Ruling, 2026-11-08
 
@@ -34,9 +35,10 @@ gates.
 
 - **`core` holds the layer.** `src/core/` holds 17,411 lines of Zig. 5,886 of them, 34 percent,
   are in `dispatch/`, `scheduling/`, `call/`, `tasks.zig`, `tasks_test.zig` and
-  `shared_loop.zig`. The core keeps part of `call/`: `call_take.zig`, 162 lines, holds the drain's
-  slow path. So the move takes at most 5,724 lines, 33 percent. The port and `wait_until` then add
-  lines to the core.
+  `shared_loop.zig`. The core keeps about 30 of those lines: `WaitLimit`, the id
+  `SchedulingGroup`, and the switch of `take_reserved` on the tag ("What the core keeps from the
+  files that move"). So the move takes about 5,850 lines, 34 percent, by arithmetic over the line
+  counts. The port and `wait_until` then add lines to the core.
 - **Every backend embeds the layer's state.** `core.Tables` holds `dispatch: Dispatch`, 104 B
   (`dispatch.zig`, comptime assert), and `groups: *Groups`. Each backend's `init` carves one
   `Groups` of 536 B from the caller's memory (`kqueue.zig:175`, `uring.zig:192`, `epoll.zig:189`).
@@ -107,23 +109,24 @@ instructions in each tick and about 10 for each operation. Decisions 26 and 30 m
 that cite them. The read of the task queues is arithmetic. Decision 26 measured +2.1 and +2.3
 percent on two kqueue rows, past the tolerance of the work gate, and Camilo raised those lines.
 Its other rows sat inside the tolerance. The speed gain of the split for a plain user is
-therefore small. The gain is a smaller surface, less memory, and a core with up to 33 percent
+therefore small. The gain is a smaller surface, less memory, and a core with about 34 percent
 fewer lines for a reader to read and a twin to carry.
 
 ## The decision, as proposed
 
 1. **The core keeps the loop and its I/O.** It keeps every piece that a program with one owner of
    the loop, and no callback, needs.
-2. **The layer is a new module, `reactor`.** It holds the records, the pollers, the tasks, the
-   scheduling groups, the calls and `SharedLoop`. It imports `core` and nothing else.
+2. **The layer is a new module, `reactor`.** It holds the records with their callbacks, the
+   pollers, the tasks, the scheduling groups, the calls and `SharedLoop`. It imports `core` and
+   nothing else.
 3. **The layer wraps a loop.** `reactor.Reactor(Loop)` holds one `Loop` by value and its own
    state. `Loop` is any type that carries the core's surface and the port below.
-4. **The core gains a port of eight names.** Each backend's `Loop` declares them. The public
+4. **The core gains a port of nine names.** Each backend's `Loop` declares them. The public
    `rotor.Loop` does not. They are the calls that the layer needs and a plain caller must not make.
 5. **The core gains one public call, `wait_until`.** It bounds the wait of each tick at a
    deadline. The stored limit has one writer on each kind of loop. On a plain loop, the program
-   writes it. On a reactor, only the layer writes it, for its pollers. A program on a reactor
-   bounds its wait with a poller, as a library does (decision 29).
+   writes it with `wait_until`. On a reactor, only the layer writes it, through the port, for its
+   pollers. A program on a reactor bounds its wait with a poller, as a library does (decision 29).
 6. **The public module exports `rotor.Reactor`.** A program that wants the layer makes a
    `rotor.Reactor` in place of a `rotor.Loop`. `Reactor.shared()` returns the same
    `*rotor.SharedLoop` as today, so a library changes nothing.
@@ -140,10 +143,11 @@ inside a tick, or exists only to order or name such calls.** Every other piece s
 |---|---|---|
 | `Loop`: `init`, `deinit`, `submit`, `cancel`, `cancel_all`, `tick`, `drain`, `assert_empty`, `in_flight` | core | the loop and its operations |
 | `Operation`, `Event`, `Handle`, `Slot` and the slot table | core | the operations and their completions |
-| the `dispatched` bit of a slot and of an event | core | the slot keeps it from submit to the event. The core copies it and never reads it |
-| `Completion`, `Completion.Call` and `Operation.completion` | core | data that an operation carries. See open question 5 |
+| the `dispatched` bit of an operation, a slot and an event | core | one bit that the slot keeps from submit to the event. The core copies it and never reads it. It holds no callback and no address. See open question 5 |
+| `Completion`, `Completion.Call`, and the call that names a record in an operation, today `Operation.completion` | layer | a completion record with a callback, which the ruling names. The layer's `Completion.mark(record, operation)` writes the record's address in `user_data` and sets the bit. See open question 5 |
 | timers, repeating timers, and the deadline of an operation | core | decisions 5 and 14 |
-| `WaitLimit` and the new `wait_until` | core | a deadline that bounds a wait. Decision 29 put `WaitLimit` in the core already |
+| `WaitLimit` and the new `wait_until` | core | a deadline that bounds a wait. Decision 29 put `WaitLimit` in the core already. It moves from `dispatch_callbacks.zig` to `src/core/wait_limit.zig` |
+| the id `SchedulingGroup`, an `enum(u8)` with no behaviour | core | the stall line names the group of a stuck task with it (`Statistics.Stall.group`). `Groups`, the shares and DRR are the layer's |
 | `post`, `Registry`, `Remote`, the mailbox rings | core | decision 4 |
 | `Message.wake`, the reserved tags, the drain's slow path, `calls_out` and the 32 slots kept for returns | core | the transport. The layer sends and takes calls through the port |
 | registered buffers, provided buffers, `BufferGroup`, `reserve_buffer_group` | core | kernel state. Two parts of one program can clash on an id without a library |
@@ -153,12 +157,12 @@ inside a tick, or exists only to order or name such calls.** Every other piece s
 | the kept tick error | core | decision 5, amendment of 2026-11-06 |
 | the drain of operations, `StillInFlight` | core | `core/shutdown.zig` keeps it, over `in_flight` alone |
 | the call of each record, `Dispatch.call_records` | layer | it calls the user's code |
-| `Poller`, `add_poller`, `remove_poller`, the pollers' limit | layer | it calls the user's code |
+| `Poller`, `add_poller`, `remove_poller`, the pollers' limit, `pollers_max` | layer | it calls the user's code |
 | `Task`, `Tasks`, `schedule`, `discard_tasks`, `TasksStillQueued`, the drain's wait for tasks and calls | layer | it calls the user's code. The layer's drain moves to `src/reactor/reactor_shutdown.zig` |
-| `SchedulingGroup`, `NamedSchedulingGroup`, `Groups`, DRR, `charge_task`, the root's `rotor_scheduling_groups` | layer | it orders the tasks |
+| `NamedSchedulingGroup`, `Groups`, the shares, DRR, `charge_task`, the root's `rotor_scheduling_groups` | layer | it orders the tasks |
 | `Service`, `CallRecord`, `CallLink`, `CallStation`, `call`, `answer`, `serve`, `stop_serving` | layer | a handler and a `finish` run as tasks |
 | `SharedLoop` | layer | it exists so that several libraries share one loop, which needs records |
-| the name of each callback in the heartbeat, `Turn`, `turn_name`, `turn_group` | the layer writes them, and the line stays the core's | only the layer calls a callback |
+| the name of each callback in the heartbeat, `Turn`, `turn_name`, `turn_group`, and a new `poller_name` | the layer writes them, and the line stays the core's | only the layer calls a callback |
 | the check that no tick runs inside a tick | layer | only a callback can tick inside a tick |
 
 Two pieces sit close to the line:
@@ -171,13 +175,37 @@ Two pieces sit close to the line:
   ring, which is the core's. So the core keeps the tags, the slow path of the drain and the kept
   slots, and hands each call and return to the layer.
 
+### What the core keeps from the files that move
+
+Step 3 moves `dispatch/`, `scheduling/`, most of `call/`, `tasks.zig` and `shared_loop.zig`. Some
+core files name types of those files today. The core imports nothing new, so each such name
+leaves the core file, or its type stays in the core. This list was read from the imports at
+`e05a549`:
+
+| core file today | what it names | after the split |
+|---|---|---|
+| `operation.zig` | `Completion`, for `Operation.completion` | nothing. The builder moves to the layer as `Completion.mark`, and `Operation` keeps the bit |
+| `tables/tables.zig` | `Dispatch`, `Groups`, `NamedTable` | nothing. `Tables` keeps `outstanding`, the stored limit and the hook |
+| `tables/tables_deadline.zig` | `WaitLimit`; `Completion` in its tests | `WaitLimit` from `src/core/wait_limit.zig`. The tests set the bit and `user_data` by hand |
+| `tick_error.zig` | `Dispatch`, for `callbacks_outstanding` | a `*u32`, the `outstanding` word |
+| `inbox.zig` | `call_take`, `Dispatch`, `Groups` | the hook. `take_reserved` keeps its switch on the tag in the core: a wake sets the drain's bit, and a call or a return goes to the hook. `take_call`, `take_return`, `answer`, `schedule_link` and `verdict` move to the layer, which runs them inside its hook |
+| `stall.zig` | `Poller`, `SchedulingGroup`, `pollers_max`; a poller and `WaitLimit` in its tests | `name_of_one` reads the heartbeat's new `poller_name`, and not the pollers' table. The layer writes that field at each `add_poller` and `remove_poller`: the name of its first poller, or null. The field sits in the padding of the 128 B line, so the size does not change. `SchedulingGroup` comes from the core's new `scheduling_group.zig` |
+| `statistics.zig` | `SchedulingGroup` | the same id, from the core |
+| `stall_watch.zig` | `Poller`, in its tests | the tests that need a poller move to the layer |
+| `offload.zig`, `offload_in_flight.zig`, `offload_in_flight_close.zig`, `tick_share.zig`, `tables/tables_finish.zig` | `Groups` or `Completion`, in their test fixtures | the fixtures lose the field, or set the bit by hand |
+| `core.zig` | `call`, `dispatch`, `scheduling`, `shared_loop`, `tasks`, and their tests | `wait_limit` and `scheduling_group` only |
+
+`scheduling_groups_max` stays in the core's `constants.zig`, because `stall.zig` asserts a group
+id against it. The layer reads it from the core.
+
 ### The core's surface after the split
 
 `core/surface.zig` loses the 16 names of the layer and gains `wait_until`: 28 names. The public
 `rotor.Loop` carries those 28 and 6 error sets. `DrainError` loses `TasksStillQueued`.
 
 ```zig
-// rotor.Loop, and each backend's Loop. Program only (class B owner check).
+// rotor.Loop, and each backend's Loop. The program only (class B owner check). rotor.Reactor and
+// SharedLoop refuse it at compile time.
 /// Bounds the wait of each tick that follows at `limit`, until the next call. `.none`, the value
 /// at init, bounds nothing. `.now` makes each tick wait 0 ns. The tick compares the limit with its
 /// own stamp after R1, as it compares the nearest timer (decision 29, item 2).
@@ -186,7 +214,19 @@ pub fn wait_until(loop: *Loop, limit: WaitLimit) void;
 
 It is one store. `Tables.wait_bound` reads the stored limit already, as `Dispatch.until_ns`
 today. So it adds no instruction to a tick. It moves from `Dispatch` to `Tables`, 8 B. The core
-never writes it, so a plain program's limit stays until the program writes it again.
+writes it only at init, with `.none`, so a plain program's limit stays until the program writes
+it again.
+
+Each kind of loop has one writer of the stored limit:
+
+| kind of loop | writer | how |
+|---|---|---|
+| plain `rotor.Loop` | the program | `wait_until`, with the owner check |
+| `rotor.Reactor` | the layer, for its pollers | the port's `stored_limit()`, a pointer, at the places where it writes `Dispatch.until_ns` today. The program cannot call `wait_until`, because `Reactor` and `SharedLoop` refuse it at compile time |
+
+The layer does not call `wait_until`, so a dispatched tick makes no owner check that it does not
+make today. A program can reach the loop inside a reactor through a field, as "The port" says of
+the port's names. That is not API.
 
 `wait_limit` on a plain loop answers `.now` for the core's reasons: operations that wait to be
 submitted, results that wait to be handed over, messages in a ring, an offload result, and a kept
@@ -194,7 +234,7 @@ error. Otherwise it answers the least of the nearest timer and the stored limit,
 
 ### The port
 
-The layer needs eight things from a backend's `Loop` that a plain caller must not reach. Each
+The layer needs nine things from a backend's `Loop` that a plain caller must not reach. Each
 backend declares them, and `core/surface.zig` lists them as `port_declarations`, checked at
 comptime as the surface is. The public `rotor.Loop` does not declare them. Decision 1's amendment
 of 2026-11-07, item 6, keeps the heartbeat's writer out of the public API, and the port holds it.
@@ -204,6 +244,7 @@ of 2026-11-07, item 6, keeps the heartbeat's writer out of the public API, and t
 | `tick_backend(events, wait_ns)` | the backend's tick, with no check of a kept error | the private function of each backend with this name |
 | `take_kept_error()` | returns the kept error once, and lowers `outstanding` | `kept_error.take` |
 | `outstanding()` | a pointer to the word that takes a tick off the fast path | `Dispatch.callbacks_outstanding` |
+| `stored_limit()` | a pointer to the stored limit, which only the layer writes on a reactor | `Dispatch.until_ns` |
 | `heartbeat_line()` | the heartbeat's writer, so the layer names each callback | `tables.heartbeat` |
 | `attach_reserved(hook)` | the function and the context that the drain hands each wake, call and return. It also marks the loop in its registry as one that takes calls | `call_take.take_reserved` and `Dispatch.note_wake`, called directly |
 | `push_reserved(target, message, calls_out)` | a call or a return into a ring's kept slots | inside `core.call.loop.Calls` |
@@ -225,7 +266,17 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     if (loop.tables.outstanding != 0) try loop.take_kept_error();
     return loop.tick_backend(events, wait_ns);
 }
+
+/// Returns the kept error once, and lowers `outstanding`. It is marked cold so that the compiler
+/// keeps it out of `tick`, as `tick_dispatched` is marked today (decision 7, rows H1 to H3).
+fn take_kept_error(loop: *Loop) TickError!void {
+    @branchHint(.cold);
+    try loop.kept_error.take(&loop.tables.outstanding);
+}
 ```
+
+The hint is the same use of the same technique, in the same three files, on a different
+function. Step 3 measures it again before H1 to H3 change (decision 7 below).
 
 The layer's tick keeps today's shape, on the layer's state and the port:
 
@@ -238,7 +289,7 @@ pub fn tick(reactor: *Reactor, events: []Event, wait_ns: u64) TickError!u32 {
 ```
 
 `tick_dispatched` is today's function: `take_kept_error`, `begin`, `tick_backend`, `end`. The
-layer writes the stored limit through the loop's `wait_until` at each place where it writes
+layer writes the stored limit through `stored_limit()` at each place where it writes
 `Dispatch.until_ns` today, and at no other place. The rules of today hold:
 
 - `begin` stores the pollers' least limit.
@@ -260,9 +311,16 @@ took a call does not block, and the next tick takes the dispatched path, because
 not 0. Its `end` runs the task.
 
 A loop with no hook drops a wake, as a plain loop does today. It halts on a call or a return
-(class B). `call` refuses a target that attached no hook, by item 12 below, so a call from a
-reactor to a plain loop returns an error on the caller's thread. Only a forged message then
-reaches the halt.
+(class B). Three cases reach a reserved message:
+
+| case | at v0.10.0 | after |
+|---|---|---|
+| a reactor calls the id of a plain loop | no plain loop exists: every loop takes calls, and a loop that never served the service halts | `call` returns `LoopNotFound` on the caller's thread, by open question 12. The plain loop gets no message and does not halt |
+| a reactor calls a reactor that never served the service | the target halts at `assert(station.state != .unused)` (class B) | no change. The same check runs in the layer's hook, on the target's thread. Decision 32 chose this halt, and this record keeps it |
+| a message that no `call` sent, or a call that passed the check while its target ended and a plain loop took its id | the target halts on the link's checks | a plain loop halts on the missing hook. The second half is the window of decision 32's W4, which that record leaves open |
+
+So the split adds no halt that a correct program reaches. The halt on a missing hook catches only
+a forged message, or the W4 window.
 
 ### The public module
 
@@ -271,8 +329,8 @@ reaches the halt.
 | `rotor.Loop` | 43 surface names, 10 error sets | 28 surface names, 6 error sets |
 | `rotor.Reactor` | none | the host's reactor: a tagged union of `reactor.Reactor(uring.Loop)` and `reactor.Reactor(epoll.Loop)` on Linux, and `reactor.Reactor(kqueue.Loop)` on Darwin, as `rotor.Loop` wraps the backends |
 | `rotor.SharedLoop` | the view of `rotor.Loop` | the view of `rotor.Reactor`, with the same 21 library calls, and 9 refused calls: today's 8 and `wait_until` |
-| `rotor.Task`, `rotor.Poller`, `rotor.SchedulingGroup`, `rotor.NamedSchedulingGroup`, `rotor.SchedulingGroupName`, `rotor.named_scheduling_group`, `rotor.Service`, `rotor.CallRecord`, `rotor.Answer`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError`, `rotor.CallLink`, `rotor.CallStation` | from `core` | the same names, from `reactor` |
-| `rotor.Completion`, `rotor.WaitLimit`, `rotor.BufferGroup`, `rotor.Heartbeat` | from `core` | no change |
+| `rotor.Completion`, `rotor.Task`, `rotor.Poller`, `rotor.NamedSchedulingGroup`, `rotor.SchedulingGroupName`, `rotor.named_scheduling_group`, `rotor.Service`, `rotor.CallRecord`, `rotor.Answer`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError`, `rotor.CallLink`, `rotor.CallStation` | from `core` | the same names, from `reactor`. `Completion` gains `mark` in place of `Operation.completion` |
+| `rotor.WaitLimit`, `rotor.SchedulingGroup`, `rotor.BufferGroup`, `rotor.Heartbeat` | from `core` | no change |
 | `rotor.reactor` | none | the generic `Reactor(Loop)` and `port_declarations`, for a twin (open question 6) |
 
 `rotor.Reactor` declares the 43 names of today's `rotor.Loop`. Each name does what it does today.
@@ -314,28 +372,29 @@ binary holds no code of the layer. Zig compiles only what a program names.
 
 ### The module graph
 
-This is an ask-before item: two new edges.
+This is an ask-before item: three new edges, `reactor` to `core`, `rotor` to `reactor`, and
+`conformance` to `reactor`.
 
-| module | imports today | imports after |
-|---|---|---|
-| `core` | `assertion_options` | no change |
-| `linux_shared` | `core` | no change |
-| `uring`, `epoll` | `core`, `linux_shared` | no change |
-| `kqueue` | `core` | no change |
-| `reactor` | none: it does not exist | `core` |
-| `rotor` | `core`, `uring`, `epoll`, `kqueue` | the same, and `reactor` |
-| `conformance` | `core`, `backend` | the same, and `reactor` |
+| module | imports today | imports after | new edge |
+|---|---|---|---|
+| `core` | `assertion_options` | no change | none |
+| `linux_shared` | `core` | no change | none |
+| `uring`, `epoll` | `core`, `linux_shared` | no change | none |
+| `kqueue` | `core` | no change | none |
+| `reactor` | none: it does not exist | `core` | `reactor` to `core` |
+| `rotor` | `core`, `uring`, `epoll`, `kqueue` | the same, and `reactor` | `rotor` to `reactor` |
+| `conformance` | `core`, `backend` | the same, and `reactor` | `conformance` to `reactor` |
 
 No backend imports `reactor`, and `core` imports nothing new. So the build refuses a backend
 that reaches into the layer, and refuses a core that names it. `bench/` stays outside the graph,
 and `build/bench.zig` gives `bench/work/work.zig` the `reactor` import for the layer's rows.
 
 `src/reactor/` owns its `constants.zig`: `pollers_max`, `tasks_queued_max`, `tasks_per_tick_max`,
-`scheduling_groups_max`, `scheduling_shares_max`, `scheduling_shares_default`,
-`scheduling_unit_credit`, `task_charge_max`, `visits_per_run_max`, `services_max`, `call_tasks_max`
-and `task_queue_length_max` move there with their asserts. `calls_per_pair_max`,
-`mailbox_posts_max`, `message_tag_call` and `message_tag_return` stay in the core, because the
-ring uses them. No value changes.
+`scheduling_shares_max`, `scheduling_shares_default`, `scheduling_unit_credit`, `task_charge_max`,
+`visits_per_run_max`, `services_max`, `call_tasks_max` and `task_queue_length_max` move there with
+their asserts. `calls_per_pair_max`, `mailbox_posts_max`, `message_tag_call` and
+`message_tag_return` stay in the core, because the ring uses them. `scheduling_groups_max` stays
+in the core, because the stall line checks a group id against it. No value changes.
 
 ### `SharedLoop` and the conformance suite
 
@@ -397,14 +456,15 @@ Rule 7 holds the layer to v0.10.0. These are the changes against it, as priors:
 | path | change | source |
 |---|---|---|
 | each tick | the same two compares, on the layer's `poller_count` and the core's `outstanding` | the code above |
-| each dispatched tick | the same calls. The layer writes the stored limit at the same places as today, one store each | the code above |
+| each dispatched tick | the same calls. The layer writes the stored limit through `stored_limit()` at the same places as today, one store each, with no owner check | the code above |
 | each raise and lower of `outstanding` | the same add. `outstanding()` inlines to a fixed offset from the reactor | the port above |
 | each tick on io_uring | not known. `Tables` changes again, so the place of `wakes` is not known | decision 30 |
 | each operation with a record at submit | the layer counts the records of the taken operations after `submit`: about 2 to 3 instructions more for each operation | arithmetic, a prior |
 | each call or return in the drain | one indirect call through the hook and its two arguments, about 3 instructions and C5. The signal to the tick: one OR on the slow path | `docs/costs.md` C5, and arithmetic |
-| each `call` | a load and a branch on the registry's mark of the target, about 2 instructions (item 12) | arithmetic, a prior |
+| each `call` | a load and a branch on the registry's mark of the target, about 2 instructions (open question 12) | arithmetic, a prior |
 | each tick that would block | the read of the task queues goes: about -4 | arithmetic, a prior |
 | each callback | the same store of its name | decision 28 |
+| each `add_poller` and `remove_poller` | one store of the first poller's name in the heartbeat's `poller_name`. No tick makes it | "What the core keeps from the files that move" |
 | memory | the same bytes, in the reactor and not in `Tables` | the sizes above |
 
 Two rows can rise:
@@ -423,40 +483,57 @@ questions 8, 11 and 12. The other layer rows, `task`, `tasks-64`, `poller`, `tas
 The macOS counts hold the kernel's instructions too, and they move from run to run.
 `bench/baseline/work.txt` records the spread on `mac`: `record` and `poller` agreed within 3
 instructions, `poller` counted 562, 562 and 559, and `tasks-groups-4` counted 12943, 12942 and
-12978. A rise of 3 to 10 is inside that spread. So rule 7 uses two methods:
+12978. A rise of 3 to 10 is inside that spread. So rule 7 uses three methods:
 
 1. **On arm64 Linux, cachegrind decides.** It counts user instructions, the same on every run. A
-   layer row counts at or below its count at `9339858`, with no tolerance. This is the method
-   that passes or fails a step.
-2. **On `mac`, a row is a check against a large rise.** Each step and `9339858` are counted five
+   layer row counts at or below its count at `9339858`, with no tolerance. The count runs in an
+   arm64 container on `mac`, as the ledger's rows H2 and H3 were counted. This method passes or
+   fails a step.
+2. **On x86-64 Linux, cachegrind decides too, before the step lands.** No x86-64 machine is named,
+   so the count comes from CI. The step goes up as a pull request, and CI's x86-64 job counts the
+   work gate on it. A run of CI started by hand on the tag `v0.10.0` gives the counts at
+   `9339858`. The programs are built for the baseline processor, and cachegrind counts user
+   instructions, so two runs on different runners compare. The two runs must name the same
+   Valgrind version. If they do not, both trees run again in one pair of runs on the same day. A
+   layer row counts at or below its count at `9339858`, with no tolerance. The step lands on
+   `main` only after this check passes.
+3. **On `mac`, a row is a check against a large rise.** Each step and `9339858` are counted five
    times each, in turns, on the same day. A step fails when its median is above the highest of
    the five counts at `9339858`.
 
-The x86-64 rows come from CI after the push, and rule 7 does not use them, because CI counts the
-two trees in different runs.
-
 ## Where it meets the records
 
-- **Decision 1.** The graph gains `reactor` and two edges. The public module gains `Reactor`. The
-  batch stays the core's shape. An operation still names a record only when its caller asks,
-  and only the layer calls the record.
+- **Decision 1.** The graph gains `reactor` and three edges: `reactor` to `core`, `rotor` to
+  `reactor`, and `conformance` to `reactor`. The public module gains `Reactor`. The batch stays the
+  core's shape. An operation still names a record only when its caller asks, now through the
+  layer's `Completion.mark`, and only the layer calls the record.
 - **Decision 2.** The rows "tasks", "cross-core calls", "scheduling groups" and "shared loop" stay
   in version one, and each row names the layer. The row "stalls" stays the core's.
 - **Decision 7.** `tick_dispatched` moves from the three backend files to `src/reactor/reactor.zig`,
-  with its cold hint. The list gains that file, and ledger rows H1 to H3 are replaced by one row.
-  This is an ask-before item. H4 to H8 stay where they are.
+  with its cold hint. The list gains that file, with a new ledger row for that hint. The plain
+  tick's branch to `take_kept_error` takes a cold hint in the same three backend files, so those
+  files stay on the list. H1 to H3 then name `take_kept_error`, with new numbers. Step 3
+  measures both hints, by the method of H1 to H3: the work gate's rows with the hint and without
+  it, on `mac` and in an arm64 container. A hint that shows no gain is not kept, and its row is
+  struck. This is an ask-before item. H4 to H8 stay where they are.
 - **Decision 10.** A twin carries the 28 names and the port, and gets the layer from
   `rotor.reactor.Reactor(Twin)`. Decision 24, proposed, gains the same.
 - **Decision 23.** A host that sleeps reads `wait_limit` on the type it ticks: the loop or the
   reactor.
 - **Decisions 26 to 30, and 32.** The code moves, and the behaviour does not. Each record gains
-  an amendment that names the new files. Decision 32 also gains the refusal of item 12.
+  an amendment that names the new files. Decision 26 also gains `Completion.mark` in place of
+  `Operation.completion`. Decision 32 also gains the refusal of open question 12.
 - **Decision 29, item 2,** rejected `bound_wait(at_ns)` beside the poller's `bool`, because a
   poller would have two ways to say "do not block". This record keeps one way on each kind of
   loop. A plain loop has `wait_until` and no poller. A reactor has the poller's `WaitLimit`, and
-  `wait_until` does not compile on a reactor or on `SharedLoop`. The layer calls the loop's
-  `wait_until` inside the reactor, as it writes `Dispatch.until_ns` today. So this record does
+  `wait_until` does not compile on a reactor or on `SharedLoop`. The layer writes the stored limit
+  through the port's `stored_limit()`, as it writes `Dispatch.until_ns` today. So this record does
   not reverse decision 29.
+- **Decision 31.** Its scheduler moves from each backend's flush to the layer, as a holder in
+  front of the core's `submit` (open question 9). Its capacity and share rules do not change.
+  These parts of its text change: the amendments of decisions 11, 12 and 20 at the flush, its
+  options on `Loop.Options` of every backend, and its note on the flush files of decision 7.
+  Nothing of it is built, so no code moves.
 - **Decision 17,** proposed, names a layer that owns the loop and holds TLS and DNS. The `reactor`
   layer is a different thing: it holds no protocol.
 - **Non-negotiable 2.** The layer reads no clock and decides nothing from a pointer value, as
@@ -465,7 +542,7 @@ two trees in different runs.
 ## Alternatives it beat
 
 1. **Leave it as it is.** A plain loop still pays the costs above, and the ruling is not met.
-   The core keeps up to 33 percent of its lines for the layer, and a twin keeps the 16 names.
+   The core keeps about 34 percent of its lines for the layer, and a twin keeps the 16 names.
 2. **A comptime switch in `Loop`.** Each backend's `Loop` takes `comptime layer: bool`, and each
    path tests it. Neither kind pays a run-time cost, and no port is needed. But the layer's code
    stays in `core` and in each backend, so the module graph does not show the line. Each backend
@@ -486,7 +563,7 @@ two trees in different runs.
    its form across releases of rotor for each version of the layer.
 6. **The proposal: a wrapper with a port.** One copy of the layer's code serves each backend and
    a twin. The graph shows the line. A plain loop holds no state of the layer, and the layer does
-   today's work in each tick. Its costs are the port's eight names, an indirect call on each
+   today's work in each tick. Its costs are the port's nine names, an indirect call on each
    reserved message, a count at submit, and a check of the target at each `call`.
 
 ## colibri, cocuyo and stompy
@@ -528,43 +605,52 @@ The migration for a program on v0.10.0 that uses the layer:
 3. Keep each library as it is. It holds the same `*rotor.SharedLoop`, with the same calls.
 4. Replace `rotor.Loop.AddPollerError`, `ScheduleError`, `ReserveSchedulingGroupError` and
    `CallError` with the `rotor.Reactor` names of the same sets.
+5. Replace each `operation.completion(&record)` with `rotor.Completion.mark(&record, operation)`.
 
 A program that names a layer call on a `rotor.Loop` fails to compile, and the compiler names the
-call. The release is v0.11.0. rotor keeps no forwarder on `rotor.Loop`, because a forwarder keeps
+call. So does a program that calls `Operation.completion`. A program that sets the `dispatched`
+bit by hand and submits the operation to a plain `rotor.Loop` compiles. That loop calls no record:
+it hands each such event to the caller of `tick`, with the bit set (open question 5). The release is v0.11.0. rotor keeps no forwarder on `rotor.Loop`, because a forwarder keeps
 the layer's state in the plain loop (open question 2).
 
 ## Build order
 
 Each step keeps `zig build test` green, and passes the Linux gate and the race gate before it
 lands. Each step that changes a tick also passes the stress gate. Each step counts every row of
-the work gate by the methods of "How a layer row is compared", at the step and at `9339858`, on
-the same day.
+the work gate at the step and at `9339858`, by the three methods of "How a layer row is
+compared". Those methods say when each count is taken. On `mac` both trees are counted on the
+same day. A step lands on `main` only after its x86-64 counts pass, from CI on its pull request.
 
-1. **The port and `wait_until`, with no move.** Each backend declares the eight port names over
-   today's state, and `core/surface.zig` checks them. `wait_until` writes `Dispatch.until_ns`. A
-   conformance scenario holds `wait_until` on each backend. Gate: every row within 2 percent of
-   its line, and the layer's rows at or below `9339858`.
+1. **The port and `wait_until`, with no move.** Each backend declares the nine port names over
+   today's state, and `core/surface.zig` checks them. Until step 3, the program's limit and the
+   pollers' limit share one word, `Dispatch.until_ns`. So step 1 declares `wait_until` on each
+   backend's `Loop` only, and not on `rotor.Loop`. Its conformance scenario adds no poller.
+   `rotor.Loop` gains `wait_until` at step 3, when the layer's writes leave the plain loop. Gate:
+   every row within 2 percent of its line, and the layer's rows at or below `9339858`.
 2. **The module `reactor`, as a forwarder.** `reactor.Reactor(Loop)` wraps a backend loop and
    forwards each layer call to today's backend call, inline. The public module exports
    `rotor.Reactor`, and `rotor.Loop` keeps its names. The layer's conformance scenarios, the
-   layer's rows of `bench/work/work.zig` and `examples/stall_watch.zig` move to the reactor. Gate:
-   the layer's rows at or below `9339858`. A forwarder adds no instruction, so a rise here is a
-   fault of the step.
-3. **The move.** `dispatch/`, `tasks.zig`, `scheduling/`, `call/` (except the ring's part and
-   `call_take.zig`'s slow path) and `shared_loop.zig` move from `src/core/` to `src/reactor/`, with
-   their tests. The drain's wait for tasks and calls moves from `core/shutdown.zig` to
-   `src/reactor/reactor_shutdown.zig`. `Tables` loses `Dispatch` and `groups`, and gains
+   layer's rows of `bench/work/work.zig` and `examples/stall_watch.zig` move to the reactor. The
+   wiring of the gates changes as the table below says. Gate: the layer's rows at or below
+   `9339858`. A forwarder adds no instruction, so a rise here is a fault of the step.
+3. **The move.** `dispatch/`, `tasks.zig`, `scheduling/`, `call/` and `shared_loop.zig` move from
+   `src/core/` to `src/reactor/`, with their tests. The core keeps what "What the core keeps from
+   the files that move" lists: `WaitLimit` in `src/core/wait_limit.zig`, the id `SchedulingGroup`
+   in `src/core/scheduling_group.zig`, the switch of `take_reserved` on the tag, and the
+   heartbeat's `poller_name`. The drain's wait for tasks and calls moves from `core/shutdown.zig`
+   to `src/reactor/reactor_shutdown.zig`. `Tables` loses `Dispatch` and `groups`, and gains
    `outstanding`, the stored limit and the hook. The backends lose `tick_dispatched`, the layer's
-   calls and `named_groups`. The hook replaces the direct calls in the drain. `call` gains the
-   check of item 12. `rotor.Loop` loses the 16 names. The halt scenarios of the layer move to
-   `tools/halt/reactor_*` and name the reactor. The programs of `tools/compile_fail/` stay there.
-   Each one that makes a loop makes a `rotor.Reactor` instead, and `poller.zig` reaches the view
-   through `reactor.shared()`. One step, because `callbacks_outstanding` joins the records, the
-   tasks and the calls (decision 27, item 1), so none of them moves alone. Gate: the plain rows at
-   or below their lines, and a lower line where the gate asks; the layer's rows at or below
-   `9339858`; the cost gates on each backend; `zig build tla`, whose heartbeat and call models
-   keep their order of stores; `zig build proofs`, with the new path of `scheduling_run.zig` in
-   `proofs/README.md`.
+   calls and `named_groups`, and gain `take_kept_error` with its cold hint. The hook replaces the
+   direct calls in the drain. `call` gains the check of open question 12. `rotor.Loop` loses the
+   16 names and gains `wait_until`. The halt scenarios of the layer move to `tools/halt/reactor_*`
+   and name the reactor. The programs of `tools/compile_fail/` stay there. Each one that makes a
+   loop makes a `rotor.Reactor` instead, and `poller.zig` reaches the view through
+   `reactor.shared()`. One step, because `callbacks_outstanding` joins the records, the tasks and
+   the calls (decision 27, item 1), so none of them moves alone. Gate: the plain rows at or below
+   their lines, and a lower line where the gate asks; the layer's rows at or below `9339858`; the
+   two cold hints measured with and without, for the ledger; the cost gates on each backend;
+   `zig build tla`, whose heartbeat and call models keep their order of stores;
+   `zig build proofs`, with the new path of `scheduling_run.zig` in `proofs/README.md`.
 4. **The records and the documents.** Decision 7 and the ledger, the amendments of each record
    in "Where it meets the records", `docs/using.md` in two parts, "A loop" and "A reactor",
    CLAUDE.md's Layout, and the README. Gate: `zig build test`, whose README check holds each Zig
@@ -575,6 +661,19 @@ the same day.
    library's deadline and the program's own with `wait_until`. Gate: `zig build test` runs it on
    each backend, and the Linux gate on io_uring and epoll.
 6. **The release.** `build.zig.zon` takes 0.11.0, and the tag follows.
+
+The wiring of the gates changes at steps 2 and 3. A gate that a step does not rewire stops at the
+step's first build, so each step changes these files in the same commit:
+
+| file | step 2 | step 3 |
+|---|---|---|
+| `build/modules.zig` | creates `reactor`, which imports `core`, in each graph it builds, the shuffled graph of `build/shuffle.zig` included. `rotor` and the three conformance modules gain the `reactor` import | no change |
+| `build.zig` | `unit_test_modules`, which makes each `test-<module>` step, gains `reactor` | no change |
+| `build/linux.zig` | its list of test executables for the Linux gate gains `reactor`, so the manifest that `tools/linux_test.sh` reads names it | no change |
+| `build/race.zig` | no change. Its comment says that `core` and `reactor` start no thread | the comment is checked again: a test of the layer that starts a thread adds `reactor` to the race manifest |
+| `build/halt.zig` | no change | the list of scenario files gains `reactor_scenarios`, which takes the `reactor` import. The Linux scenarios gain the import where a scenario names the layer |
+| `build/bench_work.zig` | `bench/work/work.zig` takes the `reactor` import for the layer's rows | no change |
+| `build/compile_fail.zig` | no change | each message that spells a moved type changes: `dispatch.dispatch_callbacks.WaitLimit` in `poller`, `scheduling.scheduling.SchedulingGroup` in `scheduling_group_literal` and `call_scheduling_group`, `scheduling.scheduling.NamedSchedulingGroup` in `call_scheduling_group`, `call.call.Answer(u64)` in `call_handler_void` and `call_now_no_reply`, `call.call.CallResult` in `call_finish_type`, and `shared_loop.SharedLoop(rotor_loop.Loop)` in `call_from_remote`. The two cases for `wait_until` are new |
 
 The mutations of step 3, each against the narrowest target:
 
@@ -590,13 +689,20 @@ The mutations of step 3, each against the narrowest target:
   takes a call, then blocks;
 - the layer's drain that does not wait for tasks: `zig build test-reactor`, the tests of
   `reactor_shutdown.zig`;
-- the check of item 12 removed: the call scenario to a plain loop;
-- the halt on a call with no hook removed: its halt scenario.
+- the check of open question 12 removed: the call scenario to a plain loop;
+- the halt on a call with no hook removed: its halt scenario;
+- the layer's store of `poller_name` removed: the scenario of `conformance_stall` that counts a
+  stall of one poller and reads its name;
+- a `Reactor.wait_until` that forwards to the loop in place of its compile error: the
+  compile-fail case of `rotor.Reactor`, which then compiles and fails the step.
 
 ## How it would be checked
 
-- `core/surface.zig` lists 28 names, and `port_declarations` lists eight. Each backend checks both
+- `core/surface.zig` lists 28 names, and `port_declarations` lists nine. Each backend checks both
   at comptime, on every host.
+- `zig build test` builds `reactor` on every host, and `zig build test-reactor` runs its tests
+  alone. `zig build test-linux` builds its test executable, and `tools/linux_test.sh` runs it.
+  The compile-fail cases match the new type names of the table in "Build order".
 - The test of the public module holds `rotor.Loop` to the 28 names and 6 error sets, and
   `rotor.Reactor` to its own list.
 - A comptime assert holds the new size of `Tables`, and another holds `Reactor`'s.
@@ -611,8 +717,13 @@ The mutations of step 3, each against the narrowest target:
 - A conformance scenario on each backend: a reactor calls a plain loop of the same registry, and
   `call` returns `LoopNotFound`. The plain loop does not halt.
 - A halt scenario: a forged call message that reaches a loop with no hook.
+- A halt scenario, moved from `core_scenarios_call_take.zig`: a call that reaches a reactor that
+  never served the service halts in the layer's hook, as at v0.10.0.
 - Every scenario of the layer passes on `reactor.Reactor(backend.Loop)`, unchanged.
-- The work gate, as "How a layer row is compared" and "Build order" say.
+- The work gate, as "How a layer row is compared" and "Build order" say: arm64 and x86-64 Linux by
+  cachegrind before a step lands, and `mac` by five counts of each tree.
+- The ledger: the cold hint of `take_kept_error` in each backend file, and of `tick_dispatched` in
+  `src/reactor/reactor.zig`, each counted with and without.
 
 ## Open questions
 
@@ -625,30 +736,45 @@ The mutations of step 3, each against the narrowest target:
    forwarder would spare that, and keep the layer's state in every plain loop.
 3. **Does the stall count stay in the core?** Proposed: yes, with the stamp, the turn check and the
    watch. The two counts of the turn, which the stamp zeroes, are the layer's data on the core's
-   line. A later change can move that store into the layer's tick, if a count shows a gain.
+   line. So are `turn_group`, the new `poller_name`, and the id `SchedulingGroup` that a stall
+   reports. A later change can move the store of the counts into the layer's tick, if a count
+   shows a gain.
 4. **Does a plain loop keep the 32 slots of each ring for returns?** Proposed: yes, for now. A
    registry option for the reserve adds a load to each post, and a ring shared by a reactor and a
    plain loop needs one answer. The cost is a post that sees 224 slots, where it saw 256 before
    decision 32.
-5. **Do `Completion` and `Operation.completion` stay in the core?** Proposed: yes. The bit is the
-   core's, and the type is 8 B of data. On a plain loop the event of such an operation reaches
-   the caller of `tick`, with `dispatched` set. A builder in the layer makes that misuse fail to
-   compile, and breaks a name that colibri's draft uses. This record keeps the name.
+5. **Is the `dispatched` bit in the core inside what the ruling allows?** Ruling item 2 puts
+   completion records with callbacks in the layer. So this record moves `Completion`,
+   `Completion.Call` and the builder, which becomes `Completion.mark`. The core keeps one bit in
+   `Operation`, `Slot` and `Event`, which it copies and never reads. The bit holds no callback and
+   no address, but it is the layer's mark in each operation of a plain loop. It costs the plain
+   loop the bit's store at submit and about 2 instructions for each event. Proposed: the bit stays.
+   Without it, the layer must find its records in a table keyed by handle. That is a lookup for
+   each event of a reactor. A plain loop that gets an operation with
+   the bit set calls nothing, and hands the event to the caller of `tick`. colibri's draft names
+   `Operation.completion`, and its adapter changes that one call. This conflict with the ruling's
+   words is for Camilo to rule on.
 6. **Does the public module export the generic `Reactor(Loop)` for a twin?** Proposed: yes, as
    `rotor.reactor.Reactor` beside `port_declarations`. A twin of decision 10 then gets the layer
    without a copy, and decision 24's search can drive a reactor. The port then becomes API for a
    twin's author, with the same rules as the surface: a change to it is a breaking change, named
    in the release. A program does not reach it through `rotor.Loop`'s declarations.
-7. **Does decision 7's list gain `src/reactor/reactor.zig`?** Proposed: yes, for the cold hint of
-   `tick_dispatched` alone, with one ledger row. H1 to H3 retire, because their files lose that
-   function.
+7. **How do decision 7's list and the ledger change?** Proposed: `src/reactor/reactor.zig` joins
+   the list, for the cold hint of `tick_dispatched` alone, with a new row. The three backend files
+   stay on the list for a cold hint on the plain tick's branch to `take_kept_error`, and H1 to H3
+   name that function. No row changes on arithmetic alone: step 3 counts each hint with and
+   without it, as d1657ce counted H1 to H3. A hint that shows no gain is removed, and its row is
+   struck.
 8. **What if the hook makes `call` count more than at v0.10.0?** Proposed: the step then gives
    each backend's `Loop` a comptime parameter, the type of its hook, `void` for a plain loop. The
    call is then direct, at the cost of a second instance of each backend in a program that runs a
    plain loop beside a reactor. Camilo rules with the counts of both forms.
-9. **Where does decision 31's disk scheduler go?** Proposed: in the layer, as a holder in front of
-   the core's `submit`, so a plain loop pays nothing for it. Decision 31 put it in each backend's
-   flush. Its capacity and share rules do not change. Camilo rules when decision 31 is built.
+9. **Does decision 31's disk scheduler move into the layer?** Proposed: yes, as a holder in front
+   of the core's `submit`, so a plain loop pays nothing for it. Decision 31 is accepted, and put it
+   in each backend's flush, so this record amends it. Its capacity and share rules do not change.
+   The scheduler calls no user code, so the rule of "The line" alone would keep it in the core.
+   The reason to move it is the cost to a plain loop, about 2 instructions in each tick by
+   decision 31's own arithmetic. Camilo rules on the move before decision 31 is built.
 10. **Does v0.11.0 carry this record alone?** Proposed: yes. Each consumer then moves once for
     the split, and a later release carries new behaviour.
 11. **What if the layer's count at submit makes `record` count more than at v0.10.0?** Proposed:
@@ -661,14 +787,22 @@ The mutations of step 3, each against the narrowest target:
     does not change. The cost is a load and a branch at each `call`. The other answer is today's
     halt on the target's thread, which a caller's mistake on another thread reaches. A refused
     operation returns an error value, by CLAUDE.md's conventions, so this record does not propose
-    it. A target that served and stopped answers `target_stopped`, as today.
+    it. A target that served and stopped answers `target_stopped`, as today. The mark covers only
+    the kind of loop. A call to a reactor that never served the service still halts on the
+    target, as decision 32 chose. A call in decision 32's W4 window, where the target ends and a
+    plain loop takes its id, halts the plain loop; W4 decides that window.
 
 ## Ask before
 
-- Two new edges of the module graph: `rotor` to `reactor`, and `conformance` to `reactor`.
-- The layout of a hot structure: `Tables` loses `Dispatch` and `groups`, and gains `outstanding`,
-  the stored limit and the hook. A loop's memory loses `Groups`.
-- A file on decision 7's list: `src/reactor/reactor.zig` (open question 7).
+- Three new edges of the module graph: `reactor` to `core`, `rotor` to `reactor`, and
+  `conformance` to `reactor`.
+- The layout of two hot structures: `Tables` loses `Dispatch` and `groups`, and gains
+  `outstanding`, the stored limit and the hook. A loop's memory loses `Groups`. The heartbeat line
+  gains `poller_name` in its padding, and stays 128 B.
+- A file on decision 7's list: `src/reactor/reactor.zig`. The three backend files keep their place
+  for a different function, `take_kept_error` (open question 7).
+- An accepted record changes: decision 31's scheduler moves into the layer (open question 9).
+- The ruling's words: the `dispatched` bit of the layer stays in the core (open question 5).
 - The named limits of the layer move to `src/reactor/constants.zig`. No value changes.
 - The surface of decision 1: 16 names leave `rotor.Loop`, and `wait_until` joins it.
 - `SharedLoop`'s refused calls gain `wait_until`, which changes the list of decision 28.
