@@ -1,7 +1,7 @@
 # 33. A core for the loop, and an optional layer for tasks and callbacks
 
-Status: **proposed** on 2026-11-08, and revised the same day after four reviews. Nothing is
-built, and nothing is built before Camilo accepts this record. Every number here is a row of
+Status: **proposed** on 2026-11-08, and revised the same day after four reviews. Camilo ruled
+open questions 5 and 9 the same day; the others are open. Nothing is built, and nothing is built before Camilo accepts this record. Every number here is a row of
 `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an earlier record measured, or a
 prior: an instruction count from arithmetic over the code at `e05a549`. Nothing was measured for
 this record. Each table says where its numbers come from.
@@ -752,8 +752,8 @@ The mutations of step 3, each against the narrowest target:
    Without it, the layer must find its records in a table keyed by handle. That is a lookup for
    each event of a reactor. A plain loop that gets an operation with
    the bit set calls nothing, and hands the event to the caller of `tick`. colibri's draft names
-   `Operation.completion`, and its adapter changes that one call. This conflict with the ruling's
-   words is for Camilo to rule on.
+   `Operation.completion`, and its adapter changes that one call. *Ruled on 2026-11-08: the bit
+   stays in the core. It is inside the ruling, because it holds no callback and no address.*
 6. **Does the public module export the generic `Reactor(Loop)` for a twin?** Proposed: yes, as
    `rotor.reactor.Reactor` beside `port_declarations`. A twin of decision 10 then gets the layer
    without a copy, and decision 24's search can drive a reactor. The port then becomes API for a
@@ -774,7 +774,8 @@ The mutations of step 3, each against the narrowest target:
    in each backend's flush, so this record amends it. Its capacity and share rules do not change.
    The scheduler calls no user code, so the rule of "The line" alone would keep it in the core.
    The reason to move it is the cost to a plain loop, about 2 instructions in each tick by
-   decision 31's own arithmetic. Camilo rules on the move before decision 31 is built.
+   decision 31's own arithmetic. *Ruled on 2026-11-08: the scheduler goes in the layer, and this
+   record amends decision 31.*
 10. **Does v0.11.0 carry this record alone?** Proposed: yes. Each consumer then moves once for
     the split, and a later release carries new behaviour.
 11. **What if the layer's count at submit makes `record` count more than at v0.10.0?** Proposed:
