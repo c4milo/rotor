@@ -276,18 +276,20 @@ fn count_the_tasks_of_more_names_than_groups() void {
     _ = groups.queued();
 }
 
-/// A lane that holds more tasks than its cap. With the check deleted, the sum returns.
+/// A lane that holds more tasks than its cap and every call's task (decision 32). With the check
+/// deleted, the sum returns.
 fn count_the_tasks_of_a_lane_past_its_cap() void {
     start(1);
-    groups.lanes[1].count = core.constants.tasks_queued_max + 1;
+    groups.lanes[1].count = core.constants.tasks_queued_max + core.constants.call_tasks_max + 1;
     scenario.reached_violation();
     _ = groups.queued();
 }
 
-/// `.default` with more tasks than its cap. With the check deleted, the count returns.
+/// `.default` with more tasks than `task_queue_length_max`. With the check deleted, the count
+/// returns.
 fn count_the_tasks_of_default_past_its_cap() void {
     start(0);
-    dispatch.tasks.count = core.constants.tasks_queued_max + 1;
+    dispatch.tasks.count = core.constants.task_queue_length_max + 1;
     scenario.reached_violation();
     _ = dispatch.tasks_queued(&groups);
 }

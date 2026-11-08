@@ -163,7 +163,8 @@ pub const Groups = struct {
         assert(groups.named <= groups.reserved);
         var sum: u32 = 0;
         for (groups.lanes[1 .. @as(usize, groups.reserved) + 1]) |*lane| sum += lane.count;
-        assert(sum <= @as(u32, groups.reserved) * constants.tasks_queued_max);
+        // The calls' tasks pass each group's cap, and `call_tasks_max` bounds them (decision 32).
+        assert(sum <= @as(u32, groups.reserved) * constants.tasks_queued_max + constants.call_tasks_max);
         return sum;
     }
 

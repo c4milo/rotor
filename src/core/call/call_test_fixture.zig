@@ -86,6 +86,8 @@ pub const Model = struct {
     /// One tick with no kernel: the drain of the mailboxes into `events`, then the tasks. Returns
     /// the events that the drain wrote.
     pub fn tick(model: *Model, events: []Event) u32 {
+        // A loop's first stamp of a tick zeroes the turn, and a run of tasks adds to its counts.
+        model.heartbeat.turn = .zero;
         _ = model.dispatch.begin(&model.heartbeat, 0);
         const produced = model.inbox.drain_mailboxes(model.id, events, &model.dispatch, &model.groups, take_reserved);
         const kept = model.dispatch.end(&model.heartbeat, &model.groups, events[0..produced]);
@@ -103,8 +105,7 @@ pub const Model = struct {
     /// The group of the task that runs now: `.default` on the path with one group, and the visit's
     /// group on the groups path (decision 30).
     pub fn running_group(model: *const Model) u8 {
-        if (model.dispatch.phase == .tasks) return 0;
-        std.debug.assert(model.dispatch.phase == .group_tasks);
+        if (model.dispatch.phase != .group_tasks) return 0;
         return model.groups.cursor;
     }
 

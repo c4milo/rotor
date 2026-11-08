@@ -204,9 +204,10 @@ pub const Dispatch = struct {
         return scheduling_run.budget_left(groups, &dispatch.tasks, dispatch.groups_ready);
     }
 
-    /// The tasks queued in every group.
+    /// The tasks queued in every group. The queue of `.default` also holds the tasks of the calls
+    /// (decision 32), so its bound is `task_queue_length_max`.
     pub fn tasks_queued(dispatch: *const Dispatch, groups: *const Groups) u32 {
-        assert(dispatch.tasks.count <= constants.tasks_queued_max);
+        assert(dispatch.tasks.count <= constants.task_queue_length_max);
         if (dispatch.groups_ready == 0) return dispatch.tasks.count;
         return dispatch.tasks.count + groups.queued();
     }
