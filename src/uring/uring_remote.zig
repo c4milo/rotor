@@ -98,7 +98,7 @@ pub const Remote = struct {
     pub fn post(remote: *Remote, target: core.LoopId, message: core.Message) PostError!void {
         remote.assert_owner();
         assert(target != remote.id);
-        assert(message.tag <= core.constants.message_tag_wake);
+        assert(core.Message.postable(message.tag));
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
         const descriptor = wake orelse return;
         // In a group the target published its eventfd, and not its ring (decision 21, point 3).

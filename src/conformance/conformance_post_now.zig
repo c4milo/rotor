@@ -152,7 +152,7 @@ test "a loop that posts and stops with no tick between still wakes a loop that s
 }
 
 /// Ticks that hand over the messages of a full ring, at most: one per event slot, and some spare.
-const drain_ticks_max = core.constants.mailbox_messages;
+const drain_ticks_max = core.constants.mailbox_posts_max;
 
 test "a loop's post answers LoopNotFound and MailboxFull, and hands over no event" {
     if (conformance.unsupported()) return error.SkipZigTest;
@@ -181,7 +181,7 @@ test "a loop's post answers LoopNotFound and MailboxFull, and hands over no even
 
     // The second loop never ticks, so it never says it sleeps: the posts wake nothing, and its ring
     // from the first loop fills.
-    for (0..core.constants.mailbox_messages) |_| try first.loop.post(1, message);
+    for (0..core.constants.mailbox_posts_max) |_| try first.loop.post(1, message);
     try testing.expectError(error.MailboxFull, first.loop.post(1, message));
     var events: [4]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try first.loop.tick(&events, 0));
@@ -189,9 +189,9 @@ test "a loop's post answers LoopNotFound and MailboxFull, and hands over no even
     // Every message that fit is handed over, and the ring takes a post again.
     var received: u32 = 0;
     var round: u32 = 0;
-    while (received < core.constants.mailbox_messages and round < drain_ticks_max) : (round += 1) {
+    while (received < core.constants.mailbox_posts_max and round < drain_ticks_max) : (round += 1) {
         received += try second.loop.tick(&events, 0);
     }
-    try testing.expectEqual(core.constants.mailbox_messages, received);
+    try testing.expectEqual(core.constants.mailbox_posts_max, received);
     try first.loop.post(1, message);
 }

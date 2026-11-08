@@ -146,6 +146,21 @@ fn settle(loop: *Loop, descriptor: core.Descriptor, filter: Filter, kept: bool, 
     submit_module.after_leaving(loop, descriptor, filter, kept);
 }
 
+/// The slow path of a drain's reserved tags (decision 32), kept out of the tick. Decision 7 allows
+/// the hint in this file, and `docs/hot-path-ledger.md`, row H8, holds the numbers.
+pub noinline fn take_reserved(
+    ring: *const core.mailbox.Mailbox,
+    peeked: core.mailbox.Mailbox.Peeked,
+    registry: *core.mailbox.Registry,
+    dispatch: *core.dispatch.Dispatch,
+    groups: *core.scheduling.Groups,
+    sender: core.LoopId,
+    receiver: core.LoopId,
+) void {
+    @branchHint(.cold);
+    core.inbox.take_reserved(ring, peeked, registry, dispatch, groups, sender, receiver);
+}
+
 const testing = std.testing;
 
 const builtin = @import("builtin");
@@ -376,4 +391,7 @@ test "a readiness marks the event of an operation that names a record, and no ot
     try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
     try testing.expect(!events[1].flags.dispatched);
     try testing.expectEqual(@as(u64, 2), events[1].user_data);
+    // The reap ran outside a tick, so no `end` called the record, and `deinit` would see it
+    // outstanding (decision 32).
+    fixture.loop.tables.dispatch.callbacks_outstanding -= 1;
 }

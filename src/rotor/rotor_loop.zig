@@ -13,6 +13,7 @@ const kqueue = @import("kqueue");
 const backend_module = @import("rotor_loop_backend.zig");
 const buffers = @import("rotor_loop_buffers.zig");
 const scheduling = @import("rotor_loop_scheduling.zig");
+const calls = @import("rotor_loop_calls.zig");
 
 const constants = core.constants;
 
@@ -111,6 +112,8 @@ pub const Loop = struct {
     pub const ScheduleError = core.ScheduleError;
     /// Why `reserve_scheduling_group` reserved nothing: the same on every backend.
     pub const ReserveSchedulingGroupError = core.scheduling.ReserveSchedulingGroupError;
+    /// Why `call` sent nothing: the same on every backend (decision 32).
+    pub const CallError = core.call.CallError;
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -432,6 +435,12 @@ pub const Loop = struct {
     pub const charge_task = scheduling.charge_task;
     pub const reserve_scheduling_group = scheduling.reserve_scheduling_group;
     pub const set_scheduling_group_shares = scheduling.set_scheduling_group_shares;
+
+    // The cross-core calls of decision 32: `rotor_loop_calls.zig`. Only `Service` calls them.
+    pub const call = calls.call;
+    pub const answer = calls.answer;
+    pub const serve = calls.serve;
+    pub const stop_serving = calls.stop_serving;
 
     // The buffers of decisions 3, 12 and 29: `rotor_loop_buffers.zig`.
     pub const register_buffers = buffers.register_buffers;

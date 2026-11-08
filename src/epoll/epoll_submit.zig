@@ -151,6 +151,13 @@ pub fn close(loop: *Loop, index: u32, slot: *Slot) void {
     tables.finish_local(index, 0);
 }
 
+/// Wakes loop `target` through `descriptor` after a cross-core call or its answer, as `Loop.post`
+/// does (decision 32).
+pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
+    _ = target;
+    if (!queue_module.Queue.wake_sent(descriptor)) loop.dropped_wake_count += 1;
+}
+
 const testing = std.testing;
 const linux = std.os.linux;
 const Event = core.Event;

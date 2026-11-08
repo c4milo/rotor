@@ -168,6 +168,24 @@ pub const Dispatch = struct {
         dispatch.callbacks_outstanding += 1;
     }
 
+    /// Queues the task of a cross-core call in `group` with the limit `task_queue_length_max`, so a
+    /// group that the program filled takes it (decision 32, ruling item 11). The calls bound their
+    /// tasks at `call_tasks_max`, so a full queue halts (class B). The drain queues it inside a
+    /// tick, and `Tables.wait_bound` keeps that tick from blocking before its `end`.
+    pub fn schedule_call(dispatch: *Dispatch, groups: *Groups, group: SchedulingGroup, task: *Task) void {
+        const limit = constants.task_queue_length_max;
+        if (group == .default) {
+            dispatch.tasks.push(task, limit) catch unreachable;
+        } else {
+            groups.assert_reserved(group);
+            // The end mark makes every queued task's `next` not null (decision 8, class A).
+            assert_class_a(!dispatch.tasks.holds(task));
+            groups.push(group, task, limit) catch unreachable;
+            dispatch.groups_ready |= @as(u16, 1) << @intCast(@intFromEnum(group));
+        }
+        dispatch.callbacks_outstanding += 1;
+    }
+
     /// Adds `units` to the cost of the task that runs now (decision 30). Halts outside a task's
     /// call, and on a charge that no task may make: every task costs at least 1, so one charge is
     /// below `task_charge_max` (class B). On the path with one group it changes no deficit: no

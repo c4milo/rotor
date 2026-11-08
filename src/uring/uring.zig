@@ -42,8 +42,9 @@ pub const files_block = false;
 
 /// Whether a `post` can be refused for lack of room at the target, which decides what a caller
 /// may assume of `mailbox_full` and what the conformance suite asserts (decision 4). A post goes
-/// through the mailbox ring the sender has to the target, which holds
-/// `core.constants.mailbox_messages`, so a full ring refuses it, as on kqueue and epoll. Until
+/// through the mailbox ring the sender has to the target, of which it sees
+/// `core.constants.mailbox_posts_max` slots (decision 32), so a full ring refuses it, as on kqueue
+/// and epoll. Until
 /// 2026-09-25 the message rode an `IORING_OP_MSG_RING` and was bounded by kernel memory alone.
 pub const post_bounded = true;
 
@@ -280,7 +281,7 @@ pub const Loop = struct {
     /// A test hands it an answer the kernel gives only under load (`uring_submit.zig`).
     pub fn deinit_through(loop: *Loop, enters: anytype) void {
         loop.tables.assert_owner();
-        loop.tables.assert_ended();
+        loop.tables.assert_ended(loop.kept_error.failure != null);
         loop.dropped_wake_count += submit_module.send_noted_wakes(loop, enters);
         if (loop.inbox.registry) |registry| {
             if (!registry.group) wake_module.release(registry, loop.tables.id, loop.wake_stand_in);
@@ -409,6 +410,19 @@ pub const Loop = struct {
     pub const heartbeat = dispatch_calls.heartbeat;
     // The host's wait limit of decision 29.
     pub const wait_limit = dispatch_calls.wait_limit;
+    // The cross-core calls of decision 32.
+    const call_calls = core.call.loop.Calls(Loop);
+    pub const call = call_calls.call;
+    pub const answer = call_calls.answer;
+    pub const serve = call_calls.serve;
+    pub const stop_serving = call_calls.stop_serving;
+    pub const callbacks_outstanding = call_calls.callbacks_outstanding;
+    /// Notes loop `target` after a call or an answer, as `post` does: the next tick's submit carries
+    /// the wake.
+    pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
+        _ = descriptor;
+        loop.wakes.note(target);
+    }
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
@@ -443,7 +457,8 @@ pub const Loop = struct {
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        return loop.inbox.drain_mailboxes(loop.tables.id, events, &loop.tables.dispatch);
+        const tables = &loop.tables;
+        return loop.inbox.drain_mailboxes(tables.id, events, &tables.dispatch, tables.groups, reap_module.take_reserved);
     }
 
     /// Tells the registry this loop is about to sleep, and looks at its mailboxes once more:

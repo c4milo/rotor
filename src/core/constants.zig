@@ -128,11 +128,57 @@ comptime {
     std.debug.assert(offload_in_flight_max >= 1);
 }
 
-/// The largest tag that a caller's `Message` may carry: one less than `message_tag_wake`
-/// (decision 29). io_uring delivers a posted message as a completion whose 32-bit result is the
-/// sender's to choose, and a result in [-4095, -1] is an errno. The uring backend sets the top bit
-/// of the tag, so a message's result is below -4095 and never reads as an operation's.
-pub const message_tag_max: u32 = 0x7fff_efff;
+/// The largest tag that a caller's `Message` may carry: three less than `message_tag_wake`
+/// (decision 29, and decision 32, which reserves the two tags below the wake). io_uring delivers a
+/// posted message as a completion whose 32-bit result is the sender's to choose, and a result in
+/// [-4095, -1] is an errno. The uring backend sets the top bit of the tag, so a message's result is
+/// below -4095 and never reads as an operation's.
+pub const message_tag_max: u32 = 0x7fff_effd;
+
+/// The tag of a cross-core call (decision 32). The payload is the address of the caller's
+/// `CallLink`, and `reserved` holds the call's generation. The drain schedules the call's task and
+/// writes no event.
+pub const message_tag_call: u32 = 0x7fff_effe;
+
+/// The tag of the answer to a cross-core call (decision 32), in the ring from the target back to
+/// the caller. Its payload and its `reserved` are those of the call.
+pub const message_tag_return: u32 = 0x7fff_efff;
+
+/// The most calls of one ordered pair of loops from `send` until their `finish` runs (decision 32,
+/// open question 1). A prior, until stompy measures the depth of its journal pipeline. A post sees
+/// the ring less this count, so a return push always finds a slot.
+pub const calls_per_pair_max: u32 = 32;
+
+/// The messages a post may leave in one ring: the ring less the room the returns of the calls
+/// need (decision 32). `push_post` refuses at it, and `push` keeps every slot.
+pub const mailbox_posts_max: u32 = mailbox_messages - calls_per_pair_max;
+
+/// The most services one loop serves or calls (decision 32, open question 7). A prior: stompy plans
+/// fewer than 8. The byte `Groups.stations` counts them.
+pub const services_max: u32 = 16;
+
+/// The most tasks of calls that one loop can hold queued at one time (decision 32, "The task queue
+/// and the fair tick"): the calls to it from each other loop, the returns of its own calls to each
+/// other loop, and its calls to itself, for each service. A call's task is pushed with the limit
+/// `tasks_queued_max + call_tasks_max`, so a group that the program filled never refuses one.
+pub const call_tasks_max: u32 = (2 * (@as(u32, loops_max) - 1) + services_max) * calls_per_pair_max;
+
+/// The most tasks one queue of one group can hold: the program's `tasks_queued_max`, and the tasks
+/// of calls above them (decision 32, ruling item 11). Each bound of a queue's length reads it.
+pub const task_queue_length_max: u32 = tasks_queued_max + call_tasks_max;
+
+comptime {
+    std.debug.assert(calls_per_pair_max >= 1);
+    std.debug.assert(calls_per_pair_max < mailbox_messages);
+    std.debug.assert(mailbox_posts_max >= messages_per_drain);
+    std.debug.assert(services_max >= 1);
+    std.debug.assert(services_max <= std.math.maxInt(u8));
+    std.debug.assert(call_tasks_max == 16_832);
+    std.debug.assert(@as(u64, tasks_queued_max) + call_tasks_max <= std.math.maxInt(u32));
+    std.debug.assert(message_tag_max < message_tag_call);
+    std.debug.assert(message_tag_call < message_tag_return);
+    std.debug.assert(message_tag_return < message_tag_wake);
+}
 
 /// The tag of `Message.wake`, the old `message_tag_max`. The loop drops such a message, and hands
 /// no event for it (decision 29). It is the largest tag that a post accepts. A tag at or below it
@@ -229,10 +275,13 @@ comptime {
     std.debug.assert(tasks_per_tick_max <= task_charge_max);
     // A deficit stays in [1 - task_charge_max * 100, scheduling_shares_max], an `i32`.
     std.debug.assert(@as(i64, task_charge_max) * scheduling_unit_credit < std.math.maxInt(i32));
-    // Every queued task of every group, and every operation that named a record, fit the count of
-    // outstanding callbacks, a `u32`.
+    // Every queued task of every group, every operation that named a record, and every call out
+    // or held with the tasks of calls fit the count of outstanding callbacks, a `u32`. A loop counts
+    // a call it sent, a call it holds, and a call to itself twice (decision 32, "Layout").
     const queued_max = @as(u64, scheduling_groups_max) * tasks_queued_max;
-    std.debug.assert(queued_max + operations_max <= std.math.maxInt(u32));
+    const calls_max = 2 * (@as(u64, loops_max) - 1 + services_max) * calls_per_pair_max + call_tasks_max;
+    std.debug.assert(calls_max == 34_176);
+    std.debug.assert(queued_max + operations_max + calls_max <= std.math.maxInt(u32));
 }
 
 /// The default length of a turn that the loop counts as a stall (decision 28). A turn is the span

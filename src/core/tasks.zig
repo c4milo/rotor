@@ -32,6 +32,9 @@ pub const Task = struct {
         /// The units that one run costs before any `charge_task`, in 1 to `task_charge_max`
         /// (decision 30). The groups path reads it beside `function`.
         cost: u16 = 1,
+        /// True for the task of a cross-core call (decision 32, ruling item 12). Its caller waits
+        /// for `finish`, so `discard_tasks` halts on such a task. It sits in the padding.
+        call_record: bool = false,
     };
 
     /// A task at `field` of `Parent` that calls `handler` with its parent. The compiler checks the
@@ -101,7 +104,8 @@ pub const Tasks = struct {
     /// when `queued_max` tasks are queued, and then changes nothing.
     pub fn push(tasks: *Tasks, task: *Task, queued_max: u32) ScheduleError!void {
         assert_class_a(!tasks.holds(task));
-        assert(queued_max <= constants.tasks_queued_max);
+        // A call's task is pushed with the higher limit (decision 32, ruling item 11).
+        assert(queued_max <= constants.task_queue_length_max);
         if (tasks.count >= queued_max) return error.TasksFull;
         if (tasks.tail) |tail| tail.next = task else tasks.head = task;
         tasks.tail = task;
@@ -154,13 +158,15 @@ pub const Tasks = struct {
     }
 
     /// Unlinks every queued task without a call, and returns the count. The cold path of a
-    /// shutdown whose tasks never stop (decision 27, "Shutdown").
+    /// shutdown whose tasks never stop (decision 27, "Shutdown"). Halts on the task of a call,
+    /// whose caller waits for its `finish` (decision 32, class C).
     pub fn discard(tasks: *Tasks) u32 {
         tasks.assert_shape();
         const discarded = tasks.count;
         var unlinked: u32 = 0;
-        while (unlinked < constants.tasks_queued_max) : (unlinked += 1) {
+        while (unlinked < constants.task_queue_length_max) : (unlinked += 1) {
             const task = tasks.head orelse break;
+            assert(!task.call.call_record);
             tasks.head = task.next;
             task.next = null;
         }
@@ -173,18 +179,18 @@ pub const Tasks = struct {
     pub fn assert_shape(tasks: *const Tasks) void {
         assert((tasks.count == 0) == (tasks.head == null));
         assert((tasks.head == null) == (tasks.tail == null));
-        assert(tasks.count <= constants.tasks_queued_max);
+        assert(tasks.count <= constants.task_queue_length_max);
     }
 
     /// Decision 8, class D, O(n): the queue's length is `count`, its last task is `tail`, and the
-    /// walk ends within `tasks_queued_max` steps. The tests call it after every step.
+    /// walk ends within `task_queue_length_max` steps. The tests call it after every step.
     pub fn assert_queue(tasks: *const Tasks) void {
         tasks.assert_shape();
         var walked: u32 = 0;
         var last: ?*Task = null;
         var at = tasks.head;
         while (at) |task| : (at = task.next) {
-            assert(walked < constants.tasks_queued_max);
+            assert(walked < constants.task_queue_length_max);
             walked += 1;
             last = task;
         }

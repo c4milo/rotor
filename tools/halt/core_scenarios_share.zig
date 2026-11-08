@@ -37,6 +37,7 @@ const loops = 3;
 var registry_memory: [Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) = undefined;
 var registry: Registry align(@alignOf(Registry)) = undefined;
 var events: [4]Event align(@alignOf(Event)) = undefined;
+const take_reserved = core.inbox.take_reserved;
 
 /// A cursor at the count of loops, one past the last sender. A cursor above 0 takes the drain's one
 /// wrapping loop. With the check deleted, that loop wraps to sender 0 before its first visit, visits
@@ -47,8 +48,9 @@ fn drain_from_a_cursor_past_the_last_loop() void {
     var inbox = core.inbox.Inbox.init(&registry, &.{}, null);
     inbox.sender_cursor = loops;
     var dispatch: core.dispatch.Dispatch = .empty;
+    groups.init(&.empty);
     scenario.reached_violation();
-    _ = inbox.drain_mailboxes(0, &events, &dispatch);
+    _ = inbox.drain_mailboxes(0, &events, &dispatch, &groups, take_reserved);
 }
 
 const slots_count = 4;

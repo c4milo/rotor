@@ -205,10 +205,20 @@ pub const Tables = struct {
     }
 
     /// What every backend's `deinit` checks: the loop is empty, no tick runs, and no watch reads
-    /// its heartbeat (decisions 5, 26, 27 and 28).
-    pub fn assert_ended(tables: *const Tables) void {
+    /// its heartbeat (decisions 5, 26, 27 and 28). No call is out or held, and no station serves
+    /// (decision 32, class C). With nothing in flight and no task queued, the only callback that
+    /// may still count is a kept tick error, which `kept` says.
+    pub fn assert_ended(tables: *const Tables, kept: bool) void {
         tables.assert_empty();
+        assert_calls_ended(&tables.dispatch, tables.groups, kept);
         tables.heartbeat.assert_unwatched();
+    }
+
+    /// The part of `assert_ended` that decision 32 adds, which a halt scenario reaches through its
+    /// parameters: no call out or held, and no station that serves (class C).
+    pub fn assert_calls_ended(dispatch: *const Dispatch, groups: *const Groups, kept: bool) void {
+        assert(dispatch.callbacks_outstanding == @intFromBool(kept));
+        assert(groups.serving == 0);
     }
 
     /// Halts when an operation has not had its final event (decision 5, rule 7).

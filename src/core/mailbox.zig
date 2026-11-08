@@ -98,10 +98,14 @@ pub const descriptor_remote = registry_module.descriptor_remote;
 const slot_mask: u32 = constants.mailbox_messages - 1;
 
 /// One ring: one loop writes it and one loop reads it. 4352 bytes aligned to 128: one line for
-/// `tail`, one for `head`, and 32 lines of messages.
+/// `tail` and `calls_out`, one for `head`, and 32 lines of messages.
 pub const Mailbox = extern struct {
     /// Messages pushed so far. Written by the producer alone. On its own 128-byte line.
     tail: std.atomic.Value(u32) align(constants.mailbox_index_alignment),
+    /// The calls of the producer to the consumer from `send` until their `finish` runs (decision
+    /// 32). Only the producer's thread reads or writes it, so it needs no atomic. It sits in bytes
+    /// of the `tail` line that were padding.
+    calls_out: u32,
     /// Messages popped so far. Written by the consumer alone. On its own 128-byte line.
     head: std.atomic.Value(u32) align(constants.mailbox_index_alignment),
     /// Written by the producer alone. It starts on the line after `head`, so a slot the
@@ -111,17 +115,31 @@ pub const Mailbox = extern struct {
     /// Leaves the ring empty. It writes no slot: no slot is read before `push` has written it.
     pub fn init(mailbox: *Mailbox) void {
         mailbox.tail = .init(0);
+        mailbox.calls_out = 0;
         mailbox.head = .init(0);
         assert(mailbox.is_empty());
     }
 
-    /// Producer only. False when the ring is full, and the message is not written.
+    /// Producer only. False when the ring is full, and the message is not written. The return of a
+    /// call and an offload worker's result use it, with every slot of the ring (decision 32).
     pub fn push(mailbox: *Mailbox, message: Message) bool {
+        return mailbox.push_below(message, constants.mailbox_messages);
+    }
+
+    /// Producer only. `push`, refused when the ring holds `mailbox_posts_max` messages already: a
+    /// post or a call leaves `calls_per_pair_max` slots for the returns of the calls (decision 32).
+    pub fn push_post(mailbox: *Mailbox, message: Message) bool {
+        return mailbox.push_below(message, constants.mailbox_posts_max);
+    }
+
+    /// Writes `message` while the ring holds fewer than `used_max` messages.
+    fn push_below(mailbox: *Mailbox, message: Message, used_max: u32) bool {
+        assert(used_max <= constants.mailbox_messages);
         const tail = mailbox.tail.load(.unordered);
         const head = mailbox.head.load(.acquire);
         const used = tail -% head;
         assert(used <= constants.mailbox_messages);
-        if (used == constants.mailbox_messages) return false;
+        if (used >= used_max) return false;
         mailbox.messages[tail & slot_mask] = message;
         mailbox.tail.store(tail +% 1, .seq_cst);
         return true;
@@ -167,19 +185,50 @@ pub const Mailbox = extern struct {
         context: anytype,
         comptime each: fn (@TypeOf(context), Message) void,
     ) u32 {
+        const peeked = mailbox.peek_each(most, context, each);
+        if (peeked.count == 0) return 0;
+        mailbox.release(peeked);
+        return peeked.count;
+    }
+
+    /// The slots that `peek_each` handed over, which the ring has not taken back yet.
+    pub const Peeked = struct { head: u32, count: u32 };
+
+    /// Consumer only. `pop_each` with the slots kept: the ring takes them back at `release`. A
+    /// consumer reads a slot again in between with `message_at`, so `each` stays a loop with no
+    /// branch and a rare message takes a cold path after it (decision 32).
+    pub fn peek_each(
+        mailbox: *Mailbox,
+        most: u32,
+        context: anytype,
+        comptime each: fn (@TypeOf(context), Message) void,
+    ) Peeked {
         const head = mailbox.head.load(.unordered);
         const tail = mailbox.tail.load(.seq_cst);
         const available = tail -% head;
         assert(available <= constants.mailbox_messages);
         const count: u32 = @intCast(@min(available, most));
-        if (count == 0) return 0;
+        if (count == 0) return .{ .head = head, .count = 0 };
         for (0..count) |offset| {
             const index = head +% @as(u32, @intCast(offset));
             each(context, mailbox.messages[index & slot_mask]);
         }
-        mailbox.head.store(head +% count, .release);
-        assert(count <= available);
-        return count;
+        return .{ .head = head, .count = count };
+    }
+
+    /// Consumer only. The message at index `offset` of what `peek_each` handed over.
+    pub fn message_at(mailbox: *const Mailbox, peeked: Peeked, offset: u32) Message {
+        assert(offset < peeked.count);
+        return mailbox.messages[(peeked.head +% offset) & slot_mask];
+    }
+
+    /// Consumer only. The ring takes back the slots of `peeked`, which holds at least one. A caller
+    /// skips an empty visit, so polling a ring costs no store and leaves the producer's copy of the
+    /// `head` line valid.
+    pub fn release(mailbox: *Mailbox, peeked: Peeked) void {
+        assert(peeked.count >= 1);
+        assert(peeked.count <= constants.mailbox_messages);
+        mailbox.head.store(peeked.head +% peeked.count, .release);
     }
 
     /// Either side. A hint: it may be stale by the time the caller acts on it. To the consumer
@@ -200,6 +249,7 @@ comptime {
     assert(@sizeOf(Message) == 16);
     assert(@alignOf(Mailbox) == constants.mailbox_index_alignment);
     assert(@offsetOf(Mailbox, "tail") == 0);
+    assert(@offsetOf(Mailbox, "calls_out") < constants.mailbox_index_alignment);
     assert(@offsetOf(Mailbox, "head") == constants.mailbox_index_alignment);
     assert(@offsetOf(Mailbox, "messages") == 2 * constants.mailbox_index_alignment);
     assert(@sizeOf(Mailbox) == 4352);
@@ -294,4 +344,23 @@ test "the indices wrap past 2^32 and the ring keeps its count and its order" {
     }
     try testing.expectEqual(@as(u32, 155), ring.head.load(.unordered));
     try testing.expect(ring.is_empty());
+}
+
+test "a post leaves the room of the returns, and a return push takes every slot" {
+    var ring: Mailbox = undefined;
+    ring.init();
+    var sequence: u64 = 0;
+    while (sequence < constants.mailbox_posts_max) : (sequence += 1) {
+        try testing.expect(ring.push_post(message_of(sequence)));
+    }
+    try testing.expect(!ring.push_post(message_of(sequence)));
+    // The returns of 32 calls still fit, and then the ring is full for every push.
+    while (sequence < constants.mailbox_messages) : (sequence += 1) {
+        try testing.expect(ring.push(message_of(sequence)));
+    }
+    try testing.expect(!ring.push(message_of(sequence)));
+    try testing.expect(!ring.push_post(message_of(sequence)));
+    var out: [constants.mailbox_messages]Message = undefined;
+    try testing.expectEqual(constants.mailbox_messages, ring.pop_into(&out));
+    for (out, 0..) |message, index| try expect_message(index, message);
 }

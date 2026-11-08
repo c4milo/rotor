@@ -23,6 +23,7 @@ const uring = @import("uring");
 const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 const loop_module = @import("rotor_loop.zig");
+const service_module = @import("rotor_service.zig");
 
 const linux = builtin.os.tag == .linux;
 
@@ -51,6 +52,15 @@ pub const Handle = core.Handle;
 pub const LoopId = core.LoopId;
 pub const Message = core.Message;
 pub const Operation = core.Operation;
+
+pub const Service = service_module.Service; // The cross-core call (decision 32).
+pub const CallRecord = service_module.CallRecord;
+pub const Answer = service_module.Answer;
+pub const CallResult = service_module.CallResult;
+pub const CallOptions = service_module.CallOptions;
+pub const CallError = service_module.CallError;
+pub const CallLink = core.call.CallLink;
+pub const CallStation = core.call.CallStation;
 
 /// Every named limit (CLAUDE.md, non-negotiable 1).
 pub const constants = core.constants;
@@ -211,8 +221,9 @@ pub const files_block = if (linux) uring.files_block or epoll.files_block else k
 
 /// Whether a `post` may be refused for lack of room at the target, from a loop or from a `Remote`:
 /// what a caller may assume of `mailbox_full` and `MailboxFull` (decision 4). True on every backend
-/// since 2026-09-25, when io_uring's posts moved to the mailbox rings every backend shares, which
-/// hold `constants.mailbox_messages` each.
+/// since 2026-09-25, when io_uring's posts moved to the mailbox rings every backend shares. A post
+/// sees `constants.mailbox_posts_max` slots of each, and the rest wait for the returns of the calls
+/// of decision 32.
 pub const post_bounded = if (linux)
     uring.post_bounded or epoll.post_bounded
 else
@@ -256,7 +267,7 @@ const testing = std.testing;
 const loop_error_sets = [_][]const u8{
     "InitError",                   "TickError", "DrainError",     "RegisterError",
     "ProvideError",                "PostError", "AddPollerError", "ScheduleError",
-    "ReserveSchedulingGroupError",
+    "ReserveSchedulingGroupError", "CallError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{

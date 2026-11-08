@@ -9,6 +9,7 @@
 pub const assertion_class = @import("assertion_class.zig");
 pub const attempt = @import("attempt.zig");
 pub const buffer_group = @import("buffer_group.zig");
+pub const call = @import("call/call.zig");
 pub const constants = @import("constants.zig");
 pub const datagram = @import("datagram.zig");
 pub const dispatch = @import("dispatch/dispatch.zig");
@@ -71,6 +72,7 @@ test {
     _ = assertion_class;
     _ = attempt;
     _ = buffer_group;
+    _ = call;
     _ = constants;
     _ = datagram;
     _ = datagram_split;

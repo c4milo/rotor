@@ -13,35 +13,78 @@ const mailbox = @import("mailbox.zig");
 const offload = @import("offload.zig");
 const operation = @import("operation.zig");
 
+const call_take = @import("call/call_take.zig");
 const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
+const Groups = @import("scheduling/scheduling_groups.zig").Groups;
 const Event = event.Event;
 const LoopId = operation.LoopId;
 const Mailbox = mailbox.Mailbox;
 const Message = operation.Message;
 const Registry = mailbox.Registry;
 
-/// What the visits of one drain write: an event for each message, and none for a `Message.wake`
-/// (decision 29). One `Visit` serves every ring of the drain, so a visit costs no new `Visit` and
-/// no sum of its own. The drain takes a wake when the rings gave more messages than events written.
-/// A wake still counts as one message of its ring's visit, so a ring of wakes cannot keep the drain
-/// longer than `messages_per_drain` for each visit.
+/// What the visits of one drain write: an event for each message of a caller's tag, and none for
+/// a reserved tag: a `Message.wake` (decision 29), a call or a return (decision 32). One `Visit`
+/// serves every ring of the drain, so a visit costs no new `Visit` and no sum of its own. A
+/// reserved message still counts as one message of its ring's visit, so a ring of them cannot keep
+/// the drain longer than `messages_per_drain` for each visit.
 const Visit = struct {
     out: []Event,
     written: u32 = 0,
 
-    /// Writes the event of `message` into the next place, and counts it only when it is not a
-    /// wake. A wake leaves an event of tag 0 in a place that the next message takes, or that no
-    /// caller reads. There is no branch, so the compiler keeps the ring's pop inline in the drain.
-    /// A branch here made it a call: the work gate's `timer` row counted 1,179 instructions on
-    /// `mac`, against 1,151 at `48cacba`, the tree before decision 29 ("What was built", item 1).
-    /// `Event.message` keeps its check of the tag of every message that is not a wake.
+    /// Writes the event of `message` into the next place, and counts it only when its tag is a
+    /// caller's. A reserved tag leaves an event of tag 0 in a place that the next message takes,
+    /// or that no caller reads. There is no branch, so the compiler keeps the ring's read inline in
+    /// the drain. A branch here made it a call: the work gate's `timer` row counted 1,179
+    /// instructions on `mac`, against 1,151 at `48cacba` (decision 29, "What was built", item 1),
+    /// and `post` 1,321 against 1,217 when decision 32 tried a branch to a cold function.
+    /// `Event.message` keeps its check of the tag of every message that makes an event.
     fn write(visit: *Visit, message: Message) void {
-        const wake = message.tag == constants.message_tag_wake;
-        const tag = if (wake) 0 else message.tag;
+        const reserved = message.tag > constants.message_tag_max;
+        const tag = if (reserved) 0 else message.tag;
         visit.out[visit.written] = Event.message(message.payload, tag);
-        visit.written += @intFromBool(!wake);
+        visit.written += @intFromBool(!reserved);
     }
 };
+
+/// The slow path of `drain_mailboxes`, which a backend hands it: `take_reserved`, or a function
+/// that calls it. Decision 7 confines `noinline` and `@branchHint` to its named files, so a
+/// backend keeps the slow path out of its tick there, and this file stays plain.
+pub const TakeReserved = fn (
+    ring: *const Mailbox,
+    peeked: Mailbox.Peeked,
+    registry: *Registry,
+    dispatch: *Dispatch,
+    groups: *Groups,
+    sender: LoopId,
+    receiver: LoopId,
+) void;
+
+/// The slow path of the reserved tags of one ring's visit: each wake, call and return that the
+/// visit read, in the order of the ring (decisions 29 and 32). The slots are the drain's until the
+/// ring takes them back, so it reads them again here.
+pub fn take_reserved(
+    ring: *const Mailbox,
+    peeked: Mailbox.Peeked,
+    registry: *Registry,
+    dispatch: *Dispatch,
+    groups: *Groups,
+    sender: LoopId,
+    receiver: LoopId,
+) void {
+    var taker: call_take.Taker = .{
+        .registry = registry,
+        .dispatch = dispatch,
+        .groups = groups,
+        .receiver = receiver,
+        .sender = sender,
+        .woke = false,
+    };
+    for (0..peeked.count) |offset| {
+        const message = ring.message_at(peeked, @intCast(offset));
+        if (message.tag > constants.message_tag_max) call_take.take_reserved(&taker, message);
+    }
+    if (taker.woke) taker.dispatch.note_wake();
+}
 
 pub const Inbox = struct {
     /// Where loops find each other's mailboxes. Null for a loop that posts to none and that none
@@ -89,12 +132,21 @@ pub const Inbox = struct {
     /// only the cursor's load. Any other cursor takes `drain_from_cursor`.
     ///
     /// A `Message.wake` writes no event. It counts in its ring's visit, and a drain that took one
-    /// tells `dispatch` (decision 29).
-    pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, dispatch: *Dispatch) u32 {
+    /// tells `dispatch` (decision 29). A call or a return writes no event either: the drain queues
+    /// its record's task in `dispatch` and `groups` (decision 32).
+    pub fn drain_mailboxes(
+        inbox: *Inbox,
+        receiver: LoopId,
+        events: []Event,
+        dispatch: *Dispatch,
+        groups: *Groups,
+        comptime take: TakeReserved,
+    ) u32 {
         const registry = inbox.registry orelse return 0;
-        if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, dispatch);
+        if (inbox.sender_cursor != 0) {
+            return inbox.drain_from_cursor(registry, receiver, events, dispatch, groups, take);
+        }
         var visit: Visit = .{ .out = events };
-        var popped: u32 = 0;
         for (0..registry.loop_count()) |sender| {
             if (sender == receiver) continue;
             const room = @min(events.len - visit.written, constants.messages_per_drain);
@@ -102,11 +154,20 @@ pub const Inbox = struct {
                 inbox.sender_cursor = @intCast(sender);
                 break;
             }
+            // The visit of one ring, written out in each drain: as a function the compiler kept it
+            // out of line, which cost the work gate's `task` row about 12 instructions on `mac`.
             // An empty ring costs a visit and no room.
-            popped += registry.mailbox(@intCast(sender), receiver).pop_each(room, &visit, Visit.write);
+            const ring = registry.mailbox(@intCast(sender), receiver);
+            const before = visit.written;
+            const peeked = ring.peek_each(@intCast(room), &visit, Visit.write);
+            if (peeked.count == 0) continue;
+            // A ring that gave more messages than events holds a reserved tag.
+            if (visit.written - before != peeked.count) {
+                take(ring, peeked, registry, dispatch, groups, @intCast(sender), receiver);
+            }
+            ring.release(peeked);
         }
         assert(visit.written <= events.len);
-        if (popped != visit.written) dispatch.note_wake();
         return visit.written;
     }
 
@@ -119,12 +180,13 @@ pub const Inbox = struct {
         receiver: LoopId,
         events: []Event,
         dispatch: *Dispatch,
+        groups: *Groups,
+        comptime take: TakeReserved,
     ) u32 {
         const loops = registry.loop_count();
         const cursor = inbox.sender_cursor;
         assert(cursor < loops);
         var visit: Visit = .{ .out = events };
-        var popped: u32 = 0;
         var sender: usize = cursor;
         for (0..loops) |_| {
             if (sender == loops) sender = 0;
@@ -134,12 +196,20 @@ pub const Inbox = struct {
                     inbox.sender_cursor = @intCast(sender);
                     break;
                 }
-                popped += registry.mailbox(@intCast(sender), receiver).pop_each(room, &visit, Visit.write);
+                // The visit of one ring, as `drain_mailboxes` writes it.
+                const ring = registry.mailbox(@intCast(sender), receiver);
+                const before = visit.written;
+                const peeked = ring.peek_each(@intCast(room), &visit, Visit.write);
+                if (peeked.count != 0) {
+                    if (visit.written - before != peeked.count) {
+                        take(ring, peeked, registry, dispatch, groups, @intCast(sender), receiver);
+                    }
+                    ring.release(peeked);
+                }
             }
             sender += 1;
         }
         assert(visit.written <= events.len);
-        if (popped != visit.written) dispatch.note_wake();
         return visit.written;
     }
 

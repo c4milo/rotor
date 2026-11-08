@@ -7,18 +7,21 @@ const event_module = @import("event.zig");
 
 const Event = event_module.Event;
 
-/// Ticks `loop` until it has nothing in flight and no task queued (decision 27), discarding the
-/// events into `scratch`, and waits `wait_ns` at most in each tick. When `rounds_max` ticks were not
-/// enough it fails: with `StillInFlight` while the kernel still holds an operation, so the loop's
-/// memory must not be freed, and with `TasksStillQueued` when only tasks are left. The kernel then
-/// holds nothing, and `discard_tasks` lets the program end the loop.
+/// Ticks `loop` until it has nothing in flight, no task queued (decision 27), and no call out or
+/// held (decision 32), discarding the events into `scratch`, and waits `wait_ns` at most in each
+/// tick. `callbacks_outstanding` counts the tasks and the calls. When `rounds_max` ticks were not
+/// enough it fails: with `StillInFlight` while the kernel still holds an operation or a call is out
+/// or held, so the loop's memory must not be freed, and with `TasksStillQueued` when only tasks are
+/// left. The kernel then holds nothing, and `discard_tasks` lets the program end the loop.
 pub fn drain(loop: anytype, scratch: []Event, rounds_max: u32, wait_ns: u64) !void {
     assert(scratch.len >= 1);
     assert(rounds_max >= 1);
     var round: u32 = 0;
-    while (loop.in_flight() != 0 or loop.tasks_queued() != 0) : (round += 1) {
+    while (loop.in_flight() != 0 or loop.callbacks_outstanding() != 0) : (round += 1) {
         if (round == rounds_max) {
             if (loop.in_flight() != 0) return error.StillInFlight;
+            // With nothing in flight, a callback that is not a queued task is a call.
+            if (loop.callbacks_outstanding() > loop.tasks_queued()) return error.StillInFlight;
             return error.TasksStillQueued;
         }
         _ = try loop.tick(scratch, wait_ns);
@@ -41,12 +44,20 @@ const Fake = struct {
     tasks: u32 = 0,
     tasks_from: u32 = 0,
 
+    /// Calls out, which no tick ends.
+    calls: u32 = 0,
+
     fn in_flight(fake: *const Fake) u32 {
         return fake.remaining;
     }
 
     fn tasks_queued(fake: *const Fake) u32 {
         return fake.tasks;
+    }
+
+    /// The tasks, and the calls out.
+    fn callbacks_outstanding(fake: *const Fake) u32 {
+        return fake.tasks + fake.calls;
     }
 
     fn tick(fake: *Fake, events: []Event, wait_ns: u64) error{Refused}!u32 {
@@ -116,4 +127,11 @@ test "drain gives up with TasksStillQueued when only tasks are left at its bound
     // An operation still in flight at the bound is the error, whatever the queue holds.
     var both: Fake = .{ .remaining = 1, .ends_from = 9, .tasks = 1, .tasks_from = 100 };
     try testing.expectError(error.StillInFlight, drain(&both, &scratch, 5, test_wait_ns));
+}
+
+test "drain gives up with StillInFlight while a call is out, with nothing in flight" {
+    var scratch: [2]Event = undefined;
+    var fake: Fake = .{ .remaining = 0, .tasks = 1, .calls = 1 };
+    try testing.expectError(error.StillInFlight, drain(&fake, &scratch, 4, test_wait_ns));
+    try testing.expectEqual(@as(u32, 4), fake.ticks);
 }

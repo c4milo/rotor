@@ -49,8 +49,9 @@ const header_magic: u64 = 0x726f_746f_725f_7267;
 /// The layout of the memory after the header. A change to `Header`, `Wake`, `Entry` or `Mailbox`
 /// changes it, so that a process built from an older rotor refuses a registry a newer one made.
 /// Version 2 reserves the tag `message_tag_wake`, which an older build may send as data
-/// (decision 29).
-const header_version: u32 = 2;
+/// (decision 29). Version 3 adds `Mailbox.calls_out`, and reserves the tags of a call and of its
+/// return (decision 32).
+const header_version: u32 = 3;
 
 /// What a registry's memory starts with. The process that creates the registry writes it once,
 /// before any other process attaches, and nobody writes it after. 128 bytes aligned to 128.

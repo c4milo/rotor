@@ -18,6 +18,8 @@ const event_module = @import("event.zig");
 const handle_module = @import("handle.zig");
 const operation_module = @import("operation.zig");
 const tasks_module = @import("tasks.zig");
+const call_module = @import("call/call.zig");
+const constants = @import("constants.zig");
 
 const Delivery = datagram_module.Delivery;
 const Event = event_module.Event;
@@ -39,7 +41,8 @@ pub const library_calls = [_][]const u8{
     "is_scheduled",    "task_budget_left",     "add_poller",
     "remove_poller",   "provide_buffers",      "provide_datagram_buffers",
     "datagram",        "provided_buffer",      "give_back_buffer",
-    "release_buffers", "reserve_buffer_group",
+    "release_buffers", "reserve_buffer_group", "call",
+    "answer",          "serve",                "stop_serving",
 };
 
 /// The calls that only the program makes. The view declares each one as a compile error that states
@@ -192,6 +195,29 @@ pub fn SharedLoop(comptime Loop: type) type {
         /// `Loop.release_buffers`.
         pub fn release_buffers(shared: *Shared, group: BufferGroup) void {
             loop(shared).release_buffers(group);
+        }
+
+        /// `Loop.call`: only `Service.send` calls it (decision 32).
+        pub fn call(shared: *Shared, link: *call_module.CallLink) call_module.CallError!void {
+            return loop(shared).call(link);
+        }
+
+        /// `Loop.answer`: only `Service` and `CallRecord.answer` call it (decision 32).
+        pub fn answer(shared: *Shared, link: *call_module.CallLink) void {
+            loop(shared).answer(link);
+        }
+
+        /// `Loop.serve`: only `Service.serve` calls it (decision 32).
+        pub fn serve(
+            shared: *Shared,
+            stations: *[constants.loops_max]call_module.CallStation,
+        ) *call_module.CallStation {
+            return loop(shared).serve(stations);
+        }
+
+        /// `Loop.stop_serving`: only `Service.stop_serving` calls it (decision 32).
+        pub fn stop_serving(shared: *Shared, stations: *[constants.loops_max]call_module.CallStation) void {
+            loop(shared).stop_serving(stations);
         }
 
         /// The calls that only the program makes, which fail to compile here.

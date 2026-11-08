@@ -54,8 +54,8 @@ pub const wake_module = @import("epoll_wake.zig");
 pub const files_block = true;
 
 /// Whether a `post` can be refused for lack of room at the target (decision 4). The mailbox rings
-/// are `core`'s and hold `core.constants.mailbox_messages`, as on every backend, so a post to a
-/// full one is refused with `mailbox_full`.
+/// are `core`'s, and a post sees `core.constants.mailbox_posts_max` slots of one, as on every
+/// backend (decision 32), so a post to a full one is refused with `mailbox_full`.
 pub const post_bounded = true;
 
 /// True on a host whose kernel this backend can run on. The conformance suite skips elsewhere.
@@ -277,7 +277,7 @@ pub const Loop = struct {
     /// watch may read the heartbeat (decision 28).
     pub fn deinit(loop: *Loop) void {
         loop.tables.assert_owner();
-        loop.tables.assert_ended();
+        loop.tables.assert_ended(loop.kept_error.failure != null);
         if (loop.inbox.registry) |registry| registry.clear(loop.tables.id);
         loop.queue.deinit();
     }
@@ -401,6 +401,14 @@ pub const Loop = struct {
     pub const heartbeat = dispatch_calls.heartbeat;
     // The host's wait limit of decision 29.
     pub const wait_limit = dispatch_calls.wait_limit;
+    // The cross-core calls of decision 32.
+    const call_calls = core.call.loop.Calls(Loop);
+    pub const call = call_calls.call;
+    pub const answer = call_calls.answer;
+    pub const serve = call_calls.serve;
+    pub const stop_serving = call_calls.stop_serving;
+    pub const callbacks_outstanding = call_calls.callbacks_outstanding;
+    pub const wake_target = submit_module.wake_target;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends
     /// with its own final event, which `drain` or the caller's ticks hand over.
@@ -434,7 +442,8 @@ pub const Loop = struct {
 
     /// Moves the messages other loops posted into `events`: `core.inbox`'s.
     pub fn drain_mailboxes(loop: *Loop, events: []Event) u32 {
-        return loop.inbox.drain_mailboxes(loop.tables.id, events, &loop.tables.dispatch);
+        const tables = &loop.tables;
+        return loop.inbox.drain_mailboxes(tables.id, events, &tables.dispatch, tables.groups, take_reserved);
     }
 
     /// Tells the registry and the offload's workers this loop is about to sleep: `core.inbox`'s.
@@ -447,6 +456,21 @@ pub const Loop = struct {
         loop.inbox.wake_up(loop.tables.id);
     }
 };
+
+/// The slow path of a drain's reserved tags (decision 32), kept out of the tick. Decision 7 allows
+/// the hint in this file, and `docs/hot-path-ledger.md`, row H7, holds the numbers.
+pub noinline fn take_reserved(
+    ring: *const core.mailbox.Mailbox,
+    peeked: core.mailbox.Mailbox.Peeked,
+    registry: *core.mailbox.Registry,
+    dispatch: *core.dispatch.Dispatch,
+    groups: *core.scheduling.Groups,
+    sender: core.LoopId,
+    receiver: core.LoopId,
+) void {
+    @branchHint(.cold);
+    core.inbox.take_reserved(ring, peeked, registry, dispatch, groups, sender, receiver);
+}
 
 comptime {
     core.surface.check(Loop);

@@ -170,8 +170,8 @@ test "a remote that outruns the loop is refused when its ring is full, and never
     try remote.init(&registry, remote_id);
     defer remote.deinit();
 
-    // Post without the loop ticking, so nothing drains meanwhile. The mailbox ring holds
-    // `mailbox_messages`, on every backend since 2026-09-25 (decision 4), and the next post is
+    // Post without the loop ticking, so nothing drains meanwhile. A post sees `mailbox_posts_max`
+    // slots of the mailbox ring, on every backend since 2026-09-25 (decisions 4 and 32), and the next post is
     // refused. It must be, and it must be refused with `MailboxFull` and not dropped. Until then an
     // io_uring post rode a `MSG_RING`, bounded only by kernel memory, and this scenario stopped at
     // a count instead.

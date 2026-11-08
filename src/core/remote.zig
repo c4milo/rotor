@@ -89,7 +89,8 @@ pub fn send(
     // below zero for exactly this reason.
     const wake = registry.get(target);
     if (wake < 0) return error.LoopNotFound;
-    if (!registry.mailbox(sender, target).push(message)) return error.MailboxFull;
+    // A post leaves the room of the calls' returns (decision 32).
+    if (!registry.mailbox(sender, target).push_post(message)) return error.MailboxFull;
     return if (registry.must_wake(target)) wake else null;
 }
 
@@ -105,7 +106,7 @@ pub fn post_now(
     message: Message,
 ) SendError!?Descriptor {
     assert(target != sender);
-    assert(message.tag <= constants.message_tag_wake);
+    assert(Message.postable(message.tag));
     const known = registry orelse return error.LoopNotFound;
     return send(known, sender, target, message);
 }

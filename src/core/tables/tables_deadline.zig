@@ -50,6 +50,9 @@ pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     if (wait_ns == 0) return null;
     const lists = tables.finished.count + tables.fired.count;
     if (tables.pending.count != 0 or lists != 0) return null;
+    // A drain of this tick queued the task of a call, which the tick's `end` runs (decision 32).
+    // Only the drain queues a task inside a tick, so only a tick that would block reads this.
+    if (tables.dispatch.tasks.count != 0 or tables.dispatch.groups_ready != 0) return null;
     const earliest = earliest_limit(tables);
     if (earliest == @intFromEnum(WaitLimit.none)) return wait_ns;
     if (earliest <= tables.now_ns) return null;

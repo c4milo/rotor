@@ -48,7 +48,8 @@ fn end_mark_function(_: *Task) void {
 
 const end_mark_call: Task.Call = .{ .name = "rotor.scheduling.end_mark", .function = end_mark_function };
 
-/// The groups of one loop. Size 536 B, alignment 8.
+/// The groups of one loop. Size 536 B, alignment 8. Decision 32 takes 2 B of its padding for
+/// `stations` and `serving`.
 pub const Groups = struct {
     lanes: [constants.scheduling_groups_max]Lane,
     /// Where the queue of each group other than `.default` ends. It is never queued and never run.
@@ -62,6 +63,11 @@ pub const Groups = struct {
     visit_open: bool,
     /// n, the named groups of the program, which hold ids 1 to n on every loop.
     named: u8,
+    /// The services that this loop serves or calls (decision 32): each station that a `serve` or
+    /// a `send` attached. At most `services_max`.
+    stations: u8,
+    /// The stations of this loop that serve. `deinit` halts while it is above 0 (decision 32).
+    serving: u8,
 
     /// The groups of a loop that has just started: `.default` at the default shares, then the
     /// named groups of `table` at their declared shares.
@@ -73,6 +79,8 @@ pub const Groups = struct {
             .cursor = 0,
             .visit_open = false,
             .named = 0,
+            .stations = 0,
+            .serving = 0,
         };
         groups.reserve_named(table);
     }
@@ -118,7 +126,8 @@ pub const Groups = struct {
     /// queued.
     pub fn push(groups: *Groups, group: SchedulingGroup, task: *Task, queued_max: u32) ScheduleError!void {
         assert(group != .default);
-        assert(queued_max <= constants.tasks_queued_max);
+        // A call's task is pushed with the higher limit (decision 32, ruling item 11).
+        assert(queued_max <= constants.task_queue_length_max);
         const lane = &groups.lanes[@intFromEnum(group)];
         if (lane.count >= queued_max) return error.TasksFull;
         task.next = &groups.end_mark;
@@ -160,15 +169,16 @@ pub const Groups = struct {
 
     /// Unlinks every task of the groups other than `.default` without a call, and returns the count.
     /// It resets every deficit, the cursor and the open visit, `.default`'s included. The caller
-    /// discards `.default`'s queue.
+    /// discards `.default`'s queue. Halts on the task of a call (decision 32, class C).
     pub fn discard(groups: *Groups) u32 {
         var discarded: u32 = 0;
         for (groups.lanes[1 .. @as(usize, groups.reserved) + 1]) |*lane| {
             const count = lane.count;
             var unlinked: u32 = 0;
             var at = lane.head;
-            while (unlinked < constants.tasks_queued_max) : (unlinked += 1) {
+            while (unlinked < constants.task_queue_length_max) : (unlinked += 1) {
                 const task = at orelse break;
+                assert(!task.call.call_record);
                 const next = task.next.?;
                 at = if (next == &groups.end_mark) null else next;
                 task.next = null;
@@ -206,7 +216,7 @@ pub const Groups = struct {
     }
 
     /// Decision 8, class D, O(n): each lane's queue is `count` long, ends at its tail and then at
-    /// the end mark, within `tasks_queued_max` steps, and its ready bit is set exactly when it
+    /// the end mark, within `task_queue_length_max` steps, and its ready bit is set exactly when it
     /// holds a task. The tests call it after every step.
     pub fn assert_lanes(groups: *const Groups, ready: u16) void {
         assert(ready & 1 == 0);
@@ -220,7 +230,7 @@ pub const Groups = struct {
             var last: ?*Task = null;
             var at = lane.head;
             while (at) |task| {
-                assert(walked < constants.tasks_queued_max);
+                assert(walked < constants.task_queue_length_max);
                 assert(task != &groups.end_mark);
                 walked += 1;
                 last = task;

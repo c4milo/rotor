@@ -79,7 +79,7 @@ pub const Remote = struct {
     pub fn post(remote: *Remote, target: core.LoopId, message: core.Message) PostError!void {
         remote.assert_owner();
         assert(target != remote.id);
-        assert(message.tag <= core.constants.message_tag_wake);
+        assert(core.Message.postable(message.tag));
         const wake = try core.remote.send(remote.registry, remote.id, target, message);
         const descriptor = wake orelse return;
         // In a group the target's wake is a pipe its group's creator made (decision 21, point 3).
@@ -196,7 +196,7 @@ test "a message reaches the ring the target drains, and a full ring is refused" 
 
     // Fill the ring, then one more: the message is refused and not dropped silently.
     var sent: u32 = 0;
-    while (sent < core.constants.mailbox_messages) : (sent += 1) {
+    while (sent < core.constants.mailbox_posts_max) : (sent += 1) {
         try remote.post(0, .{ .payload = sent, .tag = 0 });
     }
     try testing.expectError(error.MailboxFull, remote.post(0, .{ .payload = 0, .tag = 0 }));

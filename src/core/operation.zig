@@ -23,7 +23,8 @@ pub const LoopId = u16;
 
 /// What one loop posts to another: 16 bytes. Anything larger travels as an index or a pointer in
 /// `payload`, into memory the two sides agreed on. `tag` is at most `constants.message_tag_max`,
-/// or `constants.message_tag_wake` for `wake`.
+/// or `constants.message_tag_wake` for `wake`. The two tags between them belong to the calls of
+/// decision 32, and only rotor posts them.
 pub const Message = extern struct {
     payload: u64,
     tag: u32,
@@ -32,6 +33,12 @@ pub const Message = extern struct {
     /// Wakes the loop it is posted to, and reaches no one (decision 29). The loop drops it, hands
     /// no event for it, and does not block before its pollers run again.
     pub const wake: Message = .{ .payload = 0, .tag = constants.message_tag_wake };
+
+    /// True for a tag that a post may carry: a caller's tag, or the wake's (decision 32). Each post
+    /// halts on any other tag, so a program cannot forge a call.
+    pub fn postable(tag: u32) bool {
+        return tag <= constants.message_tag_max or tag == constants.message_tag_wake;
+    }
 };
 
 /// An IPv4 or IPv6 endpoint. rotor's own type, because no kernel type is part of the surface.
@@ -341,7 +348,7 @@ pub const Operation = struct {
             .post => |kind| {
                 assert(operation.timeout_ns == 0);
                 assert(kind.target < constants.loops_max);
-                assert(kind.message.tag <= constants.message_tag_wake);
+                assert(Message.postable(kind.message.tag));
             },
             .receive_from => |kind| assert_receive_from(kind),
             .send_to => |kind| assert_send_to(kind),
