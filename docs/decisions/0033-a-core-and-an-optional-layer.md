@@ -884,6 +884,19 @@ the loop or the reactor, and the adapter feeds colibri.
 | the handler's work | the program calls it after its tick | one `Task` that the poller schedules in colibri's group |
 | its buffer group | `reserve_buffer_group` on the program's loop | `reserve_buffer_group` on the view |
 
+colibri's decision 159 (ruled 2026-11-08) gives its host interface two calls, `turn(now_ns,
+operations)` and `complete(completion, now_ns)`, and colibri calls no host. Its private kind runs
+on an adapter that uses the core alone. On 2026-11-08 its session listed what that adapter needs,
+and this record keeps each of them in the core:
+
+- `Loop`, `tick` and `Event`.
+- `Operation`, with `accept`, `accept_multishot`, `connect`, `receive`, `send`, `close`,
+  `receive_from`, and the datagram send with segments and ECN.
+- `BufferGroup`, `reserve_buffer_group`, `provide_datagram_buffers`, the datagram view and
+  `give_back_buffer`.
+
+A change of this record that moves one of these out of the core is told to colibri first.
+
 A plain loop has one stored limit, and only the program writes it. So the program takes the least
 of each deadline it holds, and writes that. The adapter over a plain loop needs the core alone.
 `wait_until` replaces the cancel and the second arm of a timer each time a QUIC deadline moves,
