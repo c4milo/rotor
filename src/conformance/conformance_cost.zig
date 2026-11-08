@@ -237,3 +237,67 @@ test "one task of a full run in 16 groups stays under its bound" {
     }
     try expect_under(best_ns, group_task_bound_ns, "one task of a full run in 16 groups");
 }
+
+/// One call round trip between two loops on this thread (decision 32): the send, the drain and
+/// the handler on the target, the answer, and the drain and `finish` on the caller. Each round
+/// sends 32 calls, the most of one pair, so one tick of each loop serves them all.
+const call_rounds_per_attempt = 8;
+/// The ticks of each loop that one round may take.
+const call_ticks_max = 8;
+const call_scenarios = @import("conformance_call.zig");
+
+/// Measured on `mac` on 2026-11-07, at a load average of about 20: 1,284 to 1,299 ns in Debug, with
+/// the ticks of both loops. The bound is ten times that.
+const call_bound_ns = 13_000;
+
+/// Sends one call from each record, and ticks both loops until every call came back. A loop with
+/// nothing outstanding takes the calls in one tick on its fast path, and runs their tasks in the
+/// next.
+fn call_round(
+    harnesses: *[2]conformance.Harness,
+    clients: []call_scenarios.Client,
+    tally: *const call_scenarios.Tally,
+) !void {
+    for (clients) |*client| try client.send();
+    const expected = tally.replied + @as(u32, @intCast(clients.len));
+    var events: [64]Event = undefined;
+    for (0..call_ticks_max) |_| {
+        if (tally.replied == expected) return;
+        _ = try harnesses[1].tick(&events, 0);
+        _ = try harnesses[0].tick(&events, 0);
+    }
+    return error.CallsMissing;
+}
+
+test "one call round trip between two loops stays under its bound" {
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
+    defer life.end();
+    var harnesses: [2]conformance.Harness = undefined;
+    try call_scenarios.init_loop(&harnesses[0], 0, &registry, &.empty);
+    defer harnesses[0].deinit();
+    try call_scenarios.init_loop(&harnesses[1], 1, &registry, &.empty);
+    defer harnesses[1].deinit();
+    var service: call_scenarios.EchoService = .init;
+    var echo: call_scenarios.Echo = .{};
+    const target = harnesses[1].loop.shared();
+    service.serve(target, &echo);
+    defer service.stop_serving(target);
+    var tally: call_scenarios.Tally = .{};
+    var clients: [core.constants.calls_per_pair_max]call_scenarios.Client = undefined;
+    for (&clients) |*client| {
+        client.* = .{ .service = &service, .shared = harnesses[0].loop.shared(), .target = 1, .tally = &tally };
+    }
+    var best_ns: u64 = std.math.maxInt(u64);
+    for (0..attempts) |_| {
+        const replied = tally.replied;
+        const started_ns = now_ns();
+        for (0..call_rounds_per_attempt) |_| try call_round(&harnesses, &clients, &tally);
+        const calls = call_rounds_per_attempt * core.constants.calls_per_pair_max;
+        best_ns = @min(best_ns, (now_ns() - started_ns) / calls);
+        try testing.expectEqual(replied + calls, tally.replied);
+    }
+    try expect_under(best_ns, call_bound_ns, "one call round trip");
+}

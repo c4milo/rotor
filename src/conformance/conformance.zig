@@ -258,6 +258,8 @@ test {
     _ = @import("conformance_dispatch_local.zig");
     _ = @import("conformance_tasks.zig");
     _ = @import("conformance_scheduling.zig");
+    _ = @import("conformance_call.zig");
+    _ = @import("conformance_call_threads.zig");
     _ = @import("conformance_stall.zig");
     _ = @import("conformance_stall_watch.zig");
     _ = @import("conformance_shutdown.zig");
