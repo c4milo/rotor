@@ -68,8 +68,8 @@ comptime {
     // Every whole name above must still name something in the standard library, and every partial
     // name must still match something. A Zig upgrade that removes one fails this build rather than
     // leaving a rule that reports nothing.
-    lint.names.assert_all_resolve(std, "std", &forbidden_prefixes);
-    lint.names.assert_all_match(std, "std", &forbidden_raw_prefixes);
+    lint.assert_all_resolve(std, "std", &forbidden_prefixes);
+    lint.assert_all_match(std, "std", &forbidden_raw_prefixes);
 }
 
 /// The modules that talk to a kernel and so may read its clock.

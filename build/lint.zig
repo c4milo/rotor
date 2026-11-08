@@ -31,7 +31,7 @@ const canary_rules = [_][]const u8{
 };
 
 /// The most lines a hand-written file may hold (tools/lint/file_length.zig).
-const file_length_max_lines = 500;
+const file_length_lines_max = 500;
 
 /// One violation of each Zig rule under `src/`, then enough comment lines to pass the file-length
 /// limit.
@@ -50,7 +50,7 @@ const canary_source =
     \\    defer close_all();
     \\}
     \\
-++ "//\n" ** file_length_max_lines;
+++ "//\n" ** file_length_lines_max;
 
 /// A function that scores exactly one over `cognitive_complexity_max`: five nested `if`s score
 /// 1 + 2 + 3 + 4 + 5 and the sixth scores 1. The complexity run over it must exit 1, so raising

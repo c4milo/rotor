@@ -77,7 +77,7 @@ fn expect_findings(text: []const u8, expected: []const []const u8) !void {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var findings: commit.Findings = .{ .arena = arena, .max_findings = config.max_findings };
+    var findings: commit.Findings = .{ .arena = arena, .findings_max = config.findings_max };
     try commit.lint_message_text(arena, config, &findings, "message", text);
     try testing.expectEqual(expected.len, findings.items.items.len);
     for (findings.items.items, expected) |finding, wanted| {
@@ -121,7 +121,7 @@ test "a well-formed scope the graph does not name draws a warning" {
 
 test "a third-person subject is refused" {
     try expect_findings("feat(core): adds the timer heap\n", &.{
-        "violation: subject-description: \"adds\" is a third-person form, not imperative",
+        "error: subject-description: \"adds\" is a third-person form, not imperative",
     });
 }
 
@@ -146,7 +146,7 @@ test "a Co-Authored-By paragraph spends one of the body's three paragraphs" {
     try expect_findings(
         "feat(bench): do a thing\n\nOne.\n\nTwo.\n\nThree.\n\n" ++
             "Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>\n",
-        &.{"violation: body-size: the body has 4 paragraphs, over the limit of 3"},
+        &.{"error: body-size: the body has 4 paragraphs, over the limit of 3"},
     );
 }
 

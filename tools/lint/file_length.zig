@@ -15,14 +15,14 @@ const lint = pepegrillo.lint;
 const file_length = lint.rules.file_length;
 
 /// The most lines a hand-written file may hold.
-pub const max_lines: u32 = 500;
+pub const lines_max: u32 = 500;
 
 pub const config: file_length.Config = .{
     .scope = .{
         .extensions = &.{ ".zig", ".sh" },
         .include_directories = &.{ "src", "tools", "build", "bench" },
     },
-    .max_lines = max_lines,
+    .lines_max = lines_max,
     .message_suffix = "; split the file",
 };
 
@@ -41,12 +41,12 @@ test "file-length passes a file at the limit and flags one line over it" {
     var arena_state = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    const at_limit = try harness.run(arena, Rule, "src/uring/uring.zig", fixture_line ** max_lines);
+    const at_limit = try harness.run(arena, Rule, "src/uring/uring.zig", fixture_line ** lines_max);
     try harness.expect_messages(at_limit, &.{});
-    const over_limit = fixture_line ** (max_lines + 1);
+    const over_limit = fixture_line ** (lines_max + 1);
     const over = try harness.run(arena, Rule, "src/uring/uring.zig", over_limit);
     try harness.expect_messages(over, &.{"501 lines, over the 500-line limit; split the file"});
-    try testing.expectEqual(max_lines + 1, over[0].line);
+    try testing.expectEqual(lines_max + 1, over[0].line);
 }
 
 test "file-length reads .zig and .sh under src, tools, build and bench" {
