@@ -210,3 +210,30 @@ test "one task of a full run stays under its bound" {
     }
     try expect_under(best_ns, task_bound_ns, "one task of a full run");
 }
+
+/// One task of a full run in 16 groups at the default shares (decision 30): `schedule_in`, the
+/// groups path's visits, the pop and the call. Each group holds 4 of the 64 tasks, so each visit
+/// starts one task. Measured on `mac` on 2026-11-07, at a load average of about 20: 82 ns in Debug,
+/// against 31 for a run of `.default` alone. The bound is ten times that.
+const group_task_bound_ns = 800;
+
+test "one task of a full run in 16 groups stays under its bound" {
+    if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
+    try loop.init(&memory, &options);
+    defer loop.deinit();
+    var events: [events_max]Event = undefined;
+    var groups: [core.constants.scheduling_groups_max]core.SchedulingGroup = undefined;
+    groups[0] = .default;
+    for (groups[1..]) |*group| group.* = try loop.reserve_scheduling_group(core.constants.scheduling_shares_default);
+    const per_group = task_count / core.constants.scheduling_groups_max;
+
+    var best_ns: u64 = std.math.maxInt(u64);
+    for (0..attempts) |_| {
+        const started_ns = now_ns();
+        for (&cost_tasks, 0..) |*task, index| try loop.schedule_in(groups[index / per_group], task);
+        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+        best_ns = @min(best_ns, (now_ns() - started_ns) / task_count);
+        try testing.expectEqual(@as(u32, 0), loop.tasks_queued());
+    }
+    try expect_under(best_ns, group_task_bound_ns, "one task of a full run in 16 groups");
+}

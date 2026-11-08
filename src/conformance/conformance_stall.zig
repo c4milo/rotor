@@ -81,13 +81,23 @@ pub fn task(
     comptime field: []const u8,
     comptime handler: fn (parent: *Parent) void,
 ) core.Task {
-    return .init(Parent, field, struct {
+    return task_cost(Parent, field, handler, 1);
+}
+
+/// `core.Task.init_cost`, with the handler timed (decision 30).
+pub fn task_cost(
+    comptime Parent: type,
+    comptime field: []const u8,
+    comptime handler: fn (parent: *Parent) void,
+    comptime cost: u16,
+) core.Task {
+    return .init_cost(Parent, field, struct {
         fn timed(parent: *Parent) void {
             const started_ns = cpu_ns();
             handler(parent);
             measure(started_ns);
         }
-    }.timed);
+    }.timed, cost);
 }
 
 const conformance = @import("conformance.zig");

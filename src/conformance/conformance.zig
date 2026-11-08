@@ -88,6 +88,17 @@ pub const Harness = struct {
         });
     }
 
+    /// A loop whose options hold the named groups of `table`, which its `init` reserves as ids 1
+    /// to n (decision 30). A scenario chooses its own table, the empty one included.
+    pub fn init_named(harness: *Harness, table: *const core.scheduling.NamedTable) !void {
+        try harness.loop.init(&harness.memory, &.{
+            .operations = operations,
+            .entries = entries,
+            .spin_budget_ns = spin_budget_ns(),
+            .named_groups = table.*,
+        });
+    }
+
     /// A loop with the spin budget `budget_ns`, whatever the environment asks, for the scenarios
     /// that check what a budget does (decision 13).
     pub fn init_spin(harness: *Harness, budget_ns: u64) !void {
@@ -246,6 +257,7 @@ test {
     _ = @import("conformance_shuffle.zig");
     _ = @import("conformance_dispatch_local.zig");
     _ = @import("conformance_tasks.zig");
+    _ = @import("conformance_scheduling.zig");
     _ = @import("conformance_stall.zig");
     _ = @import("conformance_stall_watch.zig");
     _ = @import("conformance_shutdown.zig");
