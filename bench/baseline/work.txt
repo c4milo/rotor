@@ -99,6 +99,9 @@
 # `mac` at a load average of about 11 (12943, 12942 and 12978; 13639, 13638 and 13639; 2529 each
 # time). The linux-aarch64 rows are from cachegrind of Valgrind 3.25.1 in an arm64 container on
 # `mac`. The x86-64 sections hold no line for them, so CI prints them after the push.
+# On 2026-11-08 decisions 30 and 32 landed, and CI's run 42500991545 at `c10b361` printed the
+# x86-64 rows. Camilo raised x86-64 epoll `poller` from 619 to 634, CI's count there; main counted
+# 629 before. The x86-64 lines of `tasks-groups-4`, `tasks-groups-16` and `call` are CI's counts.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -122,6 +125,9 @@ task 617
 tasks-64 4158
 record 1296
 poller 564
+tasks-groups-4 12238
+tasks-groups-16 13054
+call 2533
 section linux-x86_64-epoll
 post 1289
 timer 1211
@@ -131,7 +137,10 @@ post-operation 3367
 task 668
 tasks-64 4236
 record 1353
-poller 619
+poller 634
+tasks-groups-4 12297
+tasks-groups-16 13113
+call 2690
 section linux-aarch64-uring
 post 1039
 post-operation 2905
