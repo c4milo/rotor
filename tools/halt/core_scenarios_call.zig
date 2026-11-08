@@ -54,6 +54,16 @@ fn send_a_record_that_is_out() void {
     link.prepare(&stations, &entry_call, 1, .{ .group = .default });
 }
 
+/// An idle link whose task is still linked in a queue. With the check deleted, `prepare` writes
+/// the link and returns.
+fn send_a_record_whose_task_is_queued() void {
+    start();
+    var other: Task = .{ .call = &entry_call };
+    link.task.next = &other;
+    scenario.reached_violation();
+    link.prepare(&stations, &entry_call, 1, .{ .group = .default });
+}
+
 /// A link that `prepare` wrote, and that is idle again. With the check deleted, the call is pushed
 /// and `call` returns.
 fn call_with_a_link_that_prepare_did_not_write() void {
@@ -179,6 +189,7 @@ fn discard_a_task_of_a_call_in_a_group() void {
 
 pub const scenarios = [_]scenario.Scenario{
     .{ .name = "call: send a record that is out", .run = send_a_record_that_is_out },
+    .{ .name = "call: send a record whose task is queued", .run = send_a_record_whose_task_is_queued },
     .{ .name = "call: call with a link that prepare did not write", .run = call_with_a_link_that_prepare_did_not_write },
     .{ .name = "call: call with a forged group id", .run = call_with_a_forged_group_id },
     .{ .name = "call: call in a registry of a group", .run = call_in_a_registry_of_a_group },
