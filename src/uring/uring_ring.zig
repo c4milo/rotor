@@ -382,61 +382,14 @@ fn setup_error(err: anyerror) InitError {
 
 const testing = std.testing;
 
-test "the files that fill an entry set its opcode only through set_opcode" {
-    // An opcode set any other way escapes the compile-time check, and `init` would not probe it.
-    const sources = [_][]const u8{
-        @embedFile("uring_submit.zig"),
-        @embedFile("uring_datagram.zig"),
-        @embedFile("uring_remote.zig"),
-    };
-    for (sources) |source| try testing.expect(std.mem.indexOf(u8, source, ".opcode = ") == null);
-}
-
-test "init refuses on a host without io_uring" {
-    if (builtin.os.tag == .linux) return error.SkipZigTest;
-    try testing.expectError(error.Unsupported, Ring.init(8));
-}
-
-test "a ring sets up, reports its space, and enters with nothing to do" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var ring = try Ring.init(8);
-    defer ring.deinit();
-    try testing.expectEqual(@as(u32, 8), ring.sqe_space());
-    try testing.expectEqual(@as(u32, 0), ring.cq_ready());
-    try testing.expectEqual(Entered.submitted, try ring.enter(null));
-    try testing.expect(ring.descriptor() >= 0);
-}
-
-test "a wait with nothing in flight returns when its timeout passes" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var ring = try Ring.init(8);
-    defer ring.deinit();
-    try testing.expectEqual(Entered.submitted, try ring.enter(core.constants.ns_per_ms));
-    try testing.expectEqual(@as(u32, 0), ring.cq_ready());
-}
-
-test "a no-op entry completes with the user data it carried" {
-    if (builtin.os.tag != .linux) return error.SkipZigTest;
-    var ring = try Ring.init(8);
-    defer ring.deinit();
-    const sqe = ring.get_sqe().?;
-    sqe.prep_nop();
-    sqe.user_data = 0xABCD;
-    try testing.expectEqual(@as(u32, 7), ring.sqe_space());
-    try testing.expectEqual(Entered.submitted, try ring.enter(core.constants.ns_per_s));
-    try testing.expectEqual(@as(u32, 1), ring.cq_ready());
-    try testing.expectEqual(@as(u64, 0xABCD), ring.cqe_at(0).user_data);
-    try testing.expectEqual(@as(i32, 0), ring.cqe_at(0).res);
-    ring.cq_advance(1);
-    try testing.expectEqual(@as(u32, 0), ring.cq_ready());
-}
-
 /// A clock a test gives to `enter_for`. Its first read answers `start_ns`, and every later read
-/// answers `later_ns`, so a test sets the time each enter after the first sees as left.
+/// answers `later_ns`, so a test sets the time each enter after the first sees as left. Each read
+/// also keeps the real time in `read_at_ns`, so a test can measure each enter alone.
 const TestClock = struct {
     threadlocal var reads: u32 = 0;
     threadlocal var start_ns: u64 = 0;
     threadlocal var later_ns: u64 = 0;
+    threadlocal var read_at_ns: [1 + constants.empty_wakes_max]u64 = @splat(0);
 
     fn set(start: u64, later: u64) void {
         reads = 0;
@@ -445,6 +398,7 @@ const TestClock = struct {
     }
 
     fn read() u64 {
+        if (reads < read_at_ns.len) read_at_ns[reads] = clock_ns();
         reads += 1;
         return if (reads == 1) start_ns else later_ns;
     }
@@ -463,14 +417,28 @@ test "a bounded enter that returns with none ready enters again for the time lef
     TestClock.set(start_ns, start_ns + bound_ns - left_ns);
     const before = clock_ns();
     try testing.expectEqual(Entered.submitted, try ring.enter_for(bound_ns, TestClock.read));
-    const waited = clock_ns() - before;
+    const after = clock_ns();
     try testing.expectEqual(@as(u32, 0), ring.cq_ready());
     try testing.expectEqual(1 + constants.empty_wakes_max, TestClock.reads);
-    // A busy machine makes a wait longer and never shorter. An enter again for the whole bound
-    // waits the whole bound each time, far past the upper check.
-    comptime assert(constants.empty_wakes_max >= 5);
-    try testing.expect(waited >= bound_ns + constants.empty_wakes_max * left_ns - left_ns);
-    try testing.expect(waited < 5 * bound_ns);
+    // A busy machine makes a wait longer and never shorter, so the lower bound holds at any load.
+    try testing.expect(after - before >= bound_ns + constants.empty_wakes_max * left_ns - left_ns);
+    // An enter again for the whole bound makes each enter after the first wait 100 ms or more, at
+    // any load. A correct one waits 1 ms, and then the thread waits for a core. That wait made
+    // the sum of all nine enters pass 500 ms at a load of 45 to 77. So the check is on the
+    // shortest enter: it fails only when the thread waited 99 ms for a core after each of eight.
+    try testing.expect(shortest_enter_again_ns(after) < bound_ns);
+}
+
+/// The time of the shortest enter after the first of an `enter_for` with `TestClock`. Each such
+/// enter starts after a read of the clock, and ends at the next read or at `end_ns`.
+fn shortest_enter_again_ns(end_ns: u64) u64 {
+    const stamps = &TestClock.read_at_ns;
+    var shortest_ns: u64 = std.math.maxInt(u64);
+    for (1..stamps.len) |index| {
+        const ends_ns = if (index + 1 < stamps.len) stamps[index + 1] else end_ns;
+        shortest_ns = @min(shortest_ns, ends_ns - stamps[index]);
+    }
+    return shortest_ns;
 }
 
 test "a bounded enter that returns with none ready at its deadline does not enter again" {

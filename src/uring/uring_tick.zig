@@ -263,7 +263,7 @@ test "the wait timer stays armed for a later deadline and moves for an earlier o
     try testing.expect(after < first_ns);
 }
 
-test "a wait timer an earlier tick armed does not cut a later wait short" {
+test "a wait timer armed for an earlier deadline does not cut a later wait short" {
     if (builtin.os.tag != .linux) return error.SkipZigTest;
     var memory: [Loop.memory_bytes(&.{ .operations = 2 })]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
@@ -271,10 +271,15 @@ test "a wait timer an earlier tick armed does not cut a later wait short" {
     defer loop.deinit();
     var events: [4]Event = undefined;
 
-    // A nop ends a short wait at once, and its timer stays armed.
+    // The timer is armed as a tick with a short wait arms it. An earlier version armed it through
+    // such a tick, with a nop to end the tick at once. Under load the thread then waited 20 ms or
+    // more for a core inside that tick, so the timer fired and that tick took its completion. Here
+    // nothing takes the completion before the next tick, whenever the timer fires.
     const short_ns = 20 * core.constants.ns_per_ms;
-    try testing.expectEqual(@as(u32, 1), loop.submit(&one_nop, &.{}));
-    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, short_ns));
+    loop.tables.now_ns = clock_ns();
+    const now_ns = loop.tables.now_ns;
+    try testing.expect(arm_wait_timer(&loop, now_ns, now_ns + short_ns));
+    _ = try loop.ring.enter(null);
     try testing.expect(loop.wait_timer_deadline_ns != 0);
 
     // The next wait is longer, so it keeps that timer, which fires first. The tick waits out the

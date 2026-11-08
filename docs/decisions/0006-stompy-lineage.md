@@ -284,6 +284,45 @@ Mutations of this amendment, measured against the `uring` test executable in Doc
 | no check that the deadline passed | `uring`: the subtraction overflows and halts | CAUGHT |
 | an enter again with a completion ready | `uring`: the clock read count | CAUGHT |
 
+**Corrected on 2026-11-08: two tests expected the thread to run soon after a wake.** The stress gate
+failed 5 of 1,600 runs at a load of 50 to 77. Prints in a scratch build showed that each test was
+wrong, and that rotor did what this record says:
+
+- The `uring_ring.zig` test held the sum of nine enters under 500 ms: one of 100 ms, then eight of
+  1 ms. After a wake the thread waited for a core, up to 245 ms. The sum reached 569 ms in 1 of
+  2,400 runs, at a load of 45. The test now holds the shortest of the eight enters under 100 ms.
+  An enter again for the whole bound waits 100 ms or more at any load. In 2,387 runs at a load up
+  to 81, the shortest enter was never longer than 11.3 ms.
+- The `uring_tick.zig` test armed the timer through a tick of 20 ms with a nop. When the thread
+  waited 20 ms or more for a core inside that tick, the timer fired, and that tick took its
+  completion, as it must. The test then found no timer armed. Its body ran 144,000 times at a
+  load of 50 to 82, and this happened 14 times. The later tick never ended its wait early. The
+  test now arms the timer directly, so only the later tick can take the completion.
+
+The fixes changed no code outside the tests. Each row is one run of the stress gate's loop in
+Docker's virtual machine on `mac`, with busy loops beside the copies:
+
+| tree | copies | busy loops | runs | failed | load |
+|---|---:|---:|---:|---:|---:|
+| main, with prints | 16 | 16 | 1,600 | 0 | 11 to 55 |
+| main, with prints | 24 | 40 | 2,400 | 1 | 24 to 81 |
+| with the fix | 16 | 16 | 1,600 | 0 | 15 to 45 |
+| with the fix | 24 | 40 | 2,400 | 0 | 44 to 80 |
+
+The load is the one-minute load average, read after every tenth round. The one failed run failed the
+`uring_ring.zig` test, and then ended by `SIGKILL`. The limit of 600 s on each run sends that
+signal, so a later test probably did not end. Its output was not kept, so that test is not known.
+No other run of this work ended by a signal.
+
+Mutations of the fixed tests, measured against the `uring` test executable in Docker:
+
+| mutation | caught by | result |
+|---|---|---|
+| the enter again waits the whole bound | `uring`: the shortest enter | CAUGHT |
+| the enter again removed, and the clock still read | `uring`: the lower bound of the sum | CAUGHT |
+| no wait after a timer that fired early | `uring`: the lower bound of both wait-timer tests | CAUGHT |
+| the timer armed for the clock read, not the deadline | `uring`: the lower bound of the second wait-timer test | CAUGHT |
+
 ## Why stompy should depend on rotor
 
 1. **stompy's layer is about to grow along the same path.** stompy is one binary with proxy,

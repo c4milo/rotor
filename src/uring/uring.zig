@@ -493,6 +493,7 @@ test {
     _ = wake_module;
     _ = @import("uring_group.zig");
     _ = @import("uring_reap_test.zig");
+    _ = @import("uring_ring_test.zig");
     _ = @import("uring_submit_test.zig");
     _ = @import("uring_loop_test.zig");
     _ = @import("uring_loop_test_wakes.zig");
