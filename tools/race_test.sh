@@ -13,6 +13,9 @@
 #
 # The image is glibc and not the Linux gate's alpine, because ThreadSanitizer's runtime needs a
 # dynamic glibc (build/race.zig).
+#
+# A container that runs longer than the limit of tools/docker_limit.sh is killed from the host. The
+# run then fails, and the script prints the name of the executable that hung.
 
 set -euo pipefail
 
@@ -35,6 +38,8 @@ readonly mount_point='/t'
 readonly run_directory='/tmp/bin'
 
 cd "$(dirname "$0")/.."
+# shellcheck source=tools/docker_limit.sh
+source tools/docker_limit.sh
 readonly out="$PWD/$install_directory"
 readonly stamp="$out/$stamp_name"
 readonly manifest="$out/$manifest_name"
@@ -62,9 +67,13 @@ require_fresh_install() {
   fi
 }
 
+# Runs one command in a fresh container. The first argument names what runs, for the message of a
+# run that reaches the time limit of tools/docker_limit.sh.
 in_container() {
-  docker run --rm --security-opt "$security_option" --sysctl "$ipv6_option" \
-    --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
+  local label="$1"
+  shift
+  docker_limit_run "$label" '' --rm --security-opt "$security_option" --sysctl "$ipv6_option" \
+    --volume "$out:$mount_point:ro" "$image" "$@"
 }
 
 # Copies one installed executable into its container and runs it there, as the Linux gate does.
@@ -72,7 +81,7 @@ run() {
   local name="$1"
   echo "race_test: $name"
   # shellcheck disable=SC2016
-  if ! in_container sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
+  if ! in_container "$name" sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
     sh "$mount_point" "$run_directory" "$name"; then
     fail "$name reported a race or failed; nothing after it was run"
   fi

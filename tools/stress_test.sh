@@ -15,6 +15,9 @@
 # holds the counts for the enter with a bound.
 #
 # `zig build test` does not run it: it needs Docker, as the Linux gate does, and it takes minutes.
+#
+# When no run finishes within the limit of tools/docker_limit.sh, the host kills the container. The
+# gate then fails, and the script prints that the executable hung.
 
 set -euo pipefail
 
@@ -36,12 +39,16 @@ fail() {
 }
 
 cd "$(dirname "$0")/.."
+# shellcheck source=tools/docker_limit.sh
+source tools/docker_limit.sh
 [[ -x "$install_directory/$executable" ]] ||
   fail "no $install_directory/$executable; run zig build test-linux first"
 command -v docker >/dev/null 2>&1 || fail "no docker on PATH"
 
 # The loop that runs inside the container. It prints one line per failed run and a last line with
-# the counts, and it exits 1 when a run failed.
+# the counts, and it exits 1 when a run failed. After each finished run it adds a line to
+# /progress/runs, so the watcher of tools/docker_limit.sh sees that the runs go on.
+# shellcheck disable=SC2016
 readonly script='
 set -u
 rounds=$1; copies=$2; busy=$3
@@ -58,6 +65,7 @@ while [ $r -lt $rounds ]; do
     while [ ! -s /tmp/rc.$wait_for ]; do sleep 0.05; done
     rc=$(cat /tmp/rc.$wait_for); rm /tmp/rc.$wait_for
     runs=$((runs+1))
+    echo "$runs $(date +%s)" >> /progress/runs
     if [ "$rc" != 0 ]; then
       fails=$((fails+1))
       echo "stress_test: run $runs failed:"
@@ -73,7 +81,20 @@ pkill -f "while :; do :; done" || true
 '
 
 echo "stress_test: $rounds rounds of $copies copies of $executable beside $busy busy loops"
-docker run --rm --security-opt "$security_option" \
-  -v "$PWD/$install_directory:/in:ro" "$image" \
-  sh -c "$script" stress_test "$rounds" "$copies" "$busy"
+# The host directory the container writes its progress to. The trap removes it at the exit, and
+# ends a run in progress as tools/docker_limit.sh does.
+temporary_directory="${TMPDIR:-/tmp}"
+progress_directory="$(mktemp -d "${temporary_directory%/}/rotor-stress.XXXXXX")"
+readonly progress_directory
+trap 'docker_limit_end; rm -rf "$progress_directory"' EXIT
+# The limit counts from the last finished run, so it holds each run and not the whole gate. A run
+# that hangs keeps the next runs of the container from being counted, so the limit ends the gate.
+status=0
+docker_limit_run "$executable" "$progress_directory/runs" --rm \
+  --security-opt "$security_option" -v "$PWD/$install_directory:/in:ro" \
+  -v "$progress_directory:/progress" "$image" \
+  sh -c "$script" stress_test "$rounds" "$copies" "$busy" || status=$?
+if ((status != 0)); then
+  exit "$status"
+fi
 echo "stress_test: all passed"

@@ -267,6 +267,8 @@ was about to push.
   suite's seeded program of three libraries on one loop (`conformance_program.zig`) reads two
   variables: `ROTOR_CONFORMANCE_SEED` replays one seed first, and
   `ROTOR_CONFORMANCE_SOAK_SECONDS` runs seed after seed for that many seconds, a soak.
+- Docker limit: the Linux, race and stress gates below fail at the time limit of
+  `tools/docker_limit.sh`, and name the executable that hung.
 - Linux gate: `zig build test-linux && bash tools/linux_test.sh`. The build step compiles every
   module's test executable that runs under Linux, and the io_uring probe `tools/uring_probe.zig`,
   for Linux on the host's CPU architecture into `zig-out/linux/`, and runs none of them. The

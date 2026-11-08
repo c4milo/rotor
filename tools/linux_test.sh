@@ -44,6 +44,9 @@
 # tree. Files opened with O_DIRECT belong there too: the bind mount passes every call through
 # the host's file sharing.
 #
+# A container that runs longer than the limit of tools/docker_limit.sh is killed from the host. The
+# run then fails, and the script prints the name of the executable that hung.
+#
 # The install under zig-out/linux/ must be newer than every source, or the run would pass on
 # executables older than the tree. `zig build test-linux` touches a stamp file after its last
 # install, and the script refuses to run when any source is newer than that stamp.
@@ -110,6 +113,8 @@ readonly run_directory='/tmp/bin'
 readonly kernel_floor='6.17'
 
 cd "$(dirname "$0")/.."
+# shellcheck source=tools/docker_limit.sh
+source tools/docker_limit.sh
 readonly out="$PWD/$install_directory"
 readonly stamp="$out/$stamp_name"
 readonly manifest="$out/$manifest_name"
@@ -148,18 +153,23 @@ require_fresh_install() {
 }
 
 # Runs one command in a fresh container with the install directory mounted read-only, and with the
-# seccomp profile relaxed so io_uring works.
+# seccomp profile relaxed so io_uring works. The first argument names what runs, for the message
+# of a run that reaches the time limit of tools/docker_limit.sh.
 in_container() {
-  docker run --rm ${environment_options[@]+"${environment_options[@]}"} \
+  local label="$1"
+  shift
+  docker_limit_run "$label" '' --rm ${environment_options[@]+"${environment_options[@]}"} \
     --security-opt "$security_option" --sysctl "$ipv6_option" \
-    --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
+    --volume "$out:$mount_point:ro" "$image" "$@"
 }
 
 # The same, under Docker's default seccomp profile: no --security-opt at all. This is where
 # io_uring_setup is refused, and where the epoll backend has to work.
 in_default_container() {
-  docker run --rm ${environment_options[@]+"${environment_options[@]}"} --sysctl "$ipv6_option" \
-    --volume "$out:$mount_point:ro" "$image" "$@" </dev/null
+  local label="$1"
+  shift
+  docker_limit_run "$label" '' --rm ${environment_options[@]+"${environment_options[@]}"} \
+    --sysctl "$ipv6_option" --volume "$out:$mount_point:ro" "$image" "$@"
 }
 
 # Copies one installed executable into a container of the runner's kind and runs it there. The
@@ -169,7 +179,7 @@ run_with() {
   local runner="$1"
   local name="$2"
   # shellcheck disable=SC2016
-  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
+  if ! "$runner" "$name" sh -c 'mkdir -p "$2" && cp "$1/$3" "$2/" && exec "$2/$3"' \
     sh "$mount_point" "$run_directory" "$name"; then
     fail "$name failed; nothing after it was run"
   fi
@@ -213,7 +223,7 @@ halt_with() {
   local name="$2"
   shift 2
   # shellcheck disable=SC2016
-  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && directory="$2" &&
+  if ! "$runner" "$name" sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && directory="$2" &&
     check="$3" && scenarios="$4" && shift 4 &&
     exec "$directory/$check" "$directory/$scenarios" "$@"' \
     sh "$mount_point" "$run_directory" "$halt_check_name" "$name" "$@"; then
@@ -241,7 +251,8 @@ check_with() {
   local example="$2"
   local checker="$3"
   # shellcheck disable=SC2016
-  if ! "$runner" sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && exec "$2/$4" "$2/$3"' \
+  if ! "$runner" "$example" \
+    sh -c 'mkdir -p "$2" && cp "$1/$3" "$1/$4" "$2/" && exec "$2/$4" "$2/$3"' \
     sh "$mount_point" "$run_directory" "$example" "$checker"; then
     fail "$checker failed on $example; nothing after it was run"
   fi
@@ -252,14 +263,22 @@ require_fresh_install
 if ! command -v docker >/dev/null 2>&1; then
   fail "no docker on PATH"
 fi
-if ! release="$(in_container uname -r)"; then
+# The release goes through a file and not a command substitution. An interrupt in a command
+# substitution would leave the watcher of tools/docker_limit.sh behind. The trap removes the file
+# at the exit, and ends a run in progress as tools/docker_limit.sh does.
+temporary_directory="${TMPDIR:-/tmp}"
+release_file="$(mktemp "${temporary_directory%/}/rotor-release.XXXXXX")"
+readonly release_file
+trap 'docker_limit_end; rm -f "$release_file"' EXIT
+if ! in_container uname uname -r >"$release_file"; then
   fail "docker could not run a container; start Docker and run this again"
 fi
+release="$(cat "$release_file")"
 echo "linux_test: kernel $release (floor: Linux $kernel_floor, docs/decisions/0002-scope.md)"
 
 run "$probe_name"
 
-# Standard input is the manifest here, and in_container closes it for docker, so a container
+# Standard input is the manifest here, and docker_limit_run closes it for docker, so a container
 # cannot read the names that are still to come.
 while IFS= read -r name; do
   if [[ -z "$name" ]]; then
