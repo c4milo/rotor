@@ -89,6 +89,10 @@
 # (cachegrind). Its fast path took arm64 io_uring `post`, `task` and `poller` under, so they fell.
 # The x86-64 rows are CI's counts at `586c195`, run 42392169953: the same three rows rose, and
 # io_uring `post` and `poller` fell.
+# On 2026-11-08 Camilo ruled two rows. macOS kqueue `poller` fell to 562, the median of 3 runs on
+# `mac` (562, 562, 559) at the fix for `enter_with`. x86-64 epoll `task` rose to 668, CI's count
+# at `fd67aac`, run 42407660335: the fair tick order, the split check and decision 29 each added a
+# few instructions there.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -99,7 +103,7 @@ wait 5296
 task 615
 tasks-64 4558
 record 1283
-poller 573
+poller 562
 section linux-x86_64-uring
 post-operation 3169
 timer 1165
@@ -115,7 +119,7 @@ timer 1211
 batch 26194
 wait 709
 post-operation 3367
-task 654
+task 668
 tasks-64 4236
 record 1353
 poller 619
