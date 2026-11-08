@@ -29,6 +29,9 @@
 //!   7, row H1, and hands nothing to its caller.
 //! - `poller`: one tick with one poller added that reports no work (decision 26): the cold path of
 //!   a tick that has nothing to dispatch but its poller.
+//! - `tasks-groups-4`: the 64 tasks of `tasks-64`, 16 in each of 4 scheduling groups at the
+//!   default shares, `.default` among them (decision 30): the groups path, one visit per task.
+//! - `tasks-groups-16`: the same 64 tasks, 4 in each of 16 groups.
 //!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
@@ -50,7 +53,14 @@ pub const Workload = enum {
     tasks_64,
     record,
     poller,
+    tasks_groups_4,
+    tasks_groups_16,
 };
+
+/// The groups `tasks-groups-4` and `tasks-groups-16` spread their tasks over: `.default`, then
+/// the groups `run_all` reserves.
+var groups: [core.constants.scheduling_groups_max]core.SchedulingGroup align(@alignOf(core.SchedulingGroup)) =
+    @splat(.default);
 
 /// The exit status of a workload this backend cannot run.
 pub const unsupported_status: u8 = 2;
@@ -167,7 +177,28 @@ pub fn main(init: std.process.Init) !void {
 noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
     if (workload == .poller) try first.loop.add_poller(&counted.poller);
     defer if (workload == .poller) first.loop.remove_poller(&counted.poller);
+    const spread = groups_of(workload);
+    for (groups[1..spread]) |*group| {
+        group.* = try first.loop.reserve_scheduling_group(core.constants.scheduling_shares_default);
+    }
     for (0..iterations) |_| try run(workload);
+}
+
+/// The groups `workload` spreads its tasks over, `.default` included.
+fn groups_of(comptime workload: Workload) usize {
+    return switch (workload) {
+        .tasks_groups_4 => 4,
+        .tasks_groups_16 => core.constants.scheduling_groups_max,
+        else => 1,
+    };
+}
+
+/// Schedules the 64 tasks, `tasks.len / spread` in each of the first `spread` groups, and runs
+/// them in one tick.
+fn run_groups(comptime spread: usize) !void {
+    const per_group = tasks.len / spread;
+    for (&tasks, 0..) |*task, index| try first.loop.schedule_in(groups[index / per_group], task);
+    try first.expect(0);
 }
 
 fn run(comptime workload: Workload) !void {
@@ -212,6 +243,7 @@ fn run(comptime workload: Workload) !void {
             try first.expect(0);
             try counted.expect_one();
         },
+        .tasks_groups_4, .tasks_groups_16 => try run_groups(groups_of(workload)),
     }
 }
 
@@ -241,5 +273,7 @@ pub fn workload_of(name: []const u8) ?Workload {
     if (std.mem.eql(u8, name, "tasks-64")) return .tasks_64;
     if (std.mem.eql(u8, name, "record")) return .record;
     if (std.mem.eql(u8, name, "poller")) return .poller;
+    if (std.mem.eql(u8, name, "tasks-groups-4")) return .tasks_groups_4;
+    if (std.mem.eql(u8, name, "tasks-groups-16")) return .tasks_groups_16;
     return null;
 }

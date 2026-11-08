@@ -47,6 +47,8 @@ const workloads = [_]Workload{
     .{ .name = "tasks-64", .time_span = 50_000, .cachegrind_span = 500 },
     .{ .name = "record", .time_span = 1_000_000, .cachegrind_span = 10_000 },
     .{ .name = "poller", .time_span = 1_000_000, .cachegrind_span = 10_000 },
+    .{ .name = "tasks-groups-4", .time_span = 50_000, .cachegrind_span = 500 },
+    .{ .name = "tasks-groups-16", .time_span = 50_000, .cachegrind_span = 500 },
 };
 
 comptime {
