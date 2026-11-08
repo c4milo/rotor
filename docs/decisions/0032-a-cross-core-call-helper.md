@@ -118,8 +118,11 @@ The review of the branch `decision-32` found eight things. What was done:
 The work gate on `mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of 30 to 50,
 the median of three runs) and on arm64 Linux (cachegrind of Valgrind 3.25.1 in an arm64 container
 on `mac`), all on 2026-11-08. "line" is the row of `bench/baseline/work.txt`, which `cb38fef`
-holds, and which no commit changed. `cb38fef` is `main` before decision 30, `5e2dbfc` is the fixed
-decision 30, and `0ce36b5` is this branch's code. OVER marks a count more than 2 percent above its
+holds, and which no commit changed. These tables come from the work before the rebase onto main,
+and the three hashes name commits of local branches that main does not hold. `cb38fef` is the
+public API audit before it reached main as `311e57c`, without the fix of `enter_with` (`dcbd1e6`).
+`5e2dbfc` is the fixed decision 30, and `0ce36b5` is this branch's code. Decision 30's section
+"The rows against main" gives the counts of the commits that landed. OVER marks a count more than 2 percent above its
 line. "none" is a row with no line, or a workload that the tree does not have.
 
 The tables below are the counts of the branch before its rebase. The branch `v0-10-0` puts this
@@ -1000,7 +1003,7 @@ takes the other answer, and he then ruled question 9 to follow it.
     then belongs to one loop. (b) The caller, in `CallOptions`, as Seastar does. A group id then
     names one group on every loop, so decision 30 gains named groups. *Ruled: (b), "B now, named
     groups". See "Scheduling groups (decision 30)".*
-11. **The bound of `Tasks.assert_shape` on arm64** (finish of 2026-11-08, not ruled). The check
+11. **The bound of `Tasks.assert_shape` on arm64** (finish of 2026-11-08, ruled the same day). The check
     reads `task_queue_length_max`, 82,368, which arm64 builds in two instructions, so each
     dispatched tick pays 2 more than with `tasks_queued_max`. (a) Keep it: the cuts of the finish
     hide it, and every arm64 row is at or below decision 30's. (b) Round `call_tasks_max` up to

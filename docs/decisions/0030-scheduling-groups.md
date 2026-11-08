@@ -224,8 +224,8 @@ Decision 32's work saw the scenario of shares 100 and 300 fail once at a load of
 here too, at a load of about 35: `drain` returned `CallbackStalled` and not `TasksStillQueued`.
 The stall check of the scenarios times each handler by the wall clock, and its handlers only count
 and queue a task. So the thread lost its core for 50 ms inside a handler. The scenario is right,
-and the wall clock is the cause, which `283a0e6` on main corrects with the thread's CPU clock. That
-commit is not copied here. The failure also halted in `deinit`, because the failed check returned
+and the wall clock is the cause. Main corrects it with the thread's CPU clock (`a8405e2`), and
+this record's commits are built on that change. The failure also halted in `deinit`, because the failed check returned
 with tasks queued. Each scheduling scenario now discards its tasks on that path, so it fails and
 does not halt.
 
@@ -240,8 +240,8 @@ Camilo declined both of these on 2026-11-08 (ruling 2 of that day). The counts a
    `task` 1 fewer on arm64. It needs a hint in a file that decision 7 does not list. *Declined:
    the run stays inline, and no row is added to decision 7's ledger.*
 2. **`Tables.groups` on the heartbeat's line.** With the pointer there, `Tables` keeps the size it
-   had before this record, and io_uring `post` and `post-operation` counted what `cb38fef`
-   counted: 1073 and 2963. It changes the layout of a hot structure. *Declined: the pointer stays
+   had before this record, and io_uring `post` and `post-operation` counted what the tree of the
+   API audit counted before the rebase onto main: 1073 and 2963. It changes the layout of a hot structure. *Declined: the pointer stays
    in `Tables`, and `wakes` of the io_uring `Loop` stays 8 B further on.*
 
 x86-64 is not measured. On x86-64 the add at bit 32 takes a shift, about one instruction more in
