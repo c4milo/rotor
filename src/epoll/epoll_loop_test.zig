@@ -23,17 +23,20 @@ const testing = std.testing;
 /// Operations the sizing tests ask a loop for. Small, because what they measure is the arithmetic.
 const sized_operations = 8;
 
-test "the loop's memory holds the slots, the timers, the starts and the waiters, and no more" {
+test "the loop's memory holds the slots, the timers, the starts, the lines and the waiters, and no more" {
     const options: Loop.Options = .{ .operations = sized_operations };
     const slots = sized_operations * @sizeOf(Slot);
     const timers = sized_operations * @sizeOf(TimerHeap.Entry);
     const starts = sized_operations * @sizeOf(u64);
     const waiting = Waiters.capacity_for(sized_operations) * @sizeOf(core.waiters.Entry);
+    // The heartbeat's line (decision 28) and the scheduling groups (decision 30).
+    const lines = @sizeOf(core.Heartbeat) + @sizeOf(core.scheduling.Groups);
     // Each part is carved to `memory_alignment`, so the total is at least their sum and the padding
-    // is bounded by one alignment per part.
-    const sum = slots + timers + starts + waiting;
+    // is bounded by one alignment per part, and the heartbeat's slack.
+    const sum = slots + timers + starts + waiting + lines;
+    const padding_max = 6 * core.layout.memory_alignment + core.layout.slack_of(core.Heartbeat);
     try testing.expect(Loop.memory_bytes(&options) >= sum);
-    try testing.expect(Loop.memory_bytes(&options) <= sum + 4 * core.layout.memory_alignment);
+    try testing.expect(Loop.memory_bytes(&options) <= sum + padding_max);
     // No offload was asked for, so not one byte of `Work` is counted.
     const works = sized_operations * @sizeOf(core.offload.Work);
     try testing.expect(Loop.memory_bytes(&options) < sum + works);

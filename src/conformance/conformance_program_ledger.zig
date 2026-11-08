@@ -270,7 +270,7 @@ pub fn check_after_tick(program: *Program) !void {
     if (program.failure) |failure| return failure;
     const loop = &program.main.loop;
     const dispatch = &loop.tables.dispatch;
-    if (dispatch.ticking) return error.TickStillMarked;
+    if (dispatch.phase != .idle) return error.TickStillMarked;
     const owed = program.ledger.records_in_flight + program.jobs.queued;
     if (dispatch.callbacks_outstanding != owed) return error.CallbacksOwedDrift;
     if (loop.in_flight() != program.ledger.in_flight) return error.InFlightDrift;

@@ -19,6 +19,7 @@ const dispatch = @import("dispatch/dispatch.zig");
 const Poller = dispatch.Poller;
 const Statistics = statistics_module.Statistics;
 const Stall = statistics_module.Stall;
+const SchedulingGroup = @import("scheduling/scheduling.zig").SchedulingGroup;
 
 /// What `beat_ns` holds while the loop is in a kernel wait, and before its first tick. A span
 /// from it saturates at 0, so a wait is never a stall and needs no branch of its own.
@@ -37,6 +38,13 @@ pub const Name = [:0]const u8;
 
 /// A threshold that no span reaches: what `stall_turn_ns = null` stores.
 const never: u64 = std.math.maxInt(u64);
+
+/// What `Heartbeat.turn_group` holds when the last `end` ran no task: no group has this id.
+pub const turn_group_none: u8 = std.math.maxInt(u8);
+
+comptime {
+    assert(turn_group_none >= constants.scheduling_groups_max);
+}
 
 /// What the loop's thread writes so that another thread can see that it is stuck (decision 28).
 /// Another thread reads `beat_ns`, `running` and `watchers`. The loop's own fields share the line.
@@ -59,6 +67,10 @@ pub const Heartbeat = struct {
     /// stall of one poller takes the poller's name from the table of pollers instead, so `begin`
     /// stores no name.
     turn_name: ?*const Name,
+    /// The scheduling group of the last task of the open turn's `end`, or `turn_group_none` when
+    /// that `end` called records and ran no task (decision 30). Only the loop's thread reads it,
+    /// for a stall of one task.
+    turn_group: u8,
 
     /// The callbacks of the open turn, in two counts that one instruction zeroes at each first
     /// stamp of a tick (`stp` on arm64). A turn holds the records and the tasks of one tick's
@@ -90,6 +102,7 @@ pub const Heartbeat = struct {
             .turn = .zero,
             .turn_ns = stall_turn_ns orelse never,
             .turn_name = null,
+            .turn_group = turn_group_none,
         };
     }
 
@@ -133,6 +146,15 @@ pub const Heartbeat = struct {
         heartbeat.note_stall(statistics, heartbeat.name_of_one(pollers), now_ns, span_ns);
     }
 
+    /// The group of the one task of the open turn, or null when the turn called no task, or more
+    /// than one callback (decision 30). A record's `leave` stores `turn_group_none`, so a turn of
+    /// one record names no group.
+    fn group_of_one(heartbeat: *const Heartbeat) ?SchedulingGroup {
+        if (heartbeat.turn.callbacks() != 1 or heartbeat.turn.ended != 1) return null;
+        if (heartbeat.turn_group == turn_group_none) return null;
+        return @enumFromInt(heartbeat.turn_group);
+    }
+
     /// The name of the one callback of the open turn, or null when it called none or several. A
     /// turn of one poller called the first poller of the table: `begin` called the pollers of the
     /// table, and nothing adds or removes one between `begin` and the stamp that reads this.
@@ -170,14 +192,17 @@ pub const Heartbeat = struct {
     pub fn leave(heartbeat: *Heartbeat, called: u64) void {
         assert(called != 0);
         heartbeat.turn.ended = called;
+        heartbeat.turn_group = turn_group_none;
         heartbeat.forget_running();
     }
 
     /// `end` ran `ran` tasks, at least one, after its records, and runs none now. As `leave`, but
-    /// it adds to the count, because the records of the same `end` may have counted first.
-    pub fn leave_tasks(heartbeat: *Heartbeat, ran: u64) void {
+    /// it adds to the count, because the records of the same `end` may have counted first. `group`
+    /// is the group of the last task it ran: 0 on the path with one group (decision 30).
+    pub fn leave_tasks(heartbeat: *Heartbeat, ran: u64, group: u8) void {
         assert(ran != 0);
         heartbeat.turn.ended += ran;
+        heartbeat.turn_group = group;
         heartbeat.forget_running();
     }
 
@@ -212,6 +237,7 @@ pub const Heartbeat = struct {
             .span_ns = span_ns,
             .callbacks = heartbeat.turn.callbacks(),
             .name = text_of(name),
+            .group = heartbeat.group_of_one(),
         };
     }
 

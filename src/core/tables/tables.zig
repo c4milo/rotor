@@ -24,6 +24,8 @@ const deadline = @import("tables_deadline.zig");
 const finish_module = @import("tables_finish.zig");
 const Dispatch = @import("../dispatch/dispatch.zig").Dispatch;
 const Heartbeat = @import("../stall.zig").Heartbeat;
+const Groups = @import("../scheduling/scheduling_groups.zig").Groups;
+const NamedTable = @import("../scheduling/scheduling.zig").NamedTable;
 const Shuffle = @import("../shuffle.zig").Shuffle;
 
 const Code = event_module.Code;
@@ -75,6 +77,9 @@ pub const Tables = struct {
     /// another thread reads that line, so the words of `Tables`, which every tick reads, stay on
     /// lines that a watch never moves. Each clock stamp writes it, next to `now_ns`.
     heartbeat: *Heartbeat,
+    /// The loop's scheduling groups, carved from the caller's memory (decision 30). A tick reads
+    /// it only while a group other than `.default` holds a task.
+    groups: *Groups,
     /// Operations accepted since init: what a sampling decision is a function of (decision 9).
     operation_sequence: u64,
     /// What the loop counts about itself, sampled (decision 9). The loop writes here and never
@@ -102,17 +107,21 @@ pub const Tables = struct {
         spin_budget_ns: u64 = 0,
         /// A turn at or above this is a stall, and null counts none (decision 28).
         stall_turn_ns: ?u64 = constants.stall_turn_ns_default,
+        /// The program's named groups, which `init` reserves as ids 1 to n (decision 30).
+        named_groups: NamedTable = .empty,
     };
 
     /// Must run on the thread that will own the loop. `starts` holds one nanosecond stamp per
     /// slot, for the sampled operations in flight. `heartbeat` is the loop's line for a watch
-    /// (decision 28), which a backend carves with `Layout.take`; `init` writes it.
+    /// (decision 28), which a backend carves with `Layout.take`; `init` writes it. So is `groups`
+    /// (decision 30).
     pub fn init(
         tables: *Tables,
         slots: []Slot,
         entries: []TimerHeap.Entry,
         starts: []u64,
         heartbeat: *Heartbeat,
+        groups: *Groups,
         options: Options,
     ) void {
         assert(options.id < constants.loops_max);
@@ -128,6 +137,8 @@ pub const Tables = struct {
         tables.now_ns = 0;
         heartbeat.* = .init(options.stall_turn_ns);
         tables.heartbeat = heartbeat;
+        groups.init(&options.named_groups);
+        tables.groups = groups;
         tables.operation_sequence = 0;
         tables.owner = thread_identity();
         tables.descriptors_registered = 0;
@@ -434,6 +445,7 @@ comptime {
     // the build, because only a test build carries the shuffle.
     assert(@alignOf(Tables) == 8);
     assert(@sizeOf(*Heartbeat) == 8);
+    assert(@sizeOf(*Groups) == 8);
 }
 
 /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its

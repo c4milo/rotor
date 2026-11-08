@@ -26,6 +26,7 @@ var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
 var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
+var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 
 fn table() SlotTable {
     var result: SlotTable = undefined;
@@ -164,7 +165,7 @@ const registered_count = 2;
 /// Index 2 of a loop that registered 2 descriptors.
 fn name_a_registered_descriptor_the_loop_lacks() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     tables.note_descriptors(registered_count);
     const sync = [_]core.Operation{.{
         .user_data = 1,
@@ -177,7 +178,7 @@ fn name_a_registered_descriptor_the_loop_lacks() void {
 
 fn register_descriptors_twice() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     tables.note_descriptors(registered_count);
     scenario.reached_violation();
     tables.note_descriptors(registered_count);
@@ -187,7 +188,7 @@ fn register_descriptors_twice() void {
 /// and epoll ignored it, and io_uring handed the kernel an index it did not hold.
 fn name_a_registered_buffer_the_loop_lacks() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     tables.note_buffers(registered_count);
     var bytes: [16]u8 = undefined;
     const read = [_]core.Operation{core.Operation.read(1, 3, &bytes, 0)};
@@ -199,7 +200,7 @@ fn name_a_registered_buffer_the_loop_lacks() void {
 
 fn register_buffers_twice() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     tables.note_buffers(registered_count);
     scenario.reached_violation();
     tables.note_buffers(registered_count);
@@ -207,7 +208,7 @@ fn register_buffers_twice() void {
 
 fn register_no_buffers() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     scenario.reached_violation();
     tables.note_buffers(0);
 }
@@ -338,14 +339,14 @@ fn send_a_datagram_in_too_many_segments() void {
 fn sample_with_a_mask_that_is_not_a_run_of_bits() void {
     var tables: core.Tables = undefined;
     scenario.reached_violation();
-    tables.init(&slots, &entries, &starts, &heartbeat, .{ .sampling = .{ .sample_mask = 6 } });
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{ .sampling = .{ .sample_mask = 6 } });
 }
 
 fn sample_a_phase_the_mask_can_never_match() void {
     var tables: core.Tables = undefined;
     const sampling: core.statistics.Options = .{ .sample_mask = 3, .sample_phase = 4 };
     scenario.reached_violation();
-    tables.init(&slots, &entries, &starts, &heartbeat, .{ .sampling = sampling });
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{ .sampling = sampling });
 }
 
 /// The operation has left the pending list, as after a backend's flush, so the count of slots
@@ -353,7 +354,7 @@ fn sample_a_phase_the_mask_can_never_match() void {
 /// the lists as well, and would pass with this assertion gone.
 fn end_a_loop_whose_operation_the_kernel_holds() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     const timer = [_]core.Operation{
         .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
     };
@@ -380,7 +381,7 @@ fn size_the_rings_for_more_workers_than_the_limit() void {
 /// would overwrite the result the caller is owed.
 fn cancel_a_slot_whose_final_event_is_queued() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     const timer = [_]core.Operation{
         .{ .user_data = 1, .kind = .{ .timer = .{ .after_ns = 1 } } },
     };

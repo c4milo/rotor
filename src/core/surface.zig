@@ -28,6 +28,10 @@ pub const loop_declarations = [_][]const u8{
     "tasks_queued",
     "task_budget_left",
     "discard_tasks",
+    "schedule_in",
+    "charge_task",
+    "reserve_scheduling_group",
+    "set_scheduling_group_shares",
     "shared",
     "heartbeat",
     "in_flight",
@@ -96,6 +100,10 @@ const Complete = struct {
     pub fn tasks_queued() void {}
     pub fn task_budget_left() void {}
     pub fn discard_tasks() void {}
+    pub fn schedule_in() void {}
+    pub fn charge_task() void {}
+    pub fn reserve_scheduling_group() void {}
+    pub fn set_scheduling_group_shares() void {}
     pub fn shared() void {}
     pub fn heartbeat() void {}
     pub fn in_flight() void {}

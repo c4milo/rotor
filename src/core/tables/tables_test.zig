@@ -23,6 +23,7 @@ const Fixture = struct {
     entries: [capacity]TimerHeap.Entry,
     starts: [capacity]u64,
     heartbeat: core.Heartbeat,
+    groups: core.scheduling.Groups,
     tables: Tables,
     buffer: [8]u8,
 
@@ -33,7 +34,7 @@ const Fixture = struct {
     /// Every operation is sampled by default here, so a scenario that reads the statistics does
     /// not have to submit 32 of them.
     fn init_sampling(fixture: *Fixture, sampling: core_statistics.Options) void {
-        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{
+        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{
             .id = 2,
             .sampling = sampling,
         });

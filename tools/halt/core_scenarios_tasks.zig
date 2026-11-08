@@ -17,6 +17,8 @@ var tasks: Tasks align(@alignOf(Tasks)) = .empty;
 var dispatch: Dispatch align(@alignOf(Dispatch)) = .empty;
 /// What a run stores each task's name in (decision 28).
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = .init(null);
+/// The loop's groups (decision 30).
+var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 
 /// One task pushed twice: the queue would link the task to itself. With the check deleted, the
 /// second push does so, and the run of two tasks calls it twice and returns.
@@ -60,11 +62,12 @@ fn walk_a_queue_shorter_than_its_count() void {
 /// deleted, the discard empties the queue and returns.
 fn discard_the_tasks_inside_a_tick() void {
     dispatch = .empty;
+    groups.init(&.empty);
     first = .{ .call = &ran_call };
     dispatch.schedule(&first) catch return;
     _ = dispatch.begin(&heartbeat, 0);
     scenario.reached_violation();
-    _ = dispatch.discard_tasks();
+    _ = dispatch.discard_tasks(&groups);
 }
 
 /// A loop that ends with a task queued: the task is the library's memory, which it may free once

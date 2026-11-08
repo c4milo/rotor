@@ -38,6 +38,15 @@ pub const Poller = core.Poller;
 pub const WaitLimit = core.WaitLimit;
 pub const BufferGroup = core.BufferGroup;
 pub const Task = core.Task;
+/// A task queue with shares on one loop (decision 30). `Loop.reserve_scheduling_group` makes one,
+/// and `NamedSchedulingGroup.scheduling_group` gives one of the program's named groups.
+pub const SchedulingGroup = core.SchedulingGroup;
+/// A group that is the same group on every loop of the program: one of the names of the root
+/// file's `rotor_scheduling_groups` (decision 30). A cross-core call names one (decision 32).
+pub const NamedSchedulingGroup = core.NamedSchedulingGroup;
+/// The program's names, from the root file's `rotor_scheduling_groups`: `enum { quic, dns }` for
+/// `.{ .quic = 400, .dns = 100 }`. Empty when the root declares none.
+pub const SchedulingGroupName = loop_module.root_groups.Name;
 pub const Handle = core.Handle;
 pub const LoopId = core.LoopId;
 pub const Message = core.Message;
@@ -91,6 +100,12 @@ pub const Backend = loop_module.Backend;
 /// gives one, `epoll` where it refuses, as Docker's default seccomp profile does. On Darwin it is
 /// `kqueue`. Whatever needs the choice first makes it, so `sync`, a `Registry` and a `Loop` all
 /// agree.
+/// The named group `name` of the program's root declaration, `rotor_scheduling_groups`. The program
+/// calls it, and hands each library its group at init. An undeclared name fails to compile.
+pub fn named_scheduling_group(comptime name: SchedulingGroupName) NamedSchedulingGroup {
+    return loop_module.named_scheduling_group(name);
+}
+
 pub fn backend() Backend {
     return switch (loop_module.chosen()) {
         inline else => |tag| @field(Backend, @tagName(tag)),
@@ -221,9 +236,11 @@ pub const Loop = loop_module.Loop;
 pub const Heartbeat = core.HeartbeatView;
 
 /// The loop as the program hands it to a library (decision 28). `Loop.shared` returns it. A library
-/// keeps it, and may submit, cancel, post, schedule tasks, add pollers and use buffer groups on it.
-/// `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it, with a
-/// message that states the rule: only the program ticks a shared loop (decision 27, ruling 1).
+/// keeps it, and may submit, cancel, post, schedule tasks in its group, add pollers and use buffer
+/// groups on it. `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it,
+/// with a message that states the rule: only the program ticks a shared loop (decision 27, ruling
+/// 1). So do `schedule`, `reserve_scheduling_group` and `set_scheduling_group_shares`: a library
+/// names its group in each `schedule_in`, and only the program sets the groups (decision 30).
 pub const SharedLoop = loop_module.SharedLoop;
 
 comptime {
@@ -237,8 +254,9 @@ const testing = std.testing;
 
 /// The declarations of `Loop` beyond the surface: its error sets, and nothing else.
 const loop_error_sets = [_][]const u8{
-    "InitError",    "TickError", "DrainError",     "RegisterError",
-    "ProvideError", "PostError", "AddPollerError", "ScheduleError",
+    "InitError",                   "TickError", "DrainError",     "RegisterError",
+    "ProvideError",                "PostError", "AddPollerError", "ScheduleError",
+    "ReserveSchedulingGroupError",
 };
 const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
 const registry_declarations = [_][]const u8{

@@ -157,12 +157,13 @@ fn accumulator_of(descriptor: core.Descriptor) []u8 {
 const loops_max = 16;
 var loops: u32 = 1;
 
-var loop_memory: [loops_max][
-    Loop.memory_bytes(&.{
-        .operations = operations,
-        .entries = entries,
-    })
-]u8 align(core.layout.memory_alignment) = undefined;
+/// One loop's memory, rounded up so that each block of `loop_memory` starts aligned (decision 30).
+const loop_bytes = std.mem.alignForward(usize, Loop.memory_bytes(&.{
+    .operations = operations,
+    .entries = entries,
+}), core.layout.memory_alignment);
+
+var loop_memory: [loops_max][loop_bytes]u8 align(core.layout.memory_alignment) = undefined;
 
 const group_alignment = backend.buffers.group_alignment;
 

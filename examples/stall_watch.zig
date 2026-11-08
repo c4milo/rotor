@@ -77,7 +77,7 @@ pub fn main(init: std.process.Init) !void {
     var slow: Slow = .{ .io = init.io, .reported = &watcher.reported };
     // A library holds the view, and may schedule a task on it but not tick it.
     const shared = loop.shared();
-    try shared.schedule(&slow.task);
+    try shared.schedule_in(.default, &slow.task);
     var events: [4]rotor.Event = undefined;
     // This tick runs the task, which holds the loop until the watch reports it.
     _ = try loop.tick(&events, 0);

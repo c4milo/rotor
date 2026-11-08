@@ -1,6 +1,8 @@
-//! The calls of decisions 26 to 29 that every backend's `Loop` exports, written once: the
-//! pollers, the tasks, the view a library holds, and the heartbeat. Split from `dispatch.zig` for
-//! the 500-line limit.
+//! The calls of decisions 26 to 30 that every backend's `Loop` exports, written once: the
+//! pollers, the tasks and their scheduling groups, the view a library holds, and the heartbeat.
+//! Split from `dispatch.zig` for the 500-line limit.
+const std = @import("std");
+const assert = std.debug.assert;
 const dispatch_module = @import("dispatch.zig");
 const stall_watch = @import("../stall_watch.zig");
 const HeartbeatView = stall_watch.HeartbeatView;
@@ -12,6 +14,9 @@ const Poller = dispatch_module.Poller;
 const WaitLimit = dispatch_module.WaitLimit;
 const ScheduleError = tasks_module.ScheduleError;
 const Task = tasks_module.Task;
+const scheduling = @import("../scheduling/scheduling.zig");
+const SchedulingGroup = scheduling.SchedulingGroup;
+const ReserveSchedulingGroupError = scheduling.ReserveSchedulingGroupError;
 
 /// The calls of decisions 26 to 29 that every backend's `Loop` exports, written once. `Loop` has
 /// a `tables: Tables` field, an `inbox: Inbox` field and a `kept_error` field, a `tick_error.Kept`.
@@ -39,34 +44,73 @@ pub fn Calls(comptime Loop: type) type {
             return loop.tables.dispatch.schedule(task);
         }
 
-        /// True while `task` is queued on this loop.
+        /// Queues `task` in `group`, a group of this loop (decision 30). Returns `TasksFull` when
+        /// that group holds `tasks_queued_max` tasks. `schedule_in(.default, task)` is
+        /// `schedule(task)`. The loop serves the groups by their shares, in the cost units each task
+        /// states. Halts on an id this loop did not reserve.
+        pub fn schedule_in(loop: *Loop, group: SchedulingGroup, task: *Task) ScheduleError!void {
+            loop.tables.assert_owner();
+            return loop.tables.dispatch.schedule_in(loop.tables.groups, group, task);
+        }
+
+        /// Inside a task's run only: adds `units`, at most `task_charge_max`, to the cost of the
+        /// task that runs now (decision 30). A task whose work varies calls it before it returns,
+        /// so its group pays for what it did. Halts outside a task's run.
+        pub fn charge_task(loop: *Loop, units: u16) void {
+            loop.tables.assert_owner();
+            loop.tables.dispatch.charge_task(loop.tables.groups, units);
+        }
+
+        /// Reserves the lowest free group id with `shares`, in 1 to `scheduling_shares_max`
+        /// (decision 30). The named groups hold ids 1 to n from init, so the first reserve returns
+        /// n + 1. The id belongs to this loop only, until `deinit`: no call gives it back.
+        /// `SchedulingGroupsFull` when every id is reserved. Program only, between ticks: inside a
+        /// tick it halts (class C).
+        pub fn reserve_scheduling_group(loop: *Loop, shares: u16) ReserveSchedulingGroupError!SchedulingGroup {
+            loop.tables.assert_owner();
+            assert(loop.tables.dispatch.phase == .idle);
+            return loop.tables.groups.reserve(shares);
+        }
+
+        /// Sets the shares of `.default` or of a reserved group of this loop, in 1 to
+        /// `scheduling_shares_max` (decision 30). It counts from the group's next visit. The shares
+        /// of a named group change on this loop only. Program only.
+        pub fn set_scheduling_group_shares(loop: *Loop, group: SchedulingGroup, shares: u16) void {
+            loop.tables.assert_owner();
+            loop.tables.groups.set_shares(group, shares);
+        }
+
+        /// True while `task` is queued in a group of this loop.
         pub fn is_scheduled(loop: *const Loop, task: *const Task) bool {
             loop.tables.assert_owner();
             return loop.tables.dispatch.tasks.holds(task);
         }
 
-        /// The tasks queued now. A host that sleeps in its own wait reads it before it sleeps
-        /// (decision 23), and a program reads it before `deinit`.
+        /// The tasks queued now, in every group. A host that sleeps in its own wait reads it before
+        /// it sleeps (decision 23), and a program reads it before `deinit`.
         pub fn tasks_queued(loop: *const Loop) u32 {
             loop.tables.assert_owner();
-            return loop.tables.dispatch.tasks.count;
+            return loop.tables.dispatch.tasks_queued(loop.tables.groups);
         }
 
         /// `tasks_per_tick_max` less the tasks the current run started, the task that reads it
         /// included, and 0 outside a run. A long task that splits its work does at most this many
-        /// slices plus one in one call, then schedules itself again. It counts, and never reads the
-        /// clock.
+        /// slices plus one in one call, calls `charge_task` with the slices less one, then
+        /// schedules itself again. It counts, and never reads the clock. While another group holds
+        /// a task, it is at most the whole units left in the visit of the task's group
+        /// (decision 30).
         pub fn task_budget_left(loop: *const Loop) u32 {
             loop.tables.assert_owner();
-            return loop.tables.dispatch.tasks.left;
+            return loop.tables.dispatch.task_budget_left(loop.tables.groups);
         }
 
-        /// Unlinks every queued task without a call, and returns the count (decision 27,
-        /// "Shutdown"). Only the program calls it, between ticks, after `drain` returned
-        /// `TasksStillQueued`. Halts inside a tick.
+        /// Unlinks every queued task of every group without a call, and returns the count
+        /// (decision 27, "Shutdown"). It resets each group's deficit (decision 30). Only the
+        /// program calls it, between ticks, after `drain` returned `TasksStillQueued`. Halts inside
+        /// a tick.
         pub fn discard_tasks(loop: *Loop) u32 {
             loop.tables.assert_owner();
-            return loop.tables.dispatch.discard_tasks();
+            return loop.tables.dispatch.discard_tasks(loop.tables.groups);
         }
 
         /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it

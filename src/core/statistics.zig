@@ -20,6 +20,7 @@ const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 
+const SchedulingGroup = @import("scheduling/scheduling.zig").SchedulingGroup;
 const Tag = operation_module.Operation.Tag;
 const Slot = slot_module.Slot;
 
@@ -111,8 +112,11 @@ pub const Stall = struct {
     /// The callback's name when `callbacks` is 1, and null otherwise. It is static data
     /// (`Completion.Call`), so it stays valid after a library frees its record.
     name: ?[*:0]const u8,
+    /// The task's scheduling group when `callbacks` is 1 and that callback was a task, and null
+    /// otherwise (decision 30). It fills padding, so `Stall` stays 32 B.
+    group: ?SchedulingGroup,
 
-    pub const none: Stall = .{ .end_ns = 0, .span_ns = 0, .callbacks = 0, .name = null };
+    pub const none: Stall = .{ .end_ns = 0, .span_ns = 0, .callbacks = 0, .name = null, .group = null };
 };
 
 comptime {

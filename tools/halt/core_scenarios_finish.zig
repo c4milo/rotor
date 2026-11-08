@@ -17,6 +17,7 @@ var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
 var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
+var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 var bytes: [slots_count]u8 = undefined;
 
 const socket = 3;
@@ -27,7 +28,7 @@ const received_bytes = 5;
 /// Submits `operation` and takes it off the pending list, as a backend's flush does before it
 /// makes the call. Answers its index.
 fn flushed(tables: *core.Tables, operation: core.Operation) u32 {
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     const taken = tables.submit(&.{operation}, &.{});
     std.debug.assert(taken == 1);
     const index = tables.next_pending().?;

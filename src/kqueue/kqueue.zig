@@ -138,6 +138,10 @@ pub const Loop = struct {
         /// `statistics()`, and null counts none (decision 28). A host that sleeps in its own wait
         /// sets null, because its sleep reads as one long turn (decision 23).
         stall_turn_ns: ?u64 = core.constants.stall_turn_ns_default,
+        /// The program's named scheduling groups, which `init` reserves as ids 1 to n at their
+        /// declared shares (decision 30). Empty by default. The public module sets it from the
+        /// program's root file, so every loop of a program holds the same names.
+        named_groups: core.scheduling.NamedTable = .empty,
         /// This loop's id among the loops of `registry`.
         id: core.LoopId = 0,
         registry: ?*Registry = null,
@@ -166,6 +170,9 @@ pub const Loop = struct {
         _ = layout.add(u64, options.operations);
         // The heartbeat's line, which a watch on another thread reads (decision 28).
         _ = layout.add(core.Heartbeat, 1);
+        // The scheduling groups, which a tick reads only while a group other than `.default`
+        // holds a task (decision 30).
+        _ = layout.add(core.scheduling.Groups, 1);
         _ = layout.add(core.waiters.Entry, Waiters.capacity_for(options.operations));
         // Nothing for an offload the options did not ask for, so a caller that wants none pays no
         // byte for one (decision 12, point 6 makes the same argument for the registry).
@@ -223,6 +230,7 @@ pub const Loop = struct {
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
         const heartbeat_line = &layout.take(memory, core.Heartbeat, 1)[0];
+        const groups_table = &layout.take(memory, core.scheduling.Groups, 1)[0];
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, core.waiters.Entry, waiting));
         const workers = workers_of(options);
@@ -240,11 +248,12 @@ pub const Loop = struct {
         loop.inbox = core.inbox.Inbox.init(options.registry, completions, out);
         loop.file_policy = options.file_policy;
         loop.offload = options.offload;
-        loop.tables.init(slots, entries, starts, heartbeat_line, .{
+        loop.tables.init(slots, entries, starts, heartbeat_line, groups_table, .{
             .id = options.id,
             .sampling = options.sampling,
             .spin_budget_ns = options.spin_budget_ns,
             .stall_turn_ns = options.stall_turn_ns,
+            .named_groups = options.named_groups,
         });
         loop.changes_used = 0;
         loop.trigger_armed = false;
@@ -356,7 +365,7 @@ pub const Loop = struct {
         const wait = dispatch.begin(heartbeat_line, wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);
-        return dispatch.end(heartbeat_line, events[0..produced]);
+        return dispatch.end(heartbeat_line, loop.tables.groups, events[0..produced]);
     }
 
     fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
@@ -377,6 +386,11 @@ pub const Loop = struct {
     pub const tasks_queued = dispatch_calls.tasks_queued;
     pub const task_budget_left = dispatch_calls.task_budget_left;
     pub const discard_tasks = dispatch_calls.discard_tasks;
+    // The scheduling groups of decision 30.
+    pub const schedule_in = dispatch_calls.schedule_in;
+    pub const charge_task = dispatch_calls.charge_task;
+    pub const reserve_scheduling_group = dispatch_calls.reserve_scheduling_group;
+    pub const set_scheduling_group_shares = dispatch_calls.set_scheduling_group_shares;
     // The view a library holds and the heartbeat of decision 28.
     pub const shared = dispatch_calls.shared;
     pub const heartbeat = dispatch_calls.heartbeat;

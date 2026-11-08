@@ -12,6 +12,7 @@ const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 const backend_module = @import("rotor_loop_backend.zig");
 const buffers = @import("rotor_loop_buffers.zig");
+const scheduling = @import("rotor_loop_scheduling.zig");
 
 const constants = core.constants;
 
@@ -26,6 +27,10 @@ pub const RequireError = backend_module.RequireError;
 pub const require = backend_module.require;
 
 pub const Registry = @import("rotor_loop_registry.zig").Registry;
+
+// The program's named scheduling groups (decision 30): `rotor_loop_scheduling.zig`.
+pub const root_groups = scheduling.root_groups;
+pub const named_scheduling_group = scheduling.named_scheduling_group;
 
 /// What a thread that owns no loop holds to post with (decision 4). It takes one slot of the
 /// registry, sends, and never receives.
@@ -104,6 +109,8 @@ pub const Loop = struct {
     pub const AddPollerError = core.dispatch.AddPollerError;
     /// Why `schedule` queued nothing: the same on every backend.
     pub const ScheduleError = core.ScheduleError;
+    /// Why `reserve_scheduling_group` reserved nothing: the same on every backend.
+    pub const ReserveSchedulingGroupError = core.scheduling.ReserveSchedulingGroupError;
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -152,8 +159,11 @@ pub const Loop = struct {
         }
 
         /// These options for sizing memory for the backend `tag` names, which reads no registry.
+        /// The named groups are the program's root declaration, for every loop (decision 30), so
+        /// two loops of a program cannot disagree on them.
         fn sizing(options: *const Options, comptime tag: Tag) module(tag).Loop.Options {
             return .{
+                .named_groups = scheduling.root_groups.table,
                 .operations = options.operations,
                 .entries = options.entries,
                 .sampling = options.sampling,
@@ -263,35 +273,38 @@ pub const Loop = struct {
         }
     }
 
-    /// Asks the loop to call `task.run` once, later (decision 27).
+    /// Asks the loop to call `task.run` once, later (decision 27), in `.default`. A library names
+    /// its group with `schedule_in` instead: `SharedLoop` refuses this call (decision 30).
     pub fn schedule(loop: *Loop, task: *core.Task) ScheduleError!void {
         return switch (loop.inner) {
             inline else => |*inner| inner.schedule(task),
         };
     }
 
-    /// True while `task` is queued on this loop.
+    /// True while `task` is queued in a group of this loop.
     pub fn is_scheduled(loop: *const Loop, task: *const core.Task) bool {
         return switch (loop.inner) {
             inline else => |*inner| inner.is_scheduled(task),
         };
     }
 
-    /// The tasks queued now.
+    /// The tasks queued now, in every group.
     pub fn tasks_queued(loop: *const Loop) u32 {
         return switch (loop.inner) {
             inline else => |*inner| inner.tasks_queued(),
         };
     }
 
-    /// `tasks_per_tick_max` less the tasks the current run started, and 0 outside a run.
+    /// `tasks_per_tick_max` less the tasks the current run started, and 0 outside a run. While
+    /// another group holds a task, at most the whole units left in the visit of the task's group.
     pub fn task_budget_left(loop: *const Loop) u32 {
         return switch (loop.inner) {
             inline else => |*inner| inner.task_budget_left(),
         };
     }
 
-    /// Unlinks every queued task without a call, after `drain` returned `TasksStillQueued`.
+    /// Unlinks every queued task of every group without a call, after `drain` returned
+    /// `TasksStillQueued`. It resets each group's deficit.
     pub fn discard_tasks(loop: *Loop) u32 {
         return switch (loop.inner) {
             inline else => |*inner| inner.discard_tasks(),
@@ -373,7 +386,8 @@ pub const Loop = struct {
 
     /// The view that the program hands to each library at init (decision 28). Its address is this
     /// loop's, and it declares only the calls a library may make: `tick`, `drain`, `deinit`,
-    /// `cancel_all` and `discard_tasks` fail to compile on it. Only the program calls this, on the
+    /// `cancel_all`, `discard_tasks`, `schedule`, `reserve_scheduling_group` and
+    /// `set_scheduling_group_shares` fail to compile on it. Only the program calls this, on the
     /// loop's thread.
     pub fn shared(loop: *Loop) *SharedLoop {
         switch (loop.inner) {
@@ -412,6 +426,12 @@ pub const Loop = struct {
             inline else => |*inner| inner.assert_empty(),
         }
     }
+
+    // The scheduling groups of decision 30: `rotor_loop_scheduling.zig`.
+    pub const schedule_in = scheduling.schedule_in;
+    pub const charge_task = scheduling.charge_task;
+    pub const reserve_scheduling_group = scheduling.reserve_scheduling_group;
+    pub const set_scheduling_group_shares = scheduling.set_scheduling_group_shares;
 
     // The buffers of decisions 3, 12 and 29: `rotor_loop_buffers.zig`.
     pub const register_buffers = buffers.register_buffers;

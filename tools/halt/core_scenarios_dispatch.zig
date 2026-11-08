@@ -40,7 +40,7 @@ fn read_the_wait_limit_inside_a_tick() void {
 fn end_a_tick_that_never_began() void {
     dispatch = .empty;
     scenario.reached_violation();
-    _ = dispatch.end(&heartbeat, &.{});
+    _ = dispatch.end(&heartbeat, &groups, &.{});
 }
 
 /// A failed tick abandoned twice. With the check deleted, the second call clears a clear flag.
@@ -137,7 +137,7 @@ fn tick_inside_the_last_record() void {
         .result = 0,
         .flags = .{ .dispatched = true },
     }};
-    _ = dispatch.end(&heartbeat, &events);
+    _ = dispatch.end(&heartbeat, &groups, &events);
 }
 
 fn ending_record(_: *core.Completion, _: core.Event) void {
@@ -160,10 +160,13 @@ fn end_a_loop_inside_a_record() void {
         .result = 0,
         .flags = .{ .dispatched = true },
     }};
-    _ = dispatch.end(&heartbeat, &events);
+    _ = dispatch.end(&heartbeat, &groups, &events);
 }
 
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = .init(null);
+/// The loop's groups (decision 30). No scenario here queues a task in a group other than
+/// `.default`, so `end` never reads them.
+var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 
 /// A loop that ends while a watch reads its heartbeat (decision 28). With the check deleted, the
 /// check returns.

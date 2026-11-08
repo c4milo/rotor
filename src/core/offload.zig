@@ -369,8 +369,9 @@ test "a result a worker hands back reaches the record of its operation, and no o
     var entries: [test_slots]TimerHeap.Entry = undefined;
     var starts: [test_slots]u64 = undefined;
     var heartbeat: Heartbeat = undefined;
+    var groups: @import("scheduling/scheduling.zig").Groups = undefined;
     var tables: Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
     var memory: [Offload.memory_bytes(1)]u8 align(layout.memory_alignment) = undefined;
     const rings = init_rings(&memory, 1);
     var record: dispatch.Completion = .{ .call = &ignore_call };

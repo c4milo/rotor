@@ -189,6 +189,49 @@ comptime {
     std.debug.assert(tasks_per_tick_max <= tasks_queued_max);
 }
 
+/// The scheduling groups of one loop, `.default` included (decision 30). Seastar's
+/// `max_scheduling_groups()` defaults to 16. Each group is a 32 B lane in `Groups`, so the table
+/// is 512 B of the loop's memory. A program's named groups take ids 1 to n of it.
+pub const scheduling_groups_max: u8 = 16;
+
+/// The most shares one group may hold (decision 30). Seastar's header recommends 1 to 1000.
+pub const scheduling_shares_max: u16 = 1000;
+
+/// The shares of `.default`, and of each group the program gives no other value. A prior from
+/// decision 30, and not ruled: decision 30, open question 9, fixes it from the `tasks-groups-4`
+/// row of the work gate.
+pub const scheduling_shares_default: u16 = 100;
+
+/// The credit of one task unit, in hundredths (decision 30). A share is a hundredth of a unit, so
+/// a group at the default shares gets one unit at each visit.
+pub const scheduling_unit_credit: u16 = 100;
+
+/// The most units one run of a task may cost: its static cost, and the units it adds with
+/// `charge_task` (decision 30). A prior, as `scheduling_shares_default` is.
+pub const task_charge_max: u16 = 64;
+
+/// The most visits one run of the groups takes (decision 30, "The rule"). Each start uses at most
+/// two visits of each group, one skip and one start, plus one bulk credit.
+pub const visits_per_run_max: u32 = tasks_per_tick_max * (2 * @as(u32, scheduling_groups_max) + 1);
+
+comptime {
+    std.debug.assert(scheduling_groups_max >= 2);
+    std.debug.assert(scheduling_groups_max <= 16);
+    std.debug.assert(scheduling_shares_default >= 1);
+    std.debug.assert(scheduling_shares_default <= scheduling_shares_max);
+    std.debug.assert(scheduling_unit_credit >= 1);
+    std.debug.assert(task_charge_max >= 1);
+    // The charge of the guidance for a cost that varies is at most `task_budget_left()`, so it
+    // never passes `task_charge_max` (decision 30, ruling item 11).
+    std.debug.assert(tasks_per_tick_max <= task_charge_max);
+    // A deficit stays in [1 - task_charge_max * 100, scheduling_shares_max], an `i32`.
+    std.debug.assert(@as(i64, task_charge_max) * scheduling_unit_credit < std.math.maxInt(i32));
+    // Every queued task of every group, and every operation that named a record, fit the count of
+    // outstanding callbacks, a `u32`.
+    const queued_max = @as(u64, scheduling_groups_max) * tasks_queued_max;
+    std.debug.assert(queued_max + operations_max <= std.math.maxInt(u32));
+}
+
 /// The default length of a turn that the loop counts as a stall (decision 28). A turn is the span
 /// from one clock stamp of a tick to the next tick's first stamp, with no kernel wait in it. A
 /// prior and not a measurement: 10 ms is over 15 times one full run of 64 tasks of 10 µs each

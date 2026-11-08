@@ -28,23 +28,33 @@ const Message = operation_module.Message;
 const Operation = operation_module.Operation;
 const Poller = dispatch.Poller;
 const Task = tasks_module.Task;
+const SchedulingGroup = @import("scheduling/scheduling.zig").SchedulingGroup;
 const BufferGroup = buffer_group.BufferGroup;
 const group_alignment = buffer_group.group_alignment;
 
 /// The calls a library may make on the view: each is the `Loop` call of the same name.
 pub const library_calls = [_][]const u8{
-    "submit",               "cancel",                   "post",
-    "now_ns",               "schedule",                 "is_scheduled",
-    "task_budget_left",     "add_poller",               "remove_poller",
-    "provide_buffers",      "provide_datagram_buffers", "datagram",
-    "provided_buffer",      "give_back_buffer",         "release_buffers",
-    "reserve_buffer_group",
+    "submit",          "cancel",               "post",
+    "now_ns",          "schedule_in",          "charge_task",
+    "is_scheduled",    "task_budget_left",     "add_poller",
+    "remove_poller",   "provide_buffers",      "provide_datagram_buffers",
+    "datagram",        "provided_buffer",      "give_back_buffer",
+    "release_buffers", "reserve_buffer_group",
 };
 
 /// The calls that only the program makes. The view declares each one as a compile error that states
 /// the rule. The test that names every public function skips these names, and
 /// `zig build test-compile-fail` proves that each one refuses to compile.
-pub const refused_calls = [_][]const u8{ "tick", "drain", "deinit", "cancel_all", "discard_tasks" };
+pub const refused_calls = [_][]const u8{
+    "tick",
+    "drain",
+    "deinit",
+    "cancel_all",
+    "discard_tasks",
+    "schedule",
+    "reserve_scheduling_group",
+    "set_scheduling_group_shares",
+};
 
 /// True for a call the view refuses.
 pub fn is_refused(comptime name: []const u8) bool {
@@ -103,9 +113,15 @@ pub fn SharedLoop(comptime Loop: type) type {
             return loop_const(shared).now_ns();
         }
 
-        /// `Loop.schedule`.
-        pub fn schedule(shared: *Shared, task: *Task) tasks_module.ScheduleError!void {
-            return loop(shared).schedule(task);
+        /// `Loop.schedule_in`: a library names its group in each call (decision 30). The program
+        /// hands each library its group at init.
+        pub fn schedule_in(shared: *Shared, group: SchedulingGroup, task: *Task) tasks_module.ScheduleError!void {
+            return loop(shared).schedule_in(group, task);
+        }
+
+        /// `Loop.charge_task`, inside a task's run only.
+        pub fn charge_task(shared: *Shared, units: u16) void {
+            loop(shared).charge_task(units);
         }
 
         /// `Loop.is_scheduled`.
@@ -186,6 +202,12 @@ pub fn SharedLoop(comptime Loop: type) type {
         pub const deinit = @compileError("only the program ends a shared loop");
         pub const cancel_all = @compileError("cancel_all cancels every library's operations");
         pub const discard_tasks = @compileError("only the program discards the task queue");
+        pub const schedule = @compileError("a library names its group: schedule_in(group, task) " ++
+            "(decision 30)");
+        pub const reserve_scheduling_group = @compileError("only the program sets the groups and " ++
+            "their shares (decision 30)");
+        pub const set_scheduling_group_shares = @compileError("only the program sets the groups " ++
+            "and their shares (decision 30)");
     };
 }
 
@@ -216,9 +238,12 @@ const Counting = struct {
     pub fn now_ns(counting: *const Counting) u64 {
         return counting.seen_now_ns;
     }
-    pub fn schedule(counting: *Counting, task: *Task) tasks_module.ScheduleError!void {
+    pub fn schedule_in(counting: *Counting, group: SchedulingGroup, task: *Task) tasks_module.ScheduleError!void {
         _ = task;
-        counting.calls += 1;
+        counting.calls += 1 + @as(u32, @intFromEnum(group));
+    }
+    pub fn charge_task(counting: *Counting, units: u16) void {
+        counting.calls += units;
     }
     pub fn is_scheduled(counting: *const Counting, task: *const Task) bool {
         _ = task;
@@ -251,6 +276,11 @@ test "each call of the view reaches the loop it was made from" {
     var task: Task = .{ .call = undefined };
     try testing.expect(shared.is_scheduled(&task));
     try testing.expectEqual(@as(u32, 4), shared.task_budget_left());
+    // The group reaches the loop: the counting loop adds its id.
+    try shared.schedule_in(@enumFromInt(2), &task);
+    try testing.expectEqual(@as(u32, 7), counting.calls);
+    shared.charge_task(5);
+    try testing.expectEqual(@as(u32, 12), counting.calls);
 }
 
 test "the view declares each refused call, so the compiler states the rule" {

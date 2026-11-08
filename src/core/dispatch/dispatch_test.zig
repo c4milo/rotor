@@ -26,6 +26,7 @@ const model_module = @import("dispatch_test_model.zig");
 const stall = @import("../stall.zig");
 const Heartbeat = stall.Heartbeat;
 const Name = stall.Name;
+const Groups = @import("../scheduling/scheduling.zig").Groups;
 
 const Completion = dispatch_module.Completion;
 const Dispatch = dispatch_module.Dispatch;
@@ -83,6 +84,8 @@ const Fixture = struct {
     dispatch: Dispatch,
     /// The loop's heartbeat, which `begin` and `end` write (decision 28).
     heartbeat: Heartbeat,
+    /// The loop's groups, of which only `.default` holds tasks here (decision 30).
+    groups: Groups,
     seed: u64,
     /// The pools in reverse order of id, so the same seed runs with every record elsewhere.
     reversed: bool,
@@ -99,6 +102,7 @@ const Fixture = struct {
         fixture.* = .{
             .dispatch = .empty,
             .heartbeat = .init(null),
+            .groups = undefined,
             .seed = seed,
             .reversed = reversed,
             .records = undefined,
@@ -110,6 +114,7 @@ const Fixture = struct {
             .runs = @splat(0),
             .trace = .{},
         };
+        fixture.groups.init(&.empty);
         for (0..operations_pool) |id| fixture.record(@intCast(id)).* = .{ .id = @intCast(id), .fixture = fixture };
         for (0..pollers_pool) |id| fixture.poller(@intCast(id)).* = .{ .id = @intCast(id), .fixture = fixture };
         for (0..tasks_pool) |id| fixture.task(@intCast(id)).* = .{ .id = @intCast(id), .fixture = fixture };
@@ -252,7 +257,7 @@ const Run = struct {
 
     fn discard(run: *Run) !void {
         if (!run.random.chance(1, 2)) return;
-        try testing.expectEqual(run.model.discard(), run.fixture.dispatch.discard_tasks());
+        try testing.expectEqual(run.model.discard(), run.fixture.dispatch.discard_tasks(&run.fixture.groups));
         run.fixture.queued = @splat(false);
     }
 
@@ -274,7 +279,7 @@ const Run = struct {
         var operations: [batch_max]u32 = undefined;
         const len = run.build_batch(&events, &operations);
         run.model.end(events[0..len], operations[0..len]);
-        const kept = run.fixture.dispatch.end(&run.fixture.heartbeat, events[0..len]);
+        const kept = run.fixture.dispatch.end(&run.fixture.heartbeat, &run.fixture.groups, events[0..len]);
         try run.check_kept(events[0..kept]);
         // P9: each task a poller queued inside the budget ran once in this `end`.
         for (run.model.poller_tasks[0..run.model.poller_tasks_len]) |id| {
@@ -373,7 +378,7 @@ const Run = struct {
         const dispatch = &run.fixture.dispatch;
         const model = run.model;
         dispatch.tasks.assert_queue();
-        try testing.expect(!dispatch.ticking and !dispatch.polling);
+        try testing.expect(dispatch.phase == .idle);
         // P3: the calls, and the queue in its order.
         try testing.expectEqualSlices(u32, model.trace.items(), run.fixture.trace.items());
         var ids: [tasks_pool]u32 = undefined;
@@ -444,6 +449,8 @@ const Naming = struct {
 test "the heartbeat names each callback while it runs, and counts the callbacks of a turn" {
     var dispatch: Dispatch = .empty;
     var heartbeat: Heartbeat = .init(null);
+    var groups: Groups = undefined;
+    groups.init(&.empty);
     var naming: Naming = .{ .heartbeat = &heartbeat };
     try dispatch.add_poller(&naming.poller);
     try dispatch.schedule(&naming.task);
@@ -456,7 +463,7 @@ test "the heartbeat names each callback while it runs, and counts the callbacks 
     // No callback runs between `begin` and `end`, so the heartbeat names none there.
     try testing.expectEqual(@as(?*const Name, null), heartbeat.running.load(.monotonic));
     try testing.expectEqual(Heartbeat.Turn{ .ended = 0, .polled = 1 }, heartbeat.turn);
-    try testing.expectEqual(@as(u32, 1), dispatch.end(&heartbeat, &events));
+    try testing.expectEqual(@as(u32, 1), dispatch.end(&heartbeat, &groups, &events));
     try testing.expectEqual(@as(?*const Name, null), heartbeat.running.load(.monotonic));
     // The poller, the record and the task, in one turn: no clock stamp came between them.
     try testing.expectEqual(Heartbeat.Turn{ .ended = 2, .polled = 1 }, heartbeat.turn);

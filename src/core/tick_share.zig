@@ -270,6 +270,7 @@ const TestTables = struct {
     entries: [test_slots]TimerHeap.Entry,
     starts: [test_slots]u64,
     heartbeat: Heartbeat,
+    groups: @import("scheduling/scheduling.zig").Groups,
     tables: Tables,
     bytes: [1]u8,
 
@@ -277,7 +278,7 @@ const TestTables = struct {
     /// onto `finished`, in order.
     fn init(fixture: *TestTables, count: u32) !void {
         const tables = &fixture.tables;
-        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
+        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{});
         for (0..count) |user_data| {
             const receive = Operation.receive(user_data, test_socket, &fixture.bytes);
             try testing.expectEqual(@as(u32, 1), tables.submit(&.{receive}, &.{}));

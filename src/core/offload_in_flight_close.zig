@@ -129,6 +129,7 @@ const Fixture = struct {
     entries: [test_slots]TimerHeap.Entry,
     starts: [test_slots]u64,
     heartbeat: Heartbeat,
+    groups: @import("scheduling/scheduling.zig").Groups,
     tables: Tables,
     in_flight: InFlight,
     out: in_flight_module.OutArray,
@@ -140,7 +141,7 @@ const Fixture = struct {
 
     fn init(fixture: *Fixture) void {
         const tables = &fixture.tables;
-        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
+        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{});
         fixture.in_flight = .init(&fixture.out);
         fixture.rings = offload.init_rings(&fixture.ring_memory, 1);
         fixture.closed_len = 0;

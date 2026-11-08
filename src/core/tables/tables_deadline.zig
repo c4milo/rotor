@@ -200,11 +200,12 @@ const TestTables = struct {
     entries: [test_slots]TimerHeap.Entry,
     starts: [test_slots]u64,
     heartbeat: Heartbeat,
+    groups: @import("../scheduling/scheduling.zig").Groups,
     tables: Tables,
 
     fn init(fixture: *TestTables) void {
         const tables = &fixture.tables;
-        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
+        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{});
     }
 };
 

@@ -18,6 +18,7 @@ const Tables = core.tables.Tables;
 const Task = core.Task;
 const TimerHeap = core.timer_heap.TimerHeap;
 const WaitLimit = dispatch_module.WaitLimit;
+const Groups = core.scheduling.Groups;
 
 /// A poller that answers `limit`.
 const Answering = struct {
@@ -40,8 +41,10 @@ const Quiet = struct {
 
 /// One `begin` and an `end` with no events. Returns the wait `begin` gave.
 fn tick_once(dispatch: *Dispatch, heartbeat: *Heartbeat, wait_ns: u64) u64 {
+    var groups: Groups = undefined;
+    groups.init(&.empty);
     const wait = dispatch.begin(heartbeat, wait_ns);
-    _ = dispatch.end(heartbeat, &.{});
+    _ = dispatch.end(heartbeat, &groups, &.{});
     return wait;
 }
 
@@ -90,7 +93,9 @@ test "end stores now after a record or a task while a poller is in the table, an
         .flags = .{ .dispatched = true },
     }};
     _ = dispatch.begin(&heartbeat, 9);
-    _ = dispatch.end(&heartbeat, &events);
+    var groups: Groups = undefined;
+    groups.init(&.empty);
+    _ = dispatch.end(&heartbeat, &groups, &events);
     try testing.expectEqual(WaitLimit.now, dispatch.until_ns);
     // A task.
     try dispatch.schedule(&quiet.task);
@@ -129,10 +134,11 @@ const Fixture = struct {
     entries: [capacity]TimerHeap.Entry,
     starts: [capacity]u64,
     heartbeat: Heartbeat,
+    groups: Groups,
     tables: Tables,
 
     fn init(fixture: *Fixture) void {
-        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{
+        fixture.tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{
             .id = 0,
         });
         fixture.tables.now_ns = 1_000;
@@ -216,12 +222,13 @@ const Host = struct {
     entries: [capacity]TimerHeap.Entry,
     starts: [capacity]u64,
     heartbeat: Heartbeat,
+    groups: Groups,
     tables: Tables,
     inbox: core.inbox.Inbox,
     kept_error: core.tick_error.Kept(error{Unexpected}),
 
     fn init(host: *Host) void {
-        host.tables.init(&host.slots, &host.entries, &host.starts, &host.heartbeat, .{ .id = 0 });
+        host.tables.init(&host.slots, &host.entries, &host.starts, &host.heartbeat, &host.groups, .{ .id = 0 });
         host.tables.now_ns = 1_000;
         host.inbox = .init(null, &.{}, null);
         host.kept_error = .none;

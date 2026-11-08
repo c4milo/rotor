@@ -25,27 +25,47 @@ pub const Task = struct {
     /// The task after this one in the queue, or null at the tail and while the task is not queued.
     next: ?*Task = null,
 
-    /// A static entry, as `Completion.Call` is (decision 28).
+    /// A static entry, as `Completion.Call` is (decision 28). Size 32 B, alignment 8.
     pub const Call = struct {
         name: [:0]const u8,
         function: *const fn (task: *Task) void,
+        /// The units that one run costs before any `charge_task`, in 1 to `task_charge_max`
+        /// (decision 30). The groups path reads it beside `function`.
+        cost: u16 = 1,
     };
 
     /// A task at `field` of `Parent` that calls `handler` with its parent. The compiler checks the
     /// field, the parent and the handler, and the call costs the same as one written by hand, after
-    /// one load of the static `Call`.
+    /// one load of the static `Call`. One run costs 1 unit (decision 30).
     pub fn init(
         comptime Parent: type,
         comptime field: []const u8,
         comptime handler: fn (parent: *Parent) void,
     ) Task {
+        return init_cost(Parent, field, handler, 1);
+    }
+
+    /// As `init`, with a cost of `cost` units for each run (decision 30). The compiler refuses 0
+    /// and a cost above `task_charge_max`.
+    pub fn init_cost(
+        comptime Parent: type,
+        comptime field: []const u8,
+        comptime handler: fn (parent: *Parent) void,
+        comptime cost: u16,
+    ) Task {
         comptime assert(@FieldType(Parent, field) == Task);
+        if (cost == 0) @compileError("a task costs at least 1 unit");
+        if (cost > constants.task_charge_max) @compileError("a task costs at most task_charge_max units");
         const Static = struct {
             fn function(task: *Task) void {
                 const parent: *Parent = @alignCast(@fieldParentPtr(field, task));
                 handler(parent);
             }
-            const call: Call = .{ .name = stall.name_of(Parent, field), .function = function };
+            const call: Call = .{
+                .name = stall.name_of(Parent, field),
+                .function = function,
+                .cost = cost,
+            };
         };
         return .{ .call = &Static.call };
     }
@@ -54,6 +74,8 @@ pub const Task = struct {
 comptime {
     assert(@sizeOf(Task) == 16);
     assert(@alignOf(Task) == 8);
+    assert(@sizeOf(Task.Call) == 32);
+    assert(@alignOf(Task.Call) == 8);
 }
 
 pub const ScheduleError = error{TasksFull};
@@ -109,8 +131,21 @@ pub const Tasks = struct {
             heartbeat.enter(&task.call.name);
             task.call.function(task);
         }
-        if (started != 0) heartbeat.leave_tasks(started);
+        if (started != 0) heartbeat.leave_tasks(started, 0);
         return started;
+    }
+
+    /// Takes the head, which must exist, off the queue and clears its link: what the groups path
+    /// of decision 30 does for `.default`. `run` keeps its own copy of these lines, so the path
+    /// with one group stays decision 27's code.
+    pub fn pop(tasks: *Tasks) *Task {
+        assert_class_a(tasks.head != null and tasks.count >= 1);
+        const task = tasks.head.?;
+        tasks.head = task.next;
+        task.next = null;
+        if (tasks.head == null) tasks.tail = null;
+        tasks.count -= 1;
+        return task;
     }
 
     /// Unlinks every queued task without a call, and returns the count. The cold path of a
@@ -130,7 +165,7 @@ pub const Tasks = struct {
     }
 
     /// Decision 8, class B, once in each run: the count, the head and the tail agree.
-    fn assert_shape(tasks: *const Tasks) void {
+    pub fn assert_shape(tasks: *const Tasks) void {
         assert((tasks.count == 0) == (tasks.head == null));
         assert((tasks.head == null) == (tasks.tail == null));
         assert(tasks.count <= constants.tasks_queued_max);
