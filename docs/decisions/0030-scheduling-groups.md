@@ -2,7 +2,8 @@
 
 Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), and built on 2026-11-07 on the branch
 `decision-30` (see "What was built"). Finished on 2026-11-08 on the branch `decision-30b` (see
-"Finish, 2026-11-08"). The costs in the sections after "What was built" are
+"Finish, 2026-11-08"), and put on `main` at `80339fc` with decision 32 on the branch `v0-10-0`
+the same day. The costs in the sections after "What was built" are
 priors: a row of `docs/costs.md` at the `mac` median, or an instruction count from arithmetic over
 the code at `5e9490d` and the counts of `bench/baseline/work.txt`. "What was built" holds the
 measured counts.
@@ -46,30 +47,31 @@ ends within `visits_per_run_max` visits, and a bulk credit is followed by a star
 removes the bulk credit makes the first halt in `zig build test-core`.
 
 **The default shares and `task_charge_max` were fixed on 2026-11-08** at 100 and 64 (open question
-9, and "Finish, 2026-11-08"). The work gate's new rows, with every group at one value of the shares, on
-`mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of about 20) and on arm64 Linux
-(cachegrind of Valgrind 3.25.1 in an arm64 container on `mac`):
+9, and "Finish, 2026-11-08"). The work gate's two new rows, with every group at one value of the
+shares, were counted on 2026-11-08 on the branch `v0-10-0`: `main` at `80339fc` with this record
+and decision 32. `mac` is `/usr/bin/time -l` on an M1 Pro with macOS 26.6.2, the median of three
+runs at a load average of 4 to 12. Arm64 is cachegrind of Valgrind 3.25.1 in an arm64 container on
+`mac`. The counts at shares other than 100 come from a copy of `bench/work/work.zig` that set those
+shares, and that copy was not committed.
 
 | row | shares | `mac` kqueue | arm64 io_uring | arm64 epoll |
 |---|---|---|---|---|
-| `tasks-64`, for comparison | none | 4555 | 3922 | 3954 |
-| `tasks-groups-4` | 100 | 12939 | 12328 | 12359 |
-| `tasks-groups-4` | 200 | 10721 | not measured | not measured |
-| `tasks-groups-4` | 400 | 9630 | 9004 | 9035 |
-| `tasks-groups-4` | 1000 | 9085 | not measured | not measured |
-| `tasks-groups-16` | 100 | 13622 | 13012 | 13043 |
-| `tasks-groups-16` | 400 | 10309 | 9697 | 9728 |
+| `tasks-64`, for comparison | none | 4544 | 3897 | 3945 |
+| `tasks-groups-4` | 100 | 12943 | 12313 | 12360 |
+| `tasks-groups-4` | 200 | 10727 | 10097 | 10144 |
+| `tasks-groups-4` | 400 | 9618 | 8989 | 9036 |
+| `tasks-groups-4` | 1000 | 9074 | 8445 | 8492 |
+| `tasks-groups-16` | 100 | 13639 | 13009 | 13056 |
+| `tasks-groups-16` | 200 | 11429 | 10799 | 10846 |
+| `tasks-groups-16` | 400 | 10323 | 9694 | 9741 |
+| `tasks-groups-16` | 1000 | 10369 | 9740 | 9787 |
 
 At the default shares a visit starts one task, and `tasks-groups-4` counts about 2.8 times
-`tasks-64` on `mac`, against the prior of 1.3 times. A visit costs about 69 instructions on `mac`,
-from the rows at 100 and 400. The other 60 or so for each task are `schedule_in` and the start of
-a task on the groups path, which ReleaseSafe checks. No line of `bench/baseline/work.txt` changed.
-
-The older rows on `mac` stay within their lines. On arm64 Linux the path with one group counts more
-than the base commit `cb38fef`: io_uring `post` +2, `post-operation` +4, `task` +8, `record` +7
-and `poller` +6, and epoll `task` +10, `record` +9 and `poller` +8. At `cb38fef`, io_uring
-`post`, `task` and `poller` were already over their lines with Valgrind 3.25.1. "Finish,
-2026-11-08" says what was cut and what is left.
+`tasks-64` on `mac`, against the prior of 1.3 times. A visit costs about 69 instructions on `mac`
+and on arm64, from the rows at 100 and 400. The other 62 or so for each task are `schedule_in` and
+the start of a task on the groups path, which ReleaseSafe checks. The rows at 100 are the lines of
+`bench/baseline/work.txt` for `mac` and arm64, by Camilo's ruling 4 of 2026-11-08. "The rows
+against main" below holds every row of the work gate.
 
 ## Finish, 2026-11-08
 
@@ -78,6 +80,17 @@ Camilo ruled on 2026-11-08:
 - The default shares are 100, and `task_charge_max` is 64 (open question 9).
 - The cost on the path with one group is cut first, and then every row is shown. No line of
   `bench/baseline/work.txt` is raised.
+
+Later the same day, after the review of the branch, he ruled on four more items:
+
+1. The total of one run, its cost and its charges together, is the caller's rule. The guide and
+   this record say so, and no check is added ("How a task states its cost").
+2. The groups' run gets no `never_inline` hint, and `Tables.groups` does not move ("Considered
+   and declined").
+3. Decision 32's rule 6 admits 2 instructions for each dispatched tick on arm64, for the bound of
+   `Tasks.assert_shape`.
+4. The rows `tasks-groups-4`, `tasks-groups-16` and `call` get lines in `bench/baseline/work.txt`
+   for `mac` and arm64. The x86-64 lines come from CI after the push.
 
 These parts changed on the branch `decision-30b`:
 
@@ -113,57 +126,71 @@ These parts changed on the branch `decision-30b`:
    `Dispatch.tasks_queued`, `Dispatch.task_budget_left`, `NamedSchedulingGroup.scheduling_group`,
    `leave_group_tasks` and the group of a stall. Each has a halt scenario.
 
-### What the path with one group still costs
+### What the path with one group costs against main
 
-Cachegrind's counts for each function, arm64 io_uring, for each iteration:
+The counts below were taken on 2026-11-08, after the rebase on `main`. `main` is `80339fc`, and
+`v0-10-0` is `main` with this record and decision 32. Cachegrind counted each function on arm64,
+for each iteration of a row. A function that is not in the table counts the same in both trees.
 
-| row | function | `cb38fef` | `4eb8bfb` | `decision-30b` | cause |
+| row | backend | function | `main` | `v0-10-0` | cause |
 |---|---|---|---|---|---|
-| `task` | `tick_dispatched` | 121 | 128 | 125 | `end` tests `groups_ready`: 2 |
-| `task` | `tick_backend` | 188 | 189 | 189 | `Tables` grew by 8 B |
-| `post` | `tick_backend`, 2 ticks | 382 | not measured | 384 | `Tables` grew by 8 B |
-| `post-operation` | `tick_backend`'s lines of `std.bit_set`, 4 ticks | 120 | not measured | 124 | `Tables` grew by 8 B |
+| `task` | io_uring | `tick_dispatched` | 121 | 127 | +6, below |
+| `tasks-64` | io_uring | `tick_dispatched` | 1633 | 1639 | +6, as `task` |
+| `poller` | io_uring | `tick_dispatched` | 92 | 97 | +5, below |
+| `record` | io_uring | `tick_dispatched` | 117 | 122 | +5, as `poller` |
+| `task` | io_uring | `tick_backend` | 201 | 202 | `Tables` grew by 8 B |
+| `post`, 2 ticks | io_uring | `tick_backend` | 406 | 408 | `Tables` grew by 8 B |
+| `post-operation`, 4 ticks | io_uring | `tick_backend` | 1054 | 1058 | `Tables` grew by 8 B |
+| `task` | epoll | `tick_dispatched` | 125 | 134 | +9, below |
+| `poller` | epoll | `tick_dispatched` | 98 | 106 | +8, below |
+| `record` | epoll | `tick_dispatched` | 121 | 129 | +8, as `poller` |
+| one tick | both | `drain_mailboxes` | 156 | 148 | decision 32 cut the drain |
+| `post-operation`, 4 ticks | both | `drain_mailboxes` | 676 | 652 | decision 32 cut the drain |
 
-The pointer `Tables.groups` moves `wakes` of the io_uring `Loop` from offset 0xa98 to 0xaa0, and
-the copy of its bit set then takes one instruction more in each tick. An experiment that put the
-pointer on the heartbeat's line counted `post` 1073 and `post-operation` 2963, the counts of
-`cb38fef`. It is a change of a hot structure's layout, so it waits for Camilo (open questions below).
+The +6 of io_uring's `tick_dispatched` in `task`, by the lines that cachegrind names:
 
-On epoll, `begin` also reads `groups_ready` beside `tasks.count`: `task` +3 there. A form that
-reads it only when `.default` is empty counted more on `mac`, so it was not kept.
+- +2 in `dispatch.zig`: `end` tests `groups_ready`.
+- +2 for the bound of `Tasks.assert_shape`, 82,368 since decision 32. `main` compares the count
+  with an immediate and branches. `v0-10-0` builds the bound with `mov` and `movk`, then compares
+  and branches. Decision 32, rule 6, admits this cost, by Camilo's ruling of 2026-11-08.
+- +2 that no one line holds: the inlined `std.atomic` code of the heartbeat counts +3 and
+  `std.debug.assert` +1, against `tick_error.zig` -1 and the other lines of `Tasks.run` -1.
 
-On `mac`, the compiler puts the whole groups' run inside each backend's `tick_dispatched`, which
-grew from 279 to 657 instructions. An experiment with that run kept out of line counted `task` 4,
-`record` 5 and `poller` 6 fewer on `mac`, and `task` 1 fewer on arm64. It needs a hint that
-decision 7 does not list, so it waits for Camilo too.
+`poller` and `record` count the same causes, with +2 at `std.atomic`: +5. On epoll, `begin` also
+reads `groups_ready` beside `tasks.count`, which adds 3 more in `dispatch.zig`. A form that reads it
+only when `.default` is empty counted more on `mac`, so it was not kept.
 
-### The rows
+The pointer `Tables.groups` moves `wakes` of the io_uring `Loop` by 8 B, and the copy of its bit set
+then takes one instruction more in each tick. Decision 32's cut of the drain saves 8 instructions in
+each tick that drains no message, on both backends. So the arm64 rows of `v0-10-0` count at or
+below `main`, except epoll's `task` and `tasks-64`, at +1.
 
-Every row of the work gate. "line" is the line of `bench/baseline/work.txt`. `mac` is the median
-of three runs of `zig build work-gate` at a load average of 52 to 72, so its counts move by a few
-instructions from run to run. Arm64 is cachegrind of Valgrind 3.25.1 in an arm64 container on
-`mac`, the same on every run. OVER marks a count above its line by more than 2 percent.
+### The rows against main
 
-| row | `mac` line | `mac` `cb38fef` | `mac` `4eb8bfb` | `mac` `decision-30b` | uring line | uring `cb38fef` | uring `4eb8bfb` | uring `decision-30b` | epoll line | epoll `cb38fef` | epoll `4eb8bfb` | epoll `decision-30b` |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| `post` | 1217 | 1204 | 1209 | 1212 | 1039 | 1073 OVER | 1075 OVER | 1075 OVER | 1150 | 1150 | 1150 | 1150 |
-| `post-operation` | 3114 | 3109 | 3126 | 3123 | 2905 | 2963 | 2967 OVER | 2967 OVER | 3039 | 3033 | 3033 | 3033 |
-| `timer` | 1151 | 1147 | 1152 | 1151 | 1082 | 1094 | 1095 | 1095 | 1104 | 1100 | 1100 | 1100 |
-| `batch` | 24624 | 24757 | 24905 | 24830 | 23757 | 24024 | 24025 | 24025 | 23845 | 24034 | 24034 | 24034 |
-| `wait` | 5296 | 5292 | 5341 | 5312 | none | none | none | none | 632 | 630 | 630 | 630 |
-| `task` | 615 | 606 | 617 | 619 | 545 | 563 OVER | 571 OVER | 568 OVER | 593 | 593 | 603 | 600 |
-| `tasks-64` | 4558 | 4533 | 4553 | 4549 | 3910 | 3914 | 3922 | 3919 | 3985 | 3944 | 3954 | 3951 |
-| `record` | 1283 | 1284 | 1299 | 1300 | 1199 | 1218 | 1225 OVER | 1222 | 1228 | 1230 | 1239 | 1236 |
-| `poller` | 573 | 561 | 571 | 572 | 505 | 522 OVER | 528 OVER | 526 OVER | 557 | 553 | 561 | 559 |
-| `tasks-groups-4` | none | none | 13011 | 13008 | none | none | 12328 | 12335 | none | none | 12359 | 12366 |
-| `tasks-groups-16` | none | none | 13720 | 13722 | none | none | 13012 | 13031 | none | none | 13043 | 13062 |
+Every row of the work gate, counted as above. "line" is the line of `bench/baseline/work.txt` at
+`main`, and the three new rows show the line that `v0-10-0` adds. `mac` is the median of three
+runs at a load average of about 11. Arm64 is the same on every run. A count more than 2 percent
+above its line would be marked OVER, and no count is.
 
-Against `cb38fef`, `decision-30b` counts on arm64 io_uring `post` +2, `post-operation` +4, `task`
-+5, `tasks-64` +5, `record` +4 and `poller` +4, and on epoll `task` +7, `tasks-64` +7, `record` +6
-and `poller` +6. On `mac` it counts `task` +13, `record` +16 and `poller` +11 at that load. At a
-load of 15 to 23 the same tree counted `task` 615, `record` 1296 and `poller` 569 against 606, 1284
-and 560 for `cb38fef`. No row on `mac` or on epoll is over its line. On io_uring, `cb38fef` was
-already over in `post`, `task` and `poller`, and `decision-30b` adds `post-operation`.
+| row | `mac` line | `mac` `main` | `mac` `v0-10-0` | uring line | uring `main` | uring `v0-10-0` | epoll line | epoll `main` | epoll `v0-10-0` |
+|---|---|---|---|---|---|---|---|---|---|
+| `post` | 1217 | 1203 | 1203 | 1039 | 1039 | 1033 | 1150 | 1150 | 1142 |
+| `post-operation` | 3114 | 3110 | 3102 | 2905 | 2895 | 2875 | 3039 | 3033 | 3009 |
+| `timer` | 1151 | 1147 | 1143 | 1082 | 1077 | 1070 | 1104 | 1100 | 1092 |
+| `batch` | 24624 | 24768 | 24764 | 23757 | 24007 | 24000 | 23845 | 24034 | 24026 |
+| `wait` | 5296 | 5290 | 5283 | none | none | none | 632 | 630 | 628 |
+| `task` | 615 | 606 | 613 | 545 | 547 | 546 | 593 | 593 | 594 |
+| `tasks-64` | 4558 | 4534 | 4544 | 3910 | 3898 | 3897 | 3985 | 3944 | 3945 |
+| `record` | 1283 | 1284 | 1294 | 1199 | 1201 | 1199 | 1228 | 1230 | 1230 |
+| `poller` | 562 | 560 | 567 | 505 | 506 | 504 | 557 | 553 | 553 |
+| `tasks-groups-4` | 12943 | none | 12943 | 12313 | none | 12313 | 12360 | none | 12360 |
+| `tasks-groups-16` | 13639 | none | 13639 | 13009 | none | 13009 | 13056 | none | 13056 |
+| `call` | 2529 | none | 2529 | 2307 | none | 2307 | 2442 | none | 2442 |
+
+On `mac`, `v0-10-0` counts `task` +7, `tasks-64` +10, `record` +10 and `poller` +7 against `main`.
+Every other row of `mac` is at or below `main`. Each of the three `mac` runs of each tree agreed
+within 2 instructions on these four rows, except `tasks-64` of `v0-10-0`, which counted 4541 to
+4572.
 
 ### Mutations
 
@@ -202,17 +229,23 @@ commit is not copied here. The failure also halted in `deinit`, because the fail
 with tasks queued. Each scheduling scenario now discards its tasks on that path, so it fails and
 does not halt.
 
-### Open questions
+### Considered and declined
 
-1. **The groups' run out of line.** `@call(.never_inline, ...)` on `scheduling_run.run`: `mac`
-   `task` -4, `record` -5, `poller` -6, arm64 `task` -1. Recommended: yes, as a row of decision 7's
-   ledger.
-2. **`Tables.groups` on the heartbeat's line.** `Tables` keeps its size of `cb38fef`, and io_uring
-   `post` and `post-operation` count what `cb38fef` counted. The pointer is read only on the groups
-   path, and only the loop's thread reads it. Recommended: yes, or a change to the io_uring `Loop`
-   that keeps `wakes` at its offset.
-3. **x86-64 is not measured.** On x86-64 the add at bit 32 takes a shift, about one instruction more
-   in each run of tasks (a prior). CI's x86-64 runner shows it.
+Camilo declined both of these on 2026-11-08 (ruling 2 of that day). The counts are from the branch
+`decision-30b`, before the rebase.
+
+1. **The groups' run out of line.** On `mac`, the compiler puts the whole groups' run inside each
+   backend's `tick_dispatched`, which grew from 279 to 657 instructions. `@call(.never_inline,
+   ...)` on `scheduling_run.run` counted `task` 4, `record` 5 and `poller` 6 fewer on `mac`, and
+   `task` 1 fewer on arm64. It needs a hint in a file that decision 7 does not list. *Declined:
+   the run stays inline, and no row is added to decision 7's ledger.*
+2. **`Tables.groups` on the heartbeat's line.** With the pointer there, `Tables` keeps the size it
+   had before this record, and io_uring `post` and `post-operation` counted what `cb38fef`
+   counted: 1073 and 2963. It changes the layout of a hot structure. *Declined: the pointer stays
+   in `Tables`, and `wakes` of the io_uring `Loop` stays 8 B further on.*
+
+x86-64 is not measured. On x86-64 the add at bit 32 takes a shift, about one instruction more in
+each run of tasks (a prior). CI's x86-64 runner prints those rows after the push.
 
 ## Ruling, 2026-11-07
 
@@ -777,13 +810,13 @@ line of `Groups`.
 
 **Property test, `scheduling_test.zig`,** seeded from `core.random`, which prints its seed when it
 fails: 64 seeds of 300 steps, each run three times, twice to replay and once with the tasks at
-other addresses. A reference model in `dispatch_test_model.zig` runs plain DRR with exact integers.
+other addresses. A reference model in `scheduling_test_model.zig` runs plain DRR with exact integers.
 
 | property | statement |
 |---|---|
 | G1 | the trace equals the model's |
 | G2 | each deficit stays in its bounds |
-| G3 | the window bound of the served units, for each pair of groups that stay startable |
+| G3 | the window bound of each group: while it drops no credit, its units served differ from the credit it was given by less than `task_charge_max` |
 | G4 | at most 64 starts in a run, and a run ends within `visits_per_run_max` visits |
 | G5 | scheduled = run + discarded + queued, for each group |
 | G6 | `callbacks_outstanding` = records in flight + the sum of the group counts |
@@ -851,7 +884,7 @@ more than 15 names.
 | each assertion of the table deleted | `halt-check` |
 
 **Models:** `proofs/RotorProofs/Drr.lean` proves the deficit bounds and the window bound of G3. It
-mirrors `Groups.run`, and a change to one changes the other in the same commit. No TLA+ model is
+mirrors `scheduling_run.run`, and a change to one changes the other in the same commit. No TLA+ model is
 added: a run is on one thread. `spec/tla/wake/` needs no change, because its `DrainNoWait` already
 lets a queued task make any tick wait 0.
 
@@ -922,7 +955,7 @@ item 11).
 | a declaration that the public module reads from the program | `rotor` reads `rotor_scheduling_groups` through `@import("root")`. It is not an edge of `build/modules.zig`, and core does not read it. Ruled on 2026-11-07. |
 | the backends' `Loop.Options` | a field `named_groups: NamedTable`, empty by default, which the public options do not carry. No file under `build/` changes, and no build step is added. Ruled on 2026-11-07. |
 | decision 9, rule 7 | an exact count of `TasksFull` for each group, on the refusal path, with W9 (open question 6) |
-| a new Lean file | `proofs/RotorProofs/Drr.lean`, kept in step with `Groups.run` |
+| a new Lean file | `proofs/RotorProofs/Drr.lean`, kept in step with `scheduling_run.run` |
 | none of these | no dependency, no file on decision 7's list, and no assertion moved. The limit of ruling item 9 widens eight bounds by `call_tasks_max`. Camilo ruled it on 2026-11-07. No other assertion is weakened. If the gate later asks for a cold hint on `run_groups`, that is a separate ask. |
 
 ## Sources
