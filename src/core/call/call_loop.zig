@@ -4,6 +4,7 @@
 //! the backend's own wake of a loop that sleeps, as its `post` does.
 const std = @import("std");
 const constants = @import("../constants.zig");
+const assert = std.debug.assert;
 const call_module = @import("call.zig");
 const call_take = @import("call_take.zig");
 const event = @import("../event.zig");
@@ -17,6 +18,13 @@ const Descriptor = operation.Descriptor;
 const Event = event.Event;
 const Inbox = inbox_module.Inbox;
 const LoopId = operation.LoopId;
+
+/// What each backend's `wake_target` checks: a call or an answer wakes another loop, never the
+/// loop that makes it, through a descriptor that names a loop (class B).
+pub fn assert_wake(id: LoopId, target: LoopId, descriptor: Descriptor) void {
+    assert(target != id);
+    assert(descriptor >= 0);
+}
 
 pub fn Calls(comptime Loop: type) type {
     return struct {

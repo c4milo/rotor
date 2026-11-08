@@ -17,7 +17,7 @@ const Caller = struct {
 };
 
 fn send(service: *Echo, shared: *rotor.SharedLoop, caller: *Caller) void {
-    service.send(shared, 1, &caller.call, 7, .{}) catch {};
+    service.send(shared, 1, &caller.call, &@as(u64, 7), .{}) catch {};
 }
 
 test "a call with no group" {

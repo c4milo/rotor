@@ -23,7 +23,7 @@ const target: fixture.LoopId = 1;
 const events_len = 2 * constants.messages_per_drain;
 
 fn send(pair: *Pair, client: *Client, request: u64, group: @TypeOf(Declared.group(.low))) fixture.CallError!void {
-    return pair.service.send(&pair.loops[caller], target, &client.call, request, .{ .group = group });
+    return pair.service.send(&pair.loops[caller], target, &client.call, &request, .{ .group = group });
 }
 
 test "a return finds a slot while the posts fill their share of the ring" {
@@ -131,7 +131,7 @@ test "a past deadline and a stopped station answer with no handler run, and fini
     var events: [events_len]Event = undefined;
     var watcher: Watcher = .{};
     pair.loops[target].clock_ns = 500;
-    try pair.service.send(&pair.loops[caller], target, &watcher.call, 1, .{ .group = .default, .deadline_ns = 500 });
+    try pair.service.send(&pair.loops[caller], target, &watcher.call, &@as(u64, 1), .{ .group = .default, .deadline_ns = 500 });
     _ = pair.loops[target].tick(&events);
     _ = pair.loops[caller].tick(&events);
     try testing.expectEqual(@as(u32, 0), pair.echoes[target].handled);
@@ -139,14 +139,14 @@ test "a past deadline and a stopped station answer with no handler run, and fini
     try testing.expect(!watcher.out_seen);
     try testing.expectEqual(@as(u32, 0), watcher.count_seen);
     // A deadline after the target's clock lets the handler run.
-    try pair.service.send(&pair.loops[caller], target, &watcher.call, 1, .{ .group = .default, .deadline_ns = 501 });
+    try pair.service.send(&pair.loops[caller], target, &watcher.call, &@as(u64, 1), .{ .group = .default, .deadline_ns = 501 });
     _ = pair.loops[target].tick(&events);
     _ = pair.loops[caller].tick(&events);
     try testing.expectEqual(@as(u32, 1), pair.echoes[target].handled);
     try testing.expectEqual(.replied, watcher.result.?);
     // A target that stopped answers `target_stopped`.
     pair.service.stop_serving(&pair.loops[target]);
-    try pair.service.send(&pair.loops[caller], target, &watcher.call, 1, .{ .group = .default });
+    try pair.service.send(&pair.loops[caller], target, &watcher.call, &@as(u64, 1), .{ .group = .default });
     _ = pair.loops[target].tick(&events);
     _ = pair.loops[caller].tick(&events);
     try testing.expectEqual(@as(u32, 1), pair.echoes[target].handled);
@@ -234,7 +234,7 @@ test "a call to self takes no ring, counts twice, and ends with one finish" {
     defer pair.stop();
     var client: Client = .{};
     const model = &pair.loops[caller];
-    try pair.service.send(model, caller, &client.call, 20, .{ .group = .default });
+    try pair.service.send(model, caller, &client.call, &@as(u64, 20), .{ .group = .default });
     try testing.expectEqual(@as(u32, 3), model.dispatch.callbacks_outstanding);
     try testing.expect(pair.registry.mailbox(caller, caller).is_empty());
     var events: [events_len]Event = undefined;

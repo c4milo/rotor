@@ -286,7 +286,7 @@ fn run(comptime workload: Workload) !void {
         },
         .tasks_groups_4, .tasks_groups_16 => try run_groups(groups_of(workload)),
         .call => {
-            try service.send(first.loop.shared(), second_id, &calling.call, 1, .{ .group = .default });
+            try service.send(first.loop.shared(), second_id, &calling.call, &@as(u64, 1), .{ .group = .default });
             try second.expect(0);
             try second.expect(0);
             try first.expect(0);

@@ -82,6 +82,10 @@ pub const Model = struct {
         return model.clock_ns;
     }
 
+    pub fn is_scheduled(model: *const Model, task: *const @import("../tasks.zig").Task) bool {
+        return model.dispatch.tasks.holds(task);
+    }
+
     /// The slow path of the model's drain. A call that the drain answers at once counts a wake.
     pub fn take(inbox: *inbox_module.Inbox, receiver: LoopId, events: []Event, first: LoopId, written: u32) u32 {
         const model: *Model = @alignCast(@fieldParentPtr("inbox", inbox));
@@ -157,7 +161,7 @@ pub const Echo = struct {
         const call = echo.later[0];
         std.mem.copyForwards(*EchoCall, echo.later[0 .. echo.later_len - 1], echo.later[1..echo.later_len]);
         echo.later_len -= 1;
-        call.answer(echo.model, call.request_of().* + 1);
+        call.answer(echo.model, &(call.request_of().* + 1));
     }
 };
 

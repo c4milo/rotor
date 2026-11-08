@@ -17,7 +17,7 @@ const Caller = struct {
 };
 
 fn send(service: *Echo, remote: *rotor.Remote, caller: *Caller) void {
-    service.send(remote, 1, &caller.call, 7, .{ .group = .default }) catch {};
+    service.send(remote, 1, &caller.call, &@as(u64, 7), .{ .group = .default }) catch {};
 }
 
 test "a call from a remote" {

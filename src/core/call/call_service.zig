@@ -1,7 +1,8 @@
 //! The typed surface of the cross-core call (decision 32): `Service`, one kind of call, and
 //! `CallRecord`, the caller's record of one call. Both are generic over `View`, the loop as a
 //! library holds it, so the public module instantiates them with its `SharedLoop` and a test with
-//! a model loop of its own. A `View` has `call`, `answer`, `serve`, `stop_serving` and `now_ns`.
+//! a model loop of its own. A `View` has `call`, `answer`, `serve`, `stop_serving`, `now_ns` and
+//! `is_scheduled`.
 //!
 //! The compiler checks the types: a request, a reply or a context of the wrong type, a handler or a
 //! `finish` with the wrong signature, and `.now` with no reply fail to compile.
@@ -74,10 +75,14 @@ pub fn CallRecord(comptime View: type, comptime Request: type, comptime Reply: t
         }
 
         /// Target side, after the handler returned `.later`: answers once, on the target's thread.
-        /// A second answer halts, and so does an answer through another loop.
-        pub fn answer(record: *Record, shared: *View, reply: Reply) void {
+        /// A second answer halts, and so does an answer through another loop. Both checks come
+        /// before the reply is written, so a halt leaves the record as it was.
+        pub fn answer(record: *Record, shared: *View, reply: *const Reply) void {
+            // `is_scheduled` checks that the loop's own thread calls it (class B). A held call's
+            // task is not queued: it ran the handler.
+            assert(!shared.is_scheduled(&record.link.task));
             assert(record.link.state == .held);
-            record.reply = reply;
+            record.reply = reply.*;
             record.link.outcome = .replied;
             shared.answer(&record.link);
         }
@@ -111,6 +116,9 @@ pub fn Service(
         /// first tick. It halts on a station that serves, and in a decision 21 group.
         pub fn serve(service: *This, shared: *View, context: *Context) void {
             const station = shared.serve(&service.stations);
+            // The loop's `serve` returns a station of this service that serves (class B).
+            assert(station.state == .serving);
+            assert(@intFromPtr(station) - @intFromPtr(&service.stations) < @sizeOf(@TypeOf(service.stations)));
             station.context = context;
             station.loop = shared;
         }
@@ -121,18 +129,20 @@ pub fn Service(
         }
 
         /// Sends `request` to loop `target`. On an error nothing was sent, and `finish` does not
-        /// run. It halts when `call` is out already, and on a forged group id.
+        /// run. It halts when `call` is out already, on a target id that no loop may hold, and on
+        /// a forged group id.
         pub fn send(
             service: *This,
             shared: *View,
             target: LoopId,
             call: *Call,
-            request: Request,
+            request: *const Request,
             options: CallOptions,
         ) CallError!void {
+            assert(target < constants.loops_max);
             // `prepare` halts on a record that is out, before the request is written.
             call.link.prepare(&service.stations, &entry, target, options);
-            call.request = request;
+            call.request = request.*;
             return shared.call(&call.link);
         }
 
@@ -140,6 +150,8 @@ pub fn Service(
         /// stopped answers `target_stopped`, and a deadline at or before `now_ns` answers
         /// `expired`. Otherwise the handler runs.
         fn run(task: *Task) void {
+            // Only the record's task of this service runs it (class B).
+            assert(task.call == &entry);
             const link: *CallLink = @alignCast(@fieldParentPtr("task", task));
             const call: *Call = @alignCast(@fieldParentPtr("link", link));
             const station = &link.stations[link.target];
@@ -150,7 +162,7 @@ pub fn Service(
             }
             const context: *Context = @ptrCast(@alignCast(station.context.?));
             switch (handler(context, call)) {
-                .now => |reply| call.answer(shared, reply),
+                .now => |reply| call.answer(shared, &reply),
                 .later => {},
             }
         }

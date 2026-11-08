@@ -22,6 +22,14 @@ const options: Loop.Options = .{ .operations = 4, .entries = 4 };
 var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
 var loop: Loop align(@alignOf(Loop)) = undefined;
 
+/// A call's wake of the loop that makes it (decision 32). With the check deleted, the loop notes
+/// its own id, which its next submit would wake, and the scenario returns.
+fn wake_the_loop_that_makes_the_call() void {
+    loop.init(&memory, &options) catch return;
+    scenario.reached_violation();
+    loop.wake_target(loop.tables.id, 0);
+}
+
 /// The wait the tick from another thread asks for. It is above 0 so that `tick` enters the kernel:
 /// a loop with nothing to submit that asks for no wait makes no system call.
 const tick_wait_ns = core.constants.ns_per_ms;
@@ -409,6 +417,7 @@ const scenarios = [_]scenario.Scenario{
         .run = read_an_entry_the_ring_does_not_hold,
     },
     .{ .name = "loop: end a loop that a watch reads", .run = end_a_loop_that_a_watch_reads },
+    .{ .name = "call: wake the loop that makes the call", .run = wake_the_loop_that_makes_the_call },
     .{ .name = "wake: claim a wake in a group", .run = claim_a_wake_in_a_group },
     .{ .name = "wake: release a wake in a group", .run = release_a_wake_in_a_group },
     .{

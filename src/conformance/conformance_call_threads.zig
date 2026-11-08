@@ -199,7 +199,7 @@ const Member = struct {
             client.target = @intCast(member.random.below(four));
             const deadline_ns = if (member.random.chance(1, 8)) shared.now_ns() + member.random.below(50_000) else 0;
             client.request = member.tally.accepted * 1000 + 7;
-            member.four.service.send(shared, client.target, &client.call, client.request, .{
+            member.four.service.send(shared, client.target, &client.call, &client.request, .{
                 .group = .default,
                 .deadline_ns = deadline_ns,
             }) catch continue;

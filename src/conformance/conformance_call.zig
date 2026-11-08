@@ -1,7 +1,8 @@
 //! The cross-core call of decision 32 on every backend, with every loop on the test's thread:
 //! 10,000 calls with checked replies, the 33rd call to one target, the posts that fill their share
 //! of a ring while 32 calls are out, a `.later` answer after a timer, a past deadline, a call to
-//! self, and an id that a second loop claims. `conformance_call_threads.zig` holds the scenarios
+//! self, an id that a second loop claims and serves, and an id that a loop claims and does not
+//! serve. `conformance_call_threads.zig` holds the scenarios
 //! with threads, and the calls in two named groups.
 const std = @import("std");
 const testing = std.testing;
@@ -52,7 +53,7 @@ pub const Echo = struct {
 
     /// Answers every call held `.later`, each with its request plus one.
     pub fn answer_all(echo: *Echo, shared: *View) void {
-        for (echo.held[0..echo.held_len]) |call| call.answer(shared, call.request_of().* + 1);
+        for (echo.held[0..echo.held_len]) |call| call.answer(shared, &(call.request_of().* + 1));
         echo.held_len = 0;
     }
 };
@@ -93,7 +94,7 @@ pub const Client = struct {
     /// Sends one call, with a request that no other call of the scenario carries.
     pub fn send(client: *Client) core.call.CallError!void {
         client.request = client.tally.accepted * 1000 + 7;
-        try client.service.send(client.shared, client.target, &client.call, client.request, .{ .group = client.group });
+        try client.service.send(client.shared, client.target, &client.call, &client.request, .{ .group = client.group });
         client.tally.accepted += 1;
         client.tally.left -|= 1;
     }
@@ -269,7 +270,7 @@ test "a deadline at or before the target's clock ends the call expired, with no 
     _ = try two.tick();
     var tally: Tally = .{};
     var client = client_of(&two, &tally, 1);
-    try two.service.send(two.shared(0), 1, &client.call, 1, .{ .group = .default, .deadline_ns = 1 });
+    try two.service.send(two.shared(0), 1, &client.call, &@as(u64, 1), .{ .group = .default, .deadline_ns = 1 });
     var ticks: u32 = 0;
     while (tally.expired == 0 and ticks < ticks_max) : (ticks += 1) _ = try two.tick();
     try testing.expectEqual(@as(u32, 1), tally.expired);

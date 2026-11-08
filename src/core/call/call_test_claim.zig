@@ -34,7 +34,7 @@ test "a loop that claims an id and does not serve answers target_stopped in its 
     // The station still names the loop that ended, which the claimer must not reach.
     try testing.expectEqual(@as(?*anyopaque, &pair.loops[target]), pair.service.stations[target].loop);
     var client: Client = .{};
-    try pair.service.send(&pair.loops[caller], target, &client.call, 4, .{ .group = .default });
+    try pair.service.send(&pair.loops[caller], target, &client.call, &@as(u64, 4), .{ .group = .default });
     pair.registry.begin_sleep(caller);
     var events: [events_len]Event = undefined;
     _ = claimer.tick(&events);
@@ -62,7 +62,7 @@ test "a loop that claims an id counts a stopped station at its call to self, unt
     try testing.expectEqual(@as(u8, 0), pair.loops[caller].groups.stations);
     try testing.expectEqual(@as(?*fixture.Groups, null), station.attached);
     var client: Client = .{};
-    try pair.service.send(&claimer, caller, &client.call, 8, .{ .group = .default });
+    try pair.service.send(&claimer, caller, &client.call, &@as(u64, 8), .{ .group = .default });
     try testing.expectEqual(@as(u8, 1), claimer.groups.stations);
     try testing.expectEqual(@as(?*fixture.Groups, &claimer.groups), station.attached);
     var events: [events_len]Event = undefined;
@@ -81,7 +81,7 @@ test "a station stays counted while it serves or holds a call to self" {
     const model = &pair.loops[caller];
     try testing.expectEqual(@as(u8, 1), model.groups.stations);
     var client: Client = .{};
-    try pair.service.send(model, caller, &client.call, 2, .{ .group = .default });
+    try pair.service.send(model, caller, &client.call, &@as(u64, 2), .{ .group = .default });
     pair.service.stop_serving(model);
     // The call to self has not run its finish, so the station stays counted.
     try testing.expectEqual(@as(u8, 1), model.groups.stations);
@@ -91,7 +91,7 @@ test "a station stays counted while it serves or holds a call to self" {
     try testing.expectEqual(@as(u32, 1), client.finishes);
     try testing.expectEqual(@as(u8, 0), model.groups.stations);
     // A remote call counts no station on the caller.
-    try pair.service.send(model, target, &client.call, 3, .{ .group = .default });
+    try pair.service.send(model, target, &client.call, &@as(u64, 3), .{ .group = .default });
     try testing.expectEqual(@as(u8, 0), model.groups.stations);
     _ = pair.loops[target].tick(&events);
     _ = model.tick(&events);

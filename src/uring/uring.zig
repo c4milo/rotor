@@ -420,7 +420,7 @@ pub const Loop = struct {
     /// Notes loop `target` after a call or an answer, as `post` does: the next tick's submit carries
     /// the wake.
     pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
-        _ = descriptor;
+        core.call.loop.assert_wake(loop.tables.id, target, descriptor);
         loop.wakes.note(target);
     }
 

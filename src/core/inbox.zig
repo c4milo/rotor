@@ -64,7 +64,8 @@ pub const TakeReserved = fn (
 /// events before that visit. The ring has not taken the visit's slots back, so this visits it
 /// again. Then it visits each sender that the drain did not visit yet, up to the cursor, as the
 /// drain would. It takes each wake, call and return in the order of its ring (decisions 29 and 32),
-/// and returns the events of the whole drain.
+/// and returns the events of the whole drain. Halts on a `first` that is the receiver, and on a
+/// ring of `first` that is empty, which no drain hands over (class B).
 pub fn take_reserved(
     inbox: *Inbox,
     receiver: LoopId,
@@ -77,6 +78,8 @@ pub fn take_reserved(
 ) u32 {
     const registry = inbox.registry.?;
     const loops = registry.loop_count();
+    assert(first != receiver);
+    assert(!registry.mailbox(first, receiver).is_empty());
     var taker: call_take.Taker = .{
         .registry = registry,
         .dispatch = dispatch,

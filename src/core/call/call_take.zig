@@ -131,8 +131,10 @@ pub fn answer(
     return if (wake >= 0 and known.must_wake(origin)) wake else null;
 }
 
-/// The caller's loop owns the record again: its task runs `finish`, in the call's group.
+/// The caller's loop owns the record again: its task runs `finish`, in the call's group. Halts on
+/// a `finish` entry that does not mark a call's task (class B): `discard_tasks` reads the mark.
 fn give_back(dispatch: *Dispatch, groups: *Groups, link: *CallLink) void {
+    assert(link.finish.call_record);
     link.state = .back;
     link.task.call = link.finish;
     schedule_link(dispatch, groups, link);
@@ -140,8 +142,10 @@ fn give_back(dispatch: *Dispatch, groups: *Groups, link: *CallLink) void {
 
 /// Queues the record's task in the call's group, with the limit of a call's task (decision 32,
 /// ruling item 11). A group that the program filled takes it. The calls bound their tasks at
-/// `call_tasks_max`, so the push cannot fail, and a failure halts (class B).
+/// `call_tasks_max`, so the push cannot fail, and a failure halts (class B). Halts on a link that
+/// this loop does not own: one that is neither `held` nor `back` (class B).
 pub fn schedule_link(dispatch: *Dispatch, groups: *Groups, link: *CallLink) void {
+    assert(link.state == .held or link.state == .back);
     dispatch.schedule_call(groups, link.group.scheduling_group(), &link.task);
 }
 

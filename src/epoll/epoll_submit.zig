@@ -154,7 +154,7 @@ pub fn close(loop: *Loop, index: u32, slot: *Slot) void {
 /// Wakes loop `target` through `descriptor` after a cross-core call or its answer, as `Loop.post`
 /// does (decision 32).
 pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
-    _ = target;
+    core.call.loop.assert_wake(loop.tables.id, target, descriptor);
     if (!queue_module.Queue.wake_sent(descriptor)) loop.dropped_wake_count += 1;
 }
 

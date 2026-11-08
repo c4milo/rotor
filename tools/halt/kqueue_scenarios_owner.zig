@@ -354,6 +354,17 @@ fn start_tables() void {
 
 const owner_calls = @import("owner_calls.zig").Scenarios(Loop, &loop, start_tables, options.id);
 
+/// A call's wake of the loop that makes it (decision 32). With the check deleted, the trigger of a
+/// descriptor that no process has open fails, the loop counts a dropped wake, and the scenario
+/// returns.
+fn wake_the_loop_that_makes_the_call() void {
+    start_tables();
+    remote_registry.init(&remote_registry_memory, remote_ids);
+    loop.inbox.registry = &remote_registry;
+    scenario.reached_violation();
+    loop.wake_target(options.id, 4096);
+}
+
 pub const scenarios = [_]scenario.Scenario{
     .{ .name = "owner: schedule in a group from another thread", .run = schedule_in_a_group_from_another_thread },
     .{ .name = "owner: charge a task from another thread", .run = charge_a_task_from_another_thread },
@@ -410,4 +421,5 @@ pub const scenarios = [_]scenario.Scenario{
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "owner: end a remote from another thread", .run = end_a_remote_from_another_thread },
+    .{ .name = "call: wake the loop that makes the call", .run = wake_the_loop_that_makes_the_call },
 } ++ owner_calls.scenarios;

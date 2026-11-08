@@ -81,7 +81,7 @@ fn send_a_call_one_past_the_named_groups() void {
     service.serve(shared, &context);
     const quic = rotor.named_scheduling_group(.quic);
     scenario.reached_violation();
-    service.send(shared, 0, &caller.call, 1, .{ .group = @enumFromInt(@intFromEnum(quic) + 1) }) catch return;
+    service.send(shared, 0, &caller.call, &@as(u64, 1), .{ .group = @enumFromInt(@intFromEnum(quic) + 1) }) catch return;
 }
 
 const scenarios = [_]scenario.Scenario{

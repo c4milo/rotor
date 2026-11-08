@@ -39,6 +39,15 @@ fn tick_on_this_thread() void {
 /// it, whatever the container left open.
 const closed_descriptor: core.Descriptor = 4096;
 
+/// A call's wake of the loop that makes it (decision 32). With the check deleted, the write to a
+/// descriptor that no process has open fails, the loop counts a dropped wake, and the scenario
+/// returns.
+fn wake_the_loop_that_makes_the_call() void {
+    loop.init(&memory, &options) catch return;
+    scenario.reached_violation();
+    loop.wake_target(loop.tables.id, closed_descriptor);
+}
+
 /// With the owner check deleted, the second thread's `fcntl` of the closed descriptor fails,
 /// `register_descriptors` returns `DescriptorInvalid`, and the scenario returns.
 fn register_descriptors_from_another_thread() void {
@@ -180,6 +189,7 @@ const scenarios = [_]scenario.Scenario{
     },
     .{ .name = "tick: tick with a wait above the limit", .run = tick_with_a_wait_above_the_limit },
     .{ .name = "owner: tick from another thread", .run = tick_from_another_thread },
+    .{ .name = "call: wake the loop that makes the call", .run = wake_the_loop_that_makes_the_call },
     .{
         .name = "owner: register descriptors from another thread",
         .run = register_descriptors_from_another_thread,

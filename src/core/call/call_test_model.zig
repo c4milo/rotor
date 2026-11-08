@@ -58,7 +58,7 @@ const Server = struct {
         const call = server.held[index];
         server.held[index] = server.held[server.held_len - 1];
         server.held_len -= 1;
-        call.answer(server.model, call.request_of().* + 1);
+        call.answer(server.model, &(call.request_of().* + 1));
     }
 };
 
@@ -119,7 +119,7 @@ const Run = struct {
         client.last_request = run.next_request;
         run.next_request += 1;
         const model = &run.pair.loops[loop];
-        run.pair.service.send(model, target, &client.call, client.last_request, .{
+        run.pair.service.send(model, target, &client.call, &client.last_request, .{
             .group = group,
             .deadline_ns = deadline_ns,
         }) catch |err| switch (err) {

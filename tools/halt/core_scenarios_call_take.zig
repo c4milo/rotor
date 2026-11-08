@@ -250,6 +250,7 @@ fn queue_the_task_of_a_call_twice() void {
     sent();
     fixture.groups.init(&core.scheduling.Named(.{ .low = 100 }).table);
     fixture.link.group = @enumFromInt(1);
+    fixture.link.state = .held;
     take.schedule_link(&fixture.dispatch, &fixture.groups, &fixture.link);
     scenario.reached_violation();
     take.schedule_link(&fixture.dispatch, &fixture.groups, &fixture.link);

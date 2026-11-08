@@ -405,7 +405,7 @@ pub const Loop = struct {
     pub const callbacks_outstanding = call_calls.callbacks_outstanding;
     /// Wakes loop `target` through `descriptor` after a call or an answer, as `post` does.
     pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
-        _ = target;
+        core.call.loop.assert_wake(loop.tables.id, target, descriptor);
         submit_module.wake_one(loop, loop.inbox.registry.?.group, descriptor);
     }
 
