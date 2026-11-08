@@ -10,6 +10,10 @@ const scenario = @import("scenario.zig");
 
 const Loop = rotor.Loop;
 
+/// This file is the root of its executable, so the public module reads this declaration and each
+/// loop reserves `quic` as id 1 at init (decision 30).
+pub const rotor_scheduling_groups = .{ .quic = 400 };
+
 const options: Loop.Options = .{ .operations = 4 };
 
 var memory: [Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
@@ -33,10 +37,29 @@ fn hand_out_the_view_on_this_thread() void {
     _ = loop.shared();
 }
 
+fn ran(_: *rotor.Task) void {}
+
+const ran_call: rotor.Task.Call = .{ .name = "ran", .function = ran };
+var tasks: [2]rotor.Task align(@alignOf(rotor.Task)) = @splat(.{ .call = &ran_call });
+
+/// A forged id one past the program's named groups: the loop reserved `quic` alone at init. With
+/// the check deleted, the task is queued in that lane and the call returns.
+fn queue_a_task_one_past_the_named_groups() void {
+    loop.init(&memory, &options) catch return;
+    const quic = rotor.named_scheduling_group(.quic).scheduling_group();
+    loop.schedule_in(quic, &tasks[0]) catch return;
+    scenario.reached_violation();
+    loop.schedule_in(@enumFromInt(@intFromEnum(quic) + 1), &tasks[1]) catch return;
+}
+
 const scenarios = [_]scenario.Scenario{
     .{
         .name = "rotor: hand out the view from another thread",
         .run = hand_out_the_view_from_another_thread,
+    },
+    .{
+        .name = "rotor: queue a task one past the named groups",
+        .run = queue_a_task_one_past_the_named_groups,
     },
 };
 

@@ -493,7 +493,7 @@ const scenarios = [_]scenario.Scenario{
     },
 } ++ finish.scenarios ++ spin.scenarios ++ registry.scenarios ++ file_call.scenarios ++
     post.scenarios ++ dispatch.scenarios ++ tasks.scenarios ++ tick_error.scenarios ++
-    offload.scenarios ++ share.scenarios;
+    offload.scenarios ++ share.scenarios ++ @import("core_scenarios_scheduling.zig").scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);

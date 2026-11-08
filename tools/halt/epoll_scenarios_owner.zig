@@ -272,7 +272,63 @@ fn hand_out_the_heartbeat_on_this_thread() void {
     _ = loop.heartbeat();
 }
 
+/// `schedule_in` from a second thread (decision 30). With the check deleted, the task is queued
+/// and the call returns.
+fn schedule_in_a_group_from_another_thread() void {
+    loop.init_tables(&memory, &options);
+    on_another_thread(schedule_in_a_group_on_this_thread);
+}
+
+fn schedule_in_a_group_on_this_thread() void {
+    scenario.reached_violation();
+    loop.schedule_in(.default, &task) catch {};
+}
+
+/// `charge_task` from a second thread, while the loop's own thread is in a task's run (decision
+/// 30). With the check deleted, the charge on the path with one group changes nothing and returns.
+fn charge_a_task_from_another_thread() void {
+    loop.init_tables(&memory, &options);
+    loop.tables.dispatch.phase = .tasks;
+    on_another_thread(charge_a_task_on_this_thread);
+}
+
+fn charge_a_task_on_this_thread() void {
+    scenario.reached_violation();
+    loop.charge_task(1);
+}
+
+/// `reserve_scheduling_group` from a second thread (decision 30). With the check deleted, the
+/// call returns the group.
+fn reserve_a_scheduling_group_from_another_thread() void {
+    loop.init_tables(&memory, &options);
+    on_another_thread(reserve_a_scheduling_group_on_this_thread);
+}
+
+fn reserve_a_scheduling_group_on_this_thread() void {
+    scenario.reached_violation();
+    _ = loop.reserve_scheduling_group(core.constants.scheduling_shares_default) catch {};
+}
+
+/// `set_scheduling_group_shares` from a second thread (decision 30). With the check deleted, the
+/// shares of `.default` change and the call returns.
+fn set_the_shares_from_another_thread() void {
+    loop.init_tables(&memory, &options);
+    on_another_thread(set_the_shares_on_this_thread);
+}
+
+fn set_the_shares_on_this_thread() void {
+    scenario.reached_violation();
+    loop.set_scheduling_group_shares(.default, core.constants.scheduling_shares_default);
+}
+
 pub const scenarios = [_]scenario.Scenario{
+    .{ .name = "owner: schedule in a group from another thread", .run = schedule_in_a_group_from_another_thread },
+    .{ .name = "owner: charge a task from another thread", .run = charge_a_task_from_another_thread },
+    .{
+        .name = "owner: reserve a scheduling group from another thread",
+        .run = reserve_a_scheduling_group_from_another_thread,
+    },
+    .{ .name = "owner: set the shares of a group from another thread", .run = set_the_shares_from_another_thread },
     .{ .name = "owner: reserve a group from another thread", .run = reserve_a_group_from_another_thread },
     .{
         .name = "owner: read the wait limit from another thread",
