@@ -128,21 +128,21 @@ comptime {
     std.debug.assert(offload_in_flight_max >= 1);
 }
 
-/// The largest tag that a caller's `Message` may carry: three less than `message_tag_wake`
-/// (decision 29, and decision 32, which reserves the two tags below the wake). io_uring delivers a
-/// posted message as a completion whose 32-bit result is the sender's to choose, and a result in
-/// [-4095, -1] is an errno. The uring backend sets the top bit of the tag, so a message's result is
-/// below -4095 and never reads as an operation's.
-pub const message_tag_max: u32 = 0x7fff_effd;
+/// The largest tag that a caller's `Message` may carry: one less than `message_tag_wake`
+/// (decision 29). io_uring delivers a posted message as a completion whose 32-bit result is the
+/// sender's to choose, and a result in [-4095, -1] is an errno. The uring backend sets the top bit
+/// of the tag, so a message's result is below -4095 and never reads as an operation's.
+pub const message_tag_max: u32 = 0x7fff_efff;
 
-/// The tag of a cross-core call (decision 32). The payload is the address of the caller's
-/// `CallLink`, and `reserved` holds the call's generation. The drain schedules the call's task and
-/// writes no event.
-pub const message_tag_call: u32 = 0x7fff_effe;
+/// The tag of a cross-core call (decision 32), one above the wake. The payload is the address of
+/// the caller's `CallLink`, and `reserved` holds the call's generation. Only rotor pushes it, and
+/// the drain writes no event for it, so no result ever carries it. A post refuses it, because a
+/// post accepts a tag up to `message_tag_wake`, with one compare.
+pub const message_tag_call: u32 = message_tag_wake + 1;
 
 /// The tag of the answer to a cross-core call (decision 32), in the ring from the target back to
 /// the caller. Its payload and its `reserved` are those of the call.
-pub const message_tag_return: u32 = 0x7fff_efff;
+pub const message_tag_return: u32 = message_tag_wake + 2;
 
 /// The most calls of one ordered pair of loops from `send` until their `finish` runs (decision 32,
 /// open question 1). A prior, until stompy measures the depth of its journal pipeline. A post sees
@@ -175,9 +175,10 @@ comptime {
     std.debug.assert(services_max <= std.math.maxInt(u8));
     std.debug.assert(call_tasks_max == 16_832);
     std.debug.assert(@as(u64, tasks_queued_max) + call_tasks_max <= std.math.maxInt(u32));
-    std.debug.assert(message_tag_max < message_tag_call);
+    std.debug.assert(message_tag_max < message_tag_wake);
+    std.debug.assert(message_tag_wake < message_tag_call);
     std.debug.assert(message_tag_call < message_tag_return);
-    std.debug.assert(message_tag_return < message_tag_wake);
+    std.debug.assert(message_tag_return < 1 << 31);
 }
 
 /// The tag of `Message.wake`, the old `message_tag_max`. The loop drops such a message, and hands

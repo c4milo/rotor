@@ -124,7 +124,7 @@ pub const Groups = struct {
     /// Appends `task` to group `group`, which is not `.default`. Returns `TasksFull` when the group
     /// holds `queued_max` tasks, and then changes nothing. The caller checked that the task is not
     /// queued.
-    pub fn push(groups: *Groups, group: SchedulingGroup, task: *Task, queued_max: u32) ScheduleError!void {
+    pub fn push(groups: *Groups, group: SchedulingGroup, task: *Task, comptime queued_max: u32) ScheduleError!void {
         assert(group != .default);
         // A call's task is pushed with the higher limit (decision 32, ruling item 11).
         assert(queued_max <= constants.task_queue_length_max);

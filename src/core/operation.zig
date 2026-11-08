@@ -23,8 +23,8 @@ pub const LoopId = u16;
 
 /// What one loop posts to another: 16 bytes. Anything larger travels as an index or a pointer in
 /// `payload`, into memory the two sides agreed on. `tag` is at most `constants.message_tag_max`,
-/// or `constants.message_tag_wake` for `wake`. The two tags between them belong to the calls of
-/// decision 32, and only rotor posts them.
+/// or `constants.message_tag_wake` for `wake`. The two tags above the wake belong to the calls of
+/// decision 32, and only rotor pushes them.
 pub const Message = extern struct {
     payload: u64,
     tag: u32,
@@ -35,9 +35,10 @@ pub const Message = extern struct {
     pub const wake: Message = .{ .payload = 0, .tag = constants.message_tag_wake };
 
     /// True for a tag that a post may carry: a caller's tag, or the wake's (decision 32). Each post
-    /// halts on any other tag, so a program cannot forge a call.
+    /// halts on any other tag, so a program cannot forge a call. The tags of a call are above the
+    /// wake, so this is one compare.
     pub fn postable(tag: u32) bool {
-        return tag <= constants.message_tag_max or tag == constants.message_tag_wake;
+        return tag <= constants.message_tag_wake;
     }
 };
 

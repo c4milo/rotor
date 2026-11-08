@@ -102,7 +102,7 @@ pub const Tasks = struct {
 
     /// Appends `task`. Halts when the task is queued in this queue already. Returns `TasksFull`
     /// when `queued_max` tasks are queued, and then changes nothing.
-    pub fn push(tasks: *Tasks, task: *Task, queued_max: u32) ScheduleError!void {
+    pub fn push(tasks: *Tasks, task: *Task, comptime queued_max: u32) ScheduleError!void {
         assert_class_a(!tasks.holds(task));
         // A call's task is pushed with the higher limit (decision 32, ruling item 11).
         assert(queued_max <= constants.task_queue_length_max);

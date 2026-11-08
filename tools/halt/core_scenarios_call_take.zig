@@ -155,12 +155,12 @@ fn take_a_return_in_a_registry_of_a_group() void {
     take_on_loop_zero(return_message());
 }
 
-/// A tag above `message_tag_wake`, which no post accepts. With the check deleted, the drain drops
-/// it and returns.
-fn take_a_tag_above_the_wake() void {
+/// A tag above `message_tag_return`, which neither a post nor rotor pushes. With the check deleted,
+/// the drain drops it and returns.
+fn take_a_tag_above_the_return() void {
     sent();
     var message = call_message();
-    message.tag = constants.message_tag_wake + 1;
+    message.tag = constants.message_tag_return + 1;
     take_on_loop_one(message);
 }
 
@@ -332,7 +332,7 @@ pub const scenarios = [_]scenario.Scenario{
     .{ .name = "call: take a return with a wrong target", .run = take_a_return_with_a_wrong_target },
     .{ .name = "call: take a return with a wrong generation", .run = take_a_return_with_a_wrong_generation },
     .{ .name = "call: take a return in a registry of a group", .run = take_a_return_in_a_registry_of_a_group },
-    .{ .name = "call: take a tag above the wake", .run = take_a_tag_above_the_wake },
+    .{ .name = "call: take a tag above the return", .run = take_a_tag_above_the_return },
     .{ .name = "call: answer a call twice", .run = answer_a_call_twice },
     .{ .name = "call: answer on a loop that does not hold the call", .run = answer_on_a_loop_that_does_not_hold_the_call },
     .{ .name = "call: answer with no call held on the station", .run = answer_with_no_call_held_on_the_station },
