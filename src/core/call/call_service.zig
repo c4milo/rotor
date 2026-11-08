@@ -64,7 +64,7 @@ pub fn CallRecord(comptime View: type, comptime Request: type, comptime Reply: t
         /// True from a `send` that returned success until its `finish` starts. The program must
         /// not touch the request or the reply while it is true.
         pub fn is_out(record: *const Record) bool {
-            return record.link.state != .idle;
+            return record.link.sent;
         }
 
         /// Target side: the request, from the handler's start until the answer.

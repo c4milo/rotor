@@ -110,6 +110,10 @@ pub const CallLink = struct {
     outcome: Outcome,
     /// The caller's choice. `send` writes it.
     group: NamedSchedulingGroup,
+    /// True from `prepare` until `end_call`, or until `call` refuses the call. Only the caller's
+    /// thread reads or writes it, so `is_out` reads no byte that the target writes. It sits in the
+    /// padding.
+    sent: bool,
 
     /// A link that no call has used, whose task runs `finish` on the caller.
     pub fn idle(finish: *const Task.Call) CallLink {
@@ -125,7 +129,14 @@ pub const CallLink = struct {
             .state = .idle,
             .outcome = .replied,
             .group = .default,
+            .sent = false,
         };
+    }
+
+    /// The caller owns the link again: `call` refused the call, and nothing was sent.
+    fn refuse(link: *CallLink) void {
+        link.state = .idle;
+        link.sent = false;
     }
 
     /// The caller's part of `send`, before the loop's `call`: the link names the target, the
@@ -138,7 +149,7 @@ pub const CallLink = struct {
         target: LoopId,
         options: CallOptions,
     ) void {
-        assert(link.state == .idle);
+        assert(!link.sent);
         assert(link.task.next == null);
         link.stations = stations;
         link.task.call = entry;
@@ -147,6 +158,7 @@ pub const CallLink = struct {
         link.deadline_ns = options.deadline_ns;
         link.generation +%= 1;
         link.state = .out;
+        link.sent = true;
     }
 };
 
@@ -203,7 +215,7 @@ pub fn call(
     attach(groups, &link.stations[id]);
     link.origin = id;
     if (link.target == id) return call_self(dispatch, groups, link);
-    errdefer link.state = .idle;
+    errdefer link.refuse();
     const known = registry orelse return error.LoopNotFound;
     if (link.target >= known.loop_count()) return error.LoopNotFound;
     // Negative covers a loop that is not running and a remote.
@@ -231,7 +243,7 @@ fn call_self(dispatch: *Dispatch, groups: *Groups, link: *CallLink) CallError!?D
     // A call to a loop that never served halts on the target (class B), here the caller itself.
     assert(station.state != .unused);
     if (station.self_out >= constants.calls_per_pair_max) {
-        link.state = .idle;
+        link.refuse();
         return error.CallsFull;
     }
     link.calls_out = &station.self_out;
@@ -290,6 +302,7 @@ pub fn end_call(link: *CallLink) Outcome {
     // Wrapping, so the assertion above is the one check of the count.
     count.* -%= 1;
     link.state = .idle;
+    link.sent = false;
     return link.outcome;
 }
 

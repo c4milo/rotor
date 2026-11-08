@@ -42,10 +42,13 @@ The call is built on io_uring, epoll and kqueue, through `src/core/call/` and th
    assertion is the one check, and a halt scenario proves it.
 10. **`task_queue_length_max` names the sum `tasks_queued_max + call_tasks_max`**, which each
     bound of a queue's length reads.
-11. **A test of `kqueue_reap.zig` lowers `callbacks_outstanding` by hand.** It reaps outside a
+11. **`CallLink.sent` is a byte of the caller's own**, in the link's padding. `is_out` and the
+    check of `send` read it, and not `state`, which the target writes while it owns the record.
+    The race gate found the read of `state` from the caller's thread in the scenario of four loops.
+12. **A test of `kqueue_reap.zig` lowers `callbacks_outstanding` by hand.** It reaps outside a
     tick, so no `end` calls its record, and the new check of `deinit` would halt.
-12. **`build/compile_fail.zig` gains the six cases** of the compile-fail tests.
-13. **Not built, because their records are not built:** W4's `leave`, R7's end call, and W9's
+13. **`build/compile_fail.zig` gains the six cases** of the compile-fail tests.
+14. **Not built, because their records are not built:** W4's `leave`, R7's end call, and W9's
     counts of refusals. The guide states the stop order.
 
 Two checks are proved by no halt scenario. `CallRecord.answer` checks that the call is held before
