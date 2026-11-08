@@ -1,8 +1,91 @@
 # 32. A cross-core call
 
-Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"). Nothing is built. Every cost here is a
+Status: accepted on 2026-11-07 (see "Ruling, 2026-11-07"), and built on 2026-11-07 on the branch
+`decision-32` (see "What was built"). Every cost in the sections after "What was built" is a
 prior: a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, or an instruction count from
-arithmetic. Nothing was measured for this record.
+arithmetic. "What was built" holds the measured counts.
+
+## What was built, 2026-11-07
+
+The call is built on io_uring, epoll and kqueue, through `src/core/call/` and the public module's
+`rotor.Service` and `rotor.CallRecord`. These parts differ from the design below:
+
+1. **The drain keeps one loop with no branch for each message.** A branch to a cold function in
+   the write of each message made the work gate's `post` row count 1,321 instructions on `mac`,
+   against 1,217. So a reserved tag writes an event of tag 0 that the next message takes, as the
+   wake did. After each ring's visit, the drain compares the events it wrote with the messages it
+   read. When they differ, a slow path reads the ring's slots again, before the ring takes them
+   back. `Mailbox` gains `peek_each`, `message_at` and `release` for it, and `pop_each` is
+   `peek_each` and `release`. The drain takes the slow path as a function from its backend, which
+   keeps it out of the tick with `noinline` and `@branchHint(.cold)` in a file that decision 7
+   names: `docs/hot-path-ledger.md`, rows H6 to H8. The visit of one ring is written out in both
+   loops of the drain, because a function for it stayed out of line on `mac`.
+2. **A tick that takes a call does not block.** Only the drain queues a task inside a tick, so
+   `Tables.wait_bound` answers "do not block" while a task is queued. A loop with nothing
+   outstanding takes a call on the fast path, which runs no `end`. Its next tick runs the handler.
+3. **`Loop` and `SharedLoop` also gain `serve` and `stop_serving`**, which take the service's
+   stations. A station is indexed by the loop's id, which `SharedLoop` does not name, and `serve`
+   counts in the loop's `Groups`. Each backend's `Loop` also has `wake_target`, its own wake after
+   a call or an answer, and `callbacks_outstanding`, which `drain` reads. Neither is surface.
+4. **`drain` ticks while `callbacks_outstanding` is above 0**, and answers `StillInFlight` when a
+   callback that is not a queued task stays. `deinit` checks that the count is 0, or 1 for a kept
+   tick error, and that no station serves (`Tables.assert_calls_ended`).
+5. **A handler names `*rotor.CallRecord(Request, Reply)`.** `*Service.Call` is the same type, but
+   Zig refuses the handler's type when it depends on the service that takes the handler.
+6. **`CallStation.held` counts the calls from the drain's take until the answer**, and not only
+   the calls that answered `.later`.
+7. **The service's static entry is named `@typeName` of the service type**, which holds the
+   handler's name. Zig gives no name of a function.
+8. **A station stays attached to its id.** A later loop that claims the id does not count the
+   station in its `Groups.stations`.
+9. **Each count that an assertion holds falls with a wrapping subtraction** (`-%=`), so the
+   assertion is the one check, and a halt scenario proves it.
+10. **`task_queue_length_max` names the sum `tasks_queued_max + call_tasks_max`**, which each
+    bound of a queue's length reads.
+11. **A test of `kqueue_reap.zig` lowers `callbacks_outstanding` by hand.** It reaps outside a
+    tick, so no `end` calls its record, and the new check of `deinit` would halt.
+12. **`build/compile_fail.zig` gains the six cases** of the compile-fail tests.
+13. **Not built, because their records are not built:** W4's `leave`, R7's end call, and W9's
+    counts of refusals. The guide states the stop order.
+
+Two checks are proved by no halt scenario. `CallRecord.answer` checks that the call is held before
+it writes the reply, and the loop's `answer` makes the same check one statement later. The class
+A check that a call's task is not queued twice in `.default` is `Tasks.push`'s own.
+
+The work gate on `mac` (`/usr/bin/time -l`, an M1 Pro, macOS 26.6.2, a load average of 40 to 70)
+and on arm64 Linux (cachegrind of Valgrind 3.25.1 in an arm64 container on `mac`), with the base
+`4eb8bfb` measured on the same machine on the same day:
+
+| row | `mac` base | `mac` branch | io_uring base | io_uring branch | epoll base | epoll branch |
+|---|---|---|---|---|---|---|
+| `post` | 1203 to 1222 | 1222 to 1228 | 1075 | 1091 | 1150 | 1172 |
+| `post-operation` | 3127 to 3140 | 3130 to 3154 | 2967 | 2997 | 3033 | 3064 |
+| `timer` | 1152 | 1152 to 1160 | 1095 | 1099 | 1100 | 1104 |
+| `batch` | 24836 | 24861 to 24991 | 24025 | 24091 | 24034 | 24100 |
+| `wait` | 5329 to 5368 | 5324 to 5409 | none | none | 630 | 640 |
+| `task` | 617 to 622 | 620 to 625 | 571 | 577 | 603 | 609 |
+| `tasks-64` | 4574 | 4561 to 4605 | 3922 | 3928 | 3954 | 3960 |
+| `record` | 1297 to 1307 | 1299 to 1308 | 1225 | 1231 | 1239 | 1245 |
+| `poller` | 569 to 570 | 573 to 575 | 528 | 534 | 561 | 567 |
+| `tasks-groups-4` | 13010 | 12991 to 13113 | 12328 | 12382 | 12359 | 12413 |
+| `tasks-groups-16` | 13682 | 13708 to 13793 | 13012 | 13078 | 13043 | 13109 |
+| `call`, new | none | 2285 to 2293 | none | 2171 | none | 2259 |
+
+On arm64 Linux each tick counts about 6 instructions more. The count check of `Tasks.assert_shape`
+reads `task_queue_length_max`, which arm64 builds in two instructions where `tasks_queued_max`
+took one, and each drain counts 2 more. The groups rows count about 54 and 66 more, which
+`schedule_in` takes: the compiler inlines its pushes less, now that the push of a call's task calls
+them too. `post` counts 16 and 22 more, from the drains of its four ticks. On `mac` the counts
+include the kernel's, and a row moves by up to 20 between two runs of one build at a load average
+of 30 to 70. There, `post`, `task`, `record` and `wait` are near their lines of `work.txt`, and a
+busy run can pass them. No line of `bench/baseline/work.txt` changed. At the base `4eb8bfb`, the
+io_uring rows `post`, `post-operation`, `task`, `record` and `poller` were already over their
+lines with Valgrind 3.25.1.
+
+The prior of a call round trip was about 1,430 instructions in the shape of the `post` row. The
+`call` row, which also makes three ticks, counts 2,171 on io_uring and about 2,290 on `mac`.
+`conformance_cost.zig` measured one round trip with the ticks of both loops at 1,284 to 1,299 ns in
+Debug on `mac`, and bounds it at 13,000 ns.
 
 ## Ruling, 2026-11-07
 

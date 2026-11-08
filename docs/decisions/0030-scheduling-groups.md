@@ -37,9 +37,9 @@ module. These parts differ from the design below:
 8. **`Loop.memory_bytes` is no longer a multiple of 64 bytes**, because `Groups` is 536 B. The
    echo server rounds each loop's block of its array up to `memory_alignment`.
 9. **`Dispatch` stays 104 B**, not 96 B: decision 29's `until_ns` is in it.
-10. **Not built, because their records are not built:** the limit `tasks_queued_max +
-    call_tasks_max`, `Task.Call.call_record` and the halt of `discard_tasks` on a call's task
-    (decision 32), and the count of `TasksFull` for each group (W9).
+10. **Not built, because their records are not built:** the count of `TasksFull` for each group
+    (W9). The limit `tasks_queued_max + call_tasks_max`, `Task.Call.call_record` and the halt of
+    `discard_tasks` on a call's task came with decision 32, on the branch `decision-32`.
 
 Two class A checks have no halt scenario, because no parameter reaches them (decision 8): a run
 ends within `visits_per_run_max` visits, and a bulk credit is followed by a start. A mutation that

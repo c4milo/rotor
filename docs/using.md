@@ -388,7 +388,8 @@ may do to it is post a message:
   the one message that makes no event: the loop drops it, and its next tick does not block before
   its pollers run (decision 29). The sender's own final event says 0, `mailbox_full` or
   `loop_not_found`. On every backend the mailbox between two loops holds `mailbox_messages`
-  (256), and `rotor.post_bounded` is true. A loop that sleeps is woken by the post that finds it
+  (256), of which a post sees `mailbox_posts_max` (224): the rest wait for the returns of
+  cross-core calls (decision 32). `rotor.post_bounded` is true. A loop that sleeps is woken by the post that finds it
   asleep: on io_uring with an `IORING_OP_MSG_RING` that carries no message. Between two loops
   that are awake a message costs no system call on any backend.
 - A loop can also send one message with `loop.post(target, message)`, which takes no operation:
@@ -420,6 +421,47 @@ may do to it is post a message:
   amendment of 2026-11-06).
 
 At most `loops_max` (256) loops and remotes share one registry.
+
+## Cross-core calls
+
+A cross-core call sends a request from one loop to another loop of the process, runs a handler
+there, and brings the reply back (decision 32). The caller owns the record of the call, and the
+ring between the two loops carries its address. What that needs:
+
+- The program declares each kind of call once, as a static:
+  `var append: Append = .init;` with `const Append = rotor.Service(Journal, Request, Reply,
+  Journal.append);`. The handler takes the context and a `*rotor.CallRecord(Request, Reply)`, and
+  returns `rotor.Answer(Reply)`: `.{ .now = reply }`, or `.later`, after which the handler's own
+  code calls `call.answer(shared, reply)` once, on the target's thread.
+- Each loop that serves the call calls `append.serve(shared, &journal)` before its first tick, and
+  `append.stop_serving(shared)` before its `deinit`, which halts while a station serves. A call
+  that reaches a loop that never served halts on that loop. A call that reaches a loop that stopped
+  ends with `target_stopped`.
+- The caller keeps a record in its own struct:
+  `append_call: rotor.CallRecord(Request, Reply) = .init(Writer, "append_call", on_appended)`.
+  `on_appended` takes the struct and a `rotor.CallResult(Reply)`, and switches on it: `replied`
+  with a pointer to the reply, `expired` or `target_stopped`. It runs exactly once for each `send`
+  that returns success, and it may send the same record again.
+- `append.send(shared, target, &writer.append_call, request, .{ .group = group })` sends. The
+  group is a `NamedSchedulingGroup`, from `rotor.named_scheduling_group(.journal)` or `.default`,
+  and it has no default. The handler runs in that group on the target, and `on_appended` runs in
+  it on the caller. A `deadline_ns` on the loop clock ends a call that reaches the target late
+  with `expired`, and the handler does not run.
+- `send` returns `CallsFull` when 32 calls to that target (`calls_per_pair_max`) have not yet run
+  their `finish`, `MailboxFull` when the ring holds the posts' share, and `LoopNotFound`. Then
+  nothing was sent, and `finish` does not run. The program must not touch the request or the
+  reply while `call.is_out()` is true.
+- A call to the caller's own loop takes no ring. Its tasks run in later task runs, never inside
+  `send`.
+- A post sees `mailbox_posts_max` (224) slots of a ring, so a return always finds a slot.
+- `drain` ticks while a call is out or held, and fails with `StillInFlight` when one stays. A
+  thread with no loop holds a `Remote`, which has no call.
+
+To stop loops that call each other, every loop stops its calls and posts first, through a flag of
+the program and a barrier. Then each loop ticks until no loop has a call out or a task queued.
+Then each loop calls `stop_serving` for each service, and then `cancel_all`, `drain` and `deinit`.
+A call that a loop pushes after its target's last tick stays in the ring, and its caller's `drain`
+returns `StillInFlight`.
 
 ## Loops in several processes
 
@@ -686,7 +728,10 @@ Every limit is a named constant in `rotor.constants`, or in a backend's own `con
 | file operations out on the offload per loop; more stay queued | `offload_in_flight_max`, 256 |
 | registered descriptors, registered buffers | 1,024 each |
 | provided-buffer groups, buffers per group | 16, 32,768 |
-| a message's tag | `message_tag_max`, 0x7fff_efff |
+| a message's tag | `message_tag_max`, 0x7fff_effd |
+| messages a post sees of one ring | `mailbox_posts_max`, 224 |
+| cross-core calls of one pair of loops out at once | `calls_per_pair_max`, 32 |
+| services one loop serves or calls | `services_max`, 16 |
 | the tag of `Message.wake` | `message_tag_wake`, 0x7fff_f000 |
 | messages queued from one loop to another (kqueue) | `mailbox_messages`, 256 |
 | registrations in, readiness out, per tick (kqueue) | `changes_max`, `readiness_max`, 256 |
