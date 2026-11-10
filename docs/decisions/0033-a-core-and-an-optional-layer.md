@@ -1,18 +1,20 @@
 # 33. A core for the loop, and an optional layer for tasks and callbacks
 
 Status: **proposed** on 2026-11-08, and revised the same day after five reviews. Camilo ruled open
-questions 1, 5, 6 and 9 the same day; the others are open. On 2026-11-09 he ruled again on the name
-of the internal module, which is now `reactor`. Nothing is built, and nothing is built before Camilo
-accepts this record. Every number here is a row of `docs/costs.md`, a row of
-`bench/baseline/work.txt`, a count that an earlier record measured, or a prior: an instruction count
-from arithmetic over the code at `e05a549`. Nothing was measured for this record. Each table says
-where its numbers come from.
+questions 1, 5, 6, 9, 13 and 16 that day. The ruling on questions 13 and 16 leaves one choice to the
+counts of step 2. This record holds no ruling on the other ten questions. On 2026-11-09 Camilo chose
+the name `reactor` for the internal module ("Ruling on the module's name"). Nothing is built, and
+nothing is built before Camilo accepts this record.
 
-If it is accepted, it amends decisions 1, 2, 7, 10, 23, 26, 27, 28, 29, 30, 31 and 32, and the
-Layout section of CLAUDE.md. "Ask before" lists the items that need Camilo's word first. Decision 31
-is accepted and not built. This record moves its scheduler from each backend's flush into the
-reactor, the optional module that this record adds. Open question 9 asks Camilo to rule on that
-move.
+Every number here is a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an
+earlier record measured, or a prior. A prior is an instruction count from arithmetic over the code
+at `e05a549`. Nothing was measured for this record. Each table says where its numbers come from.
+
+If it is accepted, it amends decisions 1, 2, 7, 10, 23, 26, 27, 28, 29, 30, 31 and 32. It also
+amends the Layout section of CLAUDE.md, and the list of scopes in its Commits section. "Ask before"
+lists the items that need Camilo's word first. Decision 31 is accepted and not built. This record
+moves its scheduler from each backend's flush into the reactor, the optional module that this record
+adds. Camilo ruled on that move on 2026-11-08 (open question 9).
 
 ## Ruling, 2026-11-08
 
@@ -49,26 +51,66 @@ it in each compile error. The ruling of 2026-11-09 accepts one printed repeat, `
 
 ## Ruling on the module's name, 2026-11-09
 
-Camilo read the name of the internal module, `layer`, found it a weak name, and ruled:
+Camilo asked this session about the name of the internal module: "layer? isn't that a weird name?"
+The session then put three choices to him:
+
+- `dispatch`, which the session recommended. The tree calls this code `dispatch` today:
+  `src/core/dispatch/`, `Dispatch` and `tick_dispatched`. The compiler would print
+  `dispatch.Reactor(kqueue.Loop)`.
+- `reactor`. The text of this choice said that no program types `reactor.Reactor`, and that a
+  compile error and `@typeName` print it. It called that name the repeat that Camilo struck on
+  2026-11-08.
+- No change to the record.
+
+Camilo chose `reactor`. He gave no reason with the choice. So the ruling is:
 
 1. **The internal module is `reactor`, under `src/reactor/`.** Its root file is
    `src/reactor/reactor.zig`, which declares `Reactor`.
-2. **Camilo accepts one printed repeat, `reactor.Reactor(kqueue.Loop)`.** A compile error and
-   `@typeName` print it. No program types it.
-3. **Items 1 and 2 of the ruling on the names stand.** The public module exports one name, the
-   generic `rotor.Reactor(Loop)`. There is no public `rotor.reactor` namespace, so a program never
-   types `reactor.Reactor`.
+2. **The ruling accepts one printed repeat, `reactor.Reactor(kqueue.Loop)`.** A compile error and
+   `@typeName` print it. The text of the choice that Camilo took named that repeat.
+3. **Items 1 and 2 of the ruling on the names stand.** The question kept them. The public module
+   exports one name, the generic `rotor.Reactor(Loop)`. There is no public `rotor.reactor`
+   namespace, so a program never types `reactor.Reactor`.
 
-The name `layer` is weak for two reasons:
+The ruling reverses one part of the ruling on the names. On 2026-11-08 Camilo struck
+`reactor.Reactor(Loop)`, and item 3 gave the module another name to keep that repeat out of the
+tree. Now the tree reads `reactor.Reactor(Loop)` again, and the compiler prints it.
+
+Camilo's question is his only word on the old name. This record gives two reasons against it:
 
 - The word says where the code sits. It does not say what the code does.
 - This repository uses the word for two other things. CLAUDE.md and the README call rotor "an event
   loop and I/O layer". Decision 17 has the title "The layer that owns the loop".
 
+The word "reactor" has earlier uses in the records too:
+
+- Decisions 26 and 27 use it for Seastar's reactor, the model of these pieces. That use agrees with
+  the module's name.
+- Decisions 31 and 32 state a requirement of Camilo as "robust under one reactor per core". Each
+  explains it as one loop for each CPU core. There the word names each loop of a core. In this
+  record a plain `rotor.Loop` is not a reactor. So each of the two records gains a note on the word
+  ("Where it meets the records").
+
+The rule on printed names stands for each other type. No program types `wait_limit.WaitLimit`
+either, so that fact does not separate the exception from the rest. The cost of the rule separates
+them:
+
+- A repeat such as `wait_limit.WaitLimit` or `call.call.Answer` comes from the file that declares
+  the type. It goes when the declaration moves to the module's root file. No name changes, and the
+  compiler then prints the module's name.
+- The repeat `reactor.Reactor` is the name of a type in the root file already. It goes only at the
+  cost of a name, in one of two ways:
+  - The module or the type takes another word. The two rulings chose `Reactor` and `reactor`.
+  - The generic moves out of the root file, against the rule of "Where each type is declared". The
+    compiler then prints the name of that file, and not the module's: `generic.Reactor(kqueue.Loop)`
+    for a file `generic.zig`. A test on Zig 0.16.0 showed this on 2026-11-09 ("Sources").
+
+This record takes neither way.
+
 The ruling changes these parts of this record:
 
 - It replaces item 3 of the ruling on the names.
-- Each name that followed from `layer` now follows `reactor`:
+- Each name that followed from the module's old name now follows `reactor`:
   - the files of `src/reactor/`, each named after `reactor.zig`;
   - the test step, `zig build test-reactor`;
   - the halt scenarios, `tools/halt/reactor_scenarios*.zig`;
@@ -79,14 +121,29 @@ The ruling changes these parts of this record:
   generic and of each type declared inside it ("Where each type is declared").
 - The note on decision 17 that this record proposed goes. No module of rotor now shares a name with
   that record's component.
+- Decisions 31 and 32 gain the note on the word "reactor".
 - The first ruling of 2026-11-08 names "an optional layer". This record calls that part "the
   reactor", and one value of the type "a reactor".
 
 The name has one cost inside the tree. Zig refuses a parameter or a variable that has the name of a
-declaration of its file. So a file that imports the module as `reactor` cannot name a parameter
-`reactor`. The files of `src/reactor/` do not import their own module, and a program imports `rotor`
-alone, so the rule changes nothing for them. Each other file that imports the module gives the
-import or the parameter another name. A test on Zig 0.16.0 showed the compile error on 2026-11-09.
+declaration of its file. So a file that declares an import as `reactor` cannot name a receiver
+`reactor`. The receiver of this record's sketches has that name, as a loop's receiver is `loop`. The
+cost reaches three kinds of file:
+
+- **The split files of `src/reactor/`.** A split file imports its root file, and the tree names that
+  import after the module: `kqueue_tick.zig` declares `const kqueue = @import("kqueue.zig");`. By
+  that convention `reactor_tick.zig` declares `reactor`, and `tick(reactor: *Reactor, ...)` does not
+  compile there.
+- **The files of the public module that import the module**, `rotor.zig` and `rotor_reactor.zig`.
+- **Each other file that imports the module**: the conformance suite, `bench/work/work.zig` and the
+  halt scenarios.
+
+The rule of this record: **the receiver keeps the name `reactor`, and a file that needs that name
+declares its import as `reactor_module`.** Two split files of the tree name their root file that way
+today: `call_take.zig` declares `call_module`, and `dispatch_calls.zig` declares `dispatch_module`.
+A file with no parameter or variable of that name declares the import as `reactor`, as the sketch of
+`rotor.zig` does. The name of an import does not change the name that the compiler prints. Two tests
+on Zig 0.16.0 showed these facts on 2026-11-09 ("Sources").
 
 ## Context
 
@@ -436,7 +493,8 @@ There is no `rotor.reactor` namespace, and the public module exports no list of 
 does today. It also declares `wait_until` as a compile error that states the rule: a reactor
 bounds its wait with a poller. The calls of the reactor fall in three kinds:
 
-- **The reactor's 16 names** are the reactor's own.
+- **16 calls are the names that leave `rotor.Loop`** ("What the code does today"). The loop declares
+  no call of the same name, and the module `reactor` holds their code.
 - **Seven calls wrap the loop's call.** `init`, `deinit`, `memory_bytes`, `tick`, `drain`,
   `assert_empty` and `wait_limit` each do the reactor's part, and call the loop's call for the
   core's part.
@@ -629,7 +687,7 @@ and the API rules of `~/.claude/CLAUDE.md`:
 | name | verdict |
 |---|---|
 | `rotor.reactor`, `rotor.reactor.Reactor`, `rotor.reactor.port_declarations` | struck by the ruling of 2026-11-08. `rotor.Reactor(Loop)` is the one export. The module `reactor` is not this namespace, because the public module does not export it |
-| the module `reactor`, `src/reactor/`, `reactor.Reactor(Loop)` | they stand, by the ruling of 2026-11-09. The ruling of 2026-11-08 struck them for `layer`, `src/layer/` and `layer.Reactor(Loop)`. No program types `reactor.Reactor`, so Camilo accepted the repeat that the compiler prints |
+| the module `reactor`, `src/reactor/`, `reactor.Reactor(Loop)` | they stand, by the ruling of 2026-11-09. Item 3 of the ruling on the names struck them on 2026-11-08, and the later ruling replaces that item. The compiler prints the repeat `reactor.Reactor`, and the later ruling accepts it. No program types it |
 | `tools/halt/reactor_scenarios*.zig`, `reactor_scenarios`, `zig build test-reactor`, the commit scope `reactor` | named after the module, as `core_scenarios*.zig`, `test-core` and the scope `core` are named |
 | `rotor.Reactor(Loop)` | a generic type with the name of the thing, as `std.ArrayList(T)`. Its `init` starts it in place through an out-pointer, takes `*const Options`, and has a `deinit`. The host's reactor holds the backend loop of a `rotor.Loop`, not a value of that type ("How the host's reactor reaches the port", open question 16) |
 | `rotor.Reactor(rotor.Loop).Options`, with the fields `loop` and `named_groups` | each field has a default, and the reactor copies what it keeps |
@@ -644,24 +702,27 @@ and the API rules of `~/.claude/CLAUDE.md`:
 | `name_poller`, a call on the heartbeat's line | snake_case. No repeat |
 | `port_declarations` | in `core/surface.zig` beside `loop_declarations` and `remote_declarations`, and not exported |
 | `poller_name` in the heartbeat line, `outstanding` in `Tables` | fields. No repeat |
-| `WaitLimit`, `SchedulingGroup` in the core | declared in `core.zig`, the root, and printed `core.WaitLimit` and `core.SchedulingGroup`. The draft put each in a file of its own name, which prints `wait_limit.WaitLimit`, a repeat. The ruling of 2026-11-09 accepts one printed repeat, `reactor.Reactor`, and this record keeps the rule for each other type |
+| `WaitLimit`, `SchedulingGroup` in the core | declared in `core.zig`, the root, and printed `core.WaitLimit` and `core.SchedulingGroup`. The draft put each in a file of its own name, which prints `wait_limit.WaitLimit`, a repeat. The move to the root removes that repeat and changes no name. So the rule stands for these types, and `reactor.Reactor` is its one exception ("Ruling on the module's name") |
 | `examples/two_adapters.zig`, `examples/twin.zig` | no repeat |
 | `NamedSchedulingGroup.scheduling_group()` | a name of decision 30 that this record moves and does not propose. It repeats its type's name. Open question 14 asks whether v0.11.0 renames it |
 
 ### Where each type is declared
 
 Zig 0.16 prints a type by the path of the file that declares it, from the module's root, then the
-type's name. A type in the root file takes the module's name. A test of `@typeName` showed this on
-2026-11-08. `build/compile_fail.zig` at `d786659` shows the same:
+type's name. A type in the root file takes that file's name. In this tree each root file has the
+name of its module, so the compiler prints the module's name. Tests of `@typeName` showed this on
+2026-11-08 and 2026-11-09 ("Sources"). `build/compile_fail.zig` at `d786659` shows the same:
 `scheduling.scheduling.SchedulingGroup`, `call.call.Answer(u64)` and
 `*shared_loop.SharedLoop(rotor_loop.Loop)`.
 
 So the file that declares a type decides the name that a user reads in each compile error. A type in
 a subdirectory's entry file prints its directory twice, as `call.call.Answer` does. CLAUDE.md's rule
 for split files makes such entry files. A type in a file of its own name prints a repeat, as
-`wait_limit.WaitLimit` would. So does a type that has its module's name and is in the module's root:
-`Reactor` in `src/reactor/reactor.zig` prints `reactor.Reactor`. The ruling of 2026-11-09 accepts
-that one repeat, because no program types it.
+`wait_limit.WaitLimit` would.
+
+A type that has the name of its module's root file, and is in that file, prints a repeat too:
+`Reactor` in `src/reactor/reactor.zig` prints `reactor.Reactor`. That repeat goes only at the cost
+of a name ("Ruling on the module's name"). The ruling of 2026-11-09 accepts it.
 
 The rule of this record: **each type that a program can see is declared in its module's root
 file, or inside another such type.** Its methods are aliases of functions in the root's split
@@ -712,7 +773,7 @@ This is an ask-before item: three new edges, `reactor` to `core`, `rotor` to `re
 
 No backend imports `reactor`, and `core` imports nothing new. So the build refuses a backend that
 reaches into the reactor, and refuses a core that names it. `bench/` stays outside the graph, and
-`build/bench.zig` gives `bench/work/work.zig` the `reactor` import for the reactor's rows.
+`build/bench_work.zig` gives `bench/work/work.zig` the `reactor` import for the reactor's rows.
 
 `src/reactor/` owns its `constants.zig`: `pollers_max`, `tasks_queued_max`, `tasks_per_tick_max`,
 `scheduling_shares_max`, `scheduling_shares_default`, `scheduling_unit_credit`, `task_charge_max`,
@@ -877,6 +938,11 @@ instructions, `poller` counted 562, 562 and 559, and `tasks-groups-4` counted 12
   parts of its text change: the amendments of decisions 11, 12 and 20 at the flush, its options on
   `Loop.Options` of every backend, and its note on the flush files of decision 7. Nothing of it is
   built, so no code moves.
+- **Decisions 31 and 32, the word "reactor".** Each states a requirement of Camilo as "robust under
+  one reactor per core", and explains it as one loop for each CPU core. After this record, a reactor
+  in rotor is a value of `rotor.Reactor(Loop)`, and a plain loop is not one. So each record gains a
+  note: the requirement covers each loop of a core, a plain loop or a reactor. Decisions 26 and 27
+  use the word for Seastar's reactor, and need no note.
 - **Non-negotiable 2.** The reactor reads no clock and decides nothing from a pointer value, as
   today. The hook is a function that the reactor stores once at init.
 
@@ -997,10 +1063,10 @@ on `main` only after its x86-64 counts pass, from CI on its pull request.
    `src/rotor/rotor_reactor.zig` holds its functions. `rotor.zig` is at its limit of 500 lines, so
    about 100 lines move out of it first. `rotor.Loop` keeps its names. The reactor's conformance
    scenarios, the reactor's rows of `bench/work/work.zig` and `examples/stall_watch.zig` make a
-   reactor in place of a loop. `tools/commit_lint.zig` and CLAUDE.md's list of scopes gain the
-   commit scope `reactor`. The wiring of the gates changes as the table below says. Gate: the
-   reactor's rows at or below `9339858`. A forwarder adds no instruction, so a rise here is a fault
-   of the step.
+   reactor in place of a loop. `tools/commit_lint.zig` gains the commit scope `reactor`, and so does
+   the list of scopes in CLAUDE.md's Commits section. The wiring of the gates changes as the table
+   below says. Gate: the reactor's rows at or below `9339858`. A forwarder adds no instruction, so a
+   rise here is a fault of the step.
 3. **The move.** `dispatch/`, `tasks.zig`, `scheduling/`, `call/` and `shared_loop.zig` move from
    `src/core/` to `src/reactor/`, with their tests. The declaration of each type that a program can
    see moves to `src/reactor/reactor.zig`, and its functions stay in their files ("Where each type
@@ -1110,13 +1176,18 @@ The mutations of step 3, each against the narrowest target:
 
 1. **Are `reactor` and `rotor.Reactor` the names?** Proposed: yes. Decision 26 modelled these pieces
    on Seastar's reactor. `Runtime` suggests threads, which the reactor does not start, and
-   `Scheduler` names one of its parts. *Ruled on 2026-11-08: the type is `Reactor`, and the names
-   must not repeat. The public module exports the generic `rotor.Reactor(Loop)`, and a program
-   writes `rotor.Reactor(rotor.Loop)`. There is no `rotor.reactor` namespace. The internal module is
-   `layer`, under `src/layer/`. Ruled again on 2026-11-09: the internal module is `reactor`, under
-   `src/reactor/`, so the tree reads `reactor.Reactor(uring.Loop)`. Camilo accepted that printed
-   repeat, because no program types it.* "Ruling on the names" and "Ruling on the module's name"
-   record the two rulings, and "The names, checked" applies them to each name of this record.
+   `Scheduler` names one of its parts.
+
+   *Ruled on 2026-11-08: the type is `Reactor`, and the names must not repeat. The public module
+   exports the generic `rotor.Reactor(Loop)`, and a program writes `rotor.Reactor(rotor.Loop)`.
+   There is no `rotor.reactor` namespace. The internal module is `layer`, under `src/layer/`.*
+
+   *Ruled again on 2026-11-09: Camilo chose `reactor` for the internal module, from three choices.
+   The module is under `src/reactor/`, so the tree reads `reactor.Reactor(uring.Loop)`. The text of
+   his choice named that printed repeat.*
+
+   "Ruling on the names" and "Ruling on the module's name" record the two rulings. "The names,
+   checked" applies them to each name of this record.
 2. **Does `rotor.Loop` keep forwarders for the reactor's names for one release?** Proposed: no.
    colibri may take v0.10.0's `SharedLoop` before this release. Ruling item 4 keeps that name out of
    colibri's public API, so its move is one type and one call in its adapter and its tests. A
@@ -1262,14 +1333,33 @@ The mutations of step 3, each against the narrowest target:
 
 - Seastar's reactor, as decision 26 describes it from Seastar's published design.
 - The style guide of Zig's language reference, on names that repeat their namespace.
-- A test of `@typeName` on Zig 0.16.0, on 2026-11-08: a type in a module's root file prints the
-  module's name and then its own name, a type declared inside a generic prints the generic's name
-  first, a type in `call/call.zig` prints as `call.call.Answer(u64)`, and an alias of a function is
-  a method. The messages of `build/compile_fail.zig` at `d786659` agree.
-- A second test on Zig 0.16.0, on 2026-11-09, with a module `reactor` whose root is
-  `reactor/reactor.zig`: the generic prints as `reactor.Reactor(core.Loop)`, its view as
-  `reactor.Reactor(core.Loop).SharedLoop`, and a type of the root as `reactor.Completion`. A file
-  that imports the module as `reactor` and names a parameter `reactor` does not compile.
+- The session's question to Camilo on 2026-11-09, with its three choices and his answer, for "Ruling
+  on the module's name". The session's transcript holds them.
+- A test of `@typeName` on Zig 0.16.0, on 2026-11-08. The messages of `build/compile_fail.zig` at
+  `d786659` agree with it. It showed four facts:
+  - A type in a module's root file prints the root file's name, then its own name.
+  - A type declared inside a generic prints the generic's name first.
+  - A type in `call/call.zig` prints as `call.call.Answer(u64)`.
+  - An alias of a function is a method.
+- A second test on Zig 0.16.0, on 2026-11-09. Its module `reactor` has the root file
+  `reactor/reactor.zig`. It showed three facts:
+  - The generic prints as `reactor.Reactor(core.Loop)`, and its view as
+    `reactor.Reactor(core.Loop).SharedLoop`.
+  - A type of the root prints as `reactor.Completion`.
+  - A file that imports the module as `reactor` and names a parameter `reactor` does not compile.
+- A third test on Zig 0.16.0, on 2026-11-09, of a split file `reactor_tick.zig` that imports its
+  root file and names its receiver `reactor`. It showed two facts:
+  - With the import declared as `reactor`, the file does not compile. The error is "function
+    parameter shadows declaration of 'reactor'".
+  - With the import declared as `reactor_module`, the file compiles. The compiler still prints
+    `reactor.Reactor(core.Loop)` and `reactor.Completion`.
+- A fourth test on Zig 0.16.0, on 2026-11-09. Its module `reactor` has the root file `root.zig`, and
+  a second file `generic.zig`. It showed two facts:
+  - A type in the root file prints as `root.Completion`: the file's name, and not the module's.
+  - A generic declared in the second file prints as `generic.Reactor(core.Loop)`.
+- `src/kqueue/kqueue_tick.zig`, `src/core/call/call_take.zig` and
+  `src/core/dispatch/dispatch_calls.zig` at `fc29015`, for the name that a split file gives the
+  import of its root file.
 - `src/rotor/rotor.zig`, `src/rotor/rotor_service.zig` and `src/core/stall.zig` at `d786659`, for
   the public module's exports, the binding of `Service` to the host's view, and the calls of the
   heartbeat's writer.
