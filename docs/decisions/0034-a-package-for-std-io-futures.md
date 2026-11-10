@@ -95,10 +95,14 @@ What the choices said, where a ruling depends on it:
   reads the echo table before a release.
 - **Question 4.** This record proposed a limit of 8,192, for the 4,097 fibers of a timer row under
   shape (b). The session told Camilo that the row needs 4,096 fibers when the package ticks.
+- **Question 8.** The question asked which `std.Io` calls a thread that does not own the loop may
+  make on `tejedor`. The choice said that `Event.set`, `Condition.signal` and `Mutex.unlock` work
+  from such a thread, and that it shares no `Mutex` and no `Queue` with a fiber. Neither text named
+  the 75 calls that go to `rest`.
 
 Two rulings differ from what this record proposed: the package calls `tick`, and the package waits
-for v0.11.0. Questions 6 and 9 are not ruled. The ruling on question 2 removes two of the three
-halts that question 9 asks about.
+for v0.11.0. Questions 6 and 9 are not ruled. The ruling on question 2 changes each halt that
+question 9 asks about, and question 9 says how.
 
 ## Context
 
