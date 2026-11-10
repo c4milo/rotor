@@ -5,7 +5,8 @@ and revised the same day after five reviews. Camilo ruled open questions 1, 5, 6
 day. On 2026-11-09 he chose the name `reactor` for the internal module ("Ruling on the module's
 name"). On 2026-11-10 he confirmed his chat rulings of 2026-11-08 on the other ten questions, and
 approved each item of "Ask before". The rulings on questions 8, 11, 13 and 16 leave one choice each
-to the counts of step 2. The build starts at step 1.
+to the counts of step 2. The build starts at step 1. The same day Camilo amended the port at each
+step ("Amendment, 2026-11-10: the port at each step").
 
 Every number here is a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an
 earlier record measured, or a prior. A prior is an instruction count from arithmetic over the code
@@ -183,6 +184,44 @@ What the choices said, where a ruling depends on it:
   padding and stays 128 B, and the limits move with no value changed.
 
 So each open question of this record has a ruling. Each item of "Ask before" is approved.
+
+## Amendment, 2026-11-10: the port at each step
+
+The agent that started step 1 stopped before it changed a file. It found three gaps between the
+port and today's code:
+
+- `attach_reserved` stores a hook and marks the loop in its registry. Today no field holds either.
+  The hook's 16 B in `Tables` and the mark come at step 3, and Camilo approved that layout for
+  step 3.
+- The line's `name_poller` needs the field `poller_name`, which also comes at step 3. Step 2's
+  check of the line would report it missing on each backend.
+- `push_reserved` returns only the pair's count of calls out. `wake_target` needs the target's
+  descriptor, and no name of the port gives it to the reactor.
+
+The session put two questions to Camilo, each with its choices. The first choice of each was the
+session's recommendation. He gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| How the build order handles a name of the port whose state comes at step 3 | each name joins the check with its state; a stub whose body is a compile error; the state moves to step 1 | **each name joins the check with its state** |
+| How the reactor wakes the target of a call or a return | `push_reserved` wakes it; `push_reserved` also returns the descriptor | **`push_reserved` wakes it** |
+
+So this record changes in two ways:
+
+1. **A name of the port, or a call of the line, joins the comptime check at the step that builds
+   its state.** Step 1 checks seven names: `tick_backend`, `take_kept_error`, `outstanding`,
+   `stored_limit`, `heartbeat_line`, `push_reserved` and `assert_owner`. The line has five calls
+   then: `enter`, `leave`, `leave_polling`, `leave_tasks` and `leave_group_tasks`. At step 3,
+   `attach_reserved` joins the port with the hook and the registry's mark, and `name_poller` joins
+   the line with `poller_name`. No step declares a stub, and no layout change comes before step 3.
+2. **`push_reserved` pushes the message and then wakes the target**, as `Calls.call` and the
+   answer do today in one place. So `wake_target` leaves the port, and a twin carries one name
+   fewer. The port has eight names after step 3. The reactor still raises the pair's count of calls
+   out after a push of a call, as `call` does today. For a return, the count does not change, as
+   today.
+
+"The port", "Build order" and "How it would be checked" read with this amendment. Where they say
+nine names, the port has eight after step 3.
 
 ## Context
 
