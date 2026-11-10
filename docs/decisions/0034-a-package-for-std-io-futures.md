@@ -1,18 +1,19 @@
 # 34. A package of its own for `std.Io` and its Future API
 
-Status: **proposed** on 2026-11-10. The session revised it that day after two reviews, and then for
-Camilo's rulings. Nothing is built, and no repository exists. On 2026-11-09 Camilo ruled where this
-work goes ("Ruling, 2026-11-09"). On 2026-11-10 he ruled eight of the open questions ("Rulings,
-2026-11-10"). The design below follows those rulings: the package calls `tick`, and it builds on
-`rotor.Reactor(rotor.Loop)` at v0.11.0. No review read the design as it is now. Nothing starts
-before decision 33 is accepted, built and tagged, and before Camilo accepts this record.
+Status: **proposed** on 2026-11-10. The session revised it that day after two reviews, then for
+Camilo's rulings, and then after a third review. Nothing is built, and no repository exists. On
+2026-11-09 Camilo ruled where this work goes ("Ruling, 2026-11-09"). On 2026-11-10 he ruled eight of
+the open questions ("Rulings, 2026-11-10"). The design below follows those rulings: the package
+calls `tick`, and it builds on `rotor.Reactor(rotor.Loop)` at v0.11.0. No review read the answers to
+the third review. Nothing starts before decision 33 is accepted, built and tagged, and before Camilo
+accepts this record.
 
 Decision 33 is proposed and not accepted. Each v0.11.0 name in this record follows decision 33 as
 that record proposes it. If decision 33 changes, those names change here too.
 
 Nothing was measured for this record. Each number is a row of `docs/costs.md`, a row of
 `bench/baseline/work.txt`, a number that decision 22 measured, or a prior. A prior is arithmetic
-over such rows. Each table says where its numbers come from.
+over such rows. Each table of numbers names its source.
 
 If it is accepted, it changes no source file of rotor. It amends decision 1, which still says that
 the `std.Io` table is a module of rotor. Decision 2 gains a note ("What changes in rotor").
@@ -128,13 +129,13 @@ needs something to suspend: a thread or a fiber (decision 1).
 
 ### Words
 
-std and rotor each use the words "task" and "group". This record keeps them apart, and it gives nine
-more words one meaning each:
+std and rotor each use the words "task" and "group". "Table" and "record" each name more than one
+thing in rotor's documents. So this record gives each word below one meaning:
 
 | word | meaning |
 |---|---|
 | **std task** | a function that `io.async`, `io.concurrent`, `Group.async` or `Group.concurrent` starts. std's own word is "task" |
-| **rotor task** | a `rotor.Task`: a record that a tick calls once, in a later part of that tick or in the next one (decision 27) |
+| **rotor task** | a `rotor.Task`: a struct that a tick calls once, in a later part of that tick or in the next one (decision 27) |
 | **`Io.Group`** | std's set of std tasks, which a caller awaits or cancels together |
 | **scheduling group** | rotor's queue of rotor tasks, with shares (decision 30) |
 | **reactor** | the program's `rotor.Reactor(rotor.Loop)` of decision 33, which the package ticks |
@@ -142,6 +143,11 @@ more words one meaning each:
 | **context** | a fiber, or the main context |
 | **callback** | a function that a tick calls: a record, a poller or a rotor task |
 | **event handler** | the program's function that takes each event that a tick returns |
+| **record** | a completion record: a `rotor.Completion` that an operation names, and that a tick calls for each event of that operation (decision 26) |
+| **call record** | a `rotor.CallRecord`, which holds one cross-core call (decision 32) |
+| **this record**, **decision record** | this document, and each other document of `docs/decisions/` |
+| **the table** | `Io.VTable`: the 109 function pointers of a `std.Io`. Each other table has its full name here, as "the table of pollers" |
+| **slot** | the place of one operation in flight. A reactor has `operations` of them, and it is **full** when none is free |
 | a call **blocks** | its context stops until an event. The thread does not stop: it runs another context, or it ticks |
 | a tick **waits** | its thread sleeps in the kernel |
 | a fiber is **active** | from the start of its std task until the function of that std task returns |
@@ -149,7 +155,8 @@ more words one meaning each:
 
 rotor's documents say "a tick that blocks" for a tick whose thread sleeps in the kernel. This record
 says "a tick waits" for that. It keeps "blocks" for a call, as std's own comments do (`std/Io.zig`,
-line 1272).
+line 1272). A call of `rest` can stop the whole thread in the kernel. This record says that such a
+call "holds the thread".
 
 A fiber of an `Io.Group` is free when its function returns. A fiber of a future stays in use after
 its function returns, until `await` or `cancel` takes the result. The result is in that fiber's
@@ -242,8 +249,8 @@ It is not:
 - A way to the speed sources through `std.Io`. The table cannot register a buffer or arm a multishot
   receive (decision 1). Code that wants them calls rotor ("`perform`, and a multishot operation").
 - A `std.Io` for several threads. Each call that the package runs halts from another thread,
-  `futexWake` aside. A call that goes to `rest` has no owner check: `rest` decides what another
-  thread may do there. "How a wake from another thread arrives" lists what another thread may call.
+  `futexWake` aside. This record proposes the same for the 75 calls that go to `rest`, and open
+  question 15 asks. "How a wake from another thread arrives" lists what another thread may call.
 - A library for a program with a tick loop of its own, such as a host that owns the wait (decision
   23).
 
@@ -258,12 +265,13 @@ one of three sets:
 |---|---|
 | `tick` | the package alone |
 | `drain`, `cancel_all`, `discard_tasks`, `deinit` | the program, after the package's `deinit`. `drain` ticks, and `cancel_all` ends the operation that a context waits for |
-| each other call, such as `shared`, `reserve_scheduling_group`, `set_scheduling_group_shares`, `heartbeat`, `statistics`, the buffer calls, `submit`, `cancel` and `post` | the program, as with no package. The package forwards none of them |
+| each other call, such as `shared`, `reserve_scheduling_group`, `set_scheduling_group_shares`, `heartbeat`, `statistics`, the buffer calls, `submit`, `cancel` and `post` | the program, as with no package. The package makes five of them too: `submit`, `cancel`, `shared`, `add_poller` and `remove_poller`. It forwards none |
 
-The first two rows hold the five calls that decision 28's view refuses for each library. Nothing in
-rotor's types refuses a `tick` by the program. So the package checks for one. It keeps the `now_ns`
-that its last tick left, and it halts at its next tick when the reactor's `now_ns` differs. Only a
-tick writes `now_ns` (`src/core/tables/tables.zig`, `note_clock`, `note_woken`).
+The first two rows hold five of the calls that the view refuses for each library: the five of
+decision 28. Nothing in rotor's types refuses a `tick` by the program. So the package checks for
+one. It keeps the `now_ns` that its last tick left, and it halts at its next tick when the reactor's
+`now_ns` differs. Only a tick writes `now_ns` (`src/core/tables/tables.zig`, `note_clock`,
+`note_woken`).
 
 "Rulings, 2026-11-10" says what the text of Camilo's choice said: the package owns the loop and
 passes the view to each other library. This record proposes less: the package owns the tick, and the
@@ -272,7 +280,8 @@ program takes the view from its own reactor. Open question 11 asks Camilo.
 ### The shape a caller sees
 
 This is a sketch. Camilo ruled the name `tejedor`, and the text of his choice said that a program
-types `tejedor.Fibers` (open question 1). Each other name of the package is a proposal.
+types `tejedor.Fibers` (open question 1). Each other name of the package is a proposal. The sketch
+takes one fixed type of reactor, and open question 14 asks whether the type is generic.
 
 ```zig
 const std = @import("std");
@@ -364,7 +373,7 @@ an operation:
 - Its record asserts that each event is the final one.
 
 So `perform` reaches the speed sources that make one event, such as a receive into a registered
-buffer. Code that wants a multishot receive names a record of its own, as each library does. That
+buffer. Code that wants a multishot receive names a record of its own, as each library does. Such a
 record wakes a fiber with `Event.set`, which is a `futexWake` on the reactor's thread.
 
 ### Which calls run where
@@ -380,7 +389,7 @@ that builds the row. Until its step is built, a row goes to `rest`.
 | `netLookup` | 1 | the package, as a wrapper around the call of `rest` ("Why `netLookup` is a wrapper") | 1 |
 | `netListenIp`, `netBindIp` | 2 | `rotor.sync.listen` and `rotor.sync.open_datagram`, at once, on the caller's stack | 4 |
 | `netAccept`, `netConnectIp`, `netRead`, `netWrite`, `netSend`, `netShutdown` | 6 | one operation each: `accept`, `connect`, `receive`, `send`, `send_to`, `shutdown` | 4 |
-| `netClose`, `fileClose` | 2 | one `close` operation, which blocks the context. In a callback, and with a full table of operations, `rotor.sync.close_now` | 4 |
+| `netClose`, `fileClose` | 2 | one `close` operation, which blocks the context, in each place. rotor's `close` first cancels each operation in flight for the descriptor (decision 5, rule 6). `rotor.sync.close_now` cancels none, so the package does not use it for these calls | 4 |
 | `operate`, `batchAwaitAsync`, `batchAwaitConcurrent`, `batchCancel` | 4 | the package, for `net_receive`. The other three kinds of `Io.Operation` go to `rest` | 6 |
 | `fileReadPositional`, `fileWritePositional`, `fileSync` | 3 | `read`, `write`, `fsync`, under the reactor's file policy (decision 18). A file operation that the reactor refuses goes to `rest` | 6 |
 | `crashHandler`, the 26 directory calls, 24 file calls, the 15 process calls, `clockResolution`, `random`, `randomSecure`, 6 network calls, and `now` for the other clocks | 75 | `rest` | none |
@@ -415,7 +424,7 @@ With each one the fiber never resumes. Decision 22's code had the same path. So 
    Then it returns what `rest` returned.
 
 It costs two things. The caller gets no result before the whole lookup ends. With a `Threaded`, the
-lookup holds the loop's thread for its length, as each call of `rest` that blocks.
+lookup holds the loop's thread for its length, as each call of `rest` that sleeps in the kernel.
 
 #### What `rest` is
 
@@ -423,16 +432,18 @@ lookup holds the loop's thread for its length, as each call of `rest` that block
 Camilo's ruling (open question 7). The package starts no thread with either value below.
 
 The forwarders are built from `Io.VTable` at comptime, as `adapter_rest.zig` built them. A forwarder
-has no owner check, as in that file. It reads only `rest`, which no call changes after `init`. So
-`io.random` and `io.randomSecure` stay safe from each thread when `rest` makes them so.
+of that file has no owner check. It reads only `rest`, which no call changes after `init`. This
+record proposes one change: each forwarder checks the owner, as each call that the package runs
+does, `futexWake` aside. Then `io.random` and `io.randomSecure` halt from another thread, though std
+marks them safe there. Open question 15 asks, and gives the cost of each answer.
 
 **A `std.Io.Threaded` of the program's.** A call then runs on the thread that makes it, or on
-threads that the program's value owns (decision 22, `adapter.zig`). A call that blocks there holds
-the reactor's thread for its length. The stall count of decision 28 sees it.
+threads that the program's value owns (decision 22, `adapter.zig`). A call that sleeps in the kernel
+there holds the reactor's thread for its length. The stall count of decision 28 sees it.
 
 **`std.Io.failing`** (`std/Io.zig`, lines 2512 to 2638), for a program that wants no thread. std
-describes it as a system that supports no `Io` operation. This table was read from the function of
-each of the 75 calls:
+describes it as a system that supports no `Io` operation. These rows come from the function of each
+of the 75 calls:
 
 | what `failing` does | calls | which |
 |---|---:|---|
@@ -499,12 +510,14 @@ library runs. The limit does not stop one fiber that computes and never blocks (
 
 **3. The package chooses the wait of each tick.** With an empty ready list, the wait is
 `rotor.constants.wait_ns_max`, 10 s. The reactor ends that wait earlier at an event, a timer, a
-poller's limit, a message or a wake. At the limit of rule 2, the wait is 0.
+poller's limit, a message or a wake. At the limit of rule 2, the wait is 0. While a context waits
+for a free slot, the wait is 0 too ("When the reactor is full").
 
 **4. The package does not halt when nothing is in flight.** Decision 22's code halted when each
 context waited and no operation was in flight. The package cannot know that nothing can wake a
 context. Another library can, and so can a message from another loop, or a `futexWake` from another
-thread. So the main context ticks again, and the thread sleeps in the kernel.
+thread. So the main context ticks again, and the thread sleeps in the kernel. A deadlock of fibers
+is then silent (open question 16).
 
 Two facts follow. A wake between two contexts costs no tick: the context that waits goes on the
 ready list. No fiber runs while the main context runs: a new fiber first runs when the main context
@@ -513,12 +526,15 @@ blocks.
 **What decision 28's stall count sees.** A turn runs from one stamp of a tick to the first stamp of
 the next tick. Here one turn holds the callbacks of the tick that ended, then each context that
 runs, then the pollers of the next tick. rotor counts a stall when those together last
-`stall_turn_ns` or more, and the count is exact. A stall names less than it names for a library:
+`stall_turn_ns` or more, and the count is exact. A stall's `callbacks` counts the records, the rotor
+tasks and the pollers of the turn (`src/core/stall.zig`, `Turn.callbacks`). No fiber is one of them.
+The package's poller is one of them in each turn, because each tick calls it. So:
 
-- A stall's `callbacks` counts records, pollers and rotor tasks. No fiber is one of them. A turn in
-  which only fibers ran long reads `callbacks == 0`, as the program's own code does.
-- With `callbacks == 1` the stall names that callback. It can be the record of the fiber that then
-  ran long. That name is the package's one record, and it names no function of a std task.
+- No turn reads `callbacks == 0`.
+- A turn of fibers alone reads 1, when no other library added a poller. The stall then names the
+  package's poller, and no function of a std task (`stall.zig`, `name_of_one`).
+- A turn with one record reads 2, and the stall names nothing. So does a turn of fibers alone when
+  another library added a poller.
 - A watch on the heartbeat reads a null name while a fiber runs, as for code outside a callback.
 
 With the default `stall_turn_ns` of 10 ms, 64 fibers of about 156 µs each fill one turn, by
@@ -539,10 +555,11 @@ and ticks by the rules above, until the call can return. Three facts hold there:
   with a wait of 0, when the reactor read no clock yet. Decision 22's code did the same.
 
 **A callback.** A record, a poller or a rotor task of another library runs inside a tick, on the
-thread's own stack. The event handler runs after the tick returns, while the main context is still
-blocked. Each may hold the same `io`, and none can block: a tick inside a tick halts (decision 26).
-So the package sets a flag from the start of each tick until the event handler took that tick's last
-event. While the flag is set, these rules apply:
+thread's own stack. It cannot block: its wait would need a tick inside a tick, which halts (decision
+26). The event handler runs after the tick returns. It cannot block either, because the main context
+is still blocked in its own call. Each may hold the same `io`. So the package sets a flag from the
+start of each tick until the event handler took that tick's last event. While the flag is set, these
+rules apply:
 
 | call in a callback | result |
 |---|---|
@@ -550,13 +567,19 @@ event. While the flag is set, these rules apply:
 | `async`, `Group.async` | starts a fiber. With no fiber free, std's rule leaves one choice: the function runs on the callback's stack. The first call of that function that must block halts |
 | `await` or `cancel` of a future whose fiber is not active, and `Group.await` or `Group.cancel` with no active member | returns, and frees the future's fiber |
 | `futexWake`, `checkCancel`, `netListenIp`, `netBindIp`, `now` | work, because none blocks |
-| `netClose`, `fileClose` | `rotor.sync.close_now`, at once |
+| `netClose`, `fileClose` | halts, as each call that must block. A close is one `close` operation and its final event. `rotor.sync.close_now` is no substitute: it is for a descriptor with no operation in flight |
 | `netLookup` | calls `rest`, and works while the caller's queue has room for each result. A put that must block halts |
-| each call that must block: `await` of a future whose fiber is active, `Group.await` with an active member, `sleep`, `futexWait`, a network operation, `perform`, `call` | halts, with a message that states the rule: a callback starts a fiber for work that blocks |
+| each call that must block: `await` of an active fiber's future, `Group.await` with an active member, `sleep`, `futexWait`, a network operation, a close, `perform`, `call` | halts, with a message that states the rule: a callback starts a fiber for work that blocks |
 
-The halt does not depend on the ready list. A callback that blocks halts on each run, so a test
-finds it. A std task whose arguments or result are larger than a fiber holds follows the rules for
-"no fiber free", in each place.
+A close, a `sleep` and a network operation halt on each run, so a test finds them. Other halts
+depend on state. `Mutex.lock` waits only while another holder has the lock, and `Event.wait` only
+while the event is unset. `Queue.put` waits only on a full queue, and `Queue.get` only on an empty
+one. So a record that hands work to a fiber through a `Queue` halts the process when the queue fills
+under load. A test can pass for a long time first. Two calls are safe in a callback: `Event.set`,
+and `Queue.put` with a least count of 0, which does not wait (`std/Io.zig`, lines 2006 and 2007).
+
+A std task whose arguments or result are larger than a fiber holds follows the rules for "no fiber
+free", in each place.
 
 ### Other libraries on the same reactor
 
@@ -591,20 +614,27 @@ code of a library before its wait (`src/core/dispatch/dispatch.zig`, `begin`).
 `Fibers.operations` states the most operations that the package holds in flight: one for each fiber,
 and one for the main context. Step 6 adds one for each socket that receives datagrams. The program
 adds that count to its reactor's `operations`, as the guide asks for each library. Another library
-can still fill the table.
+can still fill the reactor.
 
-`submit` takes no operation when the table is full. Decision 22's code then ticked until an
-operation ended, in a loop with no bound. In the package, a context that finds the table full blocks
-until the next tick returns, and then submits again. It tries `submit_tries_max` times: 8, a prior
-with no measurement behind it.
+`submit` takes no operation when no slot is free. Decision 22's code then ticked until an operation
+ended, in a loop with no bound. In the package, a context that finds the reactor full blocks until
+the next tick returns, and then submits again. The main context makes that tick with a wait of 0. So
+a try takes each event that is ready, and no time in the kernel. A context tries `submit_tries_max`
+times: 8, a prior with no measurement behind it. At most `resumes_between_ticks_max` contexts run
+between two tries. So the tries end after 8 ticks that do not wait, and no clock bounds them.
 
-| call | with a full table |
+| call | with a full reactor |
 |---|---|
 | `netAccept`, `netConnectIp`, `netRead`, `netWrite`, `netSend`, `netShutdown` | after the last try, returns `error.SystemResources`, which the error set of each one holds |
 | `perform` | after the last try, returns `error.OperationsFull` |
-| `sleep`, and a futex wait with a timeout | after the last try, halts. The message states what `Fibers.operations` asks for. Each has no error but `Canceled` |
-| `netClose`, `fileClose` | calls `rotor.sync.close_now` at once, which needs no operation |
+| `sleep`, a futex wait with a timeout, `netClose` and `fileClose` | after the last try, halts. The message states what `Fibers.operations` asks for. None of them has an error for it: a `sleep` and a futex wait have `Canceled` alone, and a close returns nothing |
 | the three file calls of step 6 | go to `rest` at once, as when the reactor refuses a file operation |
+
+A close does not fall back to `rotor.sync.close_now`. That call is for a descriptor with no
+operation in flight (`src/kqueue/kqueue_sync_socket.zig`, and the same in `src/linux_shared/`). A
+fiber can wait in `netRead` on the socket that another context closes. In step 6 each datagram
+socket also keeps one receive in flight. A plain close cancels neither, and rotor's `close`
+operation cancels both first (decision 5, rule 6).
 
 Each other limit has a name in the package's `constants.zig`, or is one of rotor's:
 
@@ -621,8 +651,10 @@ Each other limit has a name in the package's `constants.zig`, or is one of rotor
 ### How a wake from another thread arrives
 
 A thread that does not own the reactor may call `futexWake` for a context that waits. Camilo ruled
-that it may make no other call that the package runs (open question 8). So it may use only a part of
-std's types:
+the calls that another thread may make: "only `futexWake`". "Rulings, 2026-11-10" says that neither
+the question nor the choice named the 75 calls that go to `rest`. This record takes the ruling for
+the 34 calls that the package runs, and open question 15 asks about the 75. Of std's types, such a
+thread may use only a part:
 
 | a call of std, from another thread | what it calls | result |
 |---|---|---|
@@ -641,8 +673,8 @@ wake runs:
    with the view of its own reactor, or with its own plain loop.
 3. `futexWake` on that thread reads and writes no list. It swaps a flag in the `Fibers` value to
    true, with release order. When the flag was false, it posts `rotor.Message.wake` to `loop_id`.
-4. The reactor drops the wake. A reactor that sleeps in `tick` wakes. A poller is in its table, so
-   its next tick does not wait before that poller runs (decision 29).
+4. The reactor drops the wake. A reactor that sleeps in `tick` wakes. Its table of pollers holds a
+   poller, so its next tick does not wait before that poller runs (decision 29).
 5. The package's poller swaps the flag to false, with acquire order. When it was true, the poller
    ends the futex wait of each context on the list, as a `futexWake` on the reactor's thread does.
    Each such context goes on the ready list, so the poller answers `.now`.
@@ -650,8 +682,14 @@ wake runs:
    1543).
 
 The package calls `tick` itself, and it still needs the poller for this path. A wake stores `.now`
-only while a poller is in the table (decision 29). With no poller, a wake that a tick takes before
-its wait does not stop that wait. The context then waits for up to `wait_ns_max`.
+only while the table of pollers holds one (decision 29). With no poller, a wake that a tick takes
+before its wait does not stop that wait. The context then waits for up to `wait_ns_max`.
+
+One wake from another thread costs more than one wake on the reactor's thread. It makes each context
+on the futex list ready: at most `count + 1`. Each of them that waits with a timeout cancels its
+timer, and arms a new one when it waits again. `Event.waitTimeout` returns `error.Timeout` for a
+wake with no cause (`std/Io.zig`, lines 1824 to 1846). So each such wait on the reactor ends early,
+with that error, at each wake from another thread.
 
 `MailboxFull` on the wake is safe to drop, as decision 29 says of each wake. A thread that named no
 path halts in `futexWake`, which has no parameter for a `Remote`. So a thread that holds no `Remote`
@@ -667,11 +705,11 @@ as `await` does. The next cancel point of the std task returns `error.Canceled` 
 | the fiber waits for | a cancel does | the wait ends |
 |---|---|---|
 | an operation: a `sleep` with a time, a network call, `perform` | `reactor.cancel(handle)`, which is a request (decision 5, rule 2) | at the operation's final event: `Canceled` when nothing moved, or the bytes that moved |
-| a futex with no timeout, a `sleep` with no time, or a tick after a full table | puts the fiber on the ready list | when the fiber next runs, with `error.Canceled` |
+| a futex with no timeout, a `sleep` with no time, or a free slot | puts the fiber on the ready list | when the fiber next runs, with `error.Canceled` |
 | a futex with a timeout | takes the fiber off the list, and cancels its timer | at the timer's final event, so no event of the package comes after its wait |
 | the members of an `Io.Group`, in `Group.await` | puts the fiber on the ready list. `Group.await` then asks each member to cancel, and blocks again with no cancel point | after the last member returns. Only then `Group.await` returns `error.Canceled` |
 | another future, in `await` | nothing: `await` is no cancel point | when that future ends |
-| a cross-core call | nothing: the target owns the record until it answers (decision 32) | at `finish`. The next cancel point returns `error.Canceled` |
+| a cross-core call | nothing: the target owns the call record until it answers (decision 32) | at `finish`. The next cancel point returns `error.Canceled` |
 
 The row for an `Io.Group` is std's rule (`std/Io.zig`, lines 1272 to 1275), and decision 22's
 `group_await` did the same. A member writes the `Io.Group`, so the caller must not leave before the
@@ -683,7 +721,7 @@ on before it (decision 5).
 
 ## What the package needs from rotor
 
-Camilo ruled that the package waits for v0.11.0. So this table checks each name against decision
+Camilo ruled that the package waits for v0.11.0. So the rows below check each name against decision
 33's proposed surface, as that record is at `e7bfcb1`. Decision 33 is not accepted, and a change
 there changes a row here.
 
@@ -714,12 +752,12 @@ is rotor under decision 33.
 
 | the package would use | rotor | without it | cost to rotor |
 |---|---|---|---|
-| a send and a receive of several buffers, for `netRead` and `netWrite` | `receive` and `send` take one buffer | one buffer for each call. std's `Reader` and `Writer` take the short count and call again (decision 22, step 2) | a change to the core's `Operation`, in a record of its own. Decision 22, open question 4, deferred it until the numbers show the cost |
+| a send and a receive of several buffers, for `netRead` and `netWrite` | `receive` and `send` take one buffer | one buffer for each call. std's `Reader` and `Writer` take the short count and call again (decision 22, step 2) | a change to the core's `Operation`, in a decision record of its own. Decision 22, open question 4, deferred it until the numbers show the cost |
 | the peer's address of an accepted socket | `accept` reports the descriptor alone. `sync` has `local_address` and no call for the peer | the package calls `getpeername` itself, one system call for each accept | one more name on `sync`, on each backend. The test of its 24 names changes |
 | the options `ip6_only` and `allow_broadcast` at a bind | `sync.open_datagram` sets neither | the bind answers `OptionUnsupported`, as in decision 22 | fields in `DatagramOptions`, on each backend |
 | a wake from a thread that holds no `Remote` and no loop | none. Decision 29 rejected a second call across threads | the program gives each such thread a `Remote`: one id of the registry each, of `loops_max` (256) | an amendment of non-negotiable 4, decision 4 and the wake model. This record does not ask for it |
-| a place after each other poller, or a call that keeps the tick that runs from its wait | the reactor calls its pollers in the order in which the libraries added them. A poller's answer and a queued rotor task keep a tick from its wait, and nothing else does | the package removes its poller and adds it again before each tick that can wait | one more call. Decision 29, item 2, rejected a second way to say "do not block". This record does not ask for it |
-| the name of a fiber's function in a stall and in a watch | the reactor writes the name of each callback on the heartbeat's line, through the port. Decision 33 keeps that writer out of the API ("The port") | a stall of fibers names no fiber, and a watch reads a null name | a public call that writes a name on the line. This record does not ask for it |
+| a place after each other poller, or a call that keeps the tick that runs from its wait | the reactor calls its pollers in the order in which the libraries added them. A poller's answer and a queued rotor task keep a tick from its wait. So do an operation that waits for the flush, a result that waits for its hand-over, and a timer that is due (`src/core/tables/tables_deadline.zig`, `wait_bound`) | the package removes its poller and adds it again before each tick that can wait. A timer of 0 ns for each such wake is the other way. It takes a slot, which a full reactor does not have, and it makes one more final event. So this record prefers the move | one more call. Decision 29, item 2, rejected a second way to say "do not block". This record does not ask for it |
+| the name of a fiber's function in a stall and in a watch | the reactor writes the name of each callback on the heartbeat's line, through the port. Decision 33 keeps that writer out of the API ("The port") | a stall of fibers names the package's poller at most, and a watch reads a null name | a public call that writes a name on the line. This record does not ask for it |
 | a refusal of a second caller of `tick` | none: `tick` checks its thread, and not its caller | the package's check of `now_ns` halts at the package's next tick | this record does not ask for it |
 | a row of its own in the echo comparison | `bench/echo/echo_runner_setup.zig` holds a fixed list of candidates. rotor's package holds no `bench/` (`build.zig.zon`, `.paths`) | the package builds rotor's bench programs from a checkout at the pinned tag. It drives `echo_client` itself, with the runner's rules | an option of the runner that adds one candidate by name and path. rotor still names no package |
 
@@ -752,13 +790,13 @@ How it runs:
    `reactor.shared()` gives. `CallsFull`, `MailboxFull` and `LoopNotFound` come back as error
    values, and then nothing waits.
 3. The context blocks.
-4. The record's `finish` runs as a rotor task on the caller's reactor, in the call's named
+4. The call record's `finish` runs as a rotor task on the caller's reactor, in the call's named
    scheduling group (decision 32). It copies the result, and puts the context on the ready list. So
    the context runs after that tick returns, and no second tick passes first.
 5. The function returns the reply by value, or `error.Expired` or `error.TargetStopped`.
 
 It needs nothing new from rotor. The program gives each call a named scheduling group, as each call
-of decision 32 needs. The target owns the record until it answers, and decision 32 rejected
+of decision 32 needs. The target owns the call record until it answers, and decision 32 rejected
 `cancel_call`, so a cancel waits for `finish`. `call` blocks, so a callback cannot make it.
 
 `io.async` of a function that calls `call` gives a `std.Io.Future` for the reply, at the cost of one
@@ -780,7 +818,7 @@ Each instruction count is a prior, by arithmetic over rows that count other work
 | a fiber switch | 2: one away, and one back | not measured. No row of `docs/costs.md` holds it | row C26 went with its probe (`85d5e67`) |
 | a call through `std.Io`'s table | 1 or 2 | C5: 1.50 ns on `mac`, 1.53 on `orbstack`, 1.34 on `github` | `docs/costs.md` |
 | the owner check of each call that the package runs | 1 | C21: 1.55 ns on `mac`, 0.93 on `orbstack`, 1.00 on `github` | `docs/costs.md` |
-| the record, which the tick calls for the final event | 1 | 117 to 142 instructions: the `record` row less the `timer` row, in each section | `bench/baseline/work.txt` |
+| the record, which the tick calls for the final event | 1 | at most 117 to 142 instructions: the `record` row less the `timer` row, in each section. The `timer` row runs the fast tick, and the `record` row runs the dispatched tick (`bench/work/work.zig`). The package's poller makes each tick a dispatched one in any case | `bench/baseline/work.txt` |
 | the submit and the kernel's work for the operation | 1 | as for each operation of a library | none |
 
 A switch from one fiber to the next is the switch away of the first and the switch back of the
@@ -790,8 +828,12 @@ costs:
 | cost of each tick | prior | source |
 |---|---|---|
 | the switch to the main context. A fiber that is the only ready context switches there and back for each call that blocks, where decision 22's code made no switch | not measured | row C26 went with its probe |
-| the package's poller: one indirect call and a load of the flag in each tick. Before each tick that can wait, the package moves it to the end of the table | C5 for the call. No row counts the rest. The `poller` row counts a whole tick with one poller that reports no work: 505 to 634 instructions | `docs/costs.md`, `bench/baseline/work.txt` |
-| a tick with a wait of 0 after each 64 switches, while contexts stay ready | the backend's call: C7 is 300 ns on `github`, and C10 is 294 ns on `mac`. That is at most about 5 ns for each switch, by arithmetic | `docs/costs.md` |
+| the package's poller: one indirect call and a load of the flag in each tick. Before each tick that can wait, the package moves it to the end of the table of pollers | C5 for the call. No row counts the rest. The `poller` row counts a whole tick with one poller that reports no work: 505 to 634 instructions | `docs/costs.md`, `bench/baseline/work.txt` |
+| a tick with a wait of 0 after each 64 switches, while contexts stay ready | the backend's call: C7 is 300 ns on `github`, and C10 is 294 ns on `mac`. That is at most about 5 ns for each switch, by arithmetic, for the kernel's call alone | `docs/costs.md` |
+
+A wake from another thread has two more costs, and no row counts either. It makes each context on
+the futex list ready, and it ends each `Event.waitTimeout` there with `error.Timeout` ("How a wake
+from another thread arrives").
 
 Decision 22's code paid for no record and no poller. So the prior is that the package is slower than
 that code on the same workload. How much is not known.
@@ -837,7 +879,8 @@ The package measures the switch first, at step 0. It takes the probe of `b2bcf60
 `bench/costs/probes/probes_fiber.zig`, with the corrected switch. It runs on a quiet `mac`, on
 `orbstack` and on a GitHub runner, and a result names its machine. The number stays in the package's
 own results: rule 1 of `docs/costs.md` takes a number only from a probe in rotor's `bench/costs/`.
-If a record of rotor needs the row, the probe comes back to rotor, and that is Camilo's choice.
+If a decision record of rotor needs the row, the probe comes back to rotor, and that is Camilo's
+choice.
 
 ## The rules of rotor that the package keeps, and those it cannot keep
 
@@ -861,7 +904,7 @@ How the package stands to those texts:
 - **By its words, the first sentence of each text forbids the package's `tick`.** The package is not
   the program. It is code that the program imports, on a reactor that other libraries share.
 - **The second sentence of ruling 1 leaves room for an owner.** It forbids a tick "on a loop it does
-  not own". No record of rotor names an owner of a loop other than the program.
+  not own". No decision record of rotor names an owner of a loop other than the program.
 - **The package keeps the reason of the rule.** Decision 26 gives it: a library's tick inside the
   program's call into another library nests the callbacks of the two. The package makes no such
   tick. It is the one caller of `tick`, and a callback that must block halts.
@@ -873,7 +916,7 @@ How the package stands to those texts:
   call to the program.
 
 Camilo ruled on 2026-11-10 that the package calls `tick`. That ruling answers open question 2 of
-this record, and "Rulings, 2026-11-10" names no other record. So the texts above and the ruling do
+this record, and "Rulings, 2026-11-10" names no other decision. So the texts above and the ruling do
 not agree as they are written, and this record changes none of them. "Ask before" lists a note for
 decisions 26, 27 and 28 and for the guide. The note says that a program may hand its reactor to one
 package that ticks in its place. The program then calls no `tick` while that package's value lives.
@@ -888,10 +931,14 @@ package that ticks in its place. The program then calls no `tick` while that pac
 - **Assertions on,** in the two modes that rotor's build offers, Debug and ReleaseSafe.
 - **One thread, and shared nothing.** Each fiber of a value runs on the reactor's thread. A program
   with one reactor for each core makes one value for each.
+- **Determinism, in what the package decides (non-negotiable 2).** The ready list is first in, first
+  out. The limit between two ticks is a fixed count, and the wait of each tick follows a fixed rule.
+  The package reads no clock and no random source. It orders nothing by a pointer value: the futex
+  list compares an address for equality alone. So what the package decides replays.
 - **One final event** for each operation (decision 5). Each record does a small, fixed amount of
   work (decision 30): one store, and one push on the ready list.
 - **An error value for a limit, where std's call has one.** A refused start is
-  `ConcurrencyUnavailable`. A network call on a table that stays full is `SystemResources`. A
+  `ConcurrencyUnavailable`. A network call on a reactor that stays full is `SystemResources`. A
   refused call across cores is `CallsFull`.
 - **Tests on the real kernel**, through rotor, on kqueue, io_uring and epoll (decision 10).
 - **Ugly code only in a named file, with a ledger row (decision 7).** The context switch is
@@ -901,25 +948,31 @@ package that ticks in its place. The program then calls no `tick` while that pac
 
 - **The texts on who ticks,** as "Who ticks" says.
 - **An error value for each limit, and for each error of the kernel.** rotor's rule is that a limit
-  reached returns an error value. Three paths end in a halt, because no error value can reach a
-  caller there. They are a table that stays full under a `sleep`, a std task that `async` ran in a
-  callback, and an error of `tick`. Open question 9 lists them, and asks whether Camilo accepts
-  them.
+  reached returns an error value. Five paths end in a halt, because no error value can reach a
+  caller there. Open question 9 lists them, and asks whether Camilo accepts them.
 - **Shares for the fibers (decision 30).** A fiber is no rotor task, so no scheduling group holds it
   and no share bounds it. A fiber that computes for long holds the reactor. rotor counts the stall,
   and names no fiber.
-- **Determinism (non-negotiable 2), for the clocks and the random bytes.** `std.Io` has `now` for
-  the real clock and the CPU clocks, `random` and `randomSecure`. Each goes to `rest`, which reads
-  the host. `now` for the `awake` and `boot` clocks reads `now_ns`, so it keeps the rule. Decision
-  22's adapter needed the determinism lint to skip its directory for this.
+- **Determinism (non-negotiable 2), for what the package does not decide.** Three sources are not
+  deterministic unless the program makes them so: `rest`, the real kernel under the reactor, and a
+  `futexWake` from another thread. `now` for the real clock and the CPU clocks, `random` and
+  `randomSecure` each go to `rest`, which reads the host. `now` for the `awake` and `boot` clocks
+  reads `now_ns`, so it keeps the rule. A replay of a whole program needs a twin under the reactor
+  (decision 10), and the sketch does not run over one (open question 14).
+- **Time that moves while a context runs.** `now_ns` is the stamp of the last tick, and a timer runs
+  from it (the guide, "Submit and tick"). So `io.sleep` can return early, by at most the time since
+  the last stamp. std's comment says that `sleep` waits for the whole time (`std/Io.zig`, line
+  2391). `now` for the `awake` and `boot` clocks stands still between two ticks too. A fiber that
+  reads it in a loop, with no call that blocks, never sees time pass.
 - **std's rules for threads.** std marks six calls of the table as safe from each thread, and
   `Queue` as safe for many producers and consumers. rotor's rule is one thread for each loop
-  (non-negotiable 4). The package keeps rotor's rule. So `Mutex.lock` and each `Queue` call can halt
-  on another thread, and that halt depends on when each thread runs. Code that hands one `io` to
-  several threads does not run on the package.
+  (non-negotiable 4), and the package keeps it. So `Mutex.lock` and each `Queue` call can halt on
+  another thread. Code that hands one `io` to several threads does not run on the package. With the
+  check of open question 15, `io.random` and `io.randomSecure` halt there too.
 - **A halt for each broken invariant (non-negotiable 6).** No assertion sees a stack that overflows.
   The guard page turns it into a fault that ends the process.
-- **A halt for a context that nothing can wake.** Rule 4 of "The ready list and the tick" says why.
+- **A halt for a context that nothing can wake.** Rule 4 of "The ready list and the tick" says why,
+  and open question 16 asks.
 - **A fixed amount of work in its poller.** After a wake from another thread, the poller visits each
   context on the futex list: at most `count + 1`.
 - **snake_case for each function.** The fields of `Io.VTable` are std's, in camelCase.
@@ -940,7 +993,7 @@ package that ticks in its place. The program then calls no `tick` while that pac
   three more things:
   - each parameter of a call that goes to `rest`, for a std object that a fiber can wait on, as
     `netLookup` has;
-  - the table of `std.Io.failing`, against "What `rest` is";
+  - the rows of `std.Io.failing`, against "What `rest` is";
   - std's context switch, against the package's copy. Decision 22 found three errors in std's
     clobber lists at 0.16.0, and the same lists in 0.17.1.
 
@@ -979,8 +1032,8 @@ package that ticks in its place. The program then calls no `tick` while that pac
   release.** Each says today that a `std.Io` adapter is not in version one, and that decision 2 says
   what would bring it in. The sentence would say where code written against `std.Io` runs. Before a
   release there is no package to name. This is an ask-before item.
-- **The README's list of records is not changed here.** It stops at record 24, and its row for
-  record 22 still reads "accepted, deferred".
+- **The README's list of decision records is not changed here.** It stops at decision 24, and its
+  row for decision 22 still reads "accepted, deferred".
 - **`docs/costs.md` gains no row.** "The fiber switch has no measured cell" says why.
 - **Decisions 26, 27 and 28 and the guide gain a note on who ticks, when Camilo accepts this
   record.** "Who ticks" gives the texts and what the note would say. This commit does not write it.
@@ -999,8 +1052,8 @@ tag in `user_data`. The line counts are from that commit's own summary.
 | `adapter_scheduler.zig` | 283 | the free list, the ready list, `block`, `end_wait`, `interrupt`, `tick`, `poll`, and the futex list's unlink | only the main context ticks, so `block` and `leave` switch to it. The limit on the switches between two ticks is new. `hand_over` reads no tag: a record takes each event of a context, and the event handler takes each other event. A `submit` that takes none tries `submit_tries_max` times. The halt for "nothing is in flight" goes |
 | `adapter_tasks.zig` | 290 | `async`, `concurrent`, `await`, `cancel`, the `Io.Group` calls and the cancel protection. `await` still frees a future's fiber, and `group_await` still passes a cancel to each member | the rules of "Where a call comes from" for a callback are new |
 | `adapter_wait.zig` | 121 | the futex list, `sleep`, and `now` with its tick before the first operation | the wake from another thread is new, with the package's poller |
-| `adapter_rest.zig` | 102 | the forwarders, as they are, with no owner check | `netLookup` leaves them: the package wraps the call of `rest` |
-| `adapter_net.zig`, `adapter_net_errors.zig` | 347 | the nine network calls and the maps of their errors | each operation names the context's record. A table that stays full is `SystemResources`. A close in a callback is `close_now` |
+| `adapter_rest.zig` | 102 | the forwarders | `netLookup` leaves them: the package wraps the call of `rest`. Each other one gains the owner check, by the proposed answer to open question 15 |
+| `adapter_net.zig`, `adapter_net_errors.zig` | 347 | the nine network calls and the maps of their errors | each operation names the context's record. A reactor that stays full is `SystemResources`. `net_close` stays one `close` operation that blocks its context, and it halts in a callback |
 | `adapter_datagram.zig`, `adapter_batch.zig`, `adapter_file.zig` | 480 | step 6, and `fileClose` in step 4 | the receive that each socket keeps in flight names a record of its own, where it had a bit of `user_data`. The view reserves the buffer group |
 | the five other test files, `tools/halt/adapter_scenarios.zig`, `examples/std_io_echo.zig` | 1,438 | the scenarios and the mutation lists of decision 22. Each test still drives the loop from the main context | each test makes a reactor, where it made a loop. The tests of a callback, of the limit and of the poller are new |
 
@@ -1059,16 +1112,20 @@ do not bound the fibers.
    it before the rulings. Each resume of a fiber is then one rotor task in a scheduling group, and
    the package ticks nothing. Camilo did not choose it (open question 2).
 
-   | | shape (a), as ruled | shape (b) |
+   | | shape (a), as proposed here | shape (b) |
    |---|---|---|
    | a call that must block, in the program's own code | blocks | halts |
    | a wake between two fibers | no tick | one tick with a wait of 0: 545 to 668 instructions on the `task` row |
-   | rotor's own work for each call that blocks, as a prior | the record: 117 to 142 instructions | the record and a rotor task: 170 to 205 instructions, or 308 to 355 on the run of the scheduling groups |
-   | a fiber that runs long | a stall that names no fiber, and no share bounds it | a stall that names the package's rotor task and its scheduling group |
+   | rotor's own work for each call that blocks, as a prior | the record: at most 117 to 142 instructions | the record and a rotor task: at most 170 to 199 instructions, or 309 to 347 on the run of the scheduling groups |
+   | a fiber that runs long | a stall that names the package's poller at most, and no share bounds it | a stall that names the package's rotor task and its scheduling group |
    | a program with a tick loop of its own | cannot use the package | keeps its loop |
    | rotor's texts on who ticks | need a note ("Who ticks") | stand as they are |
 
-   Each count is a row of `bench/baseline/work.txt`, or arithmetic over its rows.
+   Each count is arithmetic over the rows of `bench/baseline/work.txt`, inside one of its five
+   sections. The record is `record - timer`: 117 to 142. A rotor task in `.default` is
+   `(tasks-64 - task) / 63`: 53 to 63. On the run of the scheduling groups it is
+   `tasks-groups-4 / 64` or `tasks-groups-16 / 64`: 191 to 213, with the tick's own work in the
+   count.
 6. **Each context ticks on its own stack, as in decision 22's code.** It saves the switch to the
    main context for each tick. Rule 1 of "The ready list and the tick" gives its two faults.
 
@@ -1080,7 +1137,7 @@ states how it is checked. Each check is proved by mutation, as rotor's are. No s
 
 0. **The switch, and its number.** The corrected switch and its tests, and the probe of "The fiber
    switch has no measured cell". Check: the switch's tests pass in Debug and in ReleaseSafe, on
-   aarch64 macOS, aarch64 Linux and x86-64 Linux. Decision 22's three mutations of the clobber lists
+   aarch64 macOS, aarch64 Linux and x86-64 Linux. Decision 22's two mutations of the clobber lists
    are each caught. Camilo reads the probe's numbers before step 1.
 1. **Contexts, std tasks, `Io.Group`s, cancel, futexes, `now`, `sleep` and the `netLookup` wrapper,
    on one thread.** The pool on the caller's memory, with a guard page for each stack. The ready
@@ -1095,7 +1152,7 @@ states how it is checked. Each check is proved by mutation, as rotor's are. No s
    - Two fibers wake each other without end, and a timer of the test's own record still fires.
    - A poller of the test, added after `init`, wakes a fiber, and that tick does not wait.
    - A record of the test starts a std task with `concurrent`, and its fiber runs after that tick.
-   - An event with no record reaches the event handler. On a full table, a `sleep` returns when a
+   - An event with no record reaches the event handler. On a full reactor, a `sleep` returns when a
      slot is free before the last try.
    - Each test reads `reactor.statistics().stalls` as 0 at its end.
    - A halt scenario for each of these eight cases:
@@ -1105,7 +1162,7 @@ states how it is checked. Each check is proved by mutation, as rotor's are. No s
      - an event with no record, and no event handler;
      - memory smaller than the options need;
      - a `deinit` while a fiber is in use;
-     - a `sleep` on a table that stays full;
+     - a `sleep` on a reactor that stays full;
      - a fiber that overflows its stack, which dies by a signal at the guard page.
    - The mutations of decision 22's step 1, each caught.
    - The first numbers: "The timer program".
@@ -1115,17 +1172,21 @@ states how it is checked. Each check is proved by mutation, as rotor's are. No s
    - A halt scenario: a `futexWake` from a thread that named no path.
    - A halt scenario: a `Mutex.lock` from another thread while a fiber holds the lock.
 3. **The calls of its own: `perform` and `call`.** Its checks:
-   - A context waits for a timer through `perform`. On a table that stays full it gets
+   - A context waits for a timer through `perform`. On a reactor that stays full it gets
      `OperationsFull`.
    - A halt scenario: `perform` with a multishot operation.
    - Two reactors on two threads: a fiber on one waits for a call to the other, and gets a reply,
      `Expired` and `TargetStopped`. A full pair gives `CallsFull`.
    - A cancel while a call is out arrives after `finish`.
-4. **The network calls, and `fileClose`.** The nine network calls of the table, and an echo server
-   written against `std.Io` alone. Check: a test of each call and of its cancel, and the mutations
-   of decision 22's step 2. A network call on a table that stays full returns `SystemResources`. A
-   checker drives the echo server on each backend.
-5. **The numbers.** "The measurement plan", below. Camilo reads the table before a release.
+4. **The network calls, and `fileClose`.** The nine network calls of "Which calls run where", and an
+   echo server written against `std.Io` alone. Its checks:
+   - A test of each call and of its cancel, and the mutations of decision 22's step 2.
+   - A network call on a reactor that stays full returns `SystemResources`.
+   - A context closes a socket while a fiber waits in `netRead` on it. The read ends with its final
+     event, and then the close returns.
+   - A halt scenario: a `netClose` in a callback.
+   - A checker drives the echo server on each backend.
+5. **The numbers.** "The measurement plan", below. Camilo reads the results before a release.
 6. **Datagrams, batches and files,** when a consumer asks. Decision 22's step 3 is the start.
 
 ### The timer program
@@ -1145,6 +1206,10 @@ branch for the adapter, and decision 22 says that only the echo half of its numb
 
 At the least stack of 128 KiB, 4,096 fibers take 512 MiB. At the default of 256 KiB they take 1 GiB.
 
+One fact bends the row. A timer of the package runs from the stamp of the last tick, so a fiber's
+`sleep` can end early. The program reads such a wake as a lateness of 0 (`std_io_timers.zig`,
+`lateness_of`). The row then favours the package against `std.Io.Threaded`, and the results say so.
+
 ### The measurement plan
 
 The workload is decision 22's: the echo workload through `std.Io`.
@@ -1156,7 +1221,7 @@ The workload is decision 22's: the echo workload through `std.Io`.
   tag, because rotor's package holds no `bench/`.
 - **The method.** rotor's `echo_client` measures each server. The rounds alternate between the
   candidates, so that drift moves each one alike. Each row holds the median and the spread of its
-  rounds. The table holds each row that the package loses.
+  rounds. The results hold each row that the package loses.
 - **The rows.** 16 and 64 connections, at 4, 8, 16 and 64 KiB, on one core, as decision 22's run.
 - **The machines.** GitHub's Linux runners on x86-64 and arm64, with io_uring, as decision 22's run.
   A quiet `mac` for kqueue, which decision 22 never got.
@@ -1166,13 +1231,13 @@ The workload is decision 22's: the echo workload through `std.Io`.
 - **Where the numbers go.** They stay in the package's results. No number from CI enters
   `docs/costs.md`.
 
-This record sets no bar for the result, by Camilo's ruling on open question 10. If the table shows a
-cost that he does not accept, open questions 12 and 13 open again with the numbers. So does the rule
-that only the main context ticks.
+This record sets no bar for the result, by Camilo's ruling on open question 10. If the results show
+a cost that he does not accept, open questions 12 and 13 open again with the numbers. So does the
+rule that only the main context ticks.
 
 ## Open questions
 
-Camilo ruled questions 1, 2, 3, 4, 5, 7, 8 and 10 on 2026-11-10. Questions 6, 9 and 11 to 13 are
+Camilo ruled questions 1, 2, 3, 4, 5, 7, 8 and 10 on 2026-11-10. Questions 6, 9 and 11 to 16 are
 open, and so is the option name `count` of question 1. Each open question has a proposed answer.
 
 1. **What are the package's name and its repository?** The candidates were `tejedor`, with the type
@@ -1180,7 +1245,8 @@ open, and so is the option name `count` of question 1. Each open question has a 
    holds one of them.
    **Ruled on 2026-11-10: `tejedor`.** The text of the choice said that a program types
    `tejedor.Fibers`, and that the repository takes the same name. The session makes no repository
-   before Camilo says so. Three names of the sketch are still proposals:
+   before Camilo says so. Each other name of the sketch is still a proposal: `perform`, `call`,
+   `operations`, `event_handler` and `loop_id` among them. Three have a reason to state:
    - `WakePath` and `set_wake_path`. `attach` and `Waker` already have a meaning in rotor's tree.
    - `EventHandler`. Decision 22's code named it `Handler`, a word that decision 32 uses for the
      function of a service.
@@ -1215,34 +1281,44 @@ open, and so is the option name `count` of question 1. Each open question has a 
 8. **May another thread make a call other than `futexWake`?** This record proposed no call that the
    package runs.
    **Ruled on 2026-11-10: only `futexWake`.** So a thread shares no `Mutex` and no `Queue` with a
-   fiber ("How a wake from another thread arrives").
+   fiber ("How a wake from another thread arrives"). Neither the question nor the choice named the
+   75 calls that go to `rest`, and open question 15 asks about them.
 9. **Does Camilo accept the halts that remain at a limit?** Under shape (b) this question listed
-   three halts. The ruling on question 2 changes each of them, and brings one more:
+   three halts. The ruling on question 2 changes each of them, and three more come:
 
    | halt | under shape (a) |
    |---|---|
-   | a `sleep`, or a futex wait with a timeout, when the table of operations is full | goes as shape (b) had it: the context waits for a tick, and submits again. A narrower halt remains: the table is still full after `submit_tries_max` tries |
+   | a `sleep`, or a futex wait with a timeout, on a full reactor | goes as shape (b) had it: the context waits for a tick, and submits again. A narrower halt remains: the reactor is still full after `submit_tries_max` tries |
    | a resume, when the program fills the scheduling group that it shares with the package | goes: no resume is a rotor task |
    | a call that blocks inside a std task that `async` ran outside a fiber, because no fiber could take it | goes for the program's own code, which may block on the main context. It remains in a callback |
+   | a `netClose` or a `fileClose` on a reactor that is still full after the last try | new. A close returns no error, and `close_now` is no substitute ("When the reactor is full") |
+   | a call in a callback that waits only in some states, such as a `Queue.put` on a full queue | new. The halt comes when the queue fills, so a test can miss it ("Where a call comes from") |
    | an error that `tick` returns | new. Under shape (b) the program's own `tick` returned it. Now it reaches the package inside a call that has no such error |
 
-   "Rulings, 2026-11-10" says that the ruling removes two of the three. This table is more exact:
-   the second halt goes whole, and the first and the third each leave a narrower halt.
+   So five halts remain: the first, the third and the three new ones. Proposed: accept each, for the
+   first version. The program adds `Fibers.operations` to its reactor's `operations`. A callback
+   starts each std task with `concurrent`. It hands work to a fiber with `Event.set`, or with
+   `Queue.put` and a least count of 0. Decision 22's code halted on an error of `tick` too.
 
-   Proposed: yes, for the first version. The program adds `Fibers.operations` to its reactor's
-   `operations`. A callback starts each std task with `concurrent`, which returns an error value.
-   Decision 22's code halted on an error of `tick` too.
+   Each tick between two tries on a full reactor has a wait of 0, so 8 tries can pass in
+   microseconds. The other answer lets those ticks wait. A slot then has more time to come free, and
+   an error can come 80 s late: 8 waits of `wait_ns_max`.
 
-   Two of them have another answer, at a cost. For the first, the package can keep each deadline
-   itself, and bound the wait of the tick that it calls. A `sleep` then needs no operation, at the
-   cost of a second path for each deadline. For the last, one more option can name a function that
-   takes the error. Nothing ends the third.
+   Three halts have another answer, at a cost:
+   - For a `sleep`, the package can keep each deadline itself, and bound the wait of the tick that
+     it calls. A `sleep` then needs no operation, at the cost of a second path for each deadline.
+   - For a close, the package can submit the `close` operation with a record of its own, and return
+     before the final event. That also serves a callback. The descriptor is then still open when the
+     call returns, and `deinit` must wait for each such close. A full reactor still gives it no
+     slot.
+   - For an error of `tick`, one more option can name a function that takes it.
 10. **Do decision 22's two conditions bind the package?** This record proposed that both bind, and
     asked which of two things the first one means.
     **Ruled on 2026-11-10: both bind, and the first means that rotor's own paths do not slow down.**
-    rotor changes no source file, so no row of `bench/baseline/work.txt` moves. The package's own
-    speed has no fixed bar. For the second condition, the package's own calls take and return
-    rotor's types.
+    The text of the choice said that the package's own speed has no fixed bar. The rest is this
+    record's reading, and no part of the ruling. rotor changes no source file, so no row of
+    `bench/baseline/work.txt` moves. For the second condition, the package's own calls take and
+    return rotor's types.
 11. **Who makes the reactor?** Proposed: the program. It makes the `rotor.Reactor(rotor.Loop)`,
     hands `init` a pointer, and keeps each call of the reactor but `tick` ("What the package
     holds"). The package then forwards nothing, and its surface stays small.
@@ -1258,8 +1334,9 @@ open, and so is the option name `count` of question 1. Each open question has a 
     names the reactor, and he ruled nothing on this question.
 
     The other answer is decision 22's tag, `0xADA7` in the top 16 bits. It saves the record's call
-    for each call that blocks: a prior of 117 to 142 instructions. Decision 22's echo numbers are
-    numbers of the tag. Its costs:
+    for each call that blocks: a prior of at most 117 to 142 instructions. It saves less than that
+    difference, because the package's poller keeps each tick a dispatched one. Decision 22's echo
+    numbers are numbers of the tag. Its costs:
     - The package reads each event that `tick` returns, and compares its tag.
     - An operation of the program with no record, whose `user_data` holds that tag, reaches the
       package as its own. Decision 26 rejected a table of tags for a like reason.
@@ -1270,6 +1347,53 @@ open, and so is the option name `count` of question 1. Each open question has a 
       Then fibers that wake each other keep each other library from its callbacks, and each socket
       from its events.
     - An option of `Fibers`, so that a program sets it. Its default is the same prior.
+14. **Is the package's type generic over the reactor's type?** On 2026-11-10 Camilo asked the
+    session whether a package that ticks can still be deterministic. He did not rule on it. What the
+    package decides replays ("What it keeps"). A replay of a whole program needs a twin under the
+    reactor (decision 10), and decision 33 gives `rotor.Reactor(Twin)`. The sketch's `init` takes
+    `*rotor.Reactor(rotor.Loop)`, one fixed type, so it does not run over a twin.
+
+    Proposed: yes. `Fibers` becomes a function that returns a type, as `rotor.Reactor(Loop)` is. A
+    program types `tejedor.Fibers(rotor.Reactor(rotor.Loop))`, or names that type once. The name
+    repeats no word of its namespace, and it is the name of the thing, as `std.ArrayList(T)` is. It
+    is longer than the `tejedor.Fibers` of Camilo's choice on question 1. A program also gets one
+    copy of the package's code, and of each function of the `Io.VTable`, for each type of reactor.
+
+    Decision 33 gives a twin's reactor each call that the package makes on a reactor, and its own
+    `SharedLoop`, `Service` and `CallRecord`. The package needs two more things from a twin, and
+    this record designs neither. One is a twin's form of `rotor.sync`: `netListenIp`, `netBindIp`,
+    `netConnectIp` and `netAccept` open and name real sockets through `rotor.sync` and
+    `getpeername`, outside the reactor. The other is the types of a twin's `Remote` and of its plain
+    loop, for `WakePath`.
+
+    The other answer is one fixed type. Then code on fibers gets no replay, and each test of it runs
+    on the real kernel.
+15. **Do the 75 forwarders check the owner?** The ruling on question 8 names "only `futexWake`", and
+    neither the question nor the choice named the calls that go to `rest`. Decision 22's forwarders
+    had no check.
+
+    Proposed: yes. Then one rule holds for each call of the `io`, and no step changes it. `rest`
+    also takes each call from one thread, in an order that replays. Its costs:
+    - `io.random` and `io.randomSecure` halt from another thread, though std marks them safe there
+      (`std/Io.zig`, lines 2465 and 2482). Such a thread calls the program's own `rest`.
+    - One more owner check for each of the 75 calls: C21.
+    - std's panic code calls `crashHandler` on `std.Options.debug_io` (`std/debug.zig`, lines 536
+      and 1641). So a program does not make the package's `io` its `debug_io`.
+
+    The other answer is no check, as in `adapter_rest.zig`. Another thread may then make 75 other
+    calls, and that set changes with the steps. A `netRead` from such a thread reaches `rest` before
+    step 4, and halts after it. `operate`, the batch calls and the three file calls change so at
+    step 6, after the first release.
+16. **Does the package halt when nothing can wake a context?** Proposed: no. Rule 4 of "The ready
+    list and the tick" says why the package cannot know it. The cost is a silent deadlock. When each
+    context waits and nothing wakes one, the thread sleeps for 10 s at a time, with no end. The
+    stall count does not see it, because a wait in the kernel is in no turn.
+
+    The other answer is decision 22's halt, behind an option. The package then halts when each
+    context waits, no operation of the reactor is in flight, and `Options.loop_id` is null. That
+    finds a deadlock in a test. It also halts a correct program whose contexts wait only for a
+    message from another loop, a poller, or the reply of a call. Such a program turns the option
+    off.
 
 ## Ask before
 
@@ -1281,8 +1405,8 @@ For rotor:
 - An amendment in the header of decision 1, and a note in decision 2, when Camilo accepts this
   record ("What changes in rotor").
 - One sentence in `docs/using.md` and one in the README, after the package's first release.
-- A row for the fiber switch in `docs/costs.md`, with its probe in `bench/costs/`, if a record of
-  rotor needs the number.
+- A row for the fiber switch in `docs/costs.md`, with its probe in `bench/costs/`, if a decision
+  record of rotor needs the number.
 
 For the package:
 
@@ -1328,3 +1452,8 @@ For the package:
   - From the tree before `46235cb`: `adapter.zig`, `adapter_scheduler.zig`, `adapter_tasks.zig`,
     `adapter_wait.zig`, `adapter_rest.zig`, `adapter_net.zig`, `constants.zig`, and
     `bench/alternatives/std_io_echo.zig`.
+- For the answers to the third review, at `c2dc00c`: `src/core/stall.zig`, `bench/work/work.zig`,
+  `src/kqueue/kqueue_sync_socket.zig`, `src/linux_shared/linux_shared_sync_socket.zig`, decision 5,
+  rule 6, and `docs/using.md`, "Submit and tick". From std: `Io.zig` at 1780 to 1846, 1970 to 2023
+  and 2391, and `debug.zig` at 536 and 1641. The session's note holds Camilo's question on
+  determinism, and the revision did not read the transcript.
