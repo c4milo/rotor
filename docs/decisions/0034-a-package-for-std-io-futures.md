@@ -105,6 +105,47 @@ Two rulings differ from what this record proposed: the package calls `tick`, and
 for v0.11.0. Questions 6 and 9 are not ruled. The ruling on question 2 changes each halt that
 question 9 asks about, and question 9 says how.
 
+### The second round
+
+Later on 2026-11-10 the session put the other questions to Camilo, after the design was revised for
+the first round and a review was answered. The first choice of each row was this record's proposed
+answer. Camilo gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| 11. Who makes the reactor? | the program; the package holds it | **the program** |
+| 12. A record or a tag for each operation of a fiber | a record; a tag in `user_data` | **a record** |
+| 13. A limit on the fibers that run between two ticks | a constant of 64; an option with a default of 64; no limit | **a constant of 64** |
+| 14. Can the package run over a twin of the reactor? | a generic type; one fixed type; a fixed type now and a generic type later | **a generic type** |
+| 15. Do the 75 calls that go to `rest` halt from another thread? | each call checks; no check on the 75 | **each call checks** |
+| 16. A halt when nothing can wake a fiber | no halt; a halt behind an option | **no halt** |
+| 9. The five halts at a limit | accept all five; remove the three that can go; only a function for an error of `tick` | **accept all five** |
+| 6. What the first release holds | through the network calls; the Future API only | **through the network calls** |
+| 1, the rest: the names of the sketch | rule them with the code; accept them as written; accept them with `fibers` for `count` | **rule them with the code** |
+| The notes in rotor's other records, at acceptance | a note on who ticks in decisions 26, 27 and 28 and in the guide; an amendment of decision 1 with a note in decision 2. Camilo could select each one | **both** |
+| Does Camilo accept this record now? | after decision 33; now | **after decision 33** |
+
+What the choices said, where a ruling depends on it:
+
+- **Question 11.** The choice said that the program keeps each call of the reactor but `tick`, and
+  that this is less than the text of the choice on question 2.
+- **Question 14.** The choice named the type `tejedor.Fibers(rotor.Reactor(rotor.Loop))`. It said
+  that the name is longer than the `tejedor.Fibers` of question 1. It also said that the record does
+  not yet design a twin's form of `rotor.sync` and of `Remote`.
+- **Question 15.** The choice said that `io.random` then halts from another thread, and that a
+  program must not make the package's `io` its `debug_io`.
+- **Question 16.** The choice said that a deadlock of fibers is then silent.
+- **Question 9.** The question listed the five halts of open question 9.
+- **Question 6.** The choice named the calls for std tasks, sleep, the wake from another thread,
+  `perform` and `call`, the nine network calls and `fileClose`, with echo numbers.
+- **The names.** The choice said that each name stays a proposal, and that Camilo rules it when the
+  first step shows it in a real program.
+- **The notes.** The session writes both when Camilo accepts this record, and not before.
+- **Acceptance.** The choice said that this record stays proposed until decision 33 is accepted
+  and the twin's parts of question 14 are in this record.
+
+So each open question up to 16 is ruled, and each name of the sketch but `tejedor` is a proposal.
+
 ## Context
 
 ### What the Future API is in Zig 0.16.0
