@@ -96,6 +96,10 @@ four more words one meaning each:
 | a fiber is **active** | from the start of its std task until the function of that std task returns |
 | a fiber is **in use** | from the start of its std task until the fiber is free again |
 
+rotor's documents say "a tick that blocks" for a tick whose thread sleeps in the kernel. This
+record says "a tick waits" for that. It keeps "blocks" for a call, as std's own comments do
+(`std/Io.zig`, line 1272).
+
 A fiber of an `Io.Group` is free when its function returns. A fiber of a future stays in use after
 its function returns, until `await` or `cancel` takes the result. The result is in that fiber's
 stack. Decision 22's code worked the same way (`adapter_tasks.zig`).
@@ -119,6 +123,10 @@ Decision 22, "Why it was removed", gives the facts of that choice:
 
 That section names two alternatives. One is a package of its own that depends on rotor's public
 module. This record is that alternative.
+
+Camilo accepted decision 22 on 2026-09-27 on two conditions: "it keeps rotor's performance, and its
+API follows rotor's own primitives" (its open question 1). The removal of 2026-11-05 withdrew
+neither. Open question 10 asks whether they bind the package.
 
 How that code worked matters for this record:
 
@@ -213,7 +221,7 @@ fn run(loop: *rotor.Loop, memory: []align(tejedor.memory_alignment) u8, rest: st
     var served = try io.concurrent(serve, .{io}); // `serve` runs on a fiber
     var events: [64]rotor.Event = undefined;
     while (fibers.active() != 0) _ = try loop.tick(&events, rotor.constants.wait_ns_max);
-    try served.await(io); // `serve` has returned: the call does not block, and frees the fiber
+    try served.await(io); // `serve` returned: the call does not block, and frees the fiber
     fibers.deinit(); // no fiber is in use
 }
 ```
@@ -251,8 +259,8 @@ pub const Fibers = struct {
     /// Halts while a fiber is in use.
     pub fn deinit(fibers: *Fibers) void;
     pub fn io(fibers: *Fibers) std.Io;
-    /// The active fibers: those whose function has not returned. The program ticks while it is
-    /// above 0.
+    /// The active fibers: each one from its start until its function returns. The program ticks
+    /// while it is above 0.
     pub fn active(fibers: *const Fibers) u32;
     /// Asks each std task to cancel, and returns at once.
     pub fn cancel_all(fibers: *Fibers) void;
@@ -279,8 +287,8 @@ It follows the API rules of the Zig projects:
 
 `active` and `deinit` count different fibers ("Words"):
 
-- `active` counts the fibers whose function has not returned. So the loop of the sketch ends when
-  `serve` returns.
+- `active` counts each fiber from its start until its function returns. So the loop of the sketch
+  ends when `serve` returns.
 - `deinit` halts while a fiber is in use, as a loop's `deinit` halts while an operation is in
   flight. The fiber of `serve` is in use until `served.await(io)` takes the result. So the sketch
   awaits before `deinit`, and that call does not block.
@@ -498,7 +506,7 @@ Four facts come with it:
 - One wake from another thread resumes each fiber that waits on a futex: at most `count` rotor
   tasks.
 - A thread that named no path halts in `futexWake`.
-- **A host that owns the wait does not wake.** `Message.wake` wakes only a loop that blocks in
+- **A host that owns the wait does not wake.** `Message.wake` wakes only a loop that sleeps in
   `tick` (decisions 23 and 29). The package's poller answers `.none`, so `wait_limit` gives such a
   host no bound for it. The thread that calls `futexWake` must also wake the host by the host's own
   means. The package cannot.
@@ -536,14 +544,14 @@ asks.
 | an operation: a `sleep` with a time, a network call, `perform` | `shared.cancel(handle)`, which is a request (decision 5, rule 2) | at the operation's final event: `Canceled` when nothing moved, or the bytes that moved |
 | a futex with no timeout, a `sleep` with no time | queues the fiber's rotor task | at the run of that rotor task, with `error.Canceled` |
 | a futex with a timeout | takes the fiber off the list, and cancels its timer | at the timer's final event, so no event of the package comes after its wait |
-| the members of an `Io.Group`, in `Group.await` | queues the fiber's rotor task. `Group.await` then asks each member to cancel, and blocks again with no cancel point | when each member has returned. Only then `Group.await` returns `error.Canceled` |
+| the members of an `Io.Group`, in `Group.await` | queues the fiber's rotor task. `Group.await` then asks each member to cancel, and blocks again with no cancel point | after the last member returns. Only then `Group.await` returns `error.Canceled` |
 | another future, in `await` | nothing: `await` is no cancel point | when that future ends |
 | a cross-core call | nothing: the target owns the record until it answers (decision 32) | at `finish`. The next cancel point returns `error.Canceled` |
 
 The row for an `Io.Group` is std's rule (`std/Io.zig`, lines 1272 to 1275), and decision 22's
 `group_await` did the same. A member writes the `Io.Group`, so the caller must not leave before the
-last member returns. `Group.cancel` asks each member to cancel and blocks until each one has
-returned. It is no cancel point.
+last member returns. `Group.cancel` asks each member to cancel and blocks until the last one
+returns. It is no cancel point.
 
 So each operation of a fiber still ends with exactly one final event, and the fiber does not go on
 before it (decision 5).
@@ -557,13 +565,13 @@ another library. Such code holds the same `io`, and its stack cannot block.
 |---|---|
 | `concurrent`, `Group.concurrent` | starts a fiber, as on a fiber. With no fiber free, `ConcurrencyUnavailable` |
 | `async`, `Group.async` | starts a fiber. With no fiber free, std's rule leaves one choice: the function runs on the caller's stack. The first call of that function that must block halts |
-| `await` or `cancel` of a future whose function has returned | returns the result, and frees the fiber |
-| `Group.await` or `Group.cancel` of an `Io.Group` whose members have all returned | returns |
+| `await` or `cancel` of a future whose fiber is not active | returns the result, and frees the fiber |
+| `Group.await` or `Group.cancel` of an `Io.Group` with no active member | returns |
 | `futexWake`, `checkCancel`, `netListenIp`, `netBindIp` | work, because none blocks |
 | `netClose`, `fileClose` | `rotor.sync.close_now`, at once. So a program can close what it opened outside a fiber |
 | `now` for the `awake` and `boot` clocks | returns `now_ns`. Before the loop's first tick `now_ns` is 0, and the package cannot poll as decision 22's code did. The call then halts, and its message says: tick once first |
 | `netLookup` | calls `rest`, and works while the caller's queue has room for each result. A put that must block halts |
-| each call that must block: `await` of a future whose function has not returned, `Group.await` with an active member, `sleep`, `futexWait`, a network operation, `perform`, `call` | halts, with a message that states the rule: only the program ticks (decision 27, ruling 1) |
+| each call that must block: `await` of a future whose fiber is active, `Group.await` with an active member, `sleep`, `futexWait`, a network operation, `perform`, `call` | halts, with a message that states the rule: only the program ticks (decision 27, ruling 1) |
 
 No fiber takes a std task whose arguments or result are larger than a fiber holds. Decision 22's
 limits were 1,024 B of arguments and 512 B of result. So the first two rows apply to such a std
@@ -597,7 +605,7 @@ and the loop sees no fiber.
 | the same call in a record, a poller or a rotor task of another library | halts: a tick inside a tick | halts |
 | `async` with no fiber free | the program's own code can run it and block. Another library's callback cannot | no code outside a fiber can block in it |
 | other libraries on the loop | the package is the one caller of `tick`. It hands out the view, and it passes on `drain`, the heartbeat, the statistics and the scheduling groups | they take the same view from the program. Nothing passes through the package |
-| a program with its own tick loop: a host that owns the wait (decision 23), or fixed turns after each tick | gives its loop up, or does not use the package | keeps its loop. A wake from another thread does not end such a host's sleep ("How a wake from another thread arrives") |
+| a program with its own tick loop: a host that owns the wait (decision 23), or fixed turns after each tick | gives its loop up, or does not use the package | keeps its loop. A wake from another thread does not end such a host's sleep ("How a wake from another thread arrives"). Such a host sets `stall_turn_ns = null`, so rotor counts no stall there |
 | an event with no record, and a post | comes to the package, which needs a handler for it, as decision 22's `Handler`: one indirect call each (C5) | goes to the program, as today |
 | a wake between two fibers | no tick | one tick with a wait of 0. The `task` row counts such a tick in `.default`: 545 to 668 instructions |
 | fibers that one tick resumes | the package's own limit | `tasks_per_tick_max`, 64, for all rotor tasks of the loop |
@@ -874,7 +882,8 @@ It cannot keep:
   several threads does not run on the package.
 - **A true cost for each rotor task (decision 30).** `std.Io` has no call by which a std task states
   its cost. So each resume counts as 1 unit, however long the fiber runs. A fiber that computes for
-  long holds the loop. rotor counts the stall and names the package's rotor task.
+  long holds the loop. rotor counts the stall and names the package's rotor task. A host that owns
+  the wait sets `stall_turn_ns = null` (the guide), so rotor counts no stall there.
 - **A halt for each broken invariant (non-negotiable 6).** No assertion sees a stack that overflows.
   A guard page turns it into a fault that ends the process (open question 5). Without the page, it
   writes the next fiber's stack.
@@ -1113,8 +1122,9 @@ The workload is decision 22's: the echo workload through `std.Io`.
 - **Where the numbers go.** They stay in the package's results. No number from CI enters
   `docs/costs.md`.
 
-This record sets no bar for the result. Camilo reads the table before a release. If shape (b) costs
-more than he accepts, open question 2 opens again, with the numbers.
+This record sets no bar for the result. Open question 10 asks whether decision 22's first condition
+sets one. Camilo reads the table before a release. If shape (b) costs more than he accepts, open
+question 2 opens again, with the numbers.
 
 ## Open questions
 
@@ -1139,6 +1149,11 @@ Each has a proposed answer.
 
    The names `WakePath` and `set_wake_path` are proposals too. `attach` and `Waker` already have a
    meaning in rotor's tree.
+
+   The option `count` is a proposal too. Decision 22's code named that field `fibers`, as rotor's
+   `Loop.Options` names `operations`. With the type `Fibers`, a program would then type
+   `Fibers.Options` and `.fibers`, which repeats the word. Proposed: `count` while the type is
+   `Fibers`, and `fibers` if the type takes another name.
 2. **Who calls `tick`?** Proposed: the program. The package is a library on a `*SharedLoop`, shape
    (b) of "Who calls `tick`". The other answer is shape (a). There the program's own code may block
    on the thread's own stack. The package is then the one caller of `tick`, and a fiber is no rotor
@@ -1196,6 +1211,18 @@ Each has a proposed answer.
    halt of `sleep` ("How the wait of the tick is bounded"). A list of resumes that a poller tries
    again ends the halt of a resume, and puts a poller in each tick. Under shape (b) nothing ends the
    third.
+10. **Do decision 22's two conditions bind the package?** Camilo set them for an adapter inside
+    rotor, and the removal withdrew neither. Proposed: both bind.
+    - **"It keeps rotor's performance."** The condition has two readings, and Camilo says which he
+      meant. In the first, rotor's own paths do not slow down. That holds: rotor changes no source
+      file, so no row of `bench/baseline/work.txt` moves. In the second, code on the `std.Io` runs
+      near rotor's own speed. Then Camilo names a bar for step 6's table. The prior is that the
+      package is slower than decision 22's adapter, which ran at 71 to 96 percent of rotor's own
+      server.
+    - **"Its API follows rotor's own primitives."** The package's own calls take and return
+      rotor's types: `rotor.Operation`, `rotor.Event`, `rotor.SchedulingGroup`, `rotor.LoopId` and
+      the types of a cross-core call. The fields of `Io.VTable` are std's, and no rule of rotor
+      changes them.
 
 ## Ask before
 
