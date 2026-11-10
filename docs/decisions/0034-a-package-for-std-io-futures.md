@@ -2,8 +2,9 @@
 
 Status: **proposed** on 2026-11-10, and revised the same day after two reviews. Nothing is built,
 and no repository exists. On 2026-11-09 Camilo ruled where this work goes ("Ruling, 2026-11-09").
-He did not rule on the design below. Each open question has a proposed answer. Nothing is built
-before Camilo accepts this record.
+On 2026-11-10 he ruled eight of the open questions ("Rulings, 2026-11-10"). Two of those rulings
+differ from the design below: the package calls `tick`, and it waits for v0.11.0. The design below
+is not yet revised for them. Nothing is built before Camilo accepts this record.
 
 Nothing was measured for this record. Each number is a row of `docs/costs.md`, a row of
 `bench/baseline/work.txt`, a number that decision 22 measured, or a prior. A prior is arithmetic
@@ -56,6 +57,42 @@ text as a reason for it:
 - Open question 3 asks about `rotor.Reactor`. That type is decision 33's, which is proposed and not
   built.
 - Item 7 of the decision proposes that rotor does not depend on the package.
+
+## Rulings, 2026-11-10
+
+On 2026-11-10 the session put eight of the open questions to Camilo, each with its choices. The
+first choice of each row was the session's recommendation. Camilo chose one for each question, and
+gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| 2. Who calls `tick`? | the program; the package; an explanation of both shapes first | **the package** |
+| 1. The package's name | `tejedor`; `rotor-fibers`; `fibra` | **`tejedor`** |
+| 3. The first rotor release that the package builds on | v0.10.0; a wait for v0.11.0 | **a wait for v0.11.0** |
+| 10. Decision 22's two conditions | both bind, and the first means that rotor's own paths do not slow down; both bind, and the first sets a bar for the package's own speed; neither binds | **both bind, and the first means that rotor's own paths do not slow down** |
+| 4. The default fibers, the default stack, and the limit | 256 fibers of 256 KiB, with a limit of 4,096; 256 fibers of 128 KiB, with a limit of 4,096; a ruling after the stack is measured | **256 fibers of 256 KiB, with a limit of 4,096** |
+| 5. A guard page for each stack | always; an option that is on by default; none | **always** |
+| 7. A default for `rest` | no default; a default of `std.Io.failing` | **no default** |
+| 8. The calls that another thread may make | only `futexWake`; none in the first release | **only `futexWake`** |
+
+What the choices said, where a ruling depends on it:
+
+- **Question 2.** The choice said that the package ticks as decision 22's adapter did. Main code may
+  `await` and block, and a wake between two fibers costs no tick. The package owns the loop and
+  passes the view to each other library. A program with its own tick loop cannot use the package.
+- **Question 1.** The choice said that a program types `tejedor.Fibers`, and that the repository
+  takes the same name. The session makes no repository before Camilo says so. The option `count` is
+  not ruled.
+- **Question 3.** The choice said that the package starts only after decision 33 is accepted,
+  built and tagged.
+- **Question 10.** The choice said that the package's own speed has no fixed bar, and that Camilo
+  reads the echo table before a release.
+- **Question 4.** This record proposed a limit of 8,192, for the 4,097 fibers of a timer row under
+  shape (b). The session told Camilo that the row needs 4,096 fibers when the package ticks.
+
+Two rulings differ from what this record proposed: the package calls `tick`, and the package waits
+for v0.11.0. Questions 6 and 9 are not ruled. The ruling on question 2 removes two of the three
+halts that question 9 asks about.
 
 ## Context
 
