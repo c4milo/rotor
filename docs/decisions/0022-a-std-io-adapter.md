@@ -325,6 +325,10 @@ The alternatives were to move the adapter into a package of its own that depends
 module, and to keep it in rotor and build no further step. colibri's decision 150 had chosen the
 adapter for its `serve` module, so colibri needs another path.
 
+**Noted on 2026-11-10.** Decision 34, which is proposed, is the first of those alternatives: a
+package of its own that depends on rotor's public module. Camilo chose that path on 2026-11-09.
+Nothing of it is built.
+
 ## Open questions
 
 1. **Build it, and when?** Proposed: after the macOS cross-core work and a number on the Linux
