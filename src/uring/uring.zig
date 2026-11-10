@@ -195,13 +195,13 @@ pub const Loop = struct {
         const slots = layout.take(memory, Slot, options.operations);
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
-        const heartbeat_line = &layout.take(memory, core.Heartbeat, 1)[0];
+        const line = &layout.take(memory, core.Heartbeat, 1)[0];
         const groups_table = &layout.take(memory, core.scheduling.Groups, 1)[0];
         const handles = layout.take(memory, Handle, HandleQueue.capacity_for(options.operations));
         loop.addresses = layout.take(memory, address.Storage, entries_of(options));
         loop.messages = layout.take(memory, datagram_module.Message, entries_of(options));
         assert(layout.bytes == memory_bytes(options));
-        loop.tables.init(slots, entries, starts, heartbeat_line, groups_table, .{
+        loop.tables.init(slots, entries, starts, line, groups_table, .{
             .id = options.id,
             .sampling = options.sampling,
             .spin_budget_ns = options.spin_budget_ns,
@@ -333,14 +333,15 @@ pub const Loop = struct {
         // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
         // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
         try loop.kept_error.take(dispatch);
-        const heartbeat_line = loop.tables.heartbeat;
-        const wait = dispatch.begin(heartbeat_line, wait_ns);
+        const line = loop.tables.heartbeat;
+        const wait = dispatch.begin(line, wait_ns);
         errdefer dispatch.abandon();
         const produced = try loop.tick_backend(events, wait);
-        return dispatch.end(heartbeat_line, loop.tables.groups, events[0..produced]);
+        return dispatch.end(line, loop.tables.groups, events[0..produced]);
     }
 
-    fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
+    /// The backend's tick, with no check of a kept error: a name of the port of decision 33.
+    pub fn tick_backend(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         const produced = if (core.spin.applies(loop.tables.spin.budget_ns, wait_ns))
             try tick_module.spin_then_wait(loop, events, wait_ns)
         else
@@ -370,6 +371,11 @@ pub const Loop = struct {
     pub const wait_limit = dispatch_calls.wait_limit;
     // The program's bound on the wait of each tick (decision 33).
     pub const wait_until = dispatch_calls.wait_until;
+    // The port of decision 33, with `tick_backend`, `push_reserved` and `assert_owner`.
+    pub const take_kept_error = dispatch_calls.take_kept_error;
+    pub const outstanding = dispatch_calls.outstanding;
+    pub const stored_limit = dispatch_calls.stored_limit;
+    pub const heartbeat_line = dispatch_calls.heartbeat_line;
     // The cross-core calls of decision 32.
     const call_calls = core.call.loop.Calls(Loop);
     pub const call = call_calls.call;
@@ -435,6 +441,7 @@ pub const Loop = struct {
 
 comptime {
     core.surface.check(Loop);
+    core.surface.check_port(Loop);
     core.surface.check_remote(Remote);
 }
 

@@ -4,7 +4,8 @@
 //! decision 1's amendment of 2026-11-07 in its old shape, and that a library cannot schedule with
 //! no group or set the groups, nor a program declare a named group that `Named` refuses
 //! (decision 30), nor a cross-core call take the wrong types or a group of one loop (decision 32).
-//! Each file of `tools/compile_fail/` makes
+//! It also proves that a backend's `Loop` that lacks a name of the port of decision 33 does not
+//! compile. Each file of `tools/compile_fail/` makes
 //! one such call, and its compile must fail with the message that states the rule or names the
 //! type. A compile that succeeds, or that fails with another message, fails the step.
 //! `zig build test` depends on it.
@@ -14,7 +15,9 @@ const modules = @import("modules.zig");
 /// One file that must not compile, and the end of the error line its compile must print. A
 /// `program` is the root of its own executable, so the public module reads the file's
 /// `rotor_scheduling_groups` (decision 30). The others are tests, whose root is Zig's test runner.
-const Case = struct { file: []const u8, message: []const u8, program: bool = false };
+/// A `core` case imports the module `core` too, for a check of a backend that the public module
+/// does not export.
+const Case = struct { file: []const u8, message: []const u8, program: bool = false, core: bool = false };
 
 /// One case for each name of `core.shared_loop.refused_calls`, with the message of its declaration
 /// in `src/core/shared_loop.zig`, then the two types of decision 29, with the compiler's message.
@@ -118,6 +121,12 @@ pub const cases = [_]Case{
         .message = "expected type 'scheduling.scheduling.NamedSchedulingGroup', " ++
             "found 'scheduling.scheduling.SchedulingGroup'",
     },
+    // Decision 33: the check of the port in each backend's root.
+    .{
+        .file = "port_missing",
+        .message = "backend Loop lacks the port's declaration 'take_kept_error' (core/surface.zig)",
+        .core = true,
+    },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.
@@ -138,6 +147,7 @@ pub fn add(
             .optimize = optimize,
         });
         module.addImport("rotor", graph.rotor);
+        if (case.core) module.addImport("core", graph.core);
         const compile = if (case.program)
             b.addExecutable(.{ .name = case.file, .root_module = module })
         else

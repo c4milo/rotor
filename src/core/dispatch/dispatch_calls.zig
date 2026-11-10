@@ -1,11 +1,12 @@
 //! The calls of decisions 26 to 30 that every backend's `Loop` exports, written once: the
 //! pollers, the tasks and their scheduling groups, the view a library holds, and the heartbeat.
-//! Also `wait_until` of decision 33.
+//! Also `wait_until` and four names of the port of decision 33, over the state of today.
 //! Split from `dispatch.zig` for the 500-line limit.
 const std = @import("std");
 const assert = std.debug.assert;
 const dispatch_module = @import("dispatch.zig");
 const stall_watch = @import("../stall_watch.zig");
+const Heartbeat = @import("../stall.zig").Heartbeat;
 const HeartbeatView = stall_watch.HeartbeatView;
 const SharedLoop = @import("../shared_loop.zig").SharedLoop;
 const tasks_module = @import("../tasks.zig");
@@ -153,6 +154,35 @@ pub fn Calls(comptime Loop: type) type {
         pub fn wait_until(loop: *Loop, limit: WaitLimit) void {
             loop.tables.assert_owner();
             loop.tables.dispatch.until_ns = limit;
+        }
+
+        // The port of decision 33: the reactor of step 3 calls these names, and a plain caller must
+        // not. They make no owner check, so the reactor's tick reaches each word at a fixed offset.
+
+        /// The loop's error set for a tick.
+        const TickError = @FieldType(Loop, "kept_error").Error;
+
+        /// Returns the error that an earlier tick kept, once, and lowers `outstanding` (decision 5,
+        /// amendment of 2026-11-06). Returns at once when no error is kept.
+        pub fn take_kept_error(loop: *Loop) TickError!void {
+            return loop.kept_error.take(&loop.tables.dispatch);
+        }
+
+        /// The word that takes a tick off the fast path while it is above 0: today
+        /// `Dispatch.callbacks_outstanding`.
+        pub fn outstanding(loop: *Loop) *u32 {
+            return &loop.tables.dispatch.callbacks_outstanding;
+        }
+
+        /// The stored limit that bounds the wait of each tick: today `Dispatch.until_ns`, which
+        /// `wait_until` writes too.
+        pub fn stored_limit(loop: *Loop) *WaitLimit {
+            return &loop.tables.dispatch.until_ns;
+        }
+
+        /// The line on which the loop names each callback that it calls (decision 28).
+        pub fn heartbeat_line(loop: *Loop) *Heartbeat {
+            return loop.tables.heartbeat;
         }
     };
 }

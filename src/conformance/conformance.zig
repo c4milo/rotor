@@ -271,5 +271,6 @@ test {
     _ = @import("conformance_wake_reuse.zig");
     _ = @import("conformance_wait_limit.zig");
     _ = @import("conformance_wait_until.zig");
+    _ = @import("conformance_port.zig");
     _ = @import("conformance_registry.zig");
 }

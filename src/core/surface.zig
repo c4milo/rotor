@@ -6,7 +6,8 @@
 //! every host, whichever kernel it needs.
 //!
 //! The list holds names and not signatures. A signature that differs fails where a consumer
-//! calls it, and the conformance suite calls every one.
+//! calls it, and the conformance suite calls every one. `check_port` checks the port of decision
+//! 33 in the same way, and the conformance suite holds the type of each name of the port.
 const std = @import("std");
 
 /// Every public declaration of a backend's `Loop`. Grows with the milestones; a name, once here,
@@ -66,11 +67,35 @@ pub const remote_declarations = [_][]const u8{
     "dropped_wakes",
 };
 
+/// The port of decision 33: what the reactor needs from a backend's `Loop`, and a plain caller must
+/// not call. Each backend declares these names, and the public `rotor.Loop` does not. The public
+/// module does not export this list. A name joins the list at the step that builds its state
+/// (decision 33, amendment of 2026-11-10): `attach_reserved` joins it at step 3, with the hook.
+pub const port_declarations = [_][]const u8{
+    "tick_backend",
+    "take_kept_error",
+    "outstanding",
+    "stored_limit",
+    "heartbeat_line",
+    "push_reserved",
+    "assert_owner",
+};
+
 /// Fails the compile, naming the first declaration `Loop` lacks.
 pub fn check(comptime Loop: type) void {
     inline for (loop_declarations) |name| {
         if (!@hasDecl(Loop, name)) {
             @compileError("backend Loop lacks the declaration '" ++ name ++ "' (core/surface.zig)");
+        }
+    }
+}
+
+/// Fails the compile, naming the first name of the port that `Loop` lacks. Each backend calls it
+/// on its own `Loop`, beside `check`.
+pub fn check_port(comptime Loop: type) void {
+    inline for (port_declarations) |name| {
+        if (!@hasDecl(Loop, name)) {
+            @compileError("backend Loop lacks the port's declaration '" ++ name ++ "' (core/surface.zig)");
         }
     }
 }
@@ -136,6 +161,21 @@ const Complete = struct {
 test "a loop with every declaration passes the check" {
     comptime check(Complete);
     try testing.expectEqual(loop_declarations.len, @typeInfo(Complete).@"struct".decls.len);
+}
+
+const CompletePort = struct {
+    pub fn tick_backend() void {}
+    pub fn take_kept_error() void {}
+    pub fn outstanding() void {}
+    pub fn stored_limit() void {}
+    pub fn heartbeat_line() void {}
+    pub fn push_reserved() void {}
+    pub fn assert_owner() void {}
+};
+
+test "a loop with every name of the port passes the check, and the list is exactly those seven" {
+    comptime check_port(CompletePort);
+    try testing.expectEqual(port_declarations.len, @typeInfo(CompletePort).@"struct".decls.len);
 }
 
 const CompleteRemote = struct {

@@ -17,6 +17,9 @@ pub fn Kept(comptime TickError: type) type {
     return struct {
         const KeptError = @This();
 
+        /// The loop's error set for a tick, which `take` returns.
+        pub const Error = TickError;
+
         /// The error a tick met after it produced events, or null.
         failure: ?TickError,
 

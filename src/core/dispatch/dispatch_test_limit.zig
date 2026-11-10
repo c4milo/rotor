@@ -1,7 +1,7 @@
 //! Tests of the wait limit of decision 29: what `Dispatch.begin` folds from the pollers, what `end`,
 //! `remove_poller` and a wake store, and what `Tables.wait_bound` and `Tables.wait_limit` read. In
 //! a file of their own for the 500-line limit of `dispatch.zig`. The drain's part is in
-//! `inbox_test.zig`. Also `wait_until` of decision 33.
+//! `inbox_test.zig`. Also `wait_until` and the port's names of decision 33 in `dispatch_calls.zig`.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("../core.zig");
@@ -275,4 +275,22 @@ test "wait_until stores the limit that a tick which would block reads, until the
     try testing.expectEqual(@as(?u64, null), tables.wait_bound(10_000));
     calls.wait_until(&host, .none);
     try testing.expectEqual(@as(?u64, 10_000), tables.wait_bound(10_000));
+}
+
+test "the port's words are the dispatch's and the heartbeat's, and a kept error comes back once" {
+    var host: Host = undefined;
+    host.init();
+    const calls = dispatch_calls.Calls(Host);
+    const dispatch = &host.tables.dispatch;
+    try testing.expectEqual(&dispatch.callbacks_outstanding, calls.outstanding(&host));
+    try testing.expectEqual(&dispatch.until_ns, calls.stored_limit(&host));
+    try testing.expectEqual(&host.heartbeat, calls.heartbeat_line(&host));
+    // No error is kept, so the take returns at once and changes nothing.
+    try calls.take_kept_error(&host);
+    try testing.expectEqual(@as(u32, 0), calls.outstanding(&host).*);
+    try testing.expectEqual(@as(u32, 2), try host.kept_error.keep(dispatch, error.Unexpected, 2));
+    try testing.expectEqual(@as(u32, 1), calls.outstanding(&host).*);
+    try testing.expectError(error.Unexpected, calls.take_kept_error(&host));
+    try testing.expectEqual(@as(u32, 0), calls.outstanding(&host).*);
+    try calls.take_kept_error(&host);
 }
