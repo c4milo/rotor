@@ -1,7 +1,7 @@
 //! Tests of the wait limit of decision 29: what `Dispatch.begin` folds from the pollers, what `end`,
 //! `remove_poller` and a wake store, and what `Tables.wait_bound` and `Tables.wait_limit` read. In
 //! a file of their own for the 500-line limit of `dispatch.zig`. The drain's part is in
-//! `inbox_test.zig`.
+//! `inbox_test.zig`. Also `wait_until` of decision 33.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("../core.zig");
@@ -248,4 +248,31 @@ test "wait_limit reads now while a tick's kernel error is kept, and the timer on
     // The next tick takes the error first, and then the host may sleep until the timer.
     try testing.expectError(error.Unexpected, host.kept_error.take(dispatch));
     try testing.expectEqual(WaitLimit.at(3_000), calls.wait_limit(&host));
+}
+
+test "wait_until stores the limit that a tick which would block reads, until the next call" {
+    var host: Host = undefined;
+    host.init();
+    const calls = dispatch_calls.Calls(Host);
+    const tables = &host.tables;
+    // `.none` at init bounds nothing.
+    try testing.expectEqual(WaitLimit.none, tables.dispatch.until_ns);
+    try testing.expectEqual(@as(?u64, 10_000), tables.wait_bound(10_000));
+    // The clock reads 1_000, so a limit at 5_000 leaves a wait of 4_000, in each tick.
+    calls.wait_until(&host, .at(5_000));
+    try testing.expectEqual(WaitLimit.at(5_000), tables.dispatch.until_ns);
+    try testing.expectEqual(@as(?u64, 4_000), tables.wait_bound(10_000));
+    try testing.expectEqual(@as(?u64, 4_000), tables.wait_bound(10_000));
+    try testing.expectEqual(WaitLimit.at(5_000), calls.wait_limit(&host));
+    // A timer before the limit ends the wait first.
+    tables.timers.arm(0, 3_000);
+    try testing.expectEqual(@as(?u64, 2_000), tables.wait_bound(10_000));
+    _ = tables.timers.pop_due(3_000);
+    // `.now`, or a limit at or before the clock, gives no wait.
+    calls.wait_until(&host, .now);
+    try testing.expectEqual(@as(?u64, null), tables.wait_bound(10_000));
+    calls.wait_until(&host, .at(1_000));
+    try testing.expectEqual(@as(?u64, null), tables.wait_bound(10_000));
+    calls.wait_until(&host, .none);
+    try testing.expectEqual(@as(?u64, 10_000), tables.wait_bound(10_000));
 }

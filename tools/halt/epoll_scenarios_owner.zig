@@ -148,6 +148,18 @@ fn reserve_a_group_on_this_thread() void {
     _ = loop.reserve_buffer_group() catch {};
 }
 
+/// `wait_until` from a second thread (decision 33). With the check deleted, the call stores the
+/// limit and returns.
+fn bound_the_wait_from_another_thread() void {
+    loop.init_tables(&memory, &options);
+    on_another_thread(bound_the_wait_on_this_thread);
+}
+
+fn bound_the_wait_on_this_thread() void {
+    scenario.reached_violation();
+    loop.wait_until(.now);
+}
+
 /// A host's `wait_limit` from a second thread (decision 29). With the check deleted, the call reads
 /// the tables and returns `.none`.
 fn read_the_wait_limit_from_another_thread() void {
@@ -342,6 +354,7 @@ pub const scenarios = [_]scenario.Scenario{
         .name = "owner: read the wait limit from another thread",
         .run = read_the_wait_limit_from_another_thread,
     },
+    .{ .name = "owner: bound the wait from another thread", .run = bound_the_wait_from_another_thread },
     .{
         .name = "owner: hand out the view from another thread",
         .run = hand_out_the_view_from_another_thread,

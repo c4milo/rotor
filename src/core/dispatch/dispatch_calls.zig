@@ -1,5 +1,6 @@
 //! The calls of decisions 26 to 30 that every backend's `Loop` exports, written once: the
 //! pollers, the tasks and their scheduling groups, the view a library holds, and the heartbeat.
+//! Also `wait_until` of decision 33.
 //! Split from `dispatch.zig` for the 500-line limit.
 const std = @import("std");
 const assert = std.debug.assert;
@@ -141,6 +142,17 @@ pub fn Calls(comptime Loop: type) type {
         pub fn heartbeat(loop: *Loop) *HeartbeatView {
             loop.tables.assert_owner();
             return stall_watch.view_of(loop.tables.heartbeat);
+        }
+
+        /// Bounds the wait of each tick that follows at `limit`, until the next call (decision 33).
+        /// `.none`, the value at init, bounds nothing, and `.now` makes each tick wait 0 ns. The
+        /// tick compares the limit with its own stamp, as it compares the nearest timer (decision
+        /// 29, item 2). Program only (class B). Until step 3 of decision 33, the pollers' limit
+        /// uses the same word: a tick with a poller writes it again, and the last `remove_poller`
+        /// writes `.none`.
+        pub fn wait_until(loop: *Loop, limit: WaitLimit) void {
+            loop.tables.assert_owner();
+            loop.tables.dispatch.until_ns = limit;
         }
     };
 }

@@ -359,6 +359,8 @@ pub const Loop = struct {
     pub const heartbeat = dispatch_calls.heartbeat;
     // The host's wait limit of decision 29.
     pub const wait_limit = dispatch_calls.wait_limit;
+    // The program's bound on the wait of each tick (decision 33).
+    pub const wait_until = dispatch_calls.wait_until;
     // The cross-core calls of decision 32.
     const call_calls = core.call.loop.Calls(Loop);
     pub const call = call_calls.call;
