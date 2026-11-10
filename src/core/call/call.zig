@@ -339,4 +339,5 @@ test {
     _ = @import("call_test.zig");
     _ = @import("call_test_claim.zig");
     _ = @import("call_test_model.zig");
+    _ = @import("call_test_push.zig");
 }

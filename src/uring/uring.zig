@@ -377,6 +377,7 @@ pub const Loop = struct {
     pub const serve = call_calls.serve;
     pub const stop_serving = call_calls.stop_serving;
     pub const callbacks_outstanding = call_calls.callbacks_outstanding;
+    pub const push_reserved = call_calls.push_reserved;
     /// Notes loop `target` after a call or an answer, as `post` does: the next tick's submit carries
     /// the wake.
     pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {

@@ -375,6 +375,7 @@ pub const Loop = struct {
     pub const serve = call_calls.serve;
     pub const stop_serving = call_calls.stop_serving;
     pub const callbacks_outstanding = call_calls.callbacks_outstanding;
+    pub const push_reserved = call_calls.push_reserved;
     pub const wake_target = submit_module.wake_target;
 
     /// Asks for the cancel of every operation in flight (decision 5, rule 7). Each still ends

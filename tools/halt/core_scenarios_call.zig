@@ -1,7 +1,8 @@
 //! Halt scenarios for the caller's side of the cross-core call of decision 32: `core.call`. Each
 //! reaches its check through the function's own parameters, or through a state that the scenario
 //! sets by hand, and enters no kernel. With the check deleted, each scenario returns, and says how.
-//! `core_scenarios_call_take.zig` holds the target's side and the drain.
+//! `core_scenarios_call_take.zig` holds the target's side and the drain. The push of a call or a
+//! return that the port's `push_reserved` makes (decision 33) is here too.
 const core = @import("core");
 const scenario = @import("scenario.zig");
 
@@ -187,6 +188,44 @@ fn discard_a_task_of_a_call_in_a_group() void {
     _ = dispatch.discard_tasks(&groups);
 }
 
+/// A call message from loop 0 to loop 1, as the port's `push_reserved` takes it (decision 33).
+fn reserved_message(tag: u32) core.Message {
+    return .{ .payload = @intFromPtr(&link), .tag = tag, .reserved = link.generation };
+}
+
+/// A push to the loop that makes it, which no ring serves. With the check deleted, the call goes
+/// into the ring from loop 0 to itself, and `push` returns.
+fn push_to_the_loop_itself() void {
+    start();
+    scenario.reached_violation();
+    _ = call.loop.push(&registry, 0, 0, reserved_message(core.constants.message_tag_call)) catch return;
+}
+
+/// A push of a caller's tag. With the check deleted, `push` pushes it as a return, and returns.
+fn push_a_tag_that_is_not_a_call_or_a_return() void {
+    start();
+    scenario.reached_violation();
+    _ = call.loop.push(&registry, 0, 1, reserved_message(0)) catch return;
+}
+
+/// With the check deleted, the call goes into a ring of shared memory, and `push` returns.
+fn push_in_a_registry_of_a_group() void {
+    start();
+    registry.group = true;
+    scenario.reached_violation();
+    _ = call.loop.push(&registry, 0, 1, reserved_message(core.constants.message_tag_call)) catch return;
+}
+
+/// A return into a ring that every slot fills, which no correct count of calls allows. With the
+/// check deleted, the return is dropped, and `push` returns.
+fn push_a_return_into_a_full_ring() void {
+    start();
+    const ring = registry.mailbox(0, 1);
+    for (0..core.constants.mailbox_messages) |_| _ = ring.push(.{ .payload = 0, .tag = 0 });
+    scenario.reached_violation();
+    _ = call.loop.push(&registry, 0, 1, reserved_message(core.constants.message_tag_return)) catch return;
+}
+
 pub const scenarios = [_]scenario.Scenario{
     .{ .name = "call: send a record that is out", .run = send_a_record_that_is_out },
     .{ .name = "call: send a record whose task is queued", .run = send_a_record_whose_task_is_queued },
@@ -203,4 +242,8 @@ pub const scenarios = [_]scenario.Scenario{
     .{ .name = "call: end a call whose count is zero", .run = end_a_call_whose_count_is_zero },
     .{ .name = "call: discard a queued task of a call", .run = discard_a_queued_task_of_a_call },
     .{ .name = "call: discard a task of a call in a group", .run = discard_a_task_of_a_call_in_a_group },
+    .{ .name = "call: push to the loop itself", .run = push_to_the_loop_itself },
+    .{ .name = "call: push a tag that is not a call or a return", .run = push_a_tag_that_is_not_a_call_or_a_return },
+    .{ .name = "call: push in a registry of a group", .run = push_in_a_registry_of_a_group },
+    .{ .name = "call: push a return into a full ring", .run = push_a_return_into_a_full_ring },
 } ++ @import("core_scenarios_call_take.zig").scenarios ++ @import("core_scenarios_call_view.zig").scenarios;
