@@ -1,10 +1,11 @@
 # 33. A core for the loop, and an optional layer for tasks and callbacks
 
-Status: **proposed** on 2026-11-08, and revised the same day after five reviews. Camilo ruled open
-questions 1, 5, 6, 9, 13 and 16 that day. The ruling on questions 13 and 16 leaves one choice to the
-counts of step 2. This record holds no ruling on the other ten questions. On 2026-11-09 Camilo chose
-the name `reactor` for the internal module ("Ruling on the module's name"). Nothing is built, and
-nothing is built before Camilo accepts this record.
+Status: **accepted** on 2026-11-10 by Camilo ("Rulings, 2026-11-10"). It was proposed on 2026-11-08,
+and revised the same day after five reviews. Camilo ruled open questions 1, 5, 6, 9, 13 and 16 that
+day. On 2026-11-09 he chose the name `reactor` for the internal module ("Ruling on the module's
+name"). On 2026-11-10 he confirmed his chat rulings of 2026-11-08 on the other ten questions, and
+approved each item of "Ask before". The rulings on questions 8, 11, 13 and 16 leave one choice each
+to the counts of step 2. The build starts at step 1.
 
 Every number here is a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an
 earlier record measured, or a prior. A prior is an instruction count from arithmetic over the code
@@ -144,6 +145,44 @@ today: `call_take.zig` declares `call_module`, and `dispatch_calls.zig` declares
 A file with no parameter or variable of that name declares the import as `reactor`, as the sketch of
 `rotor.zig` does. The name of an import does not change the name that the compiler prints. Two tests
 on Zig 0.16.0 showed these facts on 2026-11-09 ("Sources").
+
+## Rulings, 2026-11-10
+
+On 2026-11-08 Camilo ruled ten more open questions in chat, and chose to accept this record and
+start step 1. In the same hour he asked the session to teach him how rotor works as a plain loop and
+as a reactor. So the session held the acceptance and wrote none of those rulings here.
+
+On 2026-11-10 the session put each of them to him again, as a question with its choices. The first
+choice of each row was the ruling of 2026-11-08. He gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| Decision 33 leaves 28 names on a plain `rotor.Loop`, against libxev's 12 | keep the 28; a draft of a smaller buffer API; the 9 buffer calls as free functions; no `assert_empty` | **keep the 28** |
+| 2. Forwarders on `rotor.Loop` for one release | none; forwarders for v0.11.0 | **none** |
+| 3. The stall count | stays in the core; moves to the reactor | **stays in the core** |
+| 4. The 32 slots of each ring for returns | a plain loop keeps them for now; an option for the reserve | **a plain loop keeps them for now** |
+| 10. What v0.11.0 carries | this record alone; other work too | **this record alone** |
+| 7. Decision 7's list | `reactor_tick.zig` joins it for one cold hint, which the counts must justify; no new file | **as proposed** |
+| 8 and 11. The forms of `call` and `record` | step 2 builds both forms, and Camilo chooses with the counts; the plain form, with a stop at a loss over 2 percent | **both forms, and the counts decide** |
+| 12. A call to a target that takes no calls | `LoopNotFound`; the halt on the target | **`LoopNotFound`** |
+| 14 and 15. The rename to `group()`, and the core's types in `core.zig` | both; only the rename; neither | **both** |
+| The three new edges of the module graph | confirm; not yet | **confirm** |
+| The layout of `Tables`, of a loop's memory and of the heartbeat line, and the move of the reactor's limits | approve; not yet | **approve** |
+| Acceptance | accept, and start step 1; accept, and build later; not yet | **accept, and start step 1** |
+
+What the choices said, where a ruling depends on it:
+
+- **The 28 names.** Camilo asked whether rotor is as light as libxev and libuv in its API. The
+  session counted 12 calls on libxev's loop at the pinned commit `9ce8e8e`. It counted 318
+  functions in libuv's `uv.h` at v1.52.1. The question said that the gap to libxev is in three
+  groups that libxev does not have: buffers, posts between loops, and the reports and the host's
+  wait.
+- **Question 12.** The choice said that the check costs one load and one branch in each `call`.
+- **The layout.** The question named the changes of "Ask before": `Tables` loses `Dispatch` and
+  `groups`, a plain loop's memory loses `Groups`, the heartbeat line gains `poller_name` in its
+  padding and stays 128 B, and the limits move with no value changed.
+
+So each open question of this record has a ruling. Each item of "Ask before" is approved.
 
 ## Context
 
@@ -1191,16 +1230,19 @@ The mutations of step 3, each against the narrowest target:
 2. **Does `rotor.Loop` keep forwarders for the reactor's names for one release?** Proposed: no.
    colibri may take v0.10.0's `SharedLoop` before this release. Ruling item 4 keeps that name out of
    colibri's public API, so its move is one type and one call in its adapter and its tests. A
-   forwarder would spare that, and keep the reactor's state in every plain loop.
+   forwarder would spare that, and keep the reactor's state in every plain loop. *Ruled on
+   2026-11-08, and confirmed on 2026-11-10: no forwarders.*
 3. **Does the stall count stay in the core?** Proposed: yes, with the stamp, the turn check and the
    watch. The two counts of the turn, which the stamp zeroes, are the reactor's data on the core's
    line. So are `turn_group`, the new `poller_name`, and the id `SchedulingGroup` that a stall
    reports. A later change can move the store of the counts into the reactor's tick, if a count
-   shows a gain.
+   shows a gain. *Ruled on 2026-11-08, and confirmed on 2026-11-10: the stall count stays in the
+   core, with the stamp, the turn check and the watch.*
 4. **Does a plain loop keep the 32 slots of each ring for returns?** Proposed: yes, for now. A
    registry option for the reserve adds a load to each post, and a ring shared by a reactor and a
    plain loop needs one answer. The cost is a post that sees 224 slots, where it saw 256 before
-   decision 32.
+   decision 32. *Ruled on 2026-11-08, and confirmed on 2026-11-10: a plain loop keeps the 32 slots,
+   for now.*
 5. **Is the `dispatched` bit in the core inside what the ruling allows?** Ruling item 2 puts
    completion records with callbacks in the reactor. So this record moves `Completion`,
    `Completion.Call` and the builder, which becomes `Completion.mark`. The core keeps one bit in
@@ -1233,11 +1275,12 @@ The mutations of step 3, each against the narrowest target:
    files stay on the list for a cold hint on the plain tick's branch to `take_kept_error`, and H1 to
    H3 name that function. No row changes on arithmetic alone: step 3 counts each hint with and
    without it, as d1657ce counted H1 to H3. A hint that shows no gain is removed, and its row is
-   struck.
+   struck. *Ruled on 2026-11-08, and confirmed on 2026-11-10: as proposed.*
 8. **What if the hook makes `call` count more than at v0.10.0?** Proposed: the step then gives
    each backend's `Loop` a comptime parameter, the type of its hook, `void` for a plain loop. The
    call is then direct, at the cost of a second instance of each backend in a program that runs a
-   plain loop beside a reactor. Camilo rules with the counts of both forms.
+   plain loop beside a reactor. Camilo rules with the counts of both forms. *Ruled on 2026-11-08,
+   and confirmed on 2026-11-10: step 2 builds both forms, and Camilo chooses with the counts.*
 9. **Does decision 31's disk scheduler move into the reactor?** Proposed: yes, as a holder in front
    of the core's `submit`, so a plain loop pays nothing for it. Decision 31 is accepted, and put it
    in each backend's flush, so this record amends it. Its capacity and share rules do not change.
@@ -1246,11 +1289,13 @@ The mutations of step 3, each against the narrowest target:
    own arithmetic. *Ruled on 2026-11-08: the scheduler goes in the reactor, and this record amends
    decision 31.*
 10. **Does v0.11.0 carry this record alone?** Proposed: yes. Each consumer then moves once for
-    the split, and a later release carries new behaviour.
+    the split, and a later release carries new behaviour. *Ruled on 2026-11-08, and confirmed on
+    2026-11-10: v0.11.0 carries this record alone.*
 11. **What if the reactor's count at submit makes `record` count more than at v0.10.0?** Proposed:
     the core's `submit` then adds the `dispatched` bits to `outstanding`, as `Tables.submit` counts
     them today. A plain loop then keeps that part of decision 26's 8 instructions for each
-    operation. Camilo rules with the counts of both forms.
+    operation. Camilo rules with the counts of both forms. *Ruled on 2026-11-08, and confirmed on
+    2026-11-10: step 2 builds both forms, and Camilo chooses with the counts.*
 12. **How does `call` refuse a target that takes no calls?** Proposed: `attach_reserved` marks the
     loop in its registry before the loop runs, and `call` returns `LoopNotFound` for a target with
     no mark. That error already covers a loop that is not running and a remote, so `CallError`
@@ -1260,7 +1305,8 @@ The mutations of step 3, each against the narrowest target:
     it. A target that served and stopped answers `target_stopped`, as today. The mark covers only
     the kind of loop. A call to a reactor that never served the service still halts on the
     target, as decision 32 chose. A call in decision 32's W4 window, where the target ends and a
-    plain loop takes its id, halts the plain loop; W4 decides that window.
+    plain loop takes its id, halts the plain loop; W4 decides that window. *Ruled on 2026-11-08,
+    and confirmed on 2026-11-10: `call` returns `LoopNotFound` for a target with no mark.*
 13. **How does `rotor.Reactor(rotor.Loop)` reach the backend's port?** Proposed: it is a private
     type of the public module, a tagged union of `reactor.Reactor(uring.Loop)` and
     `reactor.Reactor(epoll.Loop)` on Linux, and `reactor.Reactor(kqueue.Loop)` on Darwin. Each
@@ -1277,6 +1323,7 @@ The mutations of step 3, each against the narrowest target:
     question 10). The call returns the loop's `SchedulingGroup` for the named group, and `group`
     says that. The cost is one more line of the migration. The name came with decision 30 in
     v0.10.0, and each consumer pins an older tree ("What the code does today"), so none calls it.
+    *Ruled on 2026-11-08, and confirmed on 2026-11-10: the rename lands in v0.11.0.*
 15. **Where are the types declared that print a repeat today?** "Where each type is declared"
     puts each type of this record in a root file. The public module's other types print the file
     that declares them: `rotor_loop.Loop`, `rotor_loop.Remote`, `statistics.Statistics`,
@@ -1288,7 +1335,8 @@ The mutations of step 3, each against the narrowest target:
     release can declare them in `rotor.zig` too. The same question holds for a root that passes
     500 lines: proposed, a type then goes in a file whose name, followed by the type's name,
     repeats nothing, as `view.zig` with `SharedLoop` would. The cost of the move is lines in each
-    root, and one more change to the messages of `build/compile_fail.zig`.
+    root, and one more change to the messages of `build/compile_fail.zig`. *Ruled on 2026-11-08,
+    and confirmed on 2026-11-10: as proposed.*
 16. **Is `rotor.Reactor(rotor.Loop)` strange to a Zig programmer, when it holds no
     `rotor.Loop`?** "What the argument means" gives the consequences. Proposed: keep it, as the
     ruling on the names wrote it. The argument names the loop that the reactor runs, and no call of
@@ -1308,6 +1356,9 @@ The mutations of step 3, each against the narrowest target:
     type is checked at the same step.*
 
 ## Ask before
+
+Camilo approved each item of this list on 2026-11-10 ("Rulings, 2026-11-10"). The session put the
+first two to him as questions of their own. He approved the others when he accepted the record.
 
 - Three new edges of the module graph: `reactor` to `core`, `rotor` to `reactor`, and `conformance`
   to `reactor`.
