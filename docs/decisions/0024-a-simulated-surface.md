@@ -4,6 +4,16 @@ Status: proposed on 2026-11-03, not ruled on. It would amend decision 10, which 
 simulator for consumers only". Decision 10 stays as it is until Camilo rules on this record.
 Nothing in rotor changes before that.
 
+Amended on 2026-11-11 by decision 33, which Camilo accepted on 2026-11-10. This record stays
+proposed. The simulation it proposes is a twin of decision 10, so decision 10's amendment of
+2026-11-11 holds for it too:
+
+- The surface of `src/core/surface.zig` holds 28 names. The names of the reactor are not in it.
+- A simulation that drives a reactor also declares the 8 names of the port, `port_declarations`.
+  It gets the reactor from `rotor.Reactor(Twin)`, so a search over orders runs the reactor's own
+  code.
+- A simulation carries no `shared` or `SharedLoop`. The reactor makes the view.
+
 ## Context
 
 ### The bug that asked for it

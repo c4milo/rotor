@@ -16,6 +16,28 @@ is `tag > message_tag_max`, which finds the wake, a call and a return. A ring wh
 such a tag hands the rest of the drain to its backend's slow path, which takes each one in the
 order of its ring. A drain that took a wake still tells the dispatch.
 
+Amended on 2026-11-11 by decision 33, step 3. The pollers moved to the reactor, the module `reactor`,
+and the stored limit stayed in the core:
+
+- `WaitLimit` is declared in `src/core/core.zig`, and the compiler prints `core.WaitLimit`.
+  `Completion` and `Poller` are declared in `src/reactor/reactor.zig`. Their functions are in
+  `src/reactor/dispatch/dispatch_callbacks.zig`.
+- `Dispatch.until_ns` is `stored_limit` in the core's `Tables`. On a reactor, only the reactor's
+  code writes it, through the port's `stored_limit()`. It writes it at steps 1, 4 and 5 of "What
+  the loop does" in section 2. Step 2, `Tables.wait_bound`, reads it as before.
+- A plain `rotor.Loop` gains `wait_until`, which stores the limit. Only the program calls it.
+- Section 2 rejected `bound_wait(at_ns)` beside the poller's answer, because a poller would have
+  two ways to say "do not block". Decision 33 keeps one way on each kind of loop: `wait_until` on
+  a plain loop, and a poller's `WaitLimit` on a reactor. `wait_until` fails to compile on a reactor
+  and on `SharedLoop`. So decision 33 does not reverse that choice.
+- The `wait_limit` of section 4 is the loop's in `src/core/loop_calls.zig`, and the reactor's in
+  `src/reactor/dispatch/dispatch_calls.zig`. The reactor's answers `.now` while a task is queued,
+  and otherwise the loop's answer.
+- The drain hands a wake to the hook that the reactor attaches with `attach_reserved`. The hook,
+  `Dispatch.take_reserved` in `src/reactor/call/call_loop.zig`, stores `.now` while a poller is
+  added. This replaces `Dispatch.note_wake`. A plain loop has no hook, and drops a wake.
+- `BufferGroup`, `reserve_buffer_group` and `Message.wake` stay in the core.
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"

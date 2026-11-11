@@ -9,6 +9,26 @@ count from arithmetic. Nothing was measured for this record before the ruling.
 Amended on 2026-11-07 by Camilo's ruling: the suite's check of each callback reads the thread's CPU
 clock (see "Amendment of 2026-11-07" at the end).
 
+Amended on 2026-11-11 by decision 33, step 3. The view and the names of the callbacks moved to the
+reactor, the module `reactor`. The stall count, the stamp, the turn check, the heartbeat line and
+`Heartbeat.watch` stay in the core, because a plain loop has turns too. Where this record names a
+file or a name, read:
+
+| this record | after decision 33 |
+|---|---|
+| `src/core/shared_loop.zig`, with `SharedLoop(Loop)` and `check` | `src/reactor/reactor_shared.zig`. Each reactor type declares its view as `SharedLoop`, inside its own struct |
+| `rotor.SharedLoop`, the view of `rotor.Loop` | the view of `rotor.Reactor(rotor.Loop)`, which is `rotor.Reactor(rotor.Loop).SharedLoop` |
+| `loop.shared()` | `reactor.shared()`. `rotor.Loop` has no `shared` |
+| `core/surface.zig` lists `shared` and `heartbeat` | it lists `heartbeat` alone. A twin carries no `shared` and no `SharedLoop` (decision 10) |
+| the refused calls `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` | the same five, the three of decision 30, and `wait_until`: a library bounds the wait with a poller. A reactor refuses `wait_until` too |
+| the reactor's writes on `tables.heartbeat` | writes on the line that the port's `heartbeat_line()` returns |
+| `name_of_one` reads the pollers' table | it reads the line's field `poller_name`. The reactor writes it through `name_poller` at each `add_poller` and `remove_poller`. The line stays 128 B |
+| the check that no tick runs inside a tick | the reactor's, in `Dispatch.begin` |
+
+The programs of `tools/compile_fail/` take a `*rotor.SharedLoop`, which is now the view of the
+host's reactor. Two new cases, `reactor_wait_until.zig` and `shared_wait_until.zig`, hold the
+refusal of `wait_until`.
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"

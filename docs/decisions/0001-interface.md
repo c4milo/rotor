@@ -21,6 +21,26 @@ library owns, and the tick calls it for each event of that operation. The event 
 default, and an operation that names no record is as before. The record replaces the dispatch
 helper's table below. A loop also calls up to `pollers_max` pollers once in each tick.
 
+Amended on 2026-11-11 by decision 33, step 3. The module graph and the public module change:
+
+- A new module, `reactor`, under `src/reactor/`, holds the records with callbacks, the pollers, the
+  tasks, the scheduling groups, the cross-core calls and `SharedLoop`. It imports `core` alone.
+- The graph gains three edges: `reactor` to `core`, `rotor` to `reactor`, and `conformance` to
+  `reactor`. No backend imports `reactor`.
+- The public module exports the generic `rotor.Reactor(Loop)` beside `Loop`. A program writes
+  `rotor.Reactor(rotor.Loop)`, and a twin of decision 10 writes `rotor.Reactor(Twin)`.
+- The host's reactor holds a `rotor.Loop` by value, and the reactor's state beside it. Its
+  functions are in `src/rotor/rotor_reactor.zig`.
+- `rotor.Loop` carries the 28 names of `core/surface.zig` and 6 error sets. It lost 16 names to the
+  reactor, and gained `wait_until`.
+- `core/surface.zig` also lists the port of decision 33, 8 names that each backend's `Loop`
+  declares. `rotor.Loop` does not declare them, so they are not API for a program.
+- An operation names a record with `rotor.Completion.mark(&record, operation)`, which replaces
+  `Operation.completion`. Only a reactor calls a record or a poller. The event batch stays the
+  core's shape.
+- Item 9 of the amendment of 2026-11-07 changes again. `AddPollerError` and `ScheduleError` are
+  error sets of `rotor.Reactor(rotor.Loop)`, and `rotor.Loop` declares neither.
+
 ## Context
 
 Zig 0.16 defines `std.Io`, an interface of function pointers. rotor can implement that table

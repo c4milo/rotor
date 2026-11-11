@@ -5,6 +5,22 @@ rate rule is not accepted. Nothing is built. Every cost here is a prior: a row o
 row of `bench/baseline/work.txt`, or an instruction count from arithmetic. Nothing was measured for
 this record.
 
+Amended on 2026-11-11 by decision 33, which Camilo accepted on 2026-11-10. He ruled on 2026-11-08
+that this scheduler goes in the reactor, the module `reactor` (decision 33, open question 9). It is
+a holder in front of the core's `submit`, so a plain `rotor.Loop` pays nothing for it. Nothing of
+this record is built, so no code moved. The capacity rule and the share rule do not change. These
+parts of the text change:
+
+- The amendments of decisions 11, 12 and 20 at the flush of a file operation do not apply. The
+  scheduler is not a step of each backend's flush.
+- The options are not on `Loop.Options` of every backend and of `rotor.Loop`. They are the
+  reactor's. Decision 33 does not say which type of the reactor holds them.
+- The note on decision 7's hot files does not apply: the flush files gain no branch.
+
+The word "reactor" in requirement 2, "robust under one reactor per core", means one loop for each
+CPU core. Since decision 33, a reactor in rotor is a value of `rotor.Reactor(Loop)`, and a plain
+loop is not one. The requirement covers each loop of a core: a plain loop or a reactor.
+
 ## Ruling, 2026-11-07
 
 Camilo ruled on decisions 30, 31 and 32 together. For this record:

@@ -20,6 +20,21 @@ Amended on 2026-11-08 by decision 32, for the task of a cross-core call:
   the address of a record that holds a task, and only the loop that owns the record queues it,
   on its own queue.
 
+Amended on 2026-11-11 by decision 33, step 3. The task queue moved from the core to the reactor, the
+module `reactor`. Camilo ruled on 2026-11-08 that tasks go in an optional layer (decision 33,
+"Ruling, 2026-11-08"). That ruling replaces ruling item 2 below, "The task queue is in core". The
+rules of the queue do not change. Where this record names a file or a name, read:
+
+| this record | after decision 33 |
+|---|---|
+| `src/core/tasks.zig`, `src/core/tasks_test.zig` | `src/reactor/tasks.zig`, `src/reactor/tasks_test.zig`. `Task` is declared in `src/reactor/reactor.zig` |
+| `Loop.schedule`, `is_scheduled`, `tasks_queued`, `task_budget_left`, `discard_tasks` | calls of `rotor.Reactor(rotor.Loop)`, in `src/reactor/dispatch/dispatch_calls.zig`. A plain `rotor.Loop` has none |
+| `callbacks_outstanding` | `outstanding` in the core's `Tables`. The reactor reaches it through the port's `outstanding()` |
+| the drain's wait for tasks, in `src/core/shutdown.zig` | `src/reactor/reactor_shutdown.zig`, whose `drain` returns `TasksStillQueued` as before. The loop's own `drain` waits on `in_flight` alone, and its `DrainError` has no `TasksStillQueued` |
+| `tasks_per_tick_max`, `tasks_queued_max` and `task_queue_length_max` in `src/core/constants.zig` | `src/reactor/constants.zig`, with no value changed |
+| `tools/halt/core_scenarios_tasks.zig`, `tools/halt/core_scenarios_dispatch.zig` | `tools/halt/reactor_scenarios_tasks.zig`, `tools/halt/reactor_scenarios_dispatch.zig` |
+| the owner checks in each backend's owner file | `tools/halt/kqueue_scenarios_owner.zig` and `tools/halt/epoll_scenarios_owner.zig` add the scenarios of `tools/halt/reactor_owner_calls.zig`, which check through the port's `assert_owner`. The io_uring scenarios add none of them |
+
 ## Ruling, 2026-11-06
 
 Camilo ruled on these points:

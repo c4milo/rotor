@@ -4,6 +4,17 @@ Status: **accepted** by Camilo on 2026-10-12, and **built** the same day. "Rulin
 Camilo decided, and "What was built" follows it. Decision 20's ruling on its open question 5, the
 fallback at init, stands: it is still what a process gets when it asks for nothing.
 
+Amended on 2026-11-11 by decision 33, step 3. A host reads `wait_limit` and `wait_descriptor` on the
+type it ticks: a plain `rotor.Loop`, or a `rotor.Reactor(rotor.Loop)`. The two types answer
+`wait_limit` in different ways:
+
+- A plain loop answers `.now` for the core's reasons. Otherwise it answers the least of the nearest
+  timer and the limit that the program stores with `wait_until` (`src/core/loop_calls.zig`).
+- A reactor answers `.now` while a task is queued. Otherwise it answers what its loop answers, which
+  holds the limit of its pollers (`src/reactor/dispatch/dispatch_calls.zig`).
+
+A reactor forwards `wait_descriptor` to its loop, so the descriptor is the same.
+
 ## Context
 
 Some programs cannot sleep inside `tick`. stompy is the first. It runs a rotor loop inside a

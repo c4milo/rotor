@@ -11,6 +11,25 @@ holds, until it answers. The queued task of a call counts as any task does. So t
 only when the loop owes no callback, a call included. `drain` ticks while it is above 0, and
 `deinit` halts while a call is out or held, or while a station of the loop serves.
 
+Amended on 2026-11-11 by decision 33, step 3. The records and the pollers moved to the reactor, the
+module `reactor`. A plain `rotor.Loop` calls no record and no poller. It hands each event to the
+caller of `tick`, also an event with the `dispatched` bit set. The core keeps that bit in
+`Operation`, `Slot` and `Event`. It copies the bit and never reads it (decision 33, open question 5).
+Where this record names a file or a name, read:
+
+| this record | after decision 33 |
+|---|---|
+| `src/core/dispatch.zig`, later `src/core/dispatch/` | `src/reactor/dispatch/`. `Completion` and `Poller` are declared in `src/reactor/reactor.zig` |
+| `Operation.completion(record)` | `rotor.Completion.mark(&record, operation)` |
+| the count of records in `Tables.submit` | the reactor's `submit`, after the core's `submit` (`src/reactor/dispatch/dispatch_calls.zig`) |
+| `callbacks_outstanding` in `Dispatch` | `outstanding` in the core's `Tables`. The reactor reaches it through the port's `outstanding()`. A plain loop raises it only for a kept tick error |
+| `idle()`, and `tick_dispatched` in each backend | the reactor's `tick` and `tick_dispatched`, in `src/reactor/reactor_tick.zig` |
+| `pollers_max` in `src/core/constants.zig` | `src/reactor/constants.zig`, with no value changed |
+| `Loop.add_poller`, `Loop.remove_poller` | calls of `rotor.Reactor(rotor.Loop)` and of its `SharedLoop` |
+| `tools/halt/core_scenarios_dispatch.zig` | `tools/halt/reactor_scenarios_dispatch.zig` |
+
+The scenarios of `conformance_dispatch.zig` run on `reactor.Reactor(backend.Loop)`.
+
 ## Context
 
 colibri asked for this in rotor issue 14. colibri's client and server and cocuyo's resolver will

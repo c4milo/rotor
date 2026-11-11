@@ -4,6 +4,12 @@ Status: accepted for implementation on 2026-09-19. Camilo gave the instruction t
 did not rule on the open questions below, so the implementation follows the proposed answer to
 each until a ruling changes it.
 
+Amended on 2026-11-11 by decision 33, step 3. The rows "tasks", "cross-core calls", "scheduling
+groups" and "shared loop" stay in version one. Each is now a part of the reactor, the module
+`reactor` under `src/reactor/`. A program gets them from `rotor.Reactor(rotor.Loop)`, and a plain
+`rotor.Loop` has none of them. The records with callbacks and the pollers of decision 26 are the
+reactor's too. The row "stalls" stays the core's, on a plain loop and on a reactor.
+
 ## Context
 
 The proposal: Linux io_uring and macOS kqueue, TCP sockets, regular files with O_DIRECT, timers,

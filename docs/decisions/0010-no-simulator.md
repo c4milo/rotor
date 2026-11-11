@@ -7,6 +7,26 @@ and 9, each of which now says so under its status line.
 Amended on 2026-11-06 by Camilo's ruling: build the seeded shuffle of each reaped batch now.
 "Amendment of 2026-11-06" at the end says what was built.
 
+Amended on 2026-11-11 by decision 33, step 3. A twin carries less, and gets the reactor from rotor:
+
+- A twin declares the 28 names of `core/surface.zig`. A twin that drives a reactor also declares
+  the 8 names of the port, `port_declarations` in the same file: `tick_backend`,
+  `take_kept_error`, `outstanding`, `stored_limit`, `heartbeat_line`, `attach_reserved`,
+  `push_reserved` and `assert_owner`.
+- A twin gets the reactor from `rotor.Reactor(Twin)`, which is `reactor.Reactor(Twin)` of
+  `src/reactor/reactor.zig`. The twin holds no code of the reactor.
+- A twin no longer carries `shared` or `SharedLoop`. The reactor makes the view, and `Service` and
+  `CallRecord` over it. So the amendment of 2026-11-06 on the view and the heartbeat now holds for
+  `heartbeat` alone.
+- `core.shared_loop.check` is `reactor.shared.check`, in `src/reactor/reactor_shared.zig`.
+- A twin that lacks a name fails to compile with one error that names each missing declaration
+  (`src/reactor/reactor_check.zig`).
+- `docs/using.md`, in its part "A reactor", gives the signatures of the port for a twin's author.
+  `examples/twin.zig` is a twin outside the tree, which imports only the module `rotor`.
+- In the amendment on the seeded shuffle, `Dispatch.end` is in `src/reactor/dispatch/dispatch.zig`,
+  and `tick_dispatched` is in `src/reactor/reactor_tick.zig`. The shuffle stays in each backend's
+  tick, which the port's `tick_backend` runs.
+
 ## Context
 
 The brief asked for a deterministic simulator before any backend, as stompy's non-negotiable 4

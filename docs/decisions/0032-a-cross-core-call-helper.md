@@ -6,6 +6,41 @@ decision 30 (see "What was built" and "Finish, 2026-11-08"). Every cost in the s
 those two is a prior: a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, or an
 instruction count from arithmetic. Those two sections hold the measured counts.
 
+Amended on 2026-11-11 by decision 33, step 3. The calls moved to the reactor, the module `reactor`.
+Their transport stays in the core: the reserved tags, the drain's slow path, `calls_out` and the 32
+slots of each ring kept for returns. The behaviour does not change, except for one refusal below.
+Where this record names a file or a name, read:
+
+| this record | after decision 33 |
+|---|---|
+| `src/core/call/` | `src/reactor/call/`. `Answer`, `CallResult`, `CallOptions`, `CallLink` and `CallStation` are declared in `src/reactor/reactor.zig` |
+| `src/rotor/rotor_service.zig`, with `rotor.Service` and `rotor.CallRecord` | the file is gone. `rotor.Service` and `rotor.CallRecord` are `rotor.Reactor(rotor.Loop).Service` and `rotor.Reactor(rotor.Loop).CallRecord`, declared in `src/rotor/rotor.zig`. A twin's program writes `rotor.Reactor(Twin).Service` |
+| `call`, `answer`, `serve` and `stop_serving` on `Loop` | calls of the reactor and of its `SharedLoop`. A plain `rotor.Loop` has none |
+| the push of a call or a return inside `call` | `reserved.push`, in `src/core/reserved.zig`. The reactor reaches it through the port's `push_reserved`, which then wakes the target |
+| each backend's `wake_target`, which the call makes | the backend's own `push_reserved` makes it. It is not a name of the port |
+| the drain's direct call of the take of a call | the drain hands each wake, call and return to the hook that the reactor attaches with `attach_reserved`. The hook is `Dispatch.take_reserved`, in `src/reactor/call/call_loop.zig`. `Tables` holds it as a `reserved.Hook`, 16 B |
+| `callbacks_outstanding` | `outstanding` in the core's `Tables`. The reactor reaches it through the port's `outstanding()` |
+| item 2: `Tables.wait_bound` reads the task queues | it does not. A drain that hands a call or a return to the hook sets `Inbox.handed`, and the tick that took it does not block |
+| item 4: the drain of `src/core/shutdown.zig`, and `Tables.assert_calls_ended` | `src/reactor/reactor_shutdown.zig`, and `Dispatch.assert_calls_ended` in `src/reactor/dispatch/dispatch_calls.zig` |
+| `services_max`, `call_tasks_max` and `task_queue_length_max` in `src/core/constants.zig` | `src/reactor/constants.zig`, with no value changed. `calls_per_pair_max`, `mailbox_posts_max`, `message_tag_call` and `message_tag_return` stay in the core |
+| `tools/halt/core_scenarios_call.zig`, `core_scenarios_call_take.zig` and `core_scenarios_call_view.zig` | `tools/halt/reactor_scenarios_call.zig`, `reactor_scenarios_call_take.zig` and `reactor_scenarios_call_view.zig`. The checks that stayed in the core are in `tools/halt/core_scenarios_reserved.zig` |
+
+The refusal, from decision 33, open question 12:
+
+- `attach_reserved` marks the loop in its registry as a loop that takes calls.
+- A `call` to a loop with no mark, which is a plain loop, returns `LoopNotFound` on the caller's
+  thread. At v0.10.0 every loop took calls.
+- A call to a reactor that never served the service still halts on the target, as the table of
+  wrong use in "The surface" says.
+- `src/conformance/conformance_call_plain.zig` holds the refusal on each backend.
+
+The work gate holds the `call` row to the counts of step 3, and not to those of v0.10.0 (decision
+33, "Amendment, 2026-11-11: the `call` row").
+
+The word "reactor" in requirement 2, "robust under one reactor per core", means one loop for each
+CPU core. Since decision 33, a reactor in rotor is a value of `rotor.Reactor(Loop)`, and a plain
+loop is not one. The requirement covers each loop of a core: a plain loop or a reactor.
+
 ## What was built, 2026-11-07
 
 The call is built on io_uring, epoll and kqueue, through `src/core/call/` and the public module's

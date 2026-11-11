@@ -8,6 +8,24 @@ priors: a row of `docs/costs.md` at the `mac` median, or an instruction count fr
 the code at `5e9490d` and the counts of `bench/baseline/work.txt`. "What was built" holds the
 measured counts.
 
+Amended on 2026-11-11 by decision 33, step 3. The scheduling groups moved to the reactor, the module
+`reactor`. A plain `rotor.Loop` has no groups and no memory for them. The rules of this record do
+not change. Where this record names a file or a name, read:
+
+| this record | after decision 33 |
+|---|---|
+| `src/core/scheduling/` | `src/reactor/scheduling/`. `NamedSchedulingGroup` is declared in `src/reactor/reactor.zig` |
+| the id `SchedulingGroup` | declared in `src/core/core.zig`, because the stall line names a group with it. The compiler prints `core.SchedulingGroup` |
+| `NamedSchedulingGroup.scheduling_group()` | `NamedSchedulingGroup.group()` (decision 33, open question 14) |
+| `Groups`, carved from the loop's memory, and `Tables.groups` | `Groups`, carved by the reactor from the end of its own memory (`groups_in`, `src/reactor/reactor_calls.zig`). `Tables` has no `groups`. A reactor's `memory_bytes` is the loop's bytes, then the 536 B of `Groups` at their alignment |
+| `named_groups` in each backend's `Loop.Options` | a field of the reactor's `Options`, whose default is the root's `rotor_scheduling_groups` |
+| `root_groups` of `src/rotor/rotor_loop.zig` | `reactor.root_groups`, in `src/reactor/scheduling/scheduling.zig` |
+| `schedule_in`, `charge_task`, `reserve_scheduling_group` and `set_scheduling_group_shares` on `Loop` | calls of `rotor.Reactor(rotor.Loop)`. A plain `rotor.Loop` has none |
+| `scheduling_shares_max`, `scheduling_shares_default`, `scheduling_unit_credit`, `task_charge_max` and `visits_per_run_max` in `src/core/constants.zig` | `src/reactor/constants.zig`, with no value changed. `scheduling_groups_max` stays in the core |
+| `tools/halt/core_scenarios_scheduling.zig` | `tools/halt/reactor_scenarios_scheduling.zig` |
+
+`proofs/README.md` names the new path of `scheduling_run.zig`.
+
 ## What was built, 2026-11-07
 
 The groups are built on io_uring, epoll and kqueue, through `src/core/scheduling/` and the public
