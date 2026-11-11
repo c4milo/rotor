@@ -25,6 +25,7 @@ pub const programs = [_]Program{
     .{ .name = "offload", .root = "examples/offload.zig", .checker = null },
     .{ .name = "stall_watch", .root = "examples/stall_watch.zig", .checker = null },
     .{ .name = "twin", .root = "examples/twin.zig", .checker = null },
+    .{ .name = "two_adapters", .root = "examples/two_adapters.zig", .checker = "tools/two_adapters_check.zig" },
 };
 
 /// The Zig sources under `examples/`, which the lint and the format check read. They are named file by
@@ -36,6 +37,7 @@ pub const sources = [_][]const u8{
     "examples/offload.zig",
     "examples/stall_watch.zig",
     "examples/twin.zig",
+    "examples/two_adapters.zig",
     "examples/consumer/build.zig",
 };
 
@@ -48,6 +50,7 @@ const excerpted_files = [_][]const u8{
     "examples/offload.zig",
     "examples/stall_watch.zig",
     "examples/twin.zig",
+    "examples/two_adapters.zig",
     "examples/consumer/build.zig",
 };
 
