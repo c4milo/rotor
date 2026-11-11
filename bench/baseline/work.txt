@@ -122,6 +122,9 @@
 # `mac`), and the same rows of macOS kqueue (the median of 5 runs on `mac` at a load average of
 # about 30). An x86-64 virtual machine under QEMU on `mac`, with its clock driven by the count of
 # instructions, gave CI's counts at `f101917` and `7679de4` on every row but epoll `wait`.
+# On 2026-11-11 main's CI run 43105312514 at `b9dbe0f` counted x86-64 after that fix. It gave the
+# virtual machine's counts on every row. The x86-64 lines that the gate asked to lower are its
+# counts, and so are both `call` lines, by decision 33's amendment of 2026-11-11.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -137,30 +140,30 @@ tasks-groups-4 11543
 tasks-groups-16 12264
 call 2581
 section linux-x86_64-uring
-post-operation 3169
-timer 1165
+post-operation 3028
+timer 1123
 batch 26376
-post 1169
-task 617
+post 1111
+task 598
 tasks-64 4158
 record 1296
 poller 564
-tasks-groups-4 12238
-tasks-groups-16 13054
-call 2533
+tasks-groups-4 11520
+tasks-groups-16 12324
+call 2530
 section linux-x86_64-epoll
 post 1289
-timer 1211
+timer 1186
 batch 26194
 wait 709
-post-operation 3367
+post-operation 3296
 task 668
 tasks-64 4236
 record 1353
 poller 634
-tasks-groups-4 12297
-tasks-groups-16 13113
-call 2690
+tasks-groups-4 11590
+tasks-groups-16 12394
+call 2747
 section linux-aarch64-uring
 post 994
 post-operation 2780
