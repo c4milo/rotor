@@ -1397,6 +1397,22 @@ The mutations of step 3, each against the narrowest target:
     reactor rows, and Camilo rules with the counts. The reactor's state apart from the backend's
     type is checked at the same step.*
 
+    *Ruled on 2026-11-11, with step 2's counts: form H, the host's reactor that holds a
+    `rotor.Loop`.* Step 2 built both forms on two branches, and each passed every gate. The facts
+    that the question put to Camilo:
+    - The work gate's reactor rows run on `reactor.Reactor(backend.Loop)`, so they cannot separate
+      the two forms. On arm64 with cachegrind and on `mac`, each row of both forms was at or below
+      its count at step 1.
+    - A program outside the tree ran the reactor's rows through `rotor.Reactor(rotor.Loop)`. On
+      arm64 with cachegrind, each row was equal in both forms and in `rotor.Loop` at step 1.
+    - No part of the reactor's state names a backend type, so the state can sit beside a
+      `rotor.Loop`. Form H's cost is in step 3's code: the reactor's functions take the state and
+      the backend's loop as two arguments, and the host switches once on the backend for each call.
+    - Form U's cost is that `rotor.Reactor(rotor.Loop)` holds no `rotor.Loop`.
+
+    The choices were form H, form U, and both forms through step 3. Camilo gave no reason with the
+    choice.
+
 ## Ask before
 
 Camilo approved each item of this list on 2026-11-10 ("Rulings, 2026-11-10"). The session put the
