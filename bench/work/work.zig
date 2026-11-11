@@ -37,10 +37,14 @@
 //!   handler. Then loop 0 ticks once, which takes the return and runs `finish`. One iteration is
 //!   that round trip.
 //!
+//! The rows from `task` to `call` are the reactor's: each runs on two reactors over the backend's
+//! loops, `reactor.Reactor(backend.Loop)`, and the other rows run on two loops (decision 33).
+//!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
 const std = @import("std");
 const core = @import("core");
+const reactor = @import("reactor");
 const backend = @import("backend");
 
 const Loop = backend.Loop;
@@ -104,10 +108,28 @@ const Side = struct {
     }
 };
 
+/// The reactor over this backend's loop, which the reactor's rows run on (decision 33).
+const Reactor = reactor.Reactor(Loop);
+const reactor_options: Reactor.Options = .{ .loop = loop_options };
+
+/// A side of a reactor's row: a reactor in place of the loop of `Side`.
+const ReactorSide = struct {
+    memory: [Reactor.memory_bytes(&reactor_options)]u8 align(core.layout.memory_alignment) = undefined,
+    reactor: Reactor = undefined,
+    events: [events_max]Event = undefined,
+
+    /// Ticks once, with no wait, and fails unless that tick handed over exactly `count` events.
+    fn expect(side: *ReactorSide, count: u32) !void {
+        if (try side.reactor.tick(&side.events, 0) != count) return error.EventsMissing;
+    }
+};
+
 var registry: backend.Registry align(@alignOf(backend.Registry)) = undefined;
 var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
 var first: Side align(@alignOf(Side)) = .{};
 var second: Side align(@alignOf(Side)) = .{};
+var first_reactor: ReactorSide align(@alignOf(ReactorSide)) = .{};
+var second_reactor: ReactorSide align(@alignOf(ReactorSide)) = .{};
 var batch: [batch_operations]Operation align(@alignOf(Operation)) = undefined;
 
 fn ran_nothing(_: *core.Task) void {}
@@ -151,9 +173,8 @@ const Echo = struct {
     }
 };
 
-const View = core.shared_loop.SharedLoop(Loop);
-const EchoCall = core.call.CallRecord(View, u64, u64);
-const EchoService = core.call.Service(View, Echo, u64, u64, Echo.handle);
+const EchoCall = Reactor.CallRecord(u64, u64);
+const EchoService = Reactor.Service(Echo, u64, u64, Echo.handle);
 
 /// The caller of `call`, on loop 0: each `finish` counts one reply.
 const Caller = struct {
@@ -192,13 +213,6 @@ pub fn main(init: std.process.Init) !void {
     registry.init(&registry_memory, 2);
     // Runs after both loops ended: the registry keeps the wake of each until then.
     defer backend.wake_module.close_kept(&registry);
-    var options = loop_options;
-    options.registry = &registry;
-    try first.loop.init(&first.memory, &options);
-    defer first.loop.deinit();
-    options.id = second_id;
-    try second.loop.init(&second.memory, &options);
-    defer second.loop.deinit();
     for (&batch, 0..) |*operation, index| operation.* = Operation.timer(index, 0, 0);
 
     // One loop for each workload, chosen at compile time, so the code that one workload counts does
@@ -207,20 +221,50 @@ pub fn main(init: std.process.Init) !void {
     // Each loop is a function of its own too, never inlined into `main`: when `record` and `poller`
     // were added inline, epoll's `tasks-64` counted 63 more instructions in `main` alone.
     switch (workload) {
-        inline else => |chosen| try run_all(chosen, iterations),
+        inline else => |chosen| try start(chosen, iterations),
     }
+}
+
+/// True for a row of the reactor: a workload that names a record, a poller, a task, a group or a
+/// call. It runs on two reactors, and every other row on two loops (decision 33).
+fn on_reactor(comptime workload: Workload) bool {
+    return switch (workload) {
+        .post, .post_operation, .timer, .batch, .wait => false,
+        .task, .tasks_64, .record, .poller, .tasks_groups_4, .tasks_groups_16, .call => true,
+    };
+}
+
+/// Starts the two loops, or the two reactors of a row of the reactor, runs `iterations` of
+/// `workload`, and ends them.
+fn start(comptime workload: Workload, iterations: u64) !void {
+    var options = loop_options;
+    options.registry = &registry;
+    if (comptime on_reactor(workload)) {
+        try first_reactor.reactor.init(&first_reactor.memory, &.{ .loop = options });
+        defer first_reactor.reactor.deinit();
+        options.id = second_id;
+        try second_reactor.reactor.init(&second_reactor.memory, &.{ .loop = options });
+        defer second_reactor.reactor.deinit();
+        return run_all(workload, iterations);
+    }
+    try first.loop.init(&first.memory, &options);
+    defer first.loop.deinit();
+    options.id = second_id;
+    try second.loop.init(&second.memory, &options);
+    defer second.loop.deinit();
+    return run_all(workload, iterations);
 }
 
 /// Runs `iterations` of `workload`. The poller of `poller` is added only for its own workload, and
 /// removed before `deinit`, which halts while a poller is still added.
 noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
-    if (workload == .poller) try first.loop.add_poller(&counted.poller);
-    defer if (workload == .poller) first.loop.remove_poller(&counted.poller);
-    if (workload == .call) service.serve(second.loop.shared(), &echo);
-    defer if (workload == .call) service.stop_serving(second.loop.shared());
+    if (workload == .poller) try first_reactor.reactor.add_poller(&counted.poller);
+    defer if (workload == .poller) first_reactor.reactor.remove_poller(&counted.poller);
+    if (workload == .call) service.serve(second_reactor.reactor.shared(), &echo);
+    defer if (workload == .call) service.stop_serving(second_reactor.reactor.shared());
     const spread = groups_of(workload);
     for (groups[1..spread]) |*group| {
-        group.* = try first.loop.reserve_scheduling_group(core.constants.scheduling_shares_default);
+        group.* = try first_reactor.reactor.reserve_scheduling_group(core.constants.scheduling_shares_default);
     }
     for (0..iterations) |_| try run(workload);
 }
@@ -238,8 +282,8 @@ fn groups_of(comptime workload: Workload) usize {
 /// them in one tick.
 fn run_groups(comptime spread: usize) !void {
     const per_group = tasks.len / spread;
-    for (&tasks, 0..) |*task, index| try first.loop.schedule_in(groups[index / per_group], task);
-    try first.expect(0);
+    for (&tasks, 0..) |*task, index| try first_reactor.reactor.schedule_in(groups[index / per_group], task);
+    try first_reactor.expect(0);
 }
 
 fn run(comptime workload: Workload) !void {
@@ -268,28 +312,28 @@ fn run(comptime workload: Workload) !void {
         },
         .wait => try wait_once(),
         .task => {
-            try first.loop.schedule(&tasks[0]);
-            try first.expect(0);
+            try first_reactor.reactor.schedule(&tasks[0]);
+            try first_reactor.expect(0);
         },
         .tasks_64 => {
-            for (&tasks) |*task| try first.loop.schedule(task);
-            try first.expect(0);
+            for (&tasks) |*task| try first_reactor.reactor.schedule(task);
+            try first_reactor.expect(0);
         },
         .record => {
-            try submit(&first, &.{Operation.timer(0, 0, 0).completion(&counted.completion)});
-            try first.expect(0);
+            try submit_to_reactor(&first_reactor, &.{Operation.timer(0, 0, 0).completion(&counted.completion)});
+            try first_reactor.expect(0);
             try counted.expect_one();
         },
         .poller => {
-            try first.expect(0);
+            try first_reactor.expect(0);
             try counted.expect_one();
         },
         .tasks_groups_4, .tasks_groups_16 => try run_groups(groups_of(workload)),
         .call => {
-            try service.send(first.loop.shared(), second_id, &calling.call, &@as(u64, 1), .{ .group = .default });
-            try second.expect(0);
-            try second.expect(0);
-            try first.expect(0);
+            try service.send(first_reactor.reactor.shared(), second_id, &calling.call, &@as(u64, 1), .{ .group = .default });
+            try second_reactor.expect(0);
+            try second_reactor.expect(0);
+            try first_reactor.expect(0);
             try calling.expect_one();
         },
     }
@@ -297,6 +341,11 @@ fn run(comptime workload: Workload) !void {
 
 fn submit(side: *Side, operations_to_submit: []const Operation) !void {
     const taken = side.loop.submit(operations_to_submit, &.{});
+    if (taken != operations_to_submit.len) return error.TableFull;
+}
+
+fn submit_to_reactor(side: *ReactorSide, operations_to_submit: []const Operation) !void {
+    const taken = side.reactor.submit(operations_to_submit, &.{});
     if (taken != operations_to_submit.len) return error.TableFull;
 }
 

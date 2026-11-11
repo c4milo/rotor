@@ -74,6 +74,8 @@ fn work_program(
         .optimize = .ReleaseSafe,
     });
     module.addImport("core", graph.core);
+    // The reactor's rows run on `reactor.Reactor(backend.Loop)` (decision 33).
+    module.addImport("reactor", graph.reactor);
     module.addImport("backend", backend);
     bench_memset.link(b, module);
     return b.addExecutable(.{ .name = name, .root_module = module });
