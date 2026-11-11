@@ -20,7 +20,7 @@ const tcp = @import("conformance_tcp.zig");
 const ledger_module = @import("conformance_program_ledger.zig");
 const actions = @import("conformance_program_actions.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
@@ -55,8 +55,8 @@ var group_memory: [group_bytes]u8 align(backend.buffers.group_alignment) = undef
 pub const Program = struct {
     seed: u64,
     random: core.random.Random,
-    main: *Harness,
-    peer: *Harness,
+    main: *ReactorHarness,
+    peer: *ReactorHarness,
     ledger: ledger_module.Ledger,
     jobs: ledger_module.Jobs,
     libraries: [libraries_count]actions.Library,
@@ -75,7 +75,7 @@ pub const Program = struct {
     failure: ?anyerror,
     events: [actions.events_max]Event,
 
-    fn init(program: *Program, seed: u64, main: *Harness, peer: *Harness, stream: actions.Stream, datagrams: actions.Datagrams) void {
+    fn init(program: *Program, seed: u64, main: *ReactorHarness, peer: *ReactorHarness, stream: actions.Stream, datagrams: actions.Datagrams) void {
         program.* = .{
             .seed = seed,
             .random = .init(seed),
@@ -111,13 +111,13 @@ pub const Program = struct {
         const room = actions.draw_room(program);
         var polls: [libraries_count]u32 = undefined;
         for (&program.libraries, &polls) |*library, *count| count.* = library.polls;
-        const before_ns = program.main.loop.now_ns();
+        const before_ns = program.main.reactor.now_ns();
         program.in_tick = true;
-        const count = program.main.loop.tick(program.events[0..room], wait_ns);
+        const count = program.main.reactor.tick(program.events[0..room], wait_ns);
         program.in_tick = false;
         const handed = try count;
         // A queued task keeps the tick from blocking (decision 27).
-        if (wait_ns == actions.long_wait_ns and program.main.loop.now_ns() - before_ns >= wait_ns / 2) {
+        if (wait_ns == actions.long_wait_ns and program.main.reactor.now_ns() - before_ns >= wait_ns / 2) {
             return error.TickBlockedWithTaskQueued;
         }
         program.tick_number += 1;
@@ -146,14 +146,14 @@ pub const Program = struct {
     /// final event, or by `drain`, which hands the plain ones to no one.
     fn finish(program: *Program) !void {
         program.stopping = true;
-        program.main.loop.cancel_all();
+        program.main.reactor.cancel_all();
         for (&program.ledger.entries) |*entry| entry.cancel_requested = entry.in_flight;
         if (program.random.chance(1, 2)) try program.settle() else try program.drain();
         for (&program.libraries) |*library| {
-            if (library.added) program.main.loop.remove_poller(&library.poller);
+            if (library.added) program.main.reactor.remove_poller(&library.poller);
             library.added = false;
         }
-        if (!program.main.loop.tables.dispatch.idle()) return error.DispatchNotIdleAtEnd;
+        if (!program.main.reactor.loop.tables.dispatch.idle()) return error.DispatchNotIdleAtEnd;
         try actions.check_end(program);
     }
 
@@ -165,7 +165,7 @@ pub const Program = struct {
         }
         // Nothing is left, so `drain` returns at once.
         var scratch: [1]Event = undefined;
-        try program.main.loop.drain(&scratch);
+        try program.main.reactor.drain(&scratch);
         try ledger_module.check_after_tick(program);
     }
 
@@ -175,7 +175,7 @@ pub const Program = struct {
         program.in_tick = true;
         defer program.draining = false;
         defer program.in_tick = false;
-        try program.main.loop.drain(&scratch);
+        try program.main.reactor.drain(&scratch);
         try program.ledger.forget_drained();
         try ledger_module.check_after_tick(program);
     }
@@ -183,12 +183,12 @@ pub const Program = struct {
     /// Empties the loop after a failed check, so `deinit` does not halt before the seed prints.
     fn abandon(program: *Program) void {
         program.stopping = true;
-        program.main.loop.cancel_all();
+        program.main.reactor.cancel_all();
         var scratch: [actions.events_max]Event = undefined;
-        program.main.loop.drain(&scratch) catch {};
-        _ = program.main.loop.discard_tasks();
+        program.main.reactor.drain(&scratch) catch {};
+        _ = program.main.reactor.discard_tasks();
         for (&program.libraries) |*library| {
-            if (library.added) program.main.loop.remove_poller(&library.poller);
+            if (library.added) program.main.reactor.remove_poller(&library.poller);
             library.added = false;
         }
     }
@@ -226,7 +226,7 @@ const Sockets = struct {
     receiver: core.Descriptor,
     sender: core.Descriptor,
 
-    fn open(main: *Harness) !Sockets {
+    fn open(main: *ReactorHarness) !Sockets {
         const listener = try tcp.Listener.open();
         defer sync.close_now(listener.descriptor);
         const stream = try tcp.connected_pair(main, &listener);
@@ -244,7 +244,7 @@ const Sockets = struct {
     /// datagrams sent to that port then reach the 127.0.0.1 socket. A test in another process sent
     /// its datagram to this receiver that way. Then a third socket and the sender each send one
     /// datagram, and the receiver must take the sender's datagram first.
-    fn hear_only(main: *Harness, receiver: core.Descriptor, sender: core.Descriptor) !void {
+    fn hear_only(main: *ReactorHarness, receiver: core.Descriptor, sender: core.Descriptor) !void {
         const sender_address = try sync.local_address(sender);
         try main.submit(&.{Operation.connect(connect_user_data, receiver, &sender_address)}, &.{});
         var connected: [1]Event = undefined;
@@ -270,7 +270,7 @@ const Sockets = struct {
         try testing.expectEqualStrings(sender_payload, buffer[0..bytes]);
     }
 
-    fn send_one(main: *Harness, socket: core.Descriptor, bytes: []const u8, out: *const core.datagram.Outbound) !void {
+    fn send_one(main: *ReactorHarness, socket: core.Descriptor, bytes: []const u8, out: *const core.datagram.Outbound) !void {
         try main.submit(&.{Operation.send_to(send_user_data, socket, bytes, out)}, &.{});
         var sent: [1]Event = undefined;
         try main.collect(&sent);
@@ -304,16 +304,16 @@ fn run_seed(seed: u64, totals: *Totals) !void {
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
     defer life.end();
-    var main: Harness = undefined;
+    var main: ReactorHarness = undefined;
     try main.init(0, &registry);
     defer main.deinit();
-    var peer: Harness = undefined;
+    var peer: ReactorHarness = undefined;
     try peer.init(actions.peer_id, &registry);
     defer peer.deinit();
     const memory = &group_memory;
-    const group = try main.loop.reserve_buffer_group();
-    try main.loop.provide_datagram_buffers(group, memory, actions.group_buffers, actions.buffer_bytes, .{});
-    defer main.loop.release_buffers(group);
+    const group = try main.reactor.reserve_buffer_group();
+    try main.reactor.provide_datagram_buffers(group, memory, actions.group_buffers, actions.buffer_bytes, .{});
+    defer main.reactor.release_buffers(group);
     const sockets = try Sockets.open(&main);
     defer sockets.close();
 

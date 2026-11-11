@@ -1,6 +1,7 @@
-//! The limits of decisions 26 and 27, reached through the real `Loop` on every backend: a full task
-//! queue, a full table of pollers, a full slot table while records are owed, a batch that the table
-//! takes in part, the run bound of one tick, and the bound of `drain`. Each oracle is an exact count.
+//! The limits of decisions 26 and 27, reached through a reactor over the real `Loop` on every
+//! backend (decision 33): a full task queue, a full table of pollers, a full slot table while
+//! records are owed, a batch that the table takes in part, the run bound of one tick, and the bound
+//! of `drain`. Each oracle is an exact count.
 //! The scenarios read `tables.dispatch.callbacks_outstanding` directly, because no call of the surface
 //! reports it, and a wrong count shows only later, as a tick that skips its dispatch.
 const std = @import("std");
@@ -8,7 +9,7 @@ const testing = std.testing;
 const core = @import("core");
 const conformance = @import("conformance.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 const constants = core.constants;
@@ -23,8 +24,8 @@ const long_delay_ns = constants.ns_per_s;
 const ticks_max = 1_000_000;
 
 /// The callbacks the loop has outstanding now.
-fn owed(harness: *const Harness) u32 {
-    return harness.loop.tables.dispatch.callbacks_outstanding;
+fn owed(harness: *const ReactorHarness) u32 {
+    return harness.reactor.loop.tables.dispatch.callbacks_outstanding;
 }
 
 /// The runs of every task of one scenario.
@@ -37,14 +38,14 @@ const Counted = struct {
     runs: u32 = 0,
     /// A task this one queues from its first run.
     then: ?*Counted = null,
-    harness: ?*Harness = null,
+    harness: ?*ReactorHarness = null,
 
     fn ran(counted: *Counted) void {
         counted.runs += 1;
         if (counted.tally) |tally| tally.runs += 1;
         const then = counted.then orelse return;
         counted.then = null;
-        counted.harness.?.loop.schedule(&then.task) catch unreachable;
+        counted.harness.?.reactor.schedule(&then.task) catch unreachable;
     }
 };
 
@@ -74,26 +75,26 @@ var full_queue: [constants.tasks_queued_max + 1]Counted align(@alignOf(Counted))
 
 test "a full task queue refuses one more task and changes nothing, then drains in exact ticks" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var tally: Tally = .{};
     for (&full_queue) |*one| one.* = .{ .tally = &tally };
-    for (full_queue[0..constants.tasks_queued_max]) |*one| try harness.loop.schedule(&one.task);
-    try testing.expectEqual(constants.tasks_queued_max, harness.loop.tasks_queued());
+    for (full_queue[0..constants.tasks_queued_max]) |*one| try harness.reactor.schedule(&one.task);
+    try testing.expectEqual(constants.tasks_queued_max, harness.reactor.tasks_queued());
     try testing.expectEqual(constants.tasks_queued_max, owed(&harness));
     const refused = &full_queue[constants.tasks_queued_max];
-    try testing.expectError(error.TasksFull, harness.loop.schedule(&refused.task));
+    try testing.expectError(error.TasksFull, harness.reactor.schedule(&refused.task));
     // The refusal queued nothing and counted nothing.
-    try testing.expectEqual(constants.tasks_queued_max, harness.loop.tasks_queued());
+    try testing.expectEqual(constants.tasks_queued_max, harness.reactor.tasks_queued());
     try testing.expectEqual(constants.tasks_queued_max, owed(&harness));
-    try testing.expect(!harness.loop.is_scheduled(&refused.task));
+    try testing.expect(!harness.reactor.is_scheduled(&refused.task));
 
     var tick_count: TickCount = .{};
-    try harness.loop.add_poller(&tick_count.poller);
-    defer harness.loop.remove_poller(&tick_count.poller);
+    try harness.reactor.add_poller(&tick_count.poller);
+    defer harness.reactor.remove_poller(&tick_count.poller);
     var scratch: [8]Event = undefined;
-    try harness.loop.drain(&scratch);
+    try harness.reactor.drain(&scratch);
     try testing.expectEqual(full_queue_ticks, tick_count.ticks);
     try testing.expectEqual(constants.tasks_queued_max, tally.runs);
     for (full_queue[0..constants.tasks_queued_max]) |*one| try testing.expectEqual(@as(u32, 1), one.runs);
@@ -103,28 +104,28 @@ test "a full task queue refuses one more task and changes nothing, then drains i
 
 test "a full table of pollers refuses one more, and each added poller runs once a tick" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var counts: [constants.pollers_max + 1]TickCount = @splat(.{});
     const last = &counts[constants.pollers_max];
-    for (counts[0..constants.pollers_max]) |*one| try harness.loop.add_poller(&one.poller);
-    try testing.expectError(error.PollersFull, harness.loop.add_poller(&last.poller));
-    try testing.expectEqual(constants.pollers_max, harness.loop.tables.dispatch.poller_count);
+    for (counts[0..constants.pollers_max]) |*one| try harness.reactor.add_poller(&one.poller);
+    try testing.expectError(error.PollersFull, harness.reactor.add_poller(&last.poller));
+    try testing.expectEqual(constants.pollers_max, harness.reactor.loop.tables.dispatch.poller_count);
     var events: [8]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
     for (counts[0..constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 1), one.ticks);
     try testing.expectEqual(@as(u32, 0), last.ticks);
     // A removal makes room for exactly one more.
-    harness.loop.remove_poller(&counts[0].poller);
-    try harness.loop.add_poller(&last.poller);
-    try testing.expectError(error.PollersFull, harness.loop.add_poller(&counts[0].poller));
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    harness.reactor.remove_poller(&counts[0].poller);
+    try harness.reactor.add_poller(&last.poller);
+    try testing.expectError(error.PollersFull, harness.reactor.add_poller(&counts[0].poller));
+    try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
     try testing.expectEqual(@as(u32, 1), counts[0].ticks);
     for (counts[1..constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 2), one.ticks);
     try testing.expectEqual(@as(u32, 1), last.ticks);
-    for (counts[1..]) |*one| harness.loop.remove_poller(&one.poller);
-    try testing.expectEqual(@as(u8, 0), harness.loop.tables.dispatch.poller_count);
+    for (counts[1..]) |*one| harness.reactor.remove_poller(&one.poller);
+    try testing.expectEqual(@as(u8, 0), harness.reactor.loop.tables.dispatch.poller_count);
 }
 
 /// A library's record that counts the events it receives.
@@ -143,45 +144,45 @@ const Owed = struct {
 
 /// Cancels every operation and ticks until none is in flight. Returns the events that reached the
 /// caller, which are the events of the operations without a record.
-fn cancel_and_settle(harness: *Harness) !u32 {
-    harness.loop.cancel_all();
+fn cancel_and_settle(harness: *ReactorHarness) !u32 {
+    harness.reactor.cancel_all();
     var events: [conformance.operations]Event = undefined;
     var plain: u32 = 0;
     var round: u32 = 0;
-    while (harness.loop.in_flight() != 0 and round < conformance.collect_rounds_max) : (round += 1) {
-        plain += try harness.loop.tick(&events, 10 * ms);
+    while (harness.reactor.in_flight() != 0 and round < conformance.collect_rounds_max) : (round += 1) {
+        plain += try harness.reactor.tick(&events, 10 * ms);
     }
-    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+    try testing.expectEqual(@as(u32, 0), harness.reactor.in_flight());
     return plain;
 }
 
 test "a full slot table refuses an operation with a record, and the count of owed callbacks holds" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var record: Owed = .{};
     const named = Operation.timer(0, long_delay_ns, 0).completion(&record.completion);
     const fill: [conformance.operations]Operation = @splat(named);
-    try testing.expectEqual(@as(u32, conformance.operations), harness.loop.submit(&fill, &.{}));
+    try testing.expectEqual(@as(u32, conformance.operations), harness.reactor.submit(&fill, &.{}));
     try testing.expectEqual(@as(u32, conformance.operations), owed(&harness));
     // The table is full: neither an operation with a record nor one without is taken.
-    try testing.expectEqual(@as(u32, 0), harness.loop.submit(&.{named}, &.{}));
-    try testing.expectEqual(@as(u32, 0), harness.loop.submit(&.{Operation.timer(1, ms, 0)}, &.{}));
+    try testing.expectEqual(@as(u32, 0), harness.reactor.submit(&.{named}, &.{}));
+    try testing.expectEqual(@as(u32, 0), harness.reactor.submit(&.{Operation.timer(1, ms, 0)}, &.{}));
     try testing.expectEqual(@as(u32, conformance.operations), owed(&harness));
     // A task takes no slot, so the loop queues it while the table is full.
     var counted: Counted = .{};
-    try harness.loop.schedule(&counted.task);
+    try harness.reactor.schedule(&counted.task);
     try testing.expectEqual(@as(u32, conformance.operations + 1), owed(&harness));
     var events: [8]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
     try testing.expectEqual(@as(u32, 1), counted.runs);
     try testing.expectEqual(@as(u32, conformance.operations), owed(&harness));
     try testing.expectEqual(@as(u32, 0), try cancel_and_settle(&harness));
     try testing.expectEqual(@as(u32, conformance.operations), record.finals);
     try testing.expectEqual(@as(u32, conformance.operations), record.canceled);
     try testing.expectEqual(@as(u32, 0), owed(&harness));
-    try testing.expect(harness.loop.tables.dispatch.idle());
+    try testing.expect(harness.reactor.loop.tables.dispatch.idle());
 }
 
 /// Slots the partial batch scenario leaves free, so the table takes two operations of four.
@@ -189,7 +190,7 @@ const free_slots = 2;
 
 test "a batch the table takes in part counts only the records it took" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     const fill: [conformance.operations - free_slots]Operation = @splat(Operation.timer(1, long_delay_ns, 0));
@@ -205,11 +206,11 @@ test "a batch the table takes in part counts only the records it took" {
         Operation.timer(3, long_delay_ns, 0),
     };
     var handles: [batch.len]core.Handle = undefined;
-    try testing.expectEqual(@as(u32, free_slots), harness.loop.submit(&batch, &handles));
+    try testing.expectEqual(@as(u32, free_slots), harness.reactor.submit(&batch, &handles));
     try testing.expectEqual(@as(u32, 1), owed(&harness));
-    try testing.expectEqual(@as(u32, conformance.operations), harness.loop.in_flight());
+    try testing.expectEqual(@as(u32, conformance.operations), harness.reactor.in_flight());
     // A batch the table refuses whole counts nothing.
-    try testing.expectEqual(@as(u32, 0), harness.loop.submit(batch[2..], handles[2..]));
+    try testing.expectEqual(@as(u32, 0), harness.reactor.submit(batch[2..], handles[2..]));
     try testing.expectEqual(@as(u32, 1), owed(&harness));
     // Every operation without a record reaches the caller, and the one record gets its one end.
     const plain = try cancel_and_settle(&harness);
@@ -217,24 +218,24 @@ test "a batch the table takes in part counts only the records it took" {
     try testing.expectEqual(@as(u32, 1), taken_record.finals);
     try testing.expectEqual(@as(u32, 0), refused_record.finals);
     try testing.expectEqual(@as(u32, 0), owed(&harness));
-    try testing.expect(harness.loop.tables.dispatch.idle());
+    try testing.expect(harness.reactor.loop.tables.dispatch.idle());
 }
 
 /// Tasks the run bound scenario queues: two full runs and five more.
 const backlog = 2 * constants.tasks_per_tick_max + 5;
 
 /// Ticks one tick with no event, and checks the runs so far and the tasks left.
-fn tick_tasks(harness: *Harness, tally: *const Tally, runs: u32, left: u32) !void {
+fn tick_tasks(harness: *ReactorHarness, tally: *const Tally, runs: u32, left: u32) !void {
     var events: [8]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, conformance.collect_rounds_max * ms));
+    try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, conformance.collect_rounds_max * ms));
     try testing.expectEqual(runs, tally.runs);
-    try testing.expectEqual(left, harness.loop.tasks_queued());
+    try testing.expectEqual(left, harness.reactor.tasks_queued());
     try testing.expectEqual(left, owed(harness));
 }
 
 test "each tick runs the tasks queued at its start, up to the bound of one run" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var tally: Tally = .{};
@@ -243,7 +244,7 @@ test "each tick runs the tasks queued at its start, up to the bound of one run" 
     // The first task queues one more, which waits behind the backlog.
     queued[0].then = &extra;
     queued[0].harness = &harness;
-    for (&queued) |*one| try harness.loop.schedule(&one.task);
+    for (&queued) |*one| try harness.reactor.schedule(&one.task);
     const per_tick = constants.tasks_per_tick_max;
     try tick_tasks(&harness, &tally, per_tick, backlog - per_tick + 1);
     // The run is FIFO: the first full run took the head of the backlog.
@@ -260,11 +261,11 @@ test "each tick runs the tasks queued at its start, up to the bound of one run" 
 const Forever = struct {
     task: core.Task = .init(Forever, "task", ran),
     tally: *Tally,
-    harness: *Harness,
+    harness: *ReactorHarness,
 
     fn ran(forever: *Forever) void {
         forever.tally.runs += 1;
-        forever.harness.loop.schedule(&forever.task) catch unreachable;
+        forever.harness.reactor.schedule(&forever.task) catch unreachable;
     }
 };
 
@@ -288,12 +289,12 @@ const endless = constants.tasks_per_tick_max + 36;
 
 test "a backlog of tasks does not delay a record's callback past the tick of its event" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var tally: Tally = .{};
     var tasks: [endless]Forever = @splat(.{ .tally = &tally, .harness = &harness });
-    for (&tasks) |*one| try harness.loop.schedule(&one.task);
+    for (&tasks) |*one| try harness.reactor.schedule(&one.task);
     var tick: u32 = 0;
     var noted: Noted = .{ .tick = &tick, .tally = &tally };
     // Two timers with one deadline end in one tick. The one without a record shows the caller
@@ -305,7 +306,7 @@ test "a backlog of tasks does not delay a record's callback past the tick of its
     var events: [8]Event = undefined;
     var arrived: u32 = 0;
     while (arrived == 0 and tick < ticks_max) : (tick += 1) {
-        arrived = try harness.loop.tick(&events, constants.ns_per_s);
+        arrived = try harness.reactor.tick(&events, constants.ns_per_s);
         if (arrived == 0) try testing.expectEqual(@as(?u32, null), noted.fired_at);
     }
     try testing.expectEqual(@as(u32, 1), arrived);
@@ -315,14 +316,14 @@ test "a backlog of tasks does not delay a record's callback past the tick of its
     try testing.expectEqual(@as(?u32, at), noted.fired_at);
     try testing.expectEqual(at * constants.tasks_per_tick_max, noted.runs_before);
     try testing.expectEqual(tick * constants.tasks_per_tick_max, tally.runs);
-    try testing.expectEqual(@as(u32, endless), harness.loop.discard_tasks());
+    try testing.expectEqual(@as(u32, endless), harness.reactor.discard_tasks());
     try testing.expectEqual(@as(u32, 0), owed(&harness));
 }
 
 /// A task that schedules itself again `again` times.
 const Again = struct {
     task: core.Task = .init(Again, "task", ran),
-    harness: *Harness,
+    harness: *ReactorHarness,
     again: u32,
     runs: u32 = 0,
 
@@ -330,16 +331,16 @@ const Again = struct {
         again.runs += 1;
         if (again.again == 0) return;
         again.again -= 1;
-        again.harness.loop.schedule(&again.task) catch unreachable;
+        again.harness.reactor.schedule(&again.task) catch unreachable;
     }
 };
 
 /// Queues `again` and drains the loop. When the drain fails, checks that it took exactly its bound
 /// of ticks, and returns its error.
-fn drain_chain(harness: *Harness, tick_count: *TickCount, again: *Again) !void {
-    try harness.loop.schedule(&again.task);
+fn drain_chain(harness: *ReactorHarness, tick_count: *TickCount, again: *Again) !void {
+    try harness.reactor.schedule(&again.task);
     var scratch: [8]Event = undefined;
-    harness.loop.drain(&scratch) catch |err| {
+    harness.reactor.drain(&scratch) catch |err| {
         try testing.expectEqual(constants.drain_rounds_max, tick_count.ticks);
         return err;
     };
@@ -347,24 +348,24 @@ fn drain_chain(harness: *Harness, tick_count: *TickCount, again: *Again) !void {
 
 test "drain ends a chain of tasks at its last allowed tick, and gives up one run later" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var tick_count: TickCount = .{};
-    try harness.loop.add_poller(&tick_count.poller);
-    defer harness.loop.remove_poller(&tick_count.poller);
+    try harness.reactor.add_poller(&tick_count.poller);
+    defer harness.reactor.remove_poller(&tick_count.poller);
     // One run a tick, `drain_rounds_max` runs: the last tick the bound allows empties the queue.
     var fits: Again = .{ .harness = &harness, .again = constants.drain_rounds_max - 1 };
     try drain_chain(&harness, &tick_count, &fits);
     try testing.expectEqual(constants.drain_rounds_max, fits.runs);
     try testing.expectEqual(constants.drain_rounds_max, tick_count.ticks);
-    try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
+    try testing.expectEqual(@as(u32, 0), harness.reactor.tasks_queued());
     // One run more than the bound: the drain gives up with the last run still queued.
     tick_count.ticks = 0;
     var over: Again = .{ .harness = &harness, .again = constants.drain_rounds_max };
     try testing.expectError(error.TasksStillQueued, drain_chain(&harness, &tick_count, &over));
     try testing.expectEqual(constants.drain_rounds_max, over.runs);
-    try testing.expectEqual(@as(u32, 1), harness.loop.tasks_queued());
-    try testing.expectEqual(@as(u32, 1), harness.loop.discard_tasks());
+    try testing.expectEqual(@as(u32, 1), harness.reactor.tasks_queued());
+    try testing.expectEqual(@as(u32, 1), harness.reactor.discard_tasks());
     try testing.expectEqual(@as(u32, 0), owed(&harness));
 }

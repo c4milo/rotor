@@ -11,7 +11,7 @@ const shutdown = @import("conformance_shutdown.zig");
 const tcp = @import("conformance_tcp.zig");
 const timers = @import("conformance_timers.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
@@ -41,7 +41,7 @@ fn fired(record: *const Record) bool {
 
 test "cancel_all ends every record once, and the queued tasks still run once" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     const listener = try tcp.Listener.open();
@@ -62,9 +62,9 @@ test "cancel_all ends every record once, and the queued tasks still run once" {
     }, &.{});
     try testing.expectEqual(@as(u32, 0), try shutdown.tick_until(&harness, &records[1], fired));
     var tasks: [2]Counted = @splat(.{});
-    for (&tasks) |*counted| try harness.loop.schedule(&counted.task);
+    for (&tasks) |*counted| try harness.reactor.schedule(&counted.task);
 
-    harness.loop.cancel_all();
+    harness.reactor.cancel_all();
     try testing.expectEqual(@as(u32, 1), try shutdown.tick_until(&harness, &records, all_finished));
     try shutdown.expect_one_final(&records);
     for (&records) |*record| try testing.expectError(error.Canceled, record.final.?.outcome());
@@ -77,7 +77,7 @@ test "cancel_all ends every record once, and the queued tasks still run once" {
 const Canceller = struct {
     completion: core.Completion = .init(Canceller, "completion", called),
     record: Record = .{},
-    loop: *conformance.Loop,
+    reactor: *conformance.Reactor,
     own: Handle = undefined,
     other: Handle = undefined,
 
@@ -85,8 +85,8 @@ const Canceller = struct {
         const first = canceller.record.mores + canceller.record.finals == 0;
         canceller.record.note(event);
         if (!first) return;
-        canceller.loop.cancel(canceller.own);
-        canceller.loop.cancel(canceller.other);
+        canceller.reactor.cancel(canceller.own);
+        canceller.reactor.cancel(canceller.other);
     }
 };
 
@@ -96,7 +96,7 @@ fn both_finished(pair: struct { *const Canceller, *const Record }) bool {
 
 test "a record that cancels its own operation and another record's operation ends each once" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     const listener = try tcp.Listener.open();
@@ -104,7 +104,7 @@ test "a record that cancels its own operation and another record's operation end
     const pair = try tcp.connected_pair(&harness, &listener);
     defer for (pair) |descriptor| sync.close_now(descriptor);
 
-    var canceller: Canceller = .{ .loop = &harness.loop };
+    var canceller: Canceller = .{ .reactor = &harness.reactor };
     var other: Record = .{};
     var bytes: [8]u8 = undefined;
     var handles: [2]Handle = undefined;
@@ -128,7 +128,7 @@ test "a record that cancels its own operation and another record's operation end
 
 test "a cancel's final event and another record's more event in one batch each count right" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var repeating: Record = .{};
@@ -143,17 +143,17 @@ test "a cancel's final event and another record's more event in one batch each c
     // Hold the loop off past the next fire, then cancel the long timer. The tables end a timer
     // at its cancel, so the next tick hands over its final event and the due fire together.
     timers.hold_off(period_ns + period_ns / 2);
-    harness.loop.cancel(handles[1]);
+    harness.reactor.cancel(handles[1]);
     var events: [8]Event = undefined;
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
     // A busy machine can stretch the hold past a second period, and the tick then hands over two
     // fires. One is enough.
     try testing.expect(repeating.mores >= 2);
     try testing.expectEqual(@as(u32, 1), waiting.finals);
     // The more event kept its operation owed, and the final event ended the other one.
-    try testing.expectEqual(@as(u32, 1), harness.loop.tables.dispatch.callbacks_outstanding);
+    try testing.expectEqual(@as(u32, 1), harness.reactor.loop.tables.dispatch.callbacks_outstanding);
 
-    harness.loop.cancel(handles[0]);
+    harness.reactor.cancel(handles[0]);
     _ = try shutdown.tick_until(&harness, &repeating, Record.finished);
     try testing.expectEqual(@as(u32, 1), repeating.finals);
     try testing.expectError(error.Canceled, waiting.final.?.outcome());

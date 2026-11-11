@@ -34,8 +34,8 @@ pub const Listener = struct {
 };
 
 /// Connects one client of the listener's family to `listener` through the loop, and returns both
-/// ends.
-pub fn connected_pair(harness: *Harness, listener: *const Listener) ![2]core.Descriptor {
+/// ends. `harness` is a `*Harness` or a `*conformance.ReactorHarness`, which declare the same calls.
+pub fn connected_pair(harness: anytype, listener: *const Listener) ![2]core.Descriptor {
     const client = try sync.open_socket(listener.address.family);
     errdefer sync.close_now(client);
     try harness.submit(&.{

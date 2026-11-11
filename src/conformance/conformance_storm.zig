@@ -20,7 +20,7 @@ const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const storm_senders = @import("conformance_storm_senders.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 const Random = core.random.Random;
@@ -76,7 +76,7 @@ const Library = struct {
     poller: core.Poller = .init(Library, "poller", polled),
     task: core.Task = .init(Library, "task", ran),
     completion: core.Completion = .init(Library, "completion", fired),
-    loop: *conformance.Loop,
+    reactor: *conformance.Reactor,
     random: Random,
     /// Runs left in which the task schedules itself again.
     again: u32 = 0,
@@ -91,9 +91,9 @@ const Library = struct {
     fn polled(library: *Library) core.WaitLimit {
         library.polls += 1;
         if (!library.running) return .none;
-        if (!library.loop.is_scheduled(&library.task) and library.random.chance(1, 4)) {
+        if (!library.reactor.is_scheduled(&library.task) and library.random.chance(1, 4)) {
             library.again = @intCast(library.random.below(task_again_max + 1));
-            library.loop.schedule(&library.task) catch {
+            library.reactor.schedule(&library.task) catch {
                 library.failed = true;
             };
         }
@@ -104,7 +104,7 @@ const Library = struct {
         library.runs += 1;
         if (!library.running or library.again == 0) return;
         library.again -= 1;
-        library.loop.schedule(&library.task) catch {
+        library.reactor.schedule(&library.task) catch {
             library.failed = true;
         };
     }
@@ -118,13 +118,13 @@ const Library = struct {
     fn start_timer(library: *Library) void {
         const delay_ns = library.random.below(timer_delay_max_ns + 1);
         const timer = Operation.timer(0, delay_ns, 0).completion(&library.completion);
-        if (library.loop.submit(&.{timer}, &.{}) != 1) library.failed = true;
+        if (library.reactor.submit(&.{timer}, &.{}) != 1) library.failed = true;
     }
 };
 
 /// The target loop on the test's thread, its libraries, and what it received from each sender.
 const Target = struct {
-    harness: *Harness,
+    harness: *ReactorHarness,
     libraries: [libraries]Library,
     random: Random,
     /// The payload of the next message from each sender id, which is also the count received.
@@ -144,7 +144,7 @@ const Target = struct {
 
     fn start(target: *Target) !void {
         for (&target.libraries) |*library| {
-            try target.harness.loop.add_poller(&library.poller);
+            try target.harness.reactor.add_poller(&library.poller);
             library.start_timer();
         }
         target.pollers_added = true;
@@ -158,7 +158,7 @@ const Target = struct {
         var round: u32 = 0;
         while (target.received < messages_total and round < storm_rounds_max) : (round += 1) {
             const wait_ns: u64 = if (target.random.chance(1, 2)) 0 else storm_wait_ns;
-            const count = try target.harness.loop.tick(&events, wait_ns);
+            const count = try target.harness.reactor.tick(&events, wait_ns);
             for (events[0..count]) |event| try target.accept(event);
             try target.expect_no_failure();
             const all_finished = shared.finished.load(.acquire) == senders;
@@ -171,17 +171,17 @@ const Target = struct {
     /// Stops the libraries and removes the pollers, then ticks until nothing is queued or in
     /// flight. No message may arrive now: each storm message arrived once already.
     fn quiet(target: *Target) !void {
-        const loop = &target.harness.loop;
+        const reactor = &target.harness.reactor;
         for (&target.libraries) |*library| library.running = false;
         target.remove_pollers();
         var events: [events_len]Event = undefined;
         var round: u32 = 0;
         const rounds_max = conformance.collect_rounds_max;
-        while (loop.in_flight() + loop.tasks_queued() > 0 and round < rounds_max) : (round += 1) {
-            try testing.expectEqual(@as(u32, 0), try loop.tick(&events, quiet_wait_ns));
+        while (reactor.in_flight() + reactor.tasks_queued() > 0 and round < rounds_max) : (round += 1) {
+            try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, quiet_wait_ns));
         }
-        try testing.expectEqual(@as(u32, 0), loop.in_flight());
-        try testing.expectEqual(@as(u32, 0), loop.tasks_queued());
+        try testing.expectEqual(@as(u32, 0), reactor.in_flight());
+        try testing.expectEqual(@as(u32, 0), reactor.tasks_queued());
         try target.expect_no_failure();
     }
 
@@ -190,15 +190,15 @@ const Target = struct {
     /// and the next tick that waits ends at once with no event: the wasted wake of decision 12,
     /// point 6. A sender finishes after its last wake, so one tick that waits after that takes it.
     fn settle(target: *Target, shared: *Shared) !void {
-        const loop = &target.harness.loop;
+        const reactor = &target.harness.reactor;
         var events: [events_len]Event = undefined;
         var round: u32 = 0;
         const rounds_max = conformance.collect_rounds_max;
         while (shared.finished.load(.acquire) < senders and round < rounds_max) : (round += 1) {
-            try testing.expectEqual(@as(u32, 0), try loop.tick(&events, quiet_wait_ns));
+            try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, quiet_wait_ns));
         }
         try testing.expectEqual(@as(u32, senders), shared.finished.load(.acquire));
-        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, quiet_wait_ns));
+        try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, quiet_wait_ns));
     }
 
     /// One tick with a wait of 2 s, which the peer's post must end early. Returns its length.
@@ -206,7 +206,7 @@ const Target = struct {
         var events: [events_len]Event = undefined;
         shared.quiet.store(true, .release);
         const before = backend.testing.monotonic_ns();
-        const count = try target.harness.loop.tick(&events, long_wait_ns);
+        const count = try target.harness.reactor.tick(&events, long_wait_ns);
         const waited_ns = backend.testing.monotonic_ns() - before;
         try testing.expectEqual(@as(u32, 1), count);
         try testing.expect(events[0].flags.message);
@@ -216,7 +216,7 @@ const Target = struct {
 
     fn remove_pollers(target: *Target) void {
         if (!target.pollers_added) return;
-        for (&target.libraries) |*library| target.harness.loop.remove_poller(&library.poller);
+        for (&target.libraries) |*library| target.harness.reactor.remove_poller(&library.poller);
         target.pollers_added = false;
     }
 
@@ -224,10 +224,10 @@ const Target = struct {
     fn abandon(target: *Target) void {
         for (&target.libraries) |*library| library.running = false;
         target.remove_pollers();
-        _ = target.harness.loop.discard_tasks();
-        target.harness.loop.cancel_all();
+        _ = target.harness.reactor.discard_tasks();
+        target.harness.reactor.cancel_all();
         var scratch: [events_len]Event = undefined;
-        target.harness.loop.drain(&scratch) catch {};
+        target.harness.reactor.drain(&scratch) catch {};
     }
 
     fn expect_no_failure(target: *const Target) !void {
@@ -299,7 +299,7 @@ fn scenario() !void {
     var registry: backend.Registry = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
     defer life.end();
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(target_id, &registry);
     defer harness.deinit();
 
@@ -310,7 +310,7 @@ fn scenario() !void {
         .random = .init(random.next()),
     };
     for (&target.libraries) |*library| {
-        library.* = .{ .loop = &harness.loop, .random = .init(random.next()) };
+        library.* = .{ .reactor = &harness.reactor, .random = .init(random.next()) };
     }
     var storm: Storm = undefined;
     storm.init(&registry, &random);

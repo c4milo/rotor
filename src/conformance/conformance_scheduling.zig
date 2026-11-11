@@ -13,7 +13,7 @@ const stall = @import("conformance_stall.zig");
 const post_scenarios = @import("conformance_post.zig");
 const tcp = @import("conformance_tcp.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 const SchedulingGroup = core.SchedulingGroup;
@@ -40,20 +40,20 @@ fn Forever(comptime cost: u16) type {
 
         fn ran(forever: *Self) void {
             forever.library.runs += 1;
-            forever.library.harness.loop.schedule_in(forever.library.group, &forever.task) catch unreachable;
+            forever.library.harness.reactor.schedule_in(forever.library.group, &forever.task) catch unreachable;
         }
     };
 }
 
 /// One library on the loop: its group, and the runs of its tasks.
 const Library = struct {
-    harness: *Harness,
+    harness: *ReactorHarness,
     group: SchedulingGroup,
     runs: u64 = 0,
 };
 
 /// A library with a timer and a receive that each name no record: what the tick hands its caller.
-fn tick_until_both(harness: *Harness, timer_user_data: u64, receive_user_data: u64) !u32 {
+fn tick_until_both(harness: *ReactorHarness, timer_user_data: u64, receive_user_data: u64) !u32 {
     var events: [8]Event = undefined;
     var timer_seen = false;
     var receive_seen = false;
@@ -71,18 +71,18 @@ fn tick_until_both(harness: *Harness, timer_user_data: u64, receive_user_data: u
 
 test "two libraries at shares 100 and 300 are served 1 to 3 beside a receive and a timer" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    var low: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(100) };
-    var high: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(300) };
+    var low: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(100) };
+    var high: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(300) };
     var lows: [tasks_per_library]Forever(1) = @splat(.{ .library = &low });
     var highs: [tasks_per_library]Forever(1) = @splat(.{ .library = &high });
     // A failed check returns with tasks queued, and `deinit` halts on them: the test must fail
     // and not halt.
-    errdefer _ = harness.loop.discard_tasks();
-    for (&lows) |*one| try harness.loop.schedule_in(low.group, &one.task);
-    for (&highs) |*one| try harness.loop.schedule_in(high.group, &one.task);
+    errdefer _ = harness.reactor.discard_tasks();
+    for (&lows) |*one| try harness.reactor.schedule_in(low.group, &one.task);
+    for (&highs) |*one| try harness.reactor.schedule_in(high.group, &one.task);
 
     const listener = try tcp.Listener.open();
     defer backend.sync.close_now(listener.descriptor);
@@ -104,8 +104,8 @@ test "two libraries at shares 100 and 300 are served 1 to 3 beside a receive and
     try testing.expect(low.runs >= tasks_per_library / 4);
     var scratch: [8]Event = undefined;
     try testing.expectError(error.TasksStillQueued, harness.drain(&scratch));
-    try testing.expectEqual(@as(u32, 2 * tasks_per_library), harness.loop.discard_tasks());
-    try testing.expectEqual(@as(u32, 0), harness.loop.tasks_queued());
+    try testing.expectEqual(@as(u32, 2 * tasks_per_library), harness.reactor.discard_tasks());
+    try testing.expectEqual(@as(u32, 0), harness.reactor.tasks_queued());
 }
 
 /// What a tick of the tested loop handed over in one round: the timer, and the post of the peer.
@@ -132,26 +132,26 @@ test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a 
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(registry_alignment) = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
     defer life.end();
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();
     // A peer loop on this thread posts to the tested loop once in each round.
-    var peer: Harness = undefined;
+    var peer: ReactorHarness = undefined;
     try peer.init(1, &registry);
     defer peer.deinit();
-    var costly: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(100) };
-    var unit: Library = .{ .harness = &harness, .group = try harness.loop.reserve_scheduling_group(100) };
+    var costly: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(100) };
+    var unit: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(100) };
     var costlies: [tasks_per_library]Forever(constants.task_charge_max) = @splat(.{ .library = &costly });
     var units: [tasks_per_library]Forever(1) = @splat(.{ .library = &unit });
-    errdefer _ = harness.loop.discard_tasks();
-    for (&costlies) |*one| try harness.loop.schedule_in(costly.group, &one.task);
-    for (&units) |*one| try harness.loop.schedule_in(unit.group, &one.task);
+    errdefer _ = harness.reactor.discard_tasks();
+    for (&costlies) |*one| try harness.reactor.schedule_in(costly.group, &one.task);
+    for (&units) |*one| try harness.reactor.schedule_in(unit.group, &one.task);
     var events: [8]Event = undefined;
     for (0..8) |round| {
         // A timer that is due at once, and a post, arrive within 2 ticks, whatever the groups
         // hold. The peer's tick carries the wake that a post on io_uring leaves for it.
         try harness.submit(&.{Operation.timer(round, 0, 0)}, &.{});
-        try peer.loop.post(0, .{ .payload = round, .tag = post_scenarios.tag_ping });
+        try peer.reactor.post(0, .{ .payload = round, .tag = post_scenarios.tag_ping });
         _ = try peer.tick(&events, 0);
         var arrivals: Arrivals = .{};
         for (0..2) |_| {
@@ -165,7 +165,7 @@ test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a 
     // in 16 ticks the unit group has at least 63 starts for each costly one, less one tick's.
     try testing.expect(costly.runs >= 1);
     try testing.expect(unit.runs + constants.tasks_per_tick_max >= 63 * costly.runs);
-    try testing.expectEqual(@as(u32, 2 * tasks_per_library), harness.loop.discard_tasks());
+    try testing.expectEqual(@as(u32, 2 * tasks_per_library), harness.reactor.discard_tasks());
 }
 
 /// A task that runs once.
@@ -180,17 +180,17 @@ const Once = struct {
 
 test "drain runs the tasks of every group, and discard_tasks unlinks every group" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    const first = try harness.loop.reserve_scheduling_group(100);
-    const second = try harness.loop.reserve_scheduling_group(1000);
+    const first = try harness.reactor.reserve_scheduling_group(100);
+    const second = try harness.reactor.reserve_scheduling_group(1000);
     var onces: [3][4]Once = @splat(@splat(.{}));
     const groups = [_]SchedulingGroup{ .default, first, second };
     for (&onces, groups) |*row, group| {
-        for (row) |*once| try harness.loop.schedule_in(group, &once.task);
+        for (row) |*once| try harness.reactor.schedule_in(group, &once.task);
     }
-    try testing.expectEqual(@as(u32, 12), harness.loop.tasks_queued());
+    try testing.expectEqual(@as(u32, 12), harness.reactor.tasks_queued());
     var scratch: [8]Event = undefined;
     try harness.drain(&scratch);
     for (&onces) |*row| for (row) |*once| try testing.expectEqual(@as(u32, 1), once.runs);
@@ -198,27 +198,27 @@ test "drain runs the tasks of every group, and discard_tasks unlinks every group
     var library: Library = .{ .harness = &harness, .group = first };
     var other: Library = .{ .harness = &harness, .group = second };
     var forevers: [2]Forever(1) = .{ .{ .library = &library }, .{ .library = &other } };
-    errdefer _ = harness.loop.discard_tasks();
-    try harness.loop.schedule_in(first, &forevers[0].task);
-    try harness.loop.schedule_in(second, &forevers[1].task);
+    errdefer _ = harness.reactor.discard_tasks();
+    try harness.reactor.schedule_in(first, &forevers[0].task);
+    try harness.reactor.schedule_in(second, &forevers[1].task);
     try testing.expectError(error.TasksStillQueued, harness.drain(&scratch));
-    try testing.expectEqual(@as(u32, 2), harness.loop.discard_tasks());
-    for (&forevers) |*forever| try testing.expect(!harness.loop.is_scheduled(&forever.task));
+    try testing.expectEqual(@as(u32, 2), harness.reactor.discard_tasks());
+    for (&forevers) |*forever| try testing.expect(!harness.reactor.is_scheduled(&forever.task));
 }
 
 test "a loop's init reserves the named groups of its options, and an empty table none" {
     if (conformance.unsupported()) return error.SkipZigTest;
     const Declared = core.scheduling.Named(.{ .quic = 400, .dns = 100 });
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init_named(&Declared.table);
-    const groups = harness.loop.tables.groups;
+    const groups = harness.reactor.loop.tables.groups;
     try testing.expectEqual(@as(u8, 2), groups.named);
     try testing.expectEqual(@as(u16, 400), groups.lanes[1].shares);
     try testing.expectEqual(@as(u16, 100), groups.lanes[2].shares);
-    try testing.expectEqual(@as(u8, 3), @intFromEnum(try harness.loop.reserve_scheduling_group(50)));
+    try testing.expectEqual(@as(u8, 3), @intFromEnum(try harness.reactor.reserve_scheduling_group(50)));
     // A named group holds tasks as a reserved one does.
     var once: Once = .{};
-    try harness.loop.schedule_in(Declared.group(.dns).scheduling_group(), &once.task);
+    try harness.reactor.schedule_in(Declared.group(.dns).scheduling_group(), &once.task);
     var events: [4]Event = undefined;
     _ = try harness.tick(&events, 0);
     try testing.expectEqual(@as(u32, 1), once.runs);
@@ -226,18 +226,18 @@ test "a loop's init reserves the named groups of its options, and an empty table
 
     try harness.init_named(&.empty);
     defer harness.deinit();
-    try testing.expectEqual(@as(u8, 0), harness.loop.tables.groups.named);
-    try testing.expectEqual(@as(u8, 1), @intFromEnum(try harness.loop.reserve_scheduling_group(100)));
+    try testing.expectEqual(@as(u8, 0), harness.reactor.loop.tables.groups.named);
+    try testing.expectEqual(@as(u8, 1), @intFromEnum(try harness.reactor.reserve_scheduling_group(100)));
 }
 
 test "a library schedules through its view in its group, and charges its task's cost" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     const Charging = struct {
         task: core.Task = stall.task(@This(), "task", ran),
-        shared: *core.shared_loop.SharedLoop(backend.Loop),
+        shared: *conformance.Reactor.SharedLoop,
         budget: u32 = 0,
 
         fn ran(charging: *@This()) void {
@@ -245,8 +245,8 @@ test "a library schedules through its view in its group, and charges its task's 
             charging.shared.charge_task(9);
         }
     };
-    const shared = harness.loop.shared();
-    const group = try harness.loop.reserve_scheduling_group(1000);
+    const shared = harness.reactor.shared();
+    const group = try harness.reactor.reserve_scheduling_group(1000);
     var charging: Charging = .{ .shared = shared };
     try shared.schedule_in(group, &charging.task);
     var onces: [2]Once = @splat(.{});
@@ -258,5 +258,5 @@ test "a library schedules through its view in its group, and charges its task's 
     // units.
     try testing.expectEqual(@as(u32, 9), charging.budget);
     // The charge of 9 took the rest: the visit closed at 0.
-    try testing.expectEqual(@as(i32, 0), harness.loop.tables.groups.lanes[@intFromEnum(group)].deficit);
+    try testing.expectEqual(@as(i32, 0), harness.reactor.loop.tables.groups.lanes[@intFromEnum(group)].deficit);
 }

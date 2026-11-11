@@ -174,7 +174,7 @@ fn submit(program: *Program, entry: *Entry, operation: Operation, kind: Kind) !v
     entry.record = program.random.chance(2, 3);
     const named = if (entry.record) operation.completion(&entry.completion) else with_user_data(operation, entry);
     var handles: [1]core.Handle = undefined;
-    if (program.main.loop.submit(&.{named}, &handles) != 1) return error.SubmitRefused;
+    if (program.main.reactor.submit(&.{named}, &handles) != 1) return error.SubmitRefused;
     program.ledger.started(entry, handles[0]);
 }
 
@@ -265,7 +265,7 @@ fn submit_post(program: *Program) !void {
 fn post_now(program: *Program) !void {
     const posts = &program.posts;
     if (posts.outstanding == posts_outstanding_max or posts.next_id == ids_max) return;
-    try program.main.loop.post(peer_id, .{ .payload = posts.next_id, .tag = post_tag });
+    try program.main.reactor.post(peer_id, .{ .payload = posts.next_id, .tag = post_tag });
     posts.posted.set(posts.next_id);
     posts.next_id += 1;
     posts.outstanding += 1;
@@ -274,15 +274,15 @@ fn post_now(program: *Program) !void {
 fn cancel(program: *Program) void {
     const entry = program.ledger.pick_in_flight(&program.random) orelse return;
     entry.cancel_requested = true;
-    program.main.loop.cancel(entry.handle);
+    program.main.reactor.cancel(entry.handle);
 }
 
 fn toggle_poller(program: *Program) !void {
     const library = &program.libraries[program.random.below(program.libraries.len)];
     if (library.added) {
-        program.main.loop.remove_poller(&library.poller);
+        program.main.reactor.remove_poller(&library.poller);
     } else {
-        try program.main.loop.add_poller(&library.poller);
+        try program.main.reactor.add_poller(&library.poller);
     }
     library.added = !library.added;
 }
@@ -322,8 +322,8 @@ pub fn on_more(program: *Program, entry: *Entry, event: Event) !void {
 fn on_datagram(program: *Program, event: Event) !void {
     if (!event.flags.buffer) return error.DatagramWithoutBuffer;
     const datagrams = &program.datagrams;
-    defer program.main.loop.give_back_buffer(datagrams.group, event.flags.buffer_id);
-    const delivery = program.main.loop.datagram(datagrams.group, event);
+    defer program.main.reactor.give_back_buffer(datagrams.group, event.flags.buffer_id);
+    const delivery = program.main.reactor.datagram(datagrams.group, event);
     if (delivery.bytes.len != @sizeOf(u64)) return error.DatagramLengthWrong;
     const id = std.mem.readInt(u64, delivery.bytes[0..@sizeOf(u64)], .little);
     if (id >= datagrams.next_id) return error.DatagramNeverSent;
@@ -437,10 +437,10 @@ pub fn on_message(program: *Program, event: Event) !void {
 /// The peer loop: it takes the program's messages and posts each one back.
 pub fn tick_peer(program: *Program) !void {
     var events: [events_max]Event = undefined;
-    const count = try program.peer.loop.tick(&events, 0);
+    const count = try program.peer.reactor.tick(&events, 0);
     for (events[0..count]) |event| {
         if (!event.flags.message or event.result != post_tag) return error.PeerGotOtherEvent;
-        try program.peer.loop.post(0, .{ .payload = event.user_data, .tag = post_tag });
+        try program.peer.reactor.post(0, .{ .payload = event.user_data, .tag = post_tag });
     }
 }
 

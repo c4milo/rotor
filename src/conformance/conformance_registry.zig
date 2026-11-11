@@ -128,6 +128,10 @@ test "a harness refuses a loop on a registry whose life did not begin" {
     var harness: conformance.Harness = undefined;
     try testing.expectError(error.RegistryNotStarted, harness.init(0, &registry));
     try testing.expectError(error.RegistryNotStarted, harness.init_blocking(0, &registry));
+    // The harness of the reactor's scenarios refuses it too (decision 33).
+    var reactor_harness: conformance.ReactorHarness = undefined;
+    try testing.expectError(error.RegistryNotStarted, reactor_harness.init(0, &registry));
+    try testing.expectError(error.RegistryNotStarted, reactor_harness.init_blocking(0, &registry));
 }
 
 test "a registry's life does not begin while another is open" {

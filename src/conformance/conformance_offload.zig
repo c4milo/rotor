@@ -111,48 +111,65 @@ pub const Pool = struct {
     }
 };
 
+/// The options that size a fixture's memory: the most that any policy needs.
+pub const sizing_options: Loop.Options = .{
+    .operations = operations,
+    .entries = entries,
+    .file_policy = .offload,
+    .offload = .{ .context = null, .submit = Pool.submit, .workers = workers },
+};
+
+/// The rings one worker needs. The backend that holds rings reports the size; the other holds
+/// none, and Zig has no zero-length array here, so the floor is one byte.
+pub const ring_bytes = if (backend.files_block)
+    backend.offload_module.memory_bytes(workers)
+else
+    1;
+
+/// A fixture's file for `policy`, `file_blocks` blocks long, at a path written into
+/// `path_buffer`. A file that a killed run left there is removed first.
+pub fn open_file(path_buffer: []u8, policy: core.offload.FilePolicy) !struct { [:0]const u8, core.Descriptor } {
+    const path = try conformance.scratch_path(path_buffer, path_format, .{
+        backend.testing.directory, backend.testing.process_id(), @tagName(policy),
+    });
+    const file = try sync.open_file(path, .{ .create = true, .direct = true });
+    errdefer sync.close_now(file);
+    try sync.set_file_size(file, file_blocks * block_bytes);
+    return .{ path, file };
+}
+
+/// The options of a fixture's loop with `policy`, the caller's `pool` and the offload's `rings`.
+pub fn loop_options(
+    policy: core.offload.FilePolicy,
+    pool: ?*Pool,
+    rings: []align(core.layout.memory_alignment) u8,
+) Loop.Options {
+    return .{
+        .operations = operations,
+        .entries = entries,
+        .file_policy = policy,
+        .offload = if (pool) |given| .{
+            .context = given,
+            .submit = Pool.submit,
+            .workers = workers,
+        } else null,
+        .offload_memory = rings,
+    };
+}
+
 /// One loop with a file policy, its memory, and the rings an offload needs.
 pub const Fixture = struct {
     loop: Loop,
-    memory: [
-        Loop.memory_bytes(&.{
-            .operations = operations,
-            .entries = entries,
-            .file_policy = .offload,
-            .offload = .{ .context = null, .submit = Pool.submit, .workers = workers },
-        })
-    ]u8 align(core.layout.memory_alignment),
+    memory: [Loop.memory_bytes(&sizing_options)]u8 align(core.layout.memory_alignment),
     rings: [ring_bytes]u8 align(core.layout.memory_alignment),
     path_buffer: [96]u8,
     path: [:0]const u8,
     file: core.Descriptor,
 
-    /// The rings one worker needs. The backend that holds rings reports the size; the other holds
-    /// none, and Zig has no zero-length array here, so the floor is one byte.
-    const ring_bytes = if (backend.files_block)
-        backend.offload_module.memory_bytes(workers)
-    else
-        1;
-
     pub fn init(fixture: *Fixture, policy: core.offload.FilePolicy, pool: ?*Pool) !void {
-        fixture.path = try conformance.scratch_path(&fixture.path_buffer, path_format, .{
-            backend.testing.directory, backend.testing.process_id(), @tagName(policy),
-        });
-        fixture.file = try sync.open_file(fixture.path, .{ .create = true, .direct = true });
+        fixture.path, fixture.file = try open_file(&fixture.path_buffer, policy);
         errdefer sync.close_now(fixture.file);
-        try sync.set_file_size(fixture.file, file_blocks * block_bytes);
-
-        try fixture.loop.init(&fixture.memory, &.{
-            .operations = operations,
-            .entries = entries,
-            .file_policy = policy,
-            .offload = if (pool) |given| .{
-                .context = given,
-                .submit = Pool.submit,
-                .workers = workers,
-            } else null,
-            .offload_memory = &fixture.rings,
-        });
+        try fixture.loop.init(&fixture.memory, &loop_options(policy, pool, &fixture.rings));
     }
 
     pub fn deinit(fixture: *Fixture) void {

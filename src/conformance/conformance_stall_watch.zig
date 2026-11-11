@@ -10,6 +10,7 @@ const stall = @import("conformance_stall.zig");
 
 const Event = core.Event;
 const Fixture = stall.Fixture;
+const ReactorFixture = stall.ReactorFixture;
 const clock_ns = backend.testing.monotonic_ns;
 const ns_per_ms = core.constants.ns_per_ms;
 const stall_turn_ns = stall.stall_turn_ns;
@@ -75,18 +76,18 @@ const pause_rounds_max = 1_000_000;
 
 test "a watch on another thread names the callback that holds the loop" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
+    var fixture: ReactorFixture = undefined;
     try fixture.init(stall_turn_ns);
-    defer fixture.loop.deinit();
+    defer fixture.reactor.deinit();
     var spinning: Spinning = .{};
-    var watcher: Watcher = .{ .heartbeat = fixture.loop.heartbeat(), .spinning = &spinning };
+    var watcher: Watcher = .{ .heartbeat = fixture.reactor.heartbeat(), .spinning = &spinning };
     const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
     const timer = core.Operation.timer(0, 0, 0).completion(&spinning.completion);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.submit(&.{timer}, &.{}));
+    try testing.expectEqual(@as(u32, 1), fixture.reactor.submit(&.{timer}, &.{}));
     var events: [4]Event = undefined;
     var round: u32 = 0;
     while (!spinning.released and round < conformance.collect_rounds_max) : (round += 1) {
-        _ = try fixture.loop.tick(&events, ns_per_ms);
+        _ = try fixture.reactor.tick(&events, ns_per_ms);
     }
     thread.join();
     try testing.expect(spinning.released);
@@ -94,8 +95,8 @@ test "a watch on another thread names the callback that holds the loop" {
     try testing.expectEqualStrings(expected, std.mem.span(watcher.name.?));
     try testing.expect(watcher.checks >= 1);
     // The turn the record held is a stall of that record.
-    _ = try fixture.loop.tick(&events, 0);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.statistics().last_stall.callbacks);
+    _ = try fixture.reactor.tick(&events, 0);
+    try testing.expectEqual(@as(u32, 1), fixture.reactor.statistics().last_stall.callbacks);
 }
 
 /// A watch that checks while its loop waits in the kernel, and keeps each report: the turn it named

@@ -10,7 +10,7 @@ const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const call_scenarios = @import("conformance_call.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const LoopId = core.LoopId;
 const constants = core.constants;
@@ -45,10 +45,10 @@ const Sleeper = struct {
     }
 
     fn serve(sleeper: *Sleeper) !void {
-        var harness: Harness = undefined;
+        var harness: ReactorHarness = undefined;
         try harness.init(1, sleeper.registry);
         defer harness.deinit();
-        const shared = harness.loop.shared();
+        const shared = harness.reactor.shared();
         // It serves before its first tick, so no call reaches a station that never served.
         sleeper.service.serve(shared, &sleeper.echo);
         defer sleeper.service.stop_serving(shared);
@@ -69,7 +69,7 @@ test "a call wakes a target that sleeps in its tick, and the answer wakes the ca
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
     defer life.end();
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, &registry);
     defer harness.deinit();
     var service: EchoService = .init;
@@ -79,7 +79,7 @@ test "a call wakes a target that sleeps in its tick, and the answer wakes the ca
     defer if (!joined) thread.join();
 
     var tally: Tally = .{};
-    var client: Client = .{ .service = &service, .shared = harness.loop.shared(), .target = 1, .tally = &tally };
+    var client: Client = .{ .service = &service, .shared = harness.reactor.shared(), .target = 1, .tally = &tally };
     var sent = false;
     var attempt: u32 = 0;
     while (!sent and attempt < attempts_max) : (attempt += 1) {
@@ -160,10 +160,10 @@ const Member = struct {
     }
 
     fn serve(member: *Member) !void {
-        var harness: Harness = undefined;
+        var harness: ReactorHarness = undefined;
         try harness.init(member.id, member.four.registry);
         defer harness.deinit();
-        const shared = harness.loop.shared();
+        const shared = harness.reactor.shared();
         const service = member.four.service;
         service.serve(shared, &member.echo);
         member.serving = true;
@@ -189,7 +189,7 @@ const Member = struct {
             member.stop_when_due(shared);
             try member.send_late(shared);
             const out = calls_out(&member.tally) + calls_out(&member.late_tally);
-            const settled = member.late_tally.accepted == 1 and out == 0 and harness.loop.tasks_queued() == 0;
+            const settled = member.late_tally.accepted == 1 and out == 0 and harness.reactor.tasks_queued() == 0;
             member.four.settled[member.id].store(settled, .release);
         }
         member.four.barrier(1);
@@ -283,26 +283,26 @@ test "calls in two named groups at shares 100 and 300 run their handlers 1 to 3"
     var registry_memory: [backend.Registry.memory_bytes(loops)]u8 align(core.layout.memory_alignment) = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, loops);
     defer life.end();
-    var harnesses: [loops]Harness = undefined;
-    var pointers: [loops]*Harness = undefined;
+    var harnesses: [loops]ReactorHarness = undefined;
+    var pointers: [loops]*ReactorHarness = undefined;
     var started: usize = 0;
     defer for (harnesses[0..started]) |*harness| harness.deinit();
     for (&harnesses, &pointers, 0..) |*harness, *pointer, id| {
-        try call_scenarios.init_loop(harness, @intCast(id), &registry, &Declared.table);
+        try call_scenarios.init_reactor(harness, @intCast(id), &registry, &Declared.table);
         started += 1;
         pointer.* = harness;
     }
     // Loop 0 serves, and loops 1 to 4 call it: two in `low` and two in `high`.
     var service: EchoService = .init;
     var echo: Echo = .{};
-    service.serve(harnesses[0].loop.shared(), &echo);
-    defer service.stop_serving(harnesses[0].loop.shared());
+    service.serve(harnesses[0].reactor.shared(), &echo);
+    defer service.stop_serving(harnesses[0].reactor.shared());
     var tally: Tally = .{ .left = std.math.maxInt(u32) };
     var clients: [callers][constants.calls_per_pair_max]Client = undefined;
     for (&clients, 1..) |*row, id| {
         const group = if (id <= callers / 2) Declared.group(.low) else Declared.group(.high);
         for (row) |*client| {
-            client.* = .{ .service = &service, .shared = harnesses[id].loop.shared(), .target = 0, .group = group, .tally = &tally };
+            client.* = .{ .service = &service, .shared = harnesses[id].reactor.shared(), .target = 0, .group = group, .tally = &tally };
             try client.send();
         }
     }

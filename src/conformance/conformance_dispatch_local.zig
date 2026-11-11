@@ -9,8 +9,10 @@ const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const offload = @import("conformance_offload.zig");
+const reactor_harness = @import("conformance_reactor.zig");
 
 const Event = core.Event;
+const Reactor = conformance.Reactor;
 const Operation = core.Operation;
 const sync = backend.sync;
 
@@ -45,31 +47,55 @@ const Library = struct {
 
 /// Submits `operation` with `library`'s record, ticks until the record has the final event, and
 /// returns that event. Fails when a tick hands its caller an event, which carried no record.
-fn reach_record(loop: *backend.Loop, operation: Operation, library: *Library) !Event {
+fn reach_record(reactor: *Reactor, operation: Operation, library: *Library) !Event {
     const named = operation.completion(&library.completion);
-    if (loop.submit(&.{named}, &.{}) != 1) return error.TableFull;
+    if (reactor.submit(&.{named}, &.{}) != 1) return error.TableFull;
     var events: [1]Event = undefined;
     var round: u32 = 0;
     while (library.finals == 0 and round < conformance.collect_rounds_max) : (round += 1) {
-        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, wait_ns));
+        try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, wait_ns));
     }
     try testing.expectEqual(@as(u32, 1), library.finals);
-    try testing.expectEqual(@as(u32, 0), loop.in_flight());
+    try testing.expectEqual(@as(u32, 0), reactor.in_flight());
     return library.last.?;
 }
 
+/// The offload scenarios' fixture of `conformance_offload.zig`, with a reactor in place of its
+/// loop (decision 33).
+const ReactorFixture = struct {
+    reactor: Reactor,
+    memory: [Reactor.memory_bytes(&.{ .loop = offload.sizing_options })]u8 align(core.layout.memory_alignment),
+    rings: [offload.ring_bytes]u8 align(core.layout.memory_alignment),
+    path_buffer: [96]u8,
+    path: [:0]const u8,
+    file: core.Descriptor,
+
+    fn init(fixture: *ReactorFixture, policy: core.offload.FilePolicy, pool: ?*offload.Pool) !void {
+        fixture.path, fixture.file = try offload.open_file(&fixture.path_buffer, policy);
+        errdefer sync.close_now(fixture.file);
+        try fixture.reactor.init(&fixture.memory, &.{ .loop = offload.loop_options(policy, pool, &fixture.rings) });
+    }
+
+    fn deinit(fixture: *ReactorFixture) void {
+        reactor_harness.end_in_flight(&fixture.reactor);
+        fixture.reactor.deinit();
+        sync.close_now(fixture.file);
+        backend.testing.remove_file(fixture.path);
+    }
+};
+
 // Each static restates its type's alignment, as `conformance_offload.zig` says why.
-var loop_fixture: offload.Fixture align(@alignOf(offload.Fixture)) = undefined;
+var reactor_fixture: ReactorFixture align(@alignOf(ReactorFixture)) = undefined;
 var worker_pool: offload.Pool align(@alignOf(offload.Pool)) = undefined;
 
 test "a file read that the refuse policy ends at the flush reaches its record" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    try loop_fixture.init(.refuse, null);
-    defer loop_fixture.deinit();
+    try reactor_fixture.init(.refuse, null);
+    defer reactor_fixture.deinit();
     var into: [block_bytes]u8 align(block_bytes) = @splat(0);
     var library: Library = .{};
-    const read = Operation.read(0, loop_fixture.file, &into, 0);
-    const event = try reach_record(&loop_fixture.loop, read, &library);
+    const read = Operation.read(0, reactor_fixture.file, &into, 0);
+    const event = try reach_record(&reactor_fixture.reactor, read, &library);
     if (backend.files_block) {
         try testing.expectError(error.Unsupported, event.outcome());
     } else {
@@ -82,16 +108,16 @@ test "a file read that the caller's offload runs reaches its record" {
     if (conformance.unsupported()) return error.SkipZigTest;
     if (!backend.files_block) return error.SkipZigTest;
     try worker_pool.start();
-    try loop_fixture.init(.offload, &worker_pool);
+    try reactor_fixture.init(.offload, &worker_pool);
     defer {
         // The pool stops first, because a worker reads the loop after it hands back the result.
         worker_pool.stop();
-        loop_fixture.deinit();
+        reactor_fixture.deinit();
     }
     var into: [block_bytes]u8 align(block_bytes) = @splat(0xaa);
     var library: Library = .{};
-    const read = Operation.read(0, loop_fixture.file, &into, 0);
-    const event = try reach_record(&loop_fixture.loop, read, &library);
+    const read = Operation.read(0, reactor_fixture.file, &into, 0);
+    const event = try reach_record(&reactor_fixture.reactor, read, &library);
     try testing.expectEqual(@as(u32, block_bytes), try event.outcome());
     worker_pool.stop();
     try testing.expectEqual(@as(u32, 1), worker_pool.served.load(.monotonic));
@@ -101,7 +127,7 @@ test "a write on a registered descriptor from a registered buffer reaches its re
     // Known at compile time, so a host that cannot run the backend does not compile the rest:
     // io_uring's buffer registration does not compile for macOS.
     if (comptime conformance.unsupported()) return error.SkipZigTest;
-    var harness: conformance.Harness = undefined;
+    var harness: conformance.ReactorHarness = undefined;
     try harness.init_blocking(0, null);
     defer harness.deinit();
     var path_buffer: [96]u8 = undefined;
@@ -111,8 +137,8 @@ test "a write on a registered descriptor from a registered buffer reaches its re
     defer backend.testing.remove_file(path);
     try sync.set_file_size(file, block_bytes);
     var out: [block_bytes]u8 align(block_bytes) = @splat(5);
-    try harness.loop.register_descriptors(&.{file});
-    try harness.loop.register_buffers(&.{&out});
+    try harness.reactor.register_descriptors(&.{file});
+    try harness.reactor.register_buffers(&.{&out});
 
     const write: Operation = .{ .user_data = 0, .descriptor_registered = true, .kind = .{ .write = .{
         .file = 0,
@@ -120,6 +146,6 @@ test "a write on a registered descriptor from a registered buffer reaches its re
         .offset = 0,
     } } };
     var library: Library = .{};
-    const event = try reach_record(&harness.loop, write, &library);
+    const event = try reach_record(&harness.reactor, write, &library);
     try testing.expectEqual(@as(u32, block_bytes), try event.outcome());
 }

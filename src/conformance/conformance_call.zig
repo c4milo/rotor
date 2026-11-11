@@ -10,14 +10,14 @@ const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 const LoopId = core.LoopId;
 const constants = core.constants;
 
-/// The loop as a library holds it, which a service takes.
-pub const View = core.shared_loop.SharedLoop(backend.Loop);
+/// The reactor as a library holds it, which a service takes.
+pub const View = conformance.Reactor.SharedLoop;
 /// The record of one call of the echo service.
 pub const Call = core.call.CallRecord(View, u64, u64);
 pub const EchoService = core.call.Service(View, Echo, u64, u64, Echo.handle);
@@ -100,20 +100,20 @@ pub const Client = struct {
     }
 };
 
-/// A loop on `registry` whose `init` reserves the named groups of `table` (decision 30).
-pub fn init_loop(harness: *Harness, id: LoopId, registry: ?*backend.Registry, table: *const core.scheduling.NamedTable) !void {
-    try harness.loop.init(&harness.memory, &.{
+/// A reactor on `registry` whose loop reserves the named groups of `table` at `init` (decision 30).
+pub fn init_reactor(harness: *ReactorHarness, id: LoopId, registry: ?*backend.Registry, table: *const core.scheduling.NamedTable) !void {
+    try harness.reactor.init(&harness.memory, &.{ .loop = .{
         .operations = conformance.operations,
         .entries = conformance.entries,
         .id = id,
         .registry = registry,
         .spin_budget_ns = conformance.spin_budget_ns(),
         .named_groups = table.*,
-    });
+    } });
 }
 
 /// Ticks each loop of `harnesses` once with no wait, and returns the events they handed over.
-pub fn tick_all(harnesses: []const *Harness) !u32 {
+pub fn tick_all(harnesses: []const *ReactorHarness) !u32 {
     var events: [64]Event = undefined;
     var count: u32 = 0;
     for (harnesses) |harness| count += try harness.tick(&events, 0);
@@ -124,7 +124,7 @@ pub fn tick_all(harnesses: []const *Harness) !u32 {
 const Two = struct {
     registry: backend.Registry,
     memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment),
-    harnesses: [2]Harness,
+    harnesses: [2]ReactorHarness,
     service: EchoService,
     echoes: [2]Echo,
 
@@ -132,15 +132,15 @@ const Two = struct {
         const life = try conformance.RegistryLife.start(&two.registry, &two.memory, 2);
         two.service = .init;
         for (&two.harnesses, &two.echoes, 0..) |*harness, *echo, id| {
-            try init_loop(harness, @intCast(id), &two.registry, table);
+            try init_reactor(harness, @intCast(id), &two.registry, table);
             echo.* = .{};
-            two.service.serve(harness.loop.shared(), echo);
+            two.service.serve(harness.reactor.shared(), echo);
         }
         return life;
     }
 
     fn shared(two: *Two, id: LoopId) *View {
-        return two.harnesses[id].loop.shared();
+        return two.harnesses[id].reactor.shared();
     }
 
     fn tick(two: *Two) !u32 {
@@ -149,7 +149,7 @@ const Two = struct {
 
     fn end(two: *Two) void {
         for (&two.harnesses) |*harness| {
-            two.service.stop_serving(harness.loop.shared());
+            two.service.stop_serving(harness.reactor.shared());
             harness.deinit();
         }
     }
@@ -215,7 +215,7 @@ test "a ring that holds 224 posts still takes the returns of 32 calls" {
         try client.send();
     }
     // The target fills its ring to the caller with posts, and the next post is refused.
-    const target = &two.harnesses[1].loop;
+    const target = &two.harnesses[1].reactor;
     for (0..constants.mailbox_posts_max) |payload| try target.post(0, .{ .payload = payload, .tag = 5 });
     try testing.expectError(error.MailboxFull, target.post(0, .{ .payload = 0, .tag = 5 }));
     var events: [64]Event = undefined;
@@ -306,12 +306,12 @@ test "a tick that takes a call does not block before the handler runs" {
 
 test "a call to self takes no ring, on a loop with no registry" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
-    try init_loop(&harness, 0, null, &.empty);
+    var harness: ReactorHarness = undefined;
+    try init_reactor(&harness, 0, null, &.empty);
     defer harness.deinit();
     var service: EchoService = .init;
     var echo: Echo = .{};
-    const shared = harness.loop.shared();
+    const shared = harness.reactor.shared();
     service.serve(shared, &echo);
     defer service.stop_serving(shared);
     var tally: Tally = .{ .left = 100 };
@@ -342,7 +342,7 @@ test "a call that waits in the ring of a loop that left is served by the loop th
     try testing.expectError(error.LoopNotFound, refused.send());
     try testing.expect(!refused.call.is_out());
     // A second loop claims id 1, serves, and takes the call that waited.
-    try init_loop(&two.harnesses[1], 1, &two.registry, &.empty);
+    try init_reactor(&two.harnesses[1], 1, &two.registry, &.empty);
     two.service.serve(two.shared(1), &two.echoes[1]);
     var ticks: u32 = 0;
     while (tally.replied == 0 and ticks < ticks_max) : (ticks += 1) _ = try two.tick();
@@ -359,8 +359,8 @@ test "a loop that claims the id of a loop that stopped serving, and does not ser
     two.service.stop_serving(two.shared(1));
     two.harnesses[1].deinit();
     // A second loop, at another address, claims id 1 and does not serve.
-    var claimer: Harness = undefined;
-    try init_loop(&claimer, 1, &two.registry, &.empty);
+    var claimer: ReactorHarness = undefined;
+    try init_reactor(&claimer, 1, &two.registry, &.empty);
     defer claimer.deinit();
     defer {
         two.service.stop_serving(two.shared(0));
@@ -374,5 +374,5 @@ test "a loop that claims the id of a loop that stopped serving, and does not ser
     try testing.expectEqual(@as(u32, 1), tally.stopped);
     try testing.expectEqual(@as(u32, 0), two.echoes[1].handled);
     // The claimer owes nothing: its drain answered the call, and no task of it is queued.
-    try testing.expectEqual(@as(u32, 0), claimer.loop.callbacks_outstanding());
+    try testing.expectEqual(@as(u32, 0), claimer.reactor.loop.callbacks_outstanding());
 }

@@ -10,7 +10,7 @@ const core = @import("core");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
 
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Event = core.Event;
 const Operation = core.Operation;
 
@@ -28,7 +28,7 @@ const Library = struct {
     /// The final events the record received.
     finals: u32 = 0,
     /// Set by `called` when it should submit a timer without a record from inside its callback.
-    submit_into: ?*Harness = null,
+    submit_into: ?*ReactorHarness = null,
 
     fn called(library: *Library, event: Event) void {
         std.debug.assert(event.flags.dispatched);
@@ -46,7 +46,7 @@ const Library = struct {
 const events_len = core.constants.coalesced_segments_max * 8;
 
 /// Ticks until `done` returns true, and fails if any tick hands an event to its caller.
-fn tick_until(harness: *Harness, context: anytype, comptime done: fn (@TypeOf(context)) bool) !void {
+fn tick_until(harness: *ReactorHarness, context: anytype, comptime done: fn (@TypeOf(context)) bool) !void {
     var events: [events_len]Event = undefined;
     var round: u32 = 0;
     while (!done(context) and round < rounds_max) : (round += 1) {
@@ -63,7 +63,7 @@ fn both_finished(pair: Pair) bool {
 
 test "two libraries on one loop each get their own events, whichever of them ticks" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var first: Library = .{};
@@ -79,15 +79,15 @@ test "two libraries on one loop each get their own events, whichever of them tic
     while (first.events < 3 and round < rounds_max) : (round += 1) {
         try testing.expectEqual(@as(u32, 0), try harness.tick(&events, wait_ns));
     }
-    harness.loop.cancel(handles[0]);
+    harness.reactor.cancel(handles[0]);
     try tick_until(&harness, Pair{ .first = &first, .second = &second }, both_finished);
     try testing.expectEqual(@as(u32, 1), second.events);
-    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+    try testing.expectEqual(@as(u32, 0), harness.reactor.in_flight());
 }
 
 test "an event of an operation without a record reaches the caller, and the other does not" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var library: Library = .{};
@@ -112,7 +112,7 @@ test "an event of an operation without a record reaches the caller, and the othe
 
 test "a callback may submit, and the next tick serves what it submitted" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var library: Library = .{ .submit_into = &harness };
@@ -145,7 +145,7 @@ const long_wait_ns = 2 * core.constants.ns_per_s;
 
 test "each poller runs once a tick, and one that did work keeps the tick from blocking" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var idle: Polling = .{};
@@ -153,18 +153,18 @@ test "each poller runs once a tick, and one that did work keeps the tick from bl
     var events: [8]Event = undefined;
     // `now_ns` is the clock as the last tick read it, so one tick sets it before the first reading.
     _ = try harness.tick(&events, 0);
-    try harness.loop.add_poller(&idle.poller);
-    try harness.loop.add_poller(&busy.poller);
+    try harness.reactor.add_poller(&idle.poller);
+    try harness.reactor.add_poller(&busy.poller);
     const ticks = 3;
     for (0..ticks) |_| {
-        const before = harness.loop.now_ns();
+        const before = harness.reactor.now_ns();
         try testing.expectEqual(@as(u32, 0), try harness.tick(&events, long_wait_ns));
-        try testing.expect(harness.loop.now_ns() - before < long_wait_ns / 2);
+        try testing.expect(harness.reactor.now_ns() - before < long_wait_ns / 2);
     }
     try testing.expectEqual(@as(u32, ticks), idle.calls);
     try testing.expectEqual(@as(u32, ticks), busy.calls);
-    harness.loop.remove_poller(&busy.poller);
-    harness.loop.remove_poller(&idle.poller);
+    harness.reactor.remove_poller(&busy.poller);
+    harness.reactor.remove_poller(&idle.poller);
     _ = try harness.tick(&events, 0);
     try testing.expectEqual(@as(u32, ticks), idle.calls);
 }
@@ -186,7 +186,7 @@ const datagrams = 25;
 
 /// A library whose record receives datagrams and gives each buffer back.
 const Receiver = struct {
-    harness: *Harness,
+    harness: *ReactorHarness,
     group: core.BufferGroup,
     completion: core.Completion = stall.completion(Receiver, "completion", received),
     datagrams: u32 = 0,
@@ -196,7 +196,7 @@ const Receiver = struct {
         if (!event.flags.more) receiver.finals += 1;
         if (!event.flags.buffer) return;
         receiver.datagrams += 1;
-        receiver.harness.loop.give_back_buffer(receiver.group, event.flags.buffer_id);
+        receiver.harness.reactor.give_back_buffer(receiver.group, event.flags.buffer_id);
     }
 };
 
@@ -209,7 +209,7 @@ fn ended(receiver: *Receiver) bool {
 }
 
 /// Sends `datagrams` datagrams of one byte to `socket`, from a loop of its own.
-fn send_datagrams(sending: *Harness, sender: core.Descriptor, socket: core.Descriptor) !void {
+fn send_datagrams(sending: *ReactorHarness, sender: core.Descriptor, socket: core.Descriptor) !void {
     var out: core.datagram.Outbound = .{
         .peer = try sync.local_address(socket),
         .local = undefined,
@@ -227,13 +227,13 @@ fn send_datagrams(sending: *Harness, sender: core.Descriptor, socket: core.Descr
 
 test "a multishot receive that names a record hands every datagram and its end to the record" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    const group = try harness.loop.reserve_buffer_group();
-    try harness.loop.provide_datagram_buffers(group, &group_memory, group_buffers, buffer_bytes, .{});
-    defer harness.loop.release_buffers(group);
-    var sending: Harness = undefined;
+    const group = try harness.reactor.reserve_buffer_group();
+    try harness.reactor.provide_datagram_buffers(group, &group_memory, group_buffers, buffer_bytes, .{});
+    defer harness.reactor.release_buffers(group);
+    var sending: ReactorHarness = undefined;
     try sending.init(1, null);
     defer sending.deinit();
     const socket = try sync.open_datagram(.ipv4, &loopback, .{ .coalesce = false });
@@ -248,6 +248,6 @@ test "a multishot receive that names a record hands every datagram and its end t
     try send_datagrams(&sending, sender, socket);
     try tick_until(&harness, &receiver, received_all);
     // The cancel's final event reaches the record too, through the backend's failure path.
-    harness.loop.cancel(handles[0]);
+    harness.reactor.cancel(handles[0]);
     try tick_until(&harness, &receiver, ended);
 }

@@ -38,6 +38,7 @@ const conformance = @import("conformance.zig");
 
 const Event = core.Event;
 const Loop = backend.Loop;
+const Reactor = conformance.Reactor;
 
 /// Times each cost is measured, of which the fastest is checked. Twenty is enough that one of them
 /// lands between two scheduler interruptions on a machine with work on it, and costs milliseconds.
@@ -65,6 +66,12 @@ var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) 
 // x86-64, places a static without the alignment its type takes from an aligned field, unless the
 // static declares it. `conformance_offload.zig` met it on 2026-09-23.
 var loop: Loop align(@alignOf(Loop)) = undefined;
+
+/// This file's own reactor over a loop of the same options, for the costs of the tasks (decision
+/// 33).
+const reactor_options: Reactor.Options = .{ .loop = options };
+var reactor_memory: [Reactor.memory_bytes(&reactor_options)]u8 align(core.layout.memory_alignment) = undefined;
+var reactor: Reactor align(@alignOf(Reactor)) = undefined;
 
 /// A poll with nothing in flight: `tick` with no wait, which returns at once.
 ///
@@ -196,17 +203,17 @@ const task_bound_ns = 300;
 
 test "one task of a full run stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, &options);
-    defer loop.deinit();
+    try reactor.init(&reactor_memory, &reactor_options);
+    defer reactor.deinit();
     var events: [events_max]Event = undefined;
 
     var best_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         const started_ns = now_ns();
-        for (&cost_tasks) |*task| try loop.schedule(task);
-        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+        for (&cost_tasks) |*task| try reactor.schedule(task);
+        try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, 0));
         best_ns = @min(best_ns, (now_ns() - started_ns) / task_count);
-        try testing.expectEqual(@as(u32, 0), loop.tasks_queued());
+        try testing.expectEqual(@as(u32, 0), reactor.tasks_queued());
     }
     try expect_under(best_ns, task_bound_ns, "one task of a full run");
 }
@@ -219,21 +226,21 @@ const group_task_bound_ns = 800;
 
 test "one task of a full run in 16 groups stays under its bound" {
     if (conformance.unsupported() or unmeasurable()) return error.SkipZigTest;
-    try loop.init(&memory, &options);
-    defer loop.deinit();
+    try reactor.init(&reactor_memory, &reactor_options);
+    defer reactor.deinit();
     var events: [events_max]Event = undefined;
     var groups: [core.constants.scheduling_groups_max]core.SchedulingGroup = undefined;
     groups[0] = .default;
-    for (groups[1..]) |*group| group.* = try loop.reserve_scheduling_group(core.constants.scheduling_shares_default);
+    for (groups[1..]) |*group| group.* = try reactor.reserve_scheduling_group(core.constants.scheduling_shares_default);
     const per_group = task_count / core.constants.scheduling_groups_max;
 
     var best_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         const started_ns = now_ns();
-        for (&cost_tasks, 0..) |*task, index| try loop.schedule_in(groups[index / per_group], task);
-        try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
+        for (&cost_tasks, 0..) |*task, index| try reactor.schedule_in(groups[index / per_group], task);
+        try testing.expectEqual(@as(u32, 0), try reactor.tick(&events, 0));
         best_ns = @min(best_ns, (now_ns() - started_ns) / task_count);
-        try testing.expectEqual(@as(u32, 0), loop.tasks_queued());
+        try testing.expectEqual(@as(u32, 0), reactor.tasks_queued());
     }
     try expect_under(best_ns, group_task_bound_ns, "one task of a full run in 16 groups");
 }
@@ -254,7 +261,7 @@ const call_bound_ns = 13_000;
 /// nothing outstanding takes the calls in one tick on its fast path, and runs their tasks in the
 /// next.
 fn call_round(
-    harnesses: *[2]conformance.Harness,
+    harnesses: *[2]conformance.ReactorHarness,
     clients: []call_scenarios.Client,
     tally: *const call_scenarios.Tally,
 ) !void {
@@ -275,20 +282,20 @@ test "one call round trip between two loops stays under its bound" {
     var registry_memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment) = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, 2);
     defer life.end();
-    var harnesses: [2]conformance.Harness = undefined;
-    try call_scenarios.init_loop(&harnesses[0], 0, &registry, &.empty);
+    var harnesses: [2]conformance.ReactorHarness = undefined;
+    try call_scenarios.init_reactor(&harnesses[0], 0, &registry, &.empty);
     defer harnesses[0].deinit();
-    try call_scenarios.init_loop(&harnesses[1], 1, &registry, &.empty);
+    try call_scenarios.init_reactor(&harnesses[1], 1, &registry, &.empty);
     defer harnesses[1].deinit();
     var service: call_scenarios.EchoService = .init;
     var echo: call_scenarios.Echo = .{};
-    const target = harnesses[1].loop.shared();
+    const target = harnesses[1].reactor.shared();
     service.serve(target, &echo);
     defer service.stop_serving(target);
     var tally: call_scenarios.Tally = .{};
     var clients: [core.constants.calls_per_pair_max]call_scenarios.Client = undefined;
     for (&clients) |*client| {
-        client.* = .{ .service = &service, .shared = harnesses[0].loop.shared(), .target = 1, .tally = &tally };
+        client.* = .{ .service = &service, .shared = harnesses[0].reactor.shared(), .target = 1, .tally = &tally };
     }
     var best_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {

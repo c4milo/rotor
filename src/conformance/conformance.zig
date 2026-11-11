@@ -6,13 +6,20 @@
 //!
 //! A scenario uses nothing but the backend's public surface: `Loop`, `Registry`, and the
 //! synchronous calls of `sync`. On a host the backend cannot run on, every scenario skips.
+//!
+//! The reactor's scenarios run on `reactor.Reactor(backend.Loop)`, through `ReactorHarness`, and
+//! the core's scenarios run on `backend.Loop`, through `Harness` (decision 33).
 const std = @import("std");
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const stall = @import("conformance_stall.zig");
 const registry_life = @import("conformance_registry.zig");
 
 pub const Loop = backend.Loop;
+/// The reactor over the backend under test (decision 33).
+pub const Reactor = reactor_module.Reactor(Loop);
+pub const ReactorHarness = @import("conformance_reactor.zig").ReactorHarness;
 pub const Event = core.Event;
 pub const Handle = core.Handle;
 pub const Operation = core.Operation;
@@ -25,7 +32,7 @@ const memory_bytes = Loop.memory_bytes(&.{ .operations = operations, .entries = 
 
 /// The most rounds `Harness.collect` ticks before it gives up: with a 10 ms wait each, 2 s.
 pub const collect_rounds_max = 200;
-const collect_wait_ns = 10 * core.constants.ns_per_ms;
+pub const collect_wait_ns = 10 * core.constants.ns_per_ms;
 
 /// The environment variable that gives every harness loop a spin budget, in nanoseconds. The build
 /// runs the suite once without it and once with it, so every scenario also runs on a loop that

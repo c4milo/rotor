@@ -19,6 +19,7 @@ const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
 const Harness = conformance.Harness;
+const reactor_harness = @import("conformance_reactor.zig");
 const Event = core.Event;
 const Operation = core.Operation;
 
@@ -41,17 +42,17 @@ const monotonic_ns = backend.testing.monotonic_ns;
 const Spent = struct { cpu_ns: u64, wall_ns: u64, produced: u32 };
 
 /// Hands over one event, so the loop's spin window starts now.
-fn hand_over_one(harness: *Harness) !void {
+fn hand_over_one(harness: anytype) !void {
     try harness.submit(&.{.{ .user_data = 5, .kind = .nop }}, &.{});
     var events: [1]Event = undefined;
     try harness.collect(&events);
     try testing.expectEqual(@as(u64, 5), events[0].user_data);
 }
 
-fn timed_tick(harness: *Harness, events: []Event, wait_ns: u64) !Spent {
+fn timed_tick(harness: anytype, events: []Event, wait_ns: u64) !Spent {
     const cpu_before = thread_cpu_ns();
     const wall_before = monotonic_ns();
-    const produced = try harness.loop.tick(events, wait_ns);
+    const produced = try reactor_harness.driven(harness).tick(events, wait_ns);
     return .{
         .cpu_ns = thread_cpu_ns() - cpu_before,
         .wall_ns = monotonic_ns() - wall_before,
@@ -152,18 +153,18 @@ test "a timer due inside the budget ends the spin before it starts, and the loop
 /// A library's poller that answers a deadline until the loop's clock reaches it.
 const Deadline = struct {
     poller: core.Poller = .init(Deadline, "poller", polled),
-    loop: *backend.Loop,
+    reactor: *conformance.Reactor,
     at_ns: u64,
 
     fn polled(deadline: *Deadline) core.WaitLimit {
-        if (deadline.loop.now_ns() >= deadline.at_ns) return .none;
+        if (deadline.reactor.now_ns() >= deadline.at_ns) return .none;
         return .at(deadline.at_ns);
     }
 };
 
 test "a poller's limit due inside the budget ends the spin before it starts" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: conformance.ReactorHarness = undefined;
     try harness.init_spin(budget_ns);
     defer harness.deinit();
 
@@ -172,10 +173,10 @@ test "a poller's limit due inside the budget ends the spin before it starts" {
     var least_cpu_ns: u64 = std.math.maxInt(u64);
     for (0..attempts) |_| {
         try hand_over_one(&harness);
-        const at_ns = harness.loop.now_ns() + limit_after_ns;
-        var deadline: Deadline = .{ .loop = &harness.loop, .at_ns = at_ns };
-        try harness.loop.add_poller(&deadline.poller);
-        defer harness.loop.remove_poller(&deadline.poller);
+        const at_ns = harness.reactor.now_ns() + limit_after_ns;
+        var deadline: Deadline = .{ .reactor = &harness.reactor, .at_ns = at_ns };
+        try harness.reactor.add_poller(&deadline.poller);
+        defer harness.reactor.remove_poller(&deadline.poller);
         const spent = try timed_tick(&harness, &events, 100 * ms);
         least_cpu_ns = @min(least_cpu_ns, spent.cpu_ns);
     }

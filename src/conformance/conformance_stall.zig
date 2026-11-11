@@ -5,8 +5,9 @@
 //!
 //! A scenario makes its records, pollers and tasks with `completion`, `poller` and `task`. Each
 //! one reads the thread's CPU clock before and after its handler. A run that used more CPU time
-//! than `constants.callback_stall_ns_max` is kept, and the next `Harness.tick` or `Harness.drain`
-//! returns `error.CallbackStalled`. A callback returns nothing, so it cannot fail the test itself.
+//! than `constants.callback_stall_ns_max` is kept, and the next `tick` or `drain` of `Harness` or
+//! `ReactorHarness` returns `error.CallbackStalled`. A callback returns nothing, so it cannot fail
+//! the test itself.
 //!
 //! The check reads CPU time and not the wall clock, by Camilo's ruling of 2026-11-07 (decision 28,
 //! its amendment of that day). The kernel can take the thread off the processor inside a small
@@ -101,7 +102,7 @@ pub fn task_cost(
 }
 
 const conformance = @import("conformance.zig");
-const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 
 /// Holds the thread until it used more CPU time than the limit, as a callback with too much work
 /// would. It reads the CPU clock and not the wall clock: on a loaded machine the kernel takes the
@@ -145,7 +146,7 @@ const Slow = struct {
 };
 
 /// Ticks until `slow` saw a call, and returns what the harness returned.
-fn tick_until_called(harness: *Harness, slow: *Slow) !void {
+fn tick_until_called(harness: *ReactorHarness, slow: *Slow) !void {
     var events: [8]Event = undefined;
     var round: u32 = 0;
     while (slow.calls == 0 and round < conformance.collect_rounds_max) : (round += 1) {
@@ -156,7 +157,7 @@ fn tick_until_called(harness: *Harness, slow: *Slow) !void {
 
 test "a record that holds the loop past the limit fails the tick that called it" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var slow: Slow = .{ .slow = true };
@@ -169,12 +170,12 @@ test "a record that holds the loop past the limit fails the tick that called it"
 
 test "a poller that holds the loop past the limit fails the tick that called it" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var slow: Slow = .{ .slow = true };
-    try harness.loop.add_poller(&slow.poller);
-    defer harness.loop.remove_poller(&slow.poller);
+    try harness.reactor.add_poller(&slow.poller);
+    defer harness.reactor.remove_poller(&slow.poller);
     var events: [8]Event = undefined;
     try testing.expectError(error.CallbackStalled, harness.tick(&events, 0));
     try testing.expectEqual(@as(u32, 1), slow.calls);
@@ -182,27 +183,27 @@ test "a poller that holds the loop past the limit fails the tick that called it"
 
 test "a task that holds the loop past the limit fails the tick and the drain that ran it" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var slow: Slow = .{ .slow = true };
     var events: [8]Event = undefined;
-    try harness.loop.schedule(&slow.task);
+    try harness.reactor.schedule(&slow.task);
     try testing.expectError(error.CallbackStalled, harness.tick(&events, 0));
-    try harness.loop.schedule(&slow.task);
+    try harness.reactor.schedule(&slow.task);
     try testing.expectError(error.CallbackStalled, harness.drain(&events));
     try testing.expectEqual(@as(u32, 2), slow.calls);
 }
 
 test "callbacks under the limit pass" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var quick: Slow = .{ .slow = false };
-    try harness.loop.add_poller(&quick.poller);
-    defer harness.loop.remove_poller(&quick.poller);
-    try harness.loop.schedule(&quick.task);
+    try harness.reactor.add_poller(&quick.poller);
+    defer harness.reactor.remove_poller(&quick.poller);
+    try harness.reactor.schedule(&quick.task);
     const timer = core.Operation.timer(0, core.constants.ns_per_ms, 0);
     try harness.submit(&.{timer.completion(&quick.completion)}, &.{});
     var events: [8]Event = undefined;
@@ -239,7 +240,7 @@ const Waiting = struct {
 
 test "a record that waits in the kernel past the limit passes, because the check reads CPU time" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var harness: Harness = undefined;
+    var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     var other: Fixture = undefined;
@@ -298,6 +299,20 @@ pub const Fixture = struct {
     }
 };
 
+/// One reactor whose loop has a stall threshold of its own, for a scenario whose stall is in a
+/// record (decision 33).
+pub const ReactorFixture = struct {
+    memory: [conformance.Reactor.memory_bytes(&.{ .loop = options })]u8 align(core.layout.memory_alignment),
+    reactor: conformance.Reactor,
+
+    pub fn init(fixture: *ReactorFixture, turn_ns: u64) !void {
+        var with_threshold = options;
+        with_threshold.stall_turn_ns = turn_ns;
+        with_threshold.spin_budget_ns = conformance.spin_budget_ns();
+        try fixture.reactor.init(&fixture.memory, &.{ .loop = with_threshold });
+    }
+};
+
 /// Holds the thread for `span_ns`. A spin and not a sleep, so the thread keeps the loop the whole
 /// time, as a callback with too much work would.
 fn hold_for(span_ns: u64) void {
@@ -321,29 +336,29 @@ const Holding = struct {
 
 test "a record that holds the loop past the threshold makes a stall that names it" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    var fixture: Fixture = undefined;
+    var fixture: ReactorFixture = undefined;
     try fixture.init(stall_turn_ns);
-    defer fixture.loop.deinit();
+    defer fixture.reactor.deinit();
     var holding: Holding = .{};
     // A timer that the tick waits for, so the record runs in the turn that the stamp after the
     // wait starts.
     const timer = core.Operation.timer(0, timer_delay_ns, 0).completion(&holding.completion);
-    try testing.expectEqual(@as(u32, 1), fixture.loop.submit(&.{timer}, &.{}));
+    try testing.expectEqual(@as(u32, 1), fixture.reactor.submit(&.{timer}, &.{}));
     var events: [4]Event = undefined;
     var round: u32 = 0;
     while (holding.events == 0 and round < conformance.collect_rounds_max) : (round += 1) {
-        _ = try fixture.loop.tick(&events, blocked_wait_ns);
+        _ = try fixture.reactor.tick(&events, blocked_wait_ns);
     }
     try testing.expectEqual(@as(u32, 1), holding.events);
     // The next tick's first clock stamp ends the turn that held the record.
-    _ = try fixture.loop.tick(&events, 0);
-    const statistics = fixture.loop.statistics();
+    _ = try fixture.reactor.tick(&events, 0);
+    const statistics = fixture.reactor.statistics();
     try testing.expect(statistics.stalls >= 1);
     try testing.expect(statistics.stall_ns_max >= hold_ns);
     const last = statistics.last_stall;
     try testing.expectEqual(@as(u32, 1), last.callbacks);
     try testing.expect(last.span_ns >= hold_ns);
-    try testing.expect(last.end_ns == fixture.loop.now_ns());
+    try testing.expect(last.end_ns == fixture.reactor.now_ns());
     try testing.expectEqualStrings(@typeName(Holding) ++ ".completion", std.mem.span(last.name.?));
     try check();
 }

@@ -216,8 +216,8 @@ pub const Jobs = struct {
     }
 
     fn schedule(jobs: *Jobs, program: *Program, job: *Job, origin: Origin) !void {
-        if (program.main.loop.is_scheduled(&job.task)) return error.TaskQueuedTwice;
-        try program.main.loop.schedule(&job.task);
+        if (program.main.reactor.is_scheduled(&job.task)) return error.TaskQueuedTwice;
+        try program.main.reactor.schedule(&job.task);
         job.queued = true;
         job.scheduled += 1;
         jobs.queued += 1;
@@ -241,7 +241,7 @@ pub const Jobs = struct {
 
     /// `discard_tasks`, between ticks: it must unlink every queued task and call none.
     pub fn discard(jobs: *Jobs, program: *Program) !void {
-        const discarded = program.main.loop.discard_tasks();
+        const discarded = program.main.reactor.discard_tasks();
         if (discarded != jobs.queued) return error.DiscardCountDrift;
         for (&jobs.jobs) |*job| {
             if (!job.queued) continue;
@@ -253,26 +253,26 @@ pub const Jobs = struct {
     }
 
     fn check(jobs: *const Jobs, program: *Program) !void {
-        const loop = &program.main.loop;
-        if (loop.tasks_queued() != jobs.queued) return error.TasksQueuedDrift;
+        const reactor = &program.main.reactor;
+        if (reactor.tasks_queued() != jobs.queued) return error.TasksQueuedDrift;
         for (&jobs.jobs) |*job| {
-            if (loop.is_scheduled(&job.task) != job.queued) return error.TaskQueueDrift;
+            if (reactor.is_scheduled(&job.task) != job.queued) return error.TaskQueueDrift;
             const settled = job.runs + job.discarded + @intFromBool(job.queued);
             if (job.scheduled != settled) return error.TaskOnceRuleBroken;
         }
         if (jobs.scheduled != jobs.ran + jobs.discarded + jobs.queued) return error.TaskCountDrift;
-        loop.tables.dispatch.tasks.assert_queue();
+        reactor.loop.tables.dispatch.tasks.assert_queue();
     }
 };
 
 /// The checks after every tick of the program's loop, and after `drain`.
 pub fn check_after_tick(program: *Program) !void {
     if (program.failure) |failure| return failure;
-    const loop = &program.main.loop;
-    const dispatch = &loop.tables.dispatch;
+    const reactor = &program.main.reactor;
+    const dispatch = &reactor.loop.tables.dispatch;
     if (dispatch.phase != .idle) return error.TickStillMarked;
     const owed = program.ledger.records_in_flight + program.jobs.queued;
     if (dispatch.callbacks_outstanding != owed) return error.CallbacksOwedDrift;
-    if (loop.in_flight() != program.ledger.in_flight) return error.InFlightDrift;
+    if (reactor.in_flight() != program.ledger.in_flight) return error.InFlightDrift;
     try program.jobs.check(program);
 }

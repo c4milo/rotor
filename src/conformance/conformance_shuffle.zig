@@ -13,6 +13,7 @@ const conformance = @import("conformance.zig");
 const tcp = @import("conformance_tcp.zig");
 
 const Harness = conformance.Harness;
+const reactor_harness = @import("conformance_reactor.zig");
 const Event = core.Event;
 const Operation = core.Operation;
 const sync = backend.sync;
@@ -64,7 +65,7 @@ const Pairs = struct {
     client: [receivers]core.Descriptor,
     server: [receivers]core.Descriptor,
 
-    fn open(harness: *Harness, listener: *const tcp.Listener) !Pairs {
+    fn open(harness: anytype, listener: *const tcp.Listener) !Pairs {
         var pairs: Pairs = undefined;
         for (0..receivers) |index| {
             const pair = try tcp.connected_pair(harness, listener);
@@ -81,8 +82,10 @@ const Pairs = struct {
 };
 
 /// One round: the receives wait, then four sends make every socket readable in one flush. `log`
-/// gets the order in which the receives ended. With `records`, each receive names its record.
-fn round(harness: *Harness, pairs: *const Pairs, records: ?*[receivers]Receiver, log: *Log) !void {
+/// gets the order in which the receives ended. With `records`, each receive names its record, and
+/// `harness` is a `ReactorHarness`.
+fn round(harness: anytype, pairs: *const Pairs, records: ?*[receivers]Receiver, log: *Log) !void {
+    const driven = reactor_harness.driven(harness);
     var buffers: [receivers][1]u8 = undefined;
     for (0..receivers) |index| {
         var operation = Operation.receive(index, pairs.server[index], &buffers[index]);
@@ -91,22 +94,22 @@ fn round(harness: *Harness, pairs: *const Pairs, records: ?*[receivers]Receiver,
     }
     var events: [2 * receivers]Event = undefined;
     // The receives wait: no socket is readable yet.
-    try testing.expectEqual(@as(u32, 0), try harness.loop.tick(&events, 0));
+    try testing.expectEqual(@as(u32, 0), try driven.tick(&events, 0));
     for (0..receivers) |index| {
         const send = Operation.send(send_user_data + index, pairs.client[index], "x");
         try harness.submit(&.{send}, &.{});
     }
     var tick_count: u32 = 0;
-    while (harness.loop.in_flight() != 0 and tick_count < conformance.collect_rounds_max) {
+    while (driven.in_flight() != 0 and tick_count < conformance.collect_rounds_max) {
         tick_count += 1;
         const before = log.len;
-        const count = try harness.loop.tick(&events, wait_ns);
+        const count = try driven.tick(&events, wait_ns);
         for (events[0..count]) |event| {
             if (event.user_data < receivers) log.note(event.user_data);
         }
         if (log.len - before == receivers) log.full = true;
     }
-    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+    try testing.expectEqual(@as(u32, 0), driven.in_flight());
     try testing.expectEqual(@as(u32, receivers), log.len);
 }
 
@@ -121,14 +124,19 @@ const Orders = struct {
 /// Runs rounds until `full_rounds_wanted` of them are full, and judges only those. A round whose
 /// receives a loaded machine ends over several ticks gave the shuffle less to move, so it does not
 /// count. With fewer than `full_rounds_min` full rounds the scenario cannot judge, and it skips.
-fn rounds_in_other_orders(records: bool) !u32 {
+fn rounds_in_other_orders(comptime records: bool) !u32 {
     const orders = try run_rounds(records);
     if (orders.full < full_rounds_min) return error.SkipZigTest;
     return orders.others;
 }
 
-fn run_rounds(records: bool) !Orders {
-    var harness: Harness = undefined;
+/// The harness of the rounds: a reactor's when the receives name records (decision 33).
+fn RoundHarness(comptime records: bool) type {
+    return if (records) conformance.ReactorHarness else Harness;
+}
+
+fn run_rounds(comptime records: bool) !Orders {
+    var harness: RoundHarness(records) = undefined;
     try harness.init(0, null);
     defer harness.deinit();
     const listener = try tcp.Listener.open();
