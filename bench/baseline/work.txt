@@ -110,6 +110,18 @@
 # amendment of 2026-11-11: the push through the port and the hook cost 16 to 63 instructions in
 # each round trip. The arm64 lines are cachegrind's counts above. The `mac` line is the median of 5
 # runs on `mac` at a load average of about 5, which counted 2582 once and 2581 four times.
+# On 2026-11-11 main's CI counted x86-64 `tasks-64`, `tasks-groups-4` and `tasks-groups-16` 113 to
+# 125 over `f101917`, after step 3. On x86-64 the reactor's tick reloads its state and two values
+# from the stack after each task's call. In `schedule_in`, the owner check after the branch took
+# one more instruction. The owner check moved before the branch, and each push and pop of a task
+# reads the count once, before its stores. With the pushes, the compiler inlines `schedule_in` into
+# the loop of the groups rows, and those rows fell by about 10 percent on each machine. A change
+# that makes `schedule_in` larger can end the inlining and raise them again by as much. The gate
+# then asked for lower lines, which are these counts: on arm64 Linux, `tasks-64`, `tasks-groups-4`
+# and `tasks-groups-16` of both backends (cachegrind of Valgrind 3.23.0 in an arm64 container on
+# `mac`), and the same rows of macOS kqueue (the median of 5 runs on `mac` at a load average of
+# about 30). An x86-64 virtual machine under QEMU on `mac`, with its clock driven by the count of
+# instructions, gave CI's counts at `f101917` and `7679de4` on every row but epoll `wait`.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -118,11 +130,11 @@ timer 1124
 batch 24624
 wait 5296
 task 615
-tasks-64 4558
+tasks-64 4228
 record 1283
 poller 562
-tasks-groups-4 12943
-tasks-groups-16 13639
+tasks-groups-4 11543
+tasks-groups-16 12264
 call 2581
 section linux-x86_64-uring
 post-operation 3169
@@ -155,11 +167,11 @@ post-operation 2780
 timer 1039
 batch 23757
 task 534
-tasks-64 3910
+tasks-64 3565
 record 1199
 poller 493
-tasks-groups-4 12313
-tasks-groups-16 13009
+tasks-groups-4 10870
+tasks-groups-16 11590
 call 2323
 section linux-aarch64-epoll
 post 1150
@@ -168,9 +180,9 @@ timer 1077
 batch 23845
 wait 632
 task 593
-tasks-64 3985
+tasks-64 3623
 record 1228
 poller 557
-tasks-groups-4 12360
-tasks-groups-16 13056
+tasks-groups-4 10928
+tasks-groups-16 11648
 call 2505

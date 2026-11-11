@@ -88,10 +88,14 @@ pub const Tasks = struct {
         assert_class_a(!tasks.holds(task));
         // A call's task is pushed with the higher limit (decision 32, ruling item 11).
         assert(queued_max <= constants.task_queue_length_max);
-        if (tasks.count >= queued_max) return error.TasksFull;
+        // The count is read once, before the stores. The compiler cannot prove that a store through
+        // a task's link leaves the count as it was. A second read would load the count again and
+        // check the add for an overflow that the limit rules out.
+        const count = tasks.count;
+        if (count >= queued_max) return error.TasksFull;
         if (tasks.tail) |tail| tail.next = task else tasks.head = task;
         tasks.tail = task;
-        tasks.count += 1;
+        tasks.count = count + 1;
     }
 
     /// True when `task` is in this queue. A task that is queued on another loop, and is not that
@@ -114,10 +118,14 @@ pub const Tasks = struct {
             if (ran == started) break;
             assert_class_a(tasks.head != null and tasks.count >= 1);
             const task = tasks.head orelse break;
-            tasks.head = task.next;
+            // The link and the count are read before the stores, as in `push`. The assertion
+            // above then rules out an underflow of the count.
+            const next = task.next;
+            const count = tasks.count;
+            tasks.head = next;
             task.next = null;
-            if (tasks.head == null) tasks.tail = null;
-            tasks.count -= 1;
+            if (next == null) tasks.tail = null;
+            tasks.count = count - 1;
             line.enter(&task.call.name);
             task.call.function(task);
             tasks.left -= 1;
@@ -132,10 +140,12 @@ pub const Tasks = struct {
     pub fn pop(tasks: *Tasks) *Task {
         assert_class_a(tasks.head != null and tasks.count >= 1);
         const task = tasks.head.?;
-        tasks.head = task.next;
+        const next = task.next;
+        const count = tasks.count;
+        tasks.head = next;
         task.next = null;
-        if (tasks.head == null) tasks.tail = null;
-        tasks.count -= 1;
+        if (next == null) tasks.tail = null;
+        tasks.count = count - 1;
         return task;
     }
 

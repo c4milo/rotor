@@ -136,11 +136,13 @@ pub const Groups = struct {
         // A call's task is pushed with the higher limit (decision 32, ruling item 11).
         assert(queued_max <= constants.task_queue_length_max);
         const lane = &groups.lanes[@intFromEnum(group)];
-        if (lane.count >= queued_max) return error.TasksFull;
+        // The count is read once, before the stores, as in `Tasks.push`.
+        const count = lane.count;
+        if (count >= queued_max) return error.TasksFull;
         task.next = &groups.end_mark;
         if (lane.tail) |tail| tail.next = task else lane.head = task;
         lane.tail = task;
-        lane.count += 1;
+        lane.count = count + 1;
     }
 
     /// Takes the head of group `index`, which is not `.default` and holds a task, off its queue,
@@ -148,7 +150,9 @@ pub const Groups = struct {
     pub fn pop(groups: *Groups, index: u8) *Task {
         assert(index != 0);
         const lane = &groups.lanes[index];
-        assert_class_a(lane.count >= 1);
+        // The count is read once, before the stores, as in `Tasks.pop`.
+        const count = lane.count;
+        assert_class_a(count >= 1);
         const task = lane.head.?;
         // The end mark is never popped as a task (decision 8, class A).
         assert_class_a(task != &groups.end_mark);
@@ -160,7 +164,7 @@ pub const Groups = struct {
             lane.head = next;
         }
         task.next = null;
-        lane.count -= 1;
+        lane.count = count - 1;
         return task;
     }
 
