@@ -27,6 +27,7 @@ pub const module_scopes = [_][]const u8{
     "uring",
     "kqueue",
     "epoll",
+    "reactor",
     "conformance",
     "adapter",
     "bench",
@@ -96,6 +97,7 @@ test "every scope CLAUDE.md names passes" {
         "uring",
         "kqueue",
         "epoll",
+        "reactor",
         "conformance",
         "adapter",
         "bench",
@@ -115,7 +117,7 @@ test "a well-formed scope the graph does not name draws a warning" {
     // exactly that, on 2026-09-22.
     try expect_findings("feat(windows): add the completion port\n", &.{
         "warning: scope-known: the scope \"windows\" is not a module of the graph" ++
-            " (core, linux-shared, uring, kqueue, epoll, conformance, adapter, bench, tools)",
+            " (core, linux-shared, uring, kqueue, epoll, reactor, conformance, adapter, bench, tools)",
     });
 }
 

@@ -147,8 +147,8 @@ and its mutation is measured against the Linux gate.
 - A commit message is a Conventional Commit: `type(scope)!: description`, with the scope and the
   `!` optional. The type is one of `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`,
   `ci`, `chore`. Scopes track the module graph: `core`, `linux-shared` (the module `linux_shared`,
-  since a scope holds no underscore), `uring`, `kqueue`, `epoll`, `conformance`, `adapter`,
-  `bench`, `tools`. A scope outside that set is a warning.
+  since a scope holds no underscore), `uring`, `kqueue`, `epoll`, `reactor`, `conformance`,
+  `adapter`, `bench`, `tools`. A scope outside that set is a warning.
 - The description is imperative, starts with a lowercase letter, and ends without a period. The
   subject line stays at or under 72 columns.
 - Exactly one blank line separates the body from the subject. A body line stays at or under 100
