@@ -1084,6 +1084,9 @@ and this record keeps each of them in the core:
 - `Loop`, `tick` and `Event`.
 - `Operation`, with `accept`, `accept_multishot`, `connect`, `receive`, `send`, `close`,
   `receive_from`, and the datagram send with segments and ECN.
+- `Operation.shutdown` of the send side. colibri's session added it on 2026-11-10: colibri's
+  decision 160 closes an HTTP/1.1 connection in stages (RFC 9112, section 9.6), and its host
+  interface carries that as an operation, `shutdown_send`.
 - `BufferGroup`, `reserve_buffer_group`, `provide_datagram_buffers`, the datagram view and
   `give_back_buffer`.
 
