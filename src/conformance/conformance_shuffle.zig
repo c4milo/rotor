@@ -8,6 +8,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const tcp = @import("conformance_tcp.zig");
@@ -50,7 +51,7 @@ const Log = struct {
 
 /// A library's record for one receive. It notes its receive in the log.
 const Receiver = struct {
-    completion: core.Completion = .init(Receiver, "completion", called),
+    completion: reactor_module.Completion = .init(Receiver, "completion", called),
     index: u8,
     log: *Log,
 
@@ -89,7 +90,7 @@ fn round(harness: anytype, pairs: *const Pairs, records: ?*[receivers]Receiver, 
     var buffers: [receivers][1]u8 = undefined;
     for (0..receivers) |index| {
         var operation = Operation.receive(index, pairs.server[index], &buffers[index]);
-        if (records) |named| operation = operation.completion(&named[index].completion);
+        if (records) |named| operation = reactor_module.Completion.mark(&named[index].completion, operation);
         try harness.submit(&.{operation}, &.{});
     }
     var events: [2 * receivers]Event = undefined;

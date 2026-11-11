@@ -6,6 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -35,7 +36,7 @@ var registry_memory: [backend.Registry.memory_bytes(ids)]u8 align(core.layout.me
 
 /// A library's poller that answers a deadline until the loop's clock reaches it.
 const Deadline = struct {
-    poller: core.Poller = .init(Deadline, "poller", polled),
+    poller: reactor_module.Poller = .init(Deadline, "poller", polled),
     reactor: *conformance.Reactor,
     at_ns: u64,
     due: bool = false,
@@ -74,7 +75,7 @@ test "a poller's limit ends a tick's wait, and a later poll sees its deadline du
 
 /// A library that another thread wakes: a flag the other thread stores, and a poller that reads it.
 const Woken = struct {
-    poller: core.Poller = .init(Woken, "poller", polled),
+    poller: reactor_module.Poller = .init(Woken, "poller", polled),
     flag: std.atomic.Value(bool) = .init(false),
     seen: bool = false,
 
@@ -242,7 +243,7 @@ test "a tick whose sleep a message refuses after its drain hands that message ov
 
 /// A record that counts its calls.
 const Counted = struct {
-    completion: core.Completion = .init(Counted, "completion", called),
+    completion: reactor_module.Completion = .init(Counted, "completion", called),
     calls: u32 = 0,
 
     fn called(counted: *Counted, event: Event) void {
@@ -278,7 +279,7 @@ test "a host reads now with a message waiting, after a record or a wake, then a 
 
     // A tick that called a record.
     var counted: Counted = .{};
-    try harness.submit(&.{Operation.timer(1, ms, 0).completion(&counted.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&counted.completion, Operation.timer(1, ms, 0))}, &.{});
     var ticks: u32 = 0;
     while (counted.calls == 0 and ticks < ticks_max) : (ticks += 1) _ = try harness.tick(&events, 10 * ms);
     try testing.expectEqual(@as(u32, 1), counted.calls);

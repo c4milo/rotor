@@ -16,6 +16,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const storm_senders = @import("conformance_storm_senders.zig");
@@ -73,9 +74,9 @@ var registry_memory: [backend.Registry.memory_bytes(ids)]u8 align(core.layout.me
 /// others. The task schedules itself again a seeded count of times. Its timer names its record,
 /// and the record submits the next timer from inside the tick.
 const Library = struct {
-    poller: core.Poller = .init(Library, "poller", polled),
-    task: core.Task = .init(Library, "task", ran),
-    completion: core.Completion = .init(Library, "completion", fired),
+    poller: reactor_module.Poller = .init(Library, "poller", polled),
+    task: reactor_module.Task = .init(Library, "task", ran),
+    completion: reactor_module.Completion = .init(Library, "completion", fired),
     reactor: *conformance.Reactor,
     random: Random,
     /// Runs left in which the task schedules itself again.
@@ -117,7 +118,7 @@ const Library = struct {
 
     fn start_timer(library: *Library) void {
         const delay_ns = library.random.below(timer_delay_max_ns + 1);
-        const timer = Operation.timer(0, delay_ns, 0).completion(&library.completion);
+        const timer = reactor_module.Completion.mark(&library.completion, Operation.timer(0, delay_ns, 0));
         if (library.reactor.submit(&.{timer}, &.{}) != 1) library.failed = true;
     }
 };

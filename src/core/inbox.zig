@@ -13,11 +13,9 @@ const mailbox = @import("mailbox.zig");
 const offload = @import("offload.zig");
 const operation = @import("operation.zig");
 
-const call_take = @import("call/call_take.zig");
-const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
-const Groups = @import("scheduling/scheduling_groups.zig").Groups;
+const reserved = @import("reserved.zig");
 const Event = event.Event;
-const Waker = call_take.Waker;
+const Hook = reserved.Hook;
 const LoopId = operation.LoopId;
 const Mailbox = mailbox.Mailbox;
 const Message = operation.Message;
@@ -40,18 +38,18 @@ const Visit = struct {
     /// and `post` 1,321 against 1,217 when decision 32 tried a branch to a cold function.
     /// `Event.message` keeps its check of the tag of every message that makes an event.
     fn write(visit: *Visit, message: Message) void {
-        const reserved = message.tag > constants.message_tag_max;
-        const tag = if (reserved) 0 else message.tag;
+        const reserved_tag = message.tag > constants.message_tag_max;
+        const tag = if (reserved_tag) 0 else message.tag;
         visit.out[visit.written] = Event.message(message.payload, tag);
-        visit.written += @intFromBool(!reserved);
+        visit.written += @intFromBool(!reserved_tag);
     }
 };
 
 /// The slow path of `drain_mailboxes`, which a backend hands it: a function that calls
-/// `take_reserved` with the loop's dispatch, groups and wake. Decision 7 confines `noinline` and
-/// `@branchHint` to its named files, so a backend keeps the slow path out of its tick there, and
-/// this file stays plain. The drain returns what the slow path returns, so no value of the drain
-/// lives across the call, and the drain saves no register for it.
+/// `take_reserved` with the loop's hook. Decision 7 confines `noinline` and `@branchHint` to its
+/// named files, so a backend keeps the slow path out of its tick there, and this file stays plain.
+/// The drain returns what the slow path returns, so no value of the drain lives across the call,
+/// and the drain saves no register for it.
 pub const TakeReserved = fn (
     inbox: *Inbox,
     receiver: LoopId,
@@ -60,35 +58,54 @@ pub const TakeReserved = fn (
     written: u32,
 ) u32;
 
+/// The low bits of a reserved tag that are 0 in a wake and not 0 in a call or a return. The slow
+/// path ORs them, one instruction for each message, and needs no compare with the wake's tag.
+const handed_tag_bits: u32 = 3;
+
+comptime {
+    assert(constants.message_tag_wake & handed_tag_bits == 0);
+    assert(constants.message_tag_call & handed_tag_bits != 0);
+    assert(constants.message_tag_return & handed_tag_bits != 0);
+}
+
+/// What one slow path hands each reserved message: the loop's hook, and the sender of the ring it
+/// visits now. The slow path writes `sender` before each ring it visits.
+const Taker = struct {
+    hook: *const Hook,
+    sender: LoopId,
+    /// Not 0 once the slow path handed a call or a return to the hook: the OR of each reserved
+    /// tag's low bits (`handed_tag_bits`).
+    handed: u32,
+
+    /// Takes one message with a tag above `message_tag_max`: a wake, a call or a return. It writes
+    /// no event. The hook checks the tag: a plain loop's `Hook.none` drops a wake and halts on any
+    /// other tag (class B), and a reactor's hook halts on a tag that is not one of the three.
+    fn take(taker: *Taker, message: Message) void {
+        taker.hook.take(taker.hook.context, taker.sender, message);
+        taker.handed |= message.tag & handed_tag_bits;
+    }
+};
+
 /// The slow path of a drain whose visit of the ring of `first` read a reserved tag, with `written`
 /// events before that visit. The ring has not taken the visit's slots back, so this visits it
 /// again. Then it visits each sender that the drain did not visit yet, up to the cursor, as the
-/// drain would. It takes each wake, call and return in the order of its ring (decisions 29 and 32),
-/// and returns the events of the whole drain. Halts on a `first` that is the receiver, and on a
-/// ring of `first` that is empty, which no drain hands over (class B).
+/// drain would. It hands each wake, call and return to `hook` in the order of its ring (decisions
+/// 29, 32 and 33), and returns the events of the whole drain. When it handed a call or a return,
+/// it sets `inbox.handed`. Halts on a `first` that is the receiver, and on a ring of `first` that
+/// is empty, which no drain hands over (class B).
 pub fn take_reserved(
     inbox: *Inbox,
     receiver: LoopId,
     events: []Event,
     first: LoopId,
     written: u32,
-    dispatch: *Dispatch,
-    groups: *Groups,
-    waker: ?Waker,
+    hook: *const Hook,
 ) u32 {
     const registry = inbox.registry.?;
     const loops = registry.loop_count();
     assert(first != receiver);
     assert(!registry.mailbox(first, receiver).is_empty());
-    var taker: call_take.Taker = .{
-        .registry = registry,
-        .dispatch = dispatch,
-        .groups = groups,
-        .waker = waker,
-        .receiver = receiver,
-        .sender = first,
-        .woke = false,
-    };
+    var taker: Taker = .{ .hook = hook, .sender = first, .handed = 0 };
     var visit: Visit = .{ .out = events, .written = written };
     const cursor = inbox.sender_cursor;
     var sender: usize = first;
@@ -106,35 +123,33 @@ pub fn take_reserved(
         if (sender == loops) sender = 0;
         if (sender == cursor) break;
     }
-    if (taker.woke) dispatch.note_wake();
     assert(visit.written <= events.len);
+    if (taker.handed != 0) inbox.handed = true;
     return visit.written;
 }
 
 /// The visit of one ring on the slow path: each message of a caller's tag writes an event, and each
-/// reserved tag goes to `call_take`. The slots are the drain's until the ring takes them back, so
+/// reserved tag goes to the taker. The slots are the drain's until the ring takes them back, so
 /// the reserved ones are read again before the release.
-fn take_visit(ring: *Mailbox, visit: *Visit, room: u32, taker: *call_take.Taker) void {
+fn take_visit(ring: *Mailbox, visit: *Visit, room: u32, taker: *Taker) void {
     const before = visit.written;
     const peeked = ring.peek_each(room, visit, Visit.write);
     if (peeked.count == 0) return;
     if (visit.written - before != peeked.count) {
         for (0..peeked.count) |offset| {
             const message = ring.message_at(peeked, @intCast(offset));
-            if (message.tag > constants.message_tag_max) call_take.take_reserved(taker, message);
+            if (message.tag > constants.message_tag_max) taker.take(message);
         }
     }
     ring.release(peeked);
 }
 
-/// The slow path for a test's loop: a `Container` with the fields `inbox`, `dispatch` and `groups`.
-/// It wakes no other loop.
+/// The slow path for a test's loop: a `Container` with the fields `inbox` and `hook`.
 pub fn TestTake(comptime Container: type) type {
     return struct {
         pub fn take(inbox: *Inbox, receiver: LoopId, events: []Event, first: LoopId, written: u32) u32 {
             const container: *Container = @alignCast(@fieldParentPtr("inbox", inbox));
-            const dispatch = &container.dispatch;
-            return take_reserved(inbox, receiver, events, first, written, dispatch, &container.groups, null);
+            return take_reserved(inbox, receiver, events, first, written, &container.hook);
         }
     };
 }
@@ -159,6 +174,13 @@ pub const Inbox = struct {
     /// The sender whose ring the next `drain_mailboxes` visits first (W3, ruled 2026-11-07). It is
     /// always below `registry.loop_count()`. Only the loop thread reads or writes it.
     sender_cursor: LoopId,
+    /// True once a drain handed a call or a return to the loop's hook, which queued a task that the
+    /// reactor's next tick runs (decision 33, "The reserved hook"). A tick that would block takes it
+    /// with `take_handed`, and does not block, as after a drain that wrote an event. Only such a
+    /// tick reads it, so a tick that does not block pays nothing for it, and a poll of the spin of
+    /// decision 13 keeps it for the tick that ends the spin. The hook raised `outstanding`, so the
+    /// next tick calls `take_kept_error`, which clears it. Only the loop thread touches it.
+    handed: bool,
 
     /// `out` is the out array a loop with an offload carved from its memory, or null for one with
     /// no offload (`offload.InFlight`).
@@ -170,6 +192,7 @@ pub const Inbox = struct {
             .offload_asleep = .init(false),
             .offload_in_flight = .init(out),
             .sender_cursor = 0,
+            .handed = false,
         };
     }
 
@@ -184,10 +207,9 @@ pub const Inbox = struct {
     /// The cursor stays at 0 until a drain runs out of events, so a loop that is not loaded pays
     /// only the cursor's load. Any other cursor takes `drain_from_cursor`.
     ///
-    /// A `Message.wake` writes no event. It counts in its ring's visit, and a drain that took one
-    /// tells the loop's dispatch (decision 29). A call or a return writes no event either: the
-    /// drain queues its record's task (decision 32). A ring that holds a reserved tag hands the
-    /// rest of the drain to `take`.
+    /// A `Message.wake`, a call and a return write no event. Each counts in its ring's visit, and
+    /// the drain hands it to the loop's hook (decisions 29, 32 and 33). A ring that holds a
+    /// reserved tag hands the rest of the drain to `take`.
     pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, comptime take: TakeReserved) u32 {
         const registry = inbox.registry orelse return 0;
         if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, take);
@@ -250,6 +272,14 @@ pub const Inbox = struct {
         }
         assert(visit.written <= events.len);
         return visit.written;
+    }
+
+    /// True when a drain handed a call or a return since the last call, which clears it. The
+    /// clear is on the rare path, so a tick that reads false makes one load and one branch.
+    pub fn take_handed(inbox: *Inbox) bool {
+        if (!inbox.handed) return false;
+        inbox.handed = false;
+        return true;
     }
 
     /// True while a ring to loop `receiver` holds a message: another loop's mailbox or an offload

@@ -353,14 +353,17 @@ test "the wait timer's readiness makes no event and leaves the timer disarmed" {
     try testing.expectEqual(@as(u64, 0), loop.wait_timer_deadline_ns);
 }
 
-/// A record that no tick calls here: the reap only marks the events of its operations.
-fn ignore(completion: *core.Completion, event: Event) void {
-    _ = completion;
-    _ = event;
-}
+/// The user data of a reactor's record, which no tick here calls: the loop copies the bit into the
+/// events of the operation, and reads neither (decision 33, open question 5).
+const record_user_data = 0x1000;
 
-/// The static entry of a record written by hand (decision 28).
-const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+/// `operation` with the bit and the user data that a reactor's `Completion.mark` writes.
+fn marked(operation: core.Operation) core.Operation {
+    var named = operation;
+    named.user_data = record_user_data;
+    named.dispatched = true;
+    return named;
+}
 
 /// Hands the queued slot at the head of the list to `descriptor`'s readers, as a flush does.
 fn wait_to_read(loop: *Loop, descriptor: core.Descriptor) u32 {
@@ -377,20 +380,19 @@ test "an attempt that is done marks the events of an operation that names a reco
     var memory: [Loop.memory_bytes(&options)]u8 align(core.layout.memory_alignment) = undefined;
     var loop: Loop = undefined;
     loop.init_tables(&memory, &options);
-    var record: core.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const descriptor = 5;
     const group = try loop.reserve_buffer_group();
     try testing.expectEqual(@as(u32, 2), loop.submit(&.{
-        core.Operation.receive(0, descriptor, &bytes).completion(&record),
-        core.Operation.receive_group(0, descriptor, group).completion(&record),
+        marked(core.Operation.receive(0, descriptor, &bytes)),
+        marked(core.Operation.receive_group(0, descriptor, group)),
     }, &.{}));
     const single = wait_to_read(&loop, descriptor);
     const multishot = wait_to_read(&loop, descriptor);
     // The single receive ends, and the multishot one behind it stays on the list.
     const last = conclude(&loop, descriptor, .read, single, Attempt.done(bytes.len));
     try testing.expect(last.flags.dispatched and last.is_final());
-    try testing.expectEqual(@as(u64, @intFromPtr(&record)), last.user_data);
+    try testing.expectEqual(@as(u64, record_user_data), last.user_data);
     const filled: Attempt = .{ .outcome = .done, .result = 4, .buffer_id = 0 };
     const more = conclude(&loop, descriptor, .read, multishot, filled);
     try testing.expect(more.flags.dispatched and more.flags.more and more.flags.buffer);
@@ -436,8 +438,7 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     const sender = try epoll.sync.open_datagram(.ipv4, &loopback, .{});
     defer epoll.sync.close_now(sender);
 
-    var record: core.Completion = .{ .call = &ignore_call };
-    const receive = core.Operation.receive_from(0, socket, group).completion(&record);
+    const receive = marked(core.Operation.receive_from(0, socket, group));
     var handles: [1]core.Handle = undefined;
     try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &handles));
     var events: [batch_events]Event = undefined;
@@ -449,16 +450,16 @@ test "one recvmmsg batch marks each event of a datagram receive that names a rec
     slot.offset = (@as(u64, loop.reaps) << @bitSizeOf(u32)) | 1;
     const ready = [_]Readiness{.{ .events = linux.EPOLL.IN, .data = .{ .u64 = @intCast(socket) } }};
     const produced = reap(&loop, &ready, &events);
-    var marked: u32 = 0;
+    var flagged: u32 = 0;
     for (events[0..produced]) |event| {
-        marked += @intFromBool(event.flags.dispatched and event.flags.more and event.flags.buffer);
+        flagged += @intFromBool(event.flags.dispatched and event.flags.more and event.flags.buffer);
         if (event.flags.buffer) loop.give_back_buffer(group, event.flags.buffer_id);
     }
-    // The cancel's final event goes to the record through the tick, so the loop ends empty, and a
+    // The cancel's final event goes to the caller of the drain, so the loop ends empty, and a
     // check that fails below fails without a halt in the `defer`s.
     loop.cancel(handles[0]);
     try loop.drain(events[produced..]);
     try testing.expectEqual(@as(u32, batch_datagrams), produced);
-    try testing.expectEqual(produced, marked);
-    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+    try testing.expectEqual(produced, flagged);
+    try testing.expectEqual(@as(u64, record_user_data), events[0].user_data);
 }

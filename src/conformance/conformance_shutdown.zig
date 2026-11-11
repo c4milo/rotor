@@ -9,6 +9,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const tcp = @import("conformance_tcp.zig");
@@ -35,12 +36,12 @@ const short_wait_ns = ms;
 
 /// A record that counts the events of its operations, and keeps the last final event.
 pub const Record = struct {
-    completion: core.Completion = .init(Record, "completion", called),
+    completion: reactor_module.Completion = .init(Record, "completion", called),
     mores: u32 = 0,
     finals: u32 = 0,
     final: ?Event = null,
     /// A task to queue at the final event, or null.
-    queue_at_final: ?*core.Task = null,
+    queue_at_final: ?*reactor_module.Task = null,
     reactor: ?*conformance.Reactor = null,
 
     fn called(record: *Record, event: Event) void {
@@ -68,9 +69,9 @@ pub const Record = struct {
 
 /// A task that counts its runs, and queues `then` from its run when it names one.
 pub const Counted = struct {
-    task: core.Task = .init(Counted, "task", ran),
+    task: reactor_module.Task = .init(Counted, "task", ran),
     runs: u32 = 0,
-    then: ?*core.Task = null,
+    then: ?*reactor_module.Task = null,
     reactor: ?*conformance.Reactor = null,
 
     fn ran(counted: *Counted) void {
@@ -82,7 +83,7 @@ pub const Counted = struct {
 
 /// A task that schedules itself again on every run.
 pub const Forever = struct {
-    task: core.Task = .init(Forever, "task", ran),
+    task: reactor_module.Task = .init(Forever, "task", ran),
     reactor: *conformance.Reactor,
     runs: u32 = 0,
 
@@ -96,7 +97,7 @@ pub const Forever = struct {
 pub fn expect_empty(harness: *ReactorHarness) !void {
     try testing.expectEqual(@as(u32, 0), harness.reactor.in_flight());
     try testing.expectEqual(@as(u32, 0), harness.reactor.tasks_queued());
-    try testing.expectEqual(@as(u32, 0), harness.reactor.loop.tables.dispatch.callbacks_outstanding);
+    try testing.expectEqual(@as(u32, 0), harness.reactor.loop.tables.outstanding);
 }
 
 /// Fails unless each record of `records` received exactly one final event.
@@ -130,14 +131,14 @@ test "drain ends the records in flight and runs the queued tasks, each exactly o
     var records: [4]Record = @splat(.{});
     var bytes: [8]u8 = undefined;
     try harness.submit(&.{
-        Operation.timer(0, ms, 0).completion(&records[0].completion),
-        Operation.timer(0, 3 * ms, 0).completion(&records[1].completion),
-        Operation.receive(0, pair[1], &bytes).completion(&records[2].completion),
-        Operation.send(0, pair[0], "drain").completion(&records[3].completion),
+        reactor_module.Completion.mark(&records[0].completion, Operation.timer(0, ms, 0)),
+        reactor_module.Completion.mark(&records[1].completion, Operation.timer(0, 3 * ms, 0)),
+        reactor_module.Completion.mark(&records[2].completion, Operation.receive(0, pair[1], &bytes)),
+        reactor_module.Completion.mark(&records[3].completion, Operation.send(0, pair[0], "drain")),
     }, &.{});
     var tasks: [3]Counted = @splat(.{});
     for (&tasks) |*counted| try harness.reactor.schedule(&counted.task);
-    try testing.expectEqual(@as(u32, 4 + 3), harness.reactor.loop.tables.dispatch.callbacks_outstanding);
+    try testing.expectEqual(@as(u32, 4 + 3), harness.reactor.loop.tables.outstanding);
 
     var scratch: [8]Event = undefined;
     try harness.reactor.drain(&scratch);
@@ -158,7 +159,7 @@ test "a task that a record queues at its final event in the drain runs, and so d
     var second: Counted = .{};
     var first: Counted = .{ .then = &second.task, .reactor = &harness.reactor };
     var record: Record = .{ .queue_at_final = &first.task, .reactor = &harness.reactor };
-    try harness.submit(&.{Operation.timer(0, ms, 0).completion(&record.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&record.completion, Operation.timer(0, ms, 0))}, &.{});
 
     var scratch: [8]Event = undefined;
     try harness.reactor.drain(&scratch);
@@ -175,20 +176,20 @@ test "drain reports an operation in flight before it reports a queued task" {
     defer harness.deinit();
     var record: Record = .{};
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.timer(0, never_ns, 0).completion(&record.completion)}, &handles);
+    try harness.submit(&.{reactor_module.Completion.mark(&record.completion, Operation.timer(0, never_ns, 0))}, &handles);
     var forever: Forever = .{ .reactor = &harness.reactor };
     try harness.reactor.schedule(&forever.task);
 
     // Both are left at the bound. The kernel still holds the timer, so the memory must not go.
     var scratch: [8]Event = undefined;
-    const drain = core.shutdown.drain;
-    try testing.expectError(error.StillInFlight, drain(&harness.reactor.loop, &scratch, short_rounds, short_wait_ns));
+    const dispatch = &harness.reactor.dispatch;
+    try testing.expectError(error.StillInFlight, dispatch.drain_within(&harness.reactor.loop, &scratch, short_rounds, short_wait_ns));
     try testing.expectEqual(@as(u32, short_rounds), forever.runs);
     try testing.expectEqual(@as(u32, 0), record.finals);
 
     // With the timer ended, only the task is left.
     harness.reactor.cancel(handles[0]);
-    try testing.expectError(error.TasksStillQueued, drain(&harness.reactor.loop, &scratch, short_rounds, short_wait_ns));
+    try testing.expectError(error.TasksStillQueued, dispatch.drain_within(&harness.reactor.loop, &scratch, short_rounds, short_wait_ns));
     try testing.expectEqual(@as(u32, 1), record.finals);
     try testing.expectError(error.Canceled, record.final.?.outcome());
     try testing.expectEqual(@as(u32, 1), harness.reactor.discard_tasks());
@@ -221,8 +222,8 @@ test "discard_tasks with records in flight leaves the records owed, and later ti
     var bytes: [8]u8 = undefined;
     var handles: [2]core.Handle = undefined;
     try harness.submit(&.{
-        Operation.timer(0, never_ns, 0).completion(&records[0].completion),
-        Operation.receive(0, pair[1], &bytes).completion(&records[1].completion),
+        reactor_module.Completion.mark(&records[0].completion, Operation.timer(0, never_ns, 0)),
+        reactor_module.Completion.mark(&records[1].completion, Operation.receive(0, pair[1], &bytes)),
     }, &handles);
     var scratch: [8]Event = undefined;
     _ = try harness.reactor.tick(&scratch, 0);
@@ -232,10 +233,10 @@ test "discard_tasks with records in flight leaves the records owed, and later ti
     try testing.expectEqual(@as(u32, 3), harness.reactor.discard_tasks());
     try testing.expectEqual(@as(u32, 0), harness.reactor.tasks_queued());
     // The loop still owes the two records their final events, and nothing for the tasks.
-    try testing.expectEqual(@as(u32, 2), harness.reactor.loop.tables.dispatch.callbacks_outstanding);
+    try testing.expectEqual(@as(u32, 2), harness.reactor.loop.tables.outstanding);
 
     harness.reactor.cancel(handles[0]);
-    try harness.submit(&.{Operation.send(0, pair[0], "discard").completion(&records[2].completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&records[2].completion, Operation.send(0, pair[0], "discard"))}, &.{});
     try testing.expectEqual(@as(u32, 0), try tick_until(&harness, &records, all_finished));
     try expect_one_final(&records);
     try testing.expectError(error.Canceled, records[0].final.?.outcome());

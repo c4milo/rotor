@@ -358,14 +358,17 @@ test "a shuffled build notes a close's final event as a barrier, when the close 
     try testing.expect(shuffle.barrier);
 }
 
-/// A record that no tick calls here: the reap only marks the events of its operations.
-fn ignore(completion: *core.Completion, event: Event) void {
-    _ = completion;
-    _ = event;
-}
+/// The user data of a reactor's record, which no tick here calls: the loop copies the bit into the
+/// events of the operation, and reads neither (decision 33, open question 5).
+const record_user_data = 0x1000;
 
-/// The static entry of a record written by hand (decision 28).
-const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+/// `operation` with the bit and the user data that a reactor's `Completion.mark` writes.
+fn marked(operation: core.Operation) core.Operation {
+    var named = operation;
+    named.user_data = record_user_data;
+    named.dispatched = true;
+    return named;
+}
 
 /// A receive into the fixture's buffer, which a test may name a record in.
 fn receive_operation(fixture: *Fixture) Operation {
@@ -378,22 +381,20 @@ fn receive_operation(fixture: *Fixture) Operation {
 test "an event of an operation that names a record carries the flag, and one without does not" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .call = &ignore_call };
-    const named = fixture.start(receive_operation(&fixture).completion(&record));
+    const named = fixture.start(marked(receive_operation(&fixture)));
     const plain = fixture.receive(3);
     const event = fixture.complete(named.to_bits(), 17, 0).?;
     // The tick hands this event to the record, and not to its caller (decision 26).
     try testing.expect(event.flags.dispatched);
-    try testing.expectEqual(@as(u64, @intFromPtr(&record)), event.user_data);
+    try testing.expectEqual(@as(u64, record_user_data), event.user_data);
     try testing.expect(!fixture.complete(plain.to_bits(), 4, 0).?.flags.dispatched);
 }
 
 test "a failure, and a cancel the loop issued for a deadline, reach the record as final events" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .call = &ignore_call };
     const loop = &fixture.loop;
-    const failed = fixture.start(receive_operation(&fixture).completion(&record));
+    const failed = fixture.start(marked(receive_operation(&fixture)));
     const reset = fixture.fail(failed, .CONNRESET).?;
     try testing.expect(reset.flags.dispatched and reset.is_final());
     try testing.expectError(error.ConnectionReset, reset.outcome());
@@ -401,7 +402,7 @@ test "a failure, and a cancel the loop issued for a deadline, reach the record a
     // The kernel answers ECANCELED, and the reap makes it `timeout` (decision 5, rule 4).
     var timed = receive_operation(&fixture);
     timed.timeout_ns = core.constants.ns_per_ms;
-    const handle = fixture.start(timed.completion(&record));
+    const handle = fixture.start(marked(timed));
     const slot = loop.tables.table.lookup(handle).?;
     const due = loop.tables.timers.pop_due(core.constants.ns_per_ms);
     try testing.expectEqual(@as(?u32, handle.index), due);
@@ -415,7 +416,6 @@ test "a failure, and a cancel the loop issued for a deadline, reach the record a
 test "an operation on a registered descriptor and a registered buffer keeps its record" {
     var fixture: Fixture = undefined;
     fixture.init();
-    var record: core.Completion = .{ .call = &ignore_call };
     const tables = &fixture.loop.tables;
     tables.note_descriptors(2);
     tables.note_buffers(1);
@@ -425,7 +425,7 @@ test "an operation on a registered descriptor and a registered buffer keeps its 
         .offset = 0,
     } } };
     write.descriptor_registered = true;
-    const handle = fixture.start(write.completion(&record));
+    const handle = fixture.start(marked(write));
     const event = fixture.complete(handle.to_bits(), fixture.buffer.len, 0).?;
     try testing.expect(event.flags.dispatched);
     try testing.expectEqual(@as(u32, fixture.buffer.len), try event.outcome());

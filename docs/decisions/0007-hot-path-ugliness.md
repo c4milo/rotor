@@ -17,6 +17,13 @@ Amended on 2026-11-08 by Camilo: `src/uring/uring_reap.zig`, `src/epoll/epoll.zi
 use each: the slow path of the mailbox drain (decision 32). No file joins the table, because each
 file is in it already. Ledger rows H6 to H8 hold the counts with the hints and without them.
 
+Amended on 2026-11-11 by decision 33, step 3, which Camilo approved: `tick_dispatched` moved to
+`src/reactor/reactor_tick.zig`, and that file joins the table for one use, `@branchHint(.cold)` on
+`tick_dispatched`. Ledger row H9 holds the counts. The plain tick's `take_kept_error` was counted
+with a cold hint and without it in each backend file, and the counts were the same, so it carries
+no hint. Rows H1 to H3 are struck, and `src/uring/uring.zig` and `src/kqueue/kqueue.zig` leave the
+table. `src/epoll/epoll.zig` stays for `take_reserved`.
+
 ## The collision
 
 The Performance Hints favour hand-unrolled loops, raw pointers in place of spans, and hot
@@ -53,9 +60,8 @@ These files may contain the techniques listed below. No other file may.
 | `src/uring/uring_reap.zig` | copying completion entries into events |
 | `src/kqueue/kqueue_submit.zig` | filling the changelist |
 | `src/kqueue/kqueue_reap.zig` | turning kevents into events, including the inline `recv` and `send` |
-| `src/uring/uring.zig` | `tick`, which skips the dispatch of decision 26 when nothing waits for it |
-| `src/kqueue/kqueue.zig` | the same |
-| `src/epoll/epoll.zig` | the same |
+| `src/epoll/epoll.zig` | `take_reserved`, the slow path of the mailbox drain (decision 32) |
+| `src/reactor/reactor_tick.zig` | the reactor's `tick`, which skips the dispatch of decision 26 when nothing waits for it |
 | `src/core/stall.zig` | the turn check that the first clock stamp of each tick makes (decision 28) |
 
 None of these files exists yet. The list is the budget: adding a file to it changes this record.

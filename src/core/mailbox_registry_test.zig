@@ -12,12 +12,25 @@ const Message = operation.Message;
 const Registry = registry_module.Registry;
 const descriptor_none = registry_module.descriptor_none;
 const Wake = registry_module.Wake;
+const Mailbox = @import("mailbox.zig").Mailbox;
 
 const pair_loops = 5;
 const pair_bytes = Registry.memory_bytes(pair_loops);
 
 /// The first made-up descriptor a test hands `init_group`.
 const made_up_descriptor_first: usize = 100;
+
+/// Wakes a test hands `init_group`: two made-up descriptors per loop, all distinct. Nothing here
+/// calls the kernel with them.
+fn made_up_wakes() [pair_loops]Wake {
+    var wakes: [pair_loops]Wake = undefined;
+    var next: usize = made_up_descriptor_first;
+    for (&wakes) |*made| {
+        made.* = .{ .send = @intCast(next), .watch = @intCast(next + 1) };
+        next += @sizeOf(Wake) / @sizeOf(Descriptor);
+    }
+    return wakes;
+}
 
 /// A distinct message for the ring from `sender` to `receiver`.
 fn pair_message(sender: usize, receiver: usize) Message {
@@ -142,4 +155,43 @@ test "a registry of one process keeps the wake an id's first loop made, until it
     try testing.expectEqual(@as(?Wake, null), registry.wake(2));
     registry.close_kept_wakes(CloseLog.close);
     try testing.expectEqual(@as(usize, 1), CloseLog.count);
+}
+
+test "a process that attaches sees the rings, the entries and the wakes the creator made" {
+    var memory: [pair_bytes]u8 align(@alignOf(Mailbox)) = undefined;
+    var creator: Registry = undefined;
+    const wakes = made_up_wakes();
+    creator.init_group(&memory, pair_loops, &wakes);
+    creator.set(1, wakes[1].send);
+    try testing.expect(creator.mailbox(1, 3).push(pair_message(1, 3)));
+
+    var member: Registry = undefined;
+    try member.attach(&memory);
+    try testing.expect(member.group);
+    try testing.expectEqual(@as(u16, pair_loops), member.loop_count());
+    try testing.expectEqual(wakes[4], member.wake(4).?);
+    try testing.expectEqual(wakes[1].send, member.get(1));
+    var out: [2]Message = undefined;
+    try testing.expectEqual(@as(u32, 1), member.mailbox(1, 3).pop_into(&out));
+    try testing.expectEqual(pair_message(1, 3).payload, out[0].payload);
+
+    // A survivor releases the loop of a process that died, and the id is free to claim again.
+    member.release(1);
+    try testing.expectEqual(descriptor_none, creator.get(1));
+    creator.set(1, wakes[1].send);
+}
+
+test "a loop takes calls from its mark until it withdraws, and a later loop of the id does not" {
+    var memory: [pair_bytes]u8 align(layout.memory_alignment) = undefined;
+    var registry: Registry = undefined;
+    registry.init(&memory, pair_loops);
+    registry.set(1, 41);
+    try testing.expect(!registry.takes_calls(1));
+    registry.mark_calls(1);
+    try testing.expect(registry.takes_calls(1));
+    try testing.expect(!registry.takes_calls(2));
+    registry.clear(1);
+    try testing.expect(!registry.takes_calls(1));
+    registry.set(1, 41);
+    try testing.expect(!registry.takes_calls(1));
 }

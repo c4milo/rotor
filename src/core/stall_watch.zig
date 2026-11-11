@@ -82,9 +82,7 @@ fn heartbeat_of(view: *HeartbeatView) *Heartbeat {
 }
 
 const testing = std.testing;
-const constants = @import("constants.zig");
 const statistics_module = @import("statistics.zig");
-const Poller = @import("dispatch/dispatch.zig").Poller;
 
 const run_name: stall.Name = "library.Task.run";
 
@@ -106,8 +104,7 @@ test "a watch reports a turn that stays open, with the callback that runs, and c
     var starts: [1]u64 = .{0};
     var statistics: statistics_module.Statistics = undefined;
     statistics.init(.{}, &starts);
-    var pollers: [constants.pollers_max]*Poller = undefined;
-    heartbeat.note_clock(&statistics, &pollers, 700);
+    heartbeat.note_clock(&statistics, 700);
     heartbeat.enter(&run_name);
     // The first check of a turn keeps its stamp and reports nothing.
     try testing.expectEqual(@as(?Stuck, null), watch.check());
@@ -122,7 +119,7 @@ test "a watch reports a turn that stays open, with the callback that runs, and c
     try testing.expectEqual(@as(?[*:0]const u8, null), watch.check().?.name);
 
     // A loop that moved starts the count again.
-    heartbeat.note_clock(&statistics, &pollers, 800);
+    heartbeat.note_clock(&statistics, 800);
     try testing.expectEqual(@as(?Stuck, null), watch.check());
     try testing.expectEqual(@as(u32, 1), watch.check().?.checks);
 

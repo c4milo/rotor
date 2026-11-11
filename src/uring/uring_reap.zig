@@ -180,5 +180,5 @@ pub noinline fn take_reserved(
     written: u32,
 ) u32 {
     @branchHint(.cold);
-    return core.call.loop.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
+    return core.loop_calls.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
 }

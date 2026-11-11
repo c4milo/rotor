@@ -345,19 +345,13 @@ test "memory_bytes counts the slack a 64 aligned base can cost, and none for no 
     try testing.expectEqual(slack + test_workers * @sizeOf(Mailbox), Offload.memory_bytes(test_workers));
 }
 
-const dispatch = @import("dispatch/dispatch.zig");
 const Event = @import("event.zig").Event;
 const Heartbeat = @import("stall.zig").Heartbeat;
 const TimerHeap = @import("timer_heap.zig").TimerHeap;
 
-/// A record that no tick calls here: the drain only marks the events of its operations.
-fn ignore(completion: *dispatch.Completion, event: Event) void {
-    _ = completion;
-    _ = event;
-}
-
-/// The static entry of a record written by hand (decision 28).
-const ignore_call: dispatch.Completion.Call = .{ .name = "ignore", .function = &ignore };
+/// The user data of a reactor's record, which no tick here calls: the core copies the bit into the
+/// events of its operation, and reads neither (decision 33, open question 5).
+const record_user_data = 0x1000;
 
 /// Slots of the test below: one operation that names a record, and one that does not.
 const test_slots = 2;
@@ -369,16 +363,17 @@ test "a result a worker hands back reaches the record of its operation, and no o
     var entries: [test_slots]TimerHeap.Entry = undefined;
     var starts: [test_slots]u64 = undefined;
     var heartbeat: Heartbeat = undefined;
-    var groups: @import("scheduling/scheduling.zig").Groups = undefined;
     var tables: Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     var memory: [Offload.memory_bytes(1)]u8 align(layout.memory_alignment) = undefined;
     const rings = init_rings(&memory, 1);
-    var record: dispatch.Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     const plain_user_data = 9;
+    // The first read as a reactor's `Completion.mark` writes it.
+    var marked = operation.Operation.read(record_user_data, test_file, &bytes, 0);
+    marked.dispatched = true;
     const reads = [_]operation.Operation{
-        operation.Operation.read(0, test_file, &bytes, 0).completion(&record),
+        marked,
         operation.Operation.read(plain_user_data, test_file, &bytes, 0),
     };
     try testing.expectEqual(@as(u32, reads.len), tables.submit(&reads, &.{}));
@@ -399,7 +394,7 @@ test "a result a worker hands back reaches the record of its operation, and no o
     var events: [test_slots]Event = undefined;
     try testing.expectEqual(@as(u32, reads.len), tables.drain_finished(&events));
     try testing.expect(events[0].flags.dispatched);
-    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+    try testing.expectEqual(@as(u64, record_user_data), events[0].user_data);
     try testing.expect(!events[1].flags.dispatched);
     try testing.expectEqual(@as(u32, bytes.len), try events[1].outcome());
 }

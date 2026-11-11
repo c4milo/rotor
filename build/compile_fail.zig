@@ -5,7 +5,8 @@
 //! no group or set the groups, nor a program declare a named group that `Named` refuses
 //! (decision 30), nor a cross-core call take the wrong types or a group of one loop (decision 32).
 //! It also proves that a backend's `Loop` that lacks a name of the port of decision 33 does not
-//! compile, and that `rotor.Reactor` of such a type names each name it lacks. Each file of
+//! compile, that `rotor.Reactor` of such a type names each name it lacks, that a reactor and its
+//! view refuse `wait_until`, and that a plain loop declares no call of the reactor. Each file of
 //! `tools/compile_fail/` makes
 //! one such call, and its compile must fail with the message that states the rule or names the
 //! type. A compile that succeeds, or that fails with another message, fails the step.
@@ -27,8 +28,9 @@ const Case = struct {
     continued: bool = false,
 };
 
-/// One case for each name of `core.shared_loop.refused_calls`, with the message of its declaration
-/// in `src/core/shared_loop.zig`, then the two types of decision 29, with the compiler's message.
+/// One case for each name of `reactor.shared.refused_calls`, with the message of its declaration
+/// in `src/reactor/reactor_shared.zig`, then the two types of decision 29, with the compiler's
+/// message.
 pub const cases = [_]Case{
     .{
         .file = "tick",
@@ -46,7 +48,7 @@ pub const cases = [_]Case{
     },
     .{
         .file = "poller",
-        .message = "expected type 'fn (*poller.Library) dispatch.dispatch_callbacks.WaitLimit', " ++
+        .message = "expected type 'fn (*poller.Library) core.WaitLimit', " ++
             "found 'fn (*poller.Library) bool'",
     },
     // Decision 1, amendment of 2026-11-07: the public calls that changed their shape.
@@ -74,7 +76,7 @@ pub const cases = [_]Case{
     },
     .{
         .file = "scheduling_group_literal",
-        .message = "expected type 'scheduling.scheduling.SchedulingGroup', found 'comptime_int'",
+        .message = "expected type 'core.SchedulingGroup', found 'comptime_int'",
     },
     .{ .file = "task_cost_zero", .message = "a task costs at least 1 unit" },
     .{ .file = "task_cost_above", .message = "a task costs at most task_charge_max units" },
@@ -107,27 +109,26 @@ pub const cases = [_]Case{
     // as `T` and `U` in these messages.
     .{
         .file = "call_handler_void",
-        .message = "expected type 'fn (T, U) call.call.Answer(u64)', found 'fn (T, U) void'",
+        .message = "expected type 'fn (T, U) reactor.Answer(u64)', found 'fn (T, U) void'",
     },
     .{
         .file = "call_now_no_reply",
-        .message = "coercion from enum '@typeInfo(call.call.Answer(u64)).@\"union\".tag_type.?' " ++
-            "to union 'call.call.Answer(u64)' must initialize 'u64' field 'now'",
+        .message = "coercion from enum '@typeInfo(reactor.Answer(u64)).@\"union\".tag_type.?' " ++
+            "to union 'reactor.Answer(u64)' must initialize 'u64' field 'now'",
     },
     .{
         .file = "call_finish_type",
-        .message = "expected type 'fn (T, call.call.CallResult(u64)) void', " ++
-            "found 'fn (T, call.call.CallResult(u32)) void'",
+        .message = "expected type 'fn (T, reactor.CallResult(u64)) void', " ++
+            "found 'fn (T, reactor.CallResult(u32)) void'",
     },
     .{
         .file = "call_from_remote",
-        .message = "expected type '*shared_loop.SharedLoop(rotor_loop.Loop)', found '*rotor_loop.Remote'",
+        .message = "expected type '*rotor.Reactor(rotor_loop.Loop).SharedLoop', found '*rotor_loop.Remote'",
     },
     .{ .file = "call_no_group", .message = "missing struct field: group" },
     .{
         .file = "call_scheduling_group",
-        .message = "expected type 'scheduling.scheduling.NamedSchedulingGroup', " ++
-            "found 'scheduling.scheduling.SchedulingGroup'",
+        .message = "expected type 'reactor.NamedSchedulingGroup', found 'core.SchedulingGroup'",
     },
     // Decision 33: the check of the port in each backend's root.
     .{
@@ -156,6 +157,21 @@ pub const cases = [_]Case{
         .file = "reactor_port_missing",
         .message = "push_reserved: a call or a return into a ring's kept slots, then the wake",
         .continued = true,
+    },
+    // Decision 33: a reactor and its view bound their wait with a poller, and a plain loop declares
+    // no call of the reactor.
+    .{
+        .file = "reactor_wait_until",
+        .message = "a reactor bounds its wait with a poller that returns its limit; wait_until is a " ++
+            "plain loop's (decision 33)",
+    },
+    .{
+        .file = "shared_wait_until",
+        .message = "a library bounds the wait with a poller that returns its limit (decision 33)",
+    },
+    .{
+        .file = "loop_schedule_in",
+        .message = "no field or member function named 'schedule_in' in 'rotor_loop.Loop'",
     },
 };
 

@@ -1,5 +1,5 @@
-//! `wait_until` of decision 33 on every backend: the program's bound on the wait of each tick. The
-//! loop has no poller, because until step 3 the pollers' limit uses the same word.
+//! `wait_until` of decision 33 on every backend: the program's bound on the wait of each tick. A
+//! plain loop has no poller, and only the program writes the stored limit.
 //!
 //! The bounds of time here are loose, against noise: a tick that should end after 5 ms must end
 //! before 500 ms, where a tick that ignored the limit would wait its whole second.

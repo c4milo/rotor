@@ -39,7 +39,8 @@ pub fn add(b: *std.Build) Steps {
     const target = race_target(b);
     const graph = modules.add(b, target, .Debug);
 
-    // One line per module whose tests start a thread. `core` starts none. `kqueue` holds the
+    // One line per module whose tests start a thread. `core` and `reactor` start none: the tests of
+    // the reactor's calls run their loops on one thread (decision 33). `kqueue` holds the
     // threaded tests of the mailbox rings; each conformance suite runs two loops on two threads over
     // the registry, the offload's workers beside a loop, and a post storm from several threads into
     // a loop that runs pollers, records and tasks. `conformance-epoll` is the only one of

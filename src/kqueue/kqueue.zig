@@ -49,7 +49,7 @@ pub const Registry = mailbox.Registry;
 pub const Remote = remote_module.Remote;
 pub const InitError = queue_module.InitError;
 pub const TickError = tick_module.TickError;
-pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
+pub const DrainError = TickError || error{StillInFlight};
 
 const Event = core.Event;
 const Handle = core.Handle;
@@ -133,9 +133,6 @@ pub const Loop = struct {
         _ = layout.add(u64, options.operations);
         // The heartbeat's line, which a watch on another thread reads (decision 28).
         _ = layout.add(core.Heartbeat, 1);
-        // The scheduling groups, which a tick reads only while a group other than `.default`
-        // holds a task (decision 30).
-        _ = layout.add(core.scheduling.Groups, 1);
         _ = layout.add(core.waiters.Entry, Waiters.capacity_for(options.operations));
         // Nothing for an offload the options did not ask for, so a caller that wants none pays no
         // byte for one (decision 12, point 6 makes the same argument for the registry).
@@ -193,7 +190,6 @@ pub const Loop = struct {
         const entries = layout.take(memory, TimerHeap.Entry, options.operations);
         const starts = layout.take(memory, u64, options.operations);
         const line = &layout.take(memory, core.Heartbeat, 1)[0];
-        const groups_table = &layout.take(memory, core.scheduling.Groups, 1)[0];
         const waiting = Waiters.capacity_for(options.operations);
         loop.waiters.init(layout.take(memory, core.waiters.Entry, waiting));
         const workers = workers_of(options);
@@ -211,12 +207,11 @@ pub const Loop = struct {
         loop.inbox = core.inbox.Inbox.init(options.registry, completions, out);
         loop.file_policy = options.file_policy;
         loop.offload = options.offload;
-        loop.tables.init(slots, entries, starts, line, groups_table, .{
+        loop.tables.init(slots, entries, starts, line, .{
             .id = options.id,
             .sampling = options.sampling,
             .spin_budget_ns = options.spin_budget_ns,
             .stall_turn_ns = options.stall_turn_ns,
-            .named_groups = options.named_groups,
         });
         loop.changes_used = 0;
         loop.trigger_armed = false;
@@ -307,28 +302,21 @@ pub const Loop = struct {
         submit_module.wake_one(loop, registry.?.group, descriptor);
     }
 
+    /// One turn of the loop: while `outstanding` is above 0 it returns the error an earlier tick
+    /// kept, then it runs the backend's tick (`core.tick_error.tick`). On a plain loop only a kept
+    /// error raises `outstanding`, so a tick with none pays one load and one compare for it.
     pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
-        // With no poller and no record in flight, no callback can run in this tick, so the tick
-        // skips the dispatch (decision 26).
-        if (loop.tables.dispatch.idle()) return loop.tick_backend(events, wait_ns);
-        return loop.tick_dispatched(events, wait_ns);
+        return core.tick_error.tick(loop, events, wait_ns);
     }
 
-    /// A tick that calls the pollers first and the records of the events last. It is marked cold
-    /// so that the compiler keeps it out of `tick`: inline, it cost a program with no record 12
-    /// instructions in each tick, in saved registers, on the work gate's post. Decision 7 allows the
-    /// hint in this file, and `docs/hot-path-ledger.md`, row H1, holds the numbers.
-    fn tick_dispatched(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
-        @branchHint(.cold);
-        const dispatch = &loop.tables.dispatch;
-        // An error an earlier tick kept counts as an outstanding callback, so it brings the tick
-        // here, and comes before any poller and any event (decision 5, amendment of 2026-11-06).
-        try loop.kept_error.take(dispatch);
-        const line = loop.tables.heartbeat;
-        const wait = dispatch.begin(line, wait_ns);
-        errdefer dispatch.abandon();
-        const produced = try loop.tick_backend(events, wait);
-        return dispatch.end(line, loop.tables.groups, events[0..produced]);
+    /// Returns the error that an earlier tick kept, once, and lowers `outstanding` (decision 5,
+    /// amendment of 2026-11-06): a name of the port of decision 33. Only a tick whose `outstanding`
+    /// is above 0 calls it. It carries no cold hint: the work gate counted the same with the hint
+    /// and without it, on `mac` and on arm64 Linux (decision 7, ledger rows H1 to H3, struck).
+    pub fn take_kept_error(loop: *Loop) TickError!void {
+        // A tick that runs after a drain handed a call ends that drain's signal (`Inbox.handed`).
+        loop.inbox.handed = false;
+        try loop.kept_error.take(&loop.tables.outstanding);
     }
 
     /// The backend's tick, with no check of a kept error: a name of the port of decision 33.
@@ -341,43 +329,21 @@ pub const Loop = struct {
         return produced;
     }
 
-    // The pollers of decision 26 and the tasks of decision 27: `core.dispatch.Calls`.
-    const dispatch_calls = core.dispatch.Calls(Loop);
-    pub const add_poller = dispatch_calls.add_poller;
-    pub const remove_poller = dispatch_calls.remove_poller;
-    pub const schedule = dispatch_calls.schedule;
-    pub const is_scheduled = dispatch_calls.is_scheduled;
-    pub const tasks_queued = dispatch_calls.tasks_queued;
-    pub const task_budget_left = dispatch_calls.task_budget_left;
-    pub const discard_tasks = dispatch_calls.discard_tasks;
-    // The scheduling groups of decision 30.
-    pub const schedule_in = dispatch_calls.schedule_in;
-    pub const charge_task = dispatch_calls.charge_task;
-    pub const reserve_scheduling_group = dispatch_calls.reserve_scheduling_group;
-    pub const set_scheduling_group_shares = dispatch_calls.set_scheduling_group_shares;
-    // The view a library holds and the heartbeat of decision 28.
-    pub const shared = dispatch_calls.shared;
-    pub const heartbeat = dispatch_calls.heartbeat;
-    // The host's wait limit of decision 29.
-    pub const wait_limit = dispatch_calls.wait_limit;
-    // The program's bound on the wait of each tick (decision 33).
-    pub const wait_until = dispatch_calls.wait_until;
-    // The port of decision 33, with `tick_backend`, `push_reserved` and `assert_owner`.
-    pub const take_kept_error = dispatch_calls.take_kept_error;
-    pub const outstanding = dispatch_calls.outstanding;
-    pub const stored_limit = dispatch_calls.stored_limit;
-    pub const heartbeat_line = dispatch_calls.heartbeat_line;
-    // The cross-core calls of decision 32.
-    const call_calls = core.call.loop.Calls(Loop);
-    pub const call = call_calls.call;
-    pub const answer = call_calls.answer;
-    pub const serve = call_calls.serve;
-    pub const stop_serving = call_calls.stop_serving;
-    pub const callbacks_outstanding = call_calls.callbacks_outstanding;
-    pub const push_reserved = call_calls.push_reserved;
+    // The heartbeat of decision 28, the host's wait limit of decision 29, the program's bound on
+    // the wait of each tick, and the port of decision 33 with `tick_backend`, `take_kept_error`
+    // and `assert_owner`: `core.loop_calls`.
+    const loop_calls = core.loop_calls.Calls(Loop);
+    pub const heartbeat = loop_calls.heartbeat;
+    pub const wait_limit = loop_calls.wait_limit;
+    pub const wait_until = loop_calls.wait_until;
+    pub const outstanding = loop_calls.outstanding;
+    pub const stored_limit = loop_calls.stored_limit;
+    pub const heartbeat_line = loop_calls.heartbeat_line;
+    pub const attach_reserved = loop_calls.attach_reserved;
+    pub const push_reserved = loop_calls.push_reserved;
     /// Wakes loop `target` through `descriptor` after a call or an answer, as `post` does.
     pub fn wake_target(loop: *Loop, target: core.LoopId, descriptor: core.Descriptor) void {
-        core.call.loop.assert_wake(loop.tables.id, target, descriptor);
+        core.reserved.assert_wake(loop.tables.id, target, descriptor);
         submit_module.wake_one(loop, loop.inbox.registry.?.group, descriptor);
     }
 

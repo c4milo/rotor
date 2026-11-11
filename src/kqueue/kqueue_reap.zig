@@ -156,7 +156,7 @@ pub noinline fn take_reserved(
     written: u32,
 ) u32 {
     @branchHint(.cold);
-    return core.call.loop.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
+    return core.loop_calls.Calls(Loop).take_reserved(inbox, receiver, events, first, written);
 }
 
 const testing = std.testing;
@@ -360,36 +360,35 @@ test "an operation behind a multishot receive that ran out of buffers is still s
     try testing.expectEqual(@as(u8, 'b'), own[0]);
 }
 
-/// A record that no tick calls here: the reap only marks the events of its operations.
-fn ignore(completion: *core.Completion, event: Event) void {
-    _ = completion;
-    _ = event;
-}
+/// The user data of a reactor's record, which no tick here calls: the loop copies the bit into the
+/// events of the operation, and reads neither (decision 33, open question 5).
+const record_user_data = 0x1000;
 
-/// The static entry of a record written by hand (decision 28).
-const ignore_call: core.Completion.Call = .{ .name = "ignore", .function = &ignore };
+/// `operation` with the bit and the user data that a reactor's `Completion.mark` writes.
+fn marked(operation: core.Operation) core.Operation {
+    var named = operation;
+    named.user_data = record_user_data;
+    named.dispatched = true;
+    return named;
+}
 
 test "a readiness marks the event of an operation that names a record, and no other" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
     var fixture: Fixture = undefined;
     try fixture.init();
     defer fixture.deinit();
-    var record: core.Completion = .{ .call = &ignore_call };
     var own: [2][Fixture.buffer_bytes]u8 = undefined;
     try fixture.wait(&.{
-        Operation.receive(0, fixture.pair[0], &own[0]).completion(&record),
+        marked(Operation.receive(0, fixture.pair[0], &own[0])),
         Operation.receive(2, fixture.pair[0], &own[1]),
     });
     try fixture.send(2 * Fixture.buffer_bytes);
     var events: [2]Event = undefined;
     const ready = [_]Kevent{fixture.readable(2 * Fixture.buffer_bytes, 0)};
     try testing.expectEqual(@as(u32, 2), reap(&fixture.loop, &ready, &events));
-    // The tick hands the first to the record, and the second to its caller (decision 26).
+    // A reactor's tick hands the first to its record, and the second to its caller (decision 26).
     try testing.expect(events[0].flags.dispatched);
-    try testing.expectEqual(@as(u64, @intFromPtr(&record)), events[0].user_data);
+    try testing.expectEqual(@as(u64, record_user_data), events[0].user_data);
     try testing.expect(!events[1].flags.dispatched);
     try testing.expectEqual(@as(u64, 2), events[1].user_data);
-    // The reap ran outside a tick, so no `end` called the record, and `deinit` would see it
-    // outstanding (decision 32).
-    fixture.loop.tables.dispatch.callbacks_outstanding -= 1;
 }

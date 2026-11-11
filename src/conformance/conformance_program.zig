@@ -153,7 +153,7 @@ pub const Program = struct {
             if (library.added) program.main.reactor.remove_poller(&library.poller);
             library.added = false;
         }
-        if (!program.main.reactor.loop.tables.dispatch.idle()) return error.DispatchNotIdleAtEnd;
+        if (!(program.main.reactor.dispatch.poller_count == 0 and program.main.reactor.loop.tables.outstanding == 0)) return error.DispatchNotIdleAtEnd;
         try actions.check_end(program);
     }
 

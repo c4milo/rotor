@@ -10,11 +10,11 @@ const scenario = @import("scenario.zig");
 const Kept = core.tick_error.Kept(error{Unexpected});
 
 fn keep_an_error_while_one_is_kept() void {
-    var dispatch: core.dispatch.Dispatch = .empty;
+    var outstanding: u32 = 0;
     var kept: Kept = .none;
-    _ = kept.keep(&dispatch, error.Unexpected, 1) catch unreachable;
+    _ = kept.keep(&outstanding, error.Unexpected, 1) catch unreachable;
     scenario.reached_violation();
-    _ = kept.keep(&dispatch, error.Unexpected, 1) catch unreachable;
+    _ = kept.keep(&outstanding, error.Unexpected, 1) catch unreachable;
 }
 
 pub const scenarios = [_]scenario.Scenario{

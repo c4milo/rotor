@@ -12,8 +12,6 @@ const epoll = @import("epoll");
 const kqueue = @import("kqueue");
 const backend_module = @import("rotor_loop_backend.zig");
 const buffers = @import("rotor_loop_buffers.zig");
-const scheduling = @import("rotor_loop_scheduling.zig");
-const calls = @import("rotor_loop_calls.zig");
 
 const constants = core.constants;
 
@@ -28,10 +26,6 @@ pub const RequireError = backend_module.RequireError;
 pub const require = backend_module.require;
 
 pub const Registry = @import("rotor_loop_registry.zig").Registry;
-
-// The program's named scheduling groups (decision 30): `rotor_loop_scheduling.zig`.
-pub const root_groups = scheduling.root_groups;
-pub const named_scheduling_group = scheduling.named_scheduling_group;
 
 /// What a thread that owns no loop holds to post with (decision 4). It takes one slot of the
 /// registry, sends, and never receives.
@@ -79,11 +73,10 @@ pub const Remote = struct {
     }
 };
 
-/// The loop as the program hands it to a library (decision 28): `core/shared_loop.zig`.
-pub const SharedLoop = core.shared_loop.SharedLoop(Loop);
-
 /// The loop. One belongs to one thread, holds no lock and starts no thread (decision 4).
-/// `docs/using.md` says what it promises and what it needs.
+/// `docs/using.md` says what it promises and what it needs. It carries the core's surface alone:
+/// the records with callbacks, the pollers, the tasks, the scheduling groups, the calls and the
+/// view of a library are the reactor's, `rotor.Reactor(Loop)` (decision 33).
 pub const Loop = struct {
     inner: Inner,
 
@@ -94,7 +87,7 @@ pub const Loop = struct {
 
     pub const InitError = if (linux) uring.InitError || epoll.InitError else kqueue.InitError;
     pub const TickError = if (linux) uring.TickError || epoll.TickError else kqueue.TickError;
-    pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
+    pub const DrainError = TickError || error{StillInFlight};
     pub const RegisterError = if (linux)
         uring.buffers.RegisterError || uring.descriptors.RegisterError ||
             epoll.buffers.RegisterError || epoll.descriptors_module.RegisterError
@@ -106,14 +99,6 @@ pub const Loop = struct {
         kqueue.buffers.ProvideError;
     /// Why `post` sent nothing: the same on every backend.
     pub const PostError = core.remote.SendError;
-    /// Why `add_poller` added nothing: the same on every backend.
-    pub const AddPollerError = core.dispatch.AddPollerError;
-    /// Why `schedule` queued nothing: the same on every backend.
-    pub const ScheduleError = core.ScheduleError;
-    /// Why `reserve_scheduling_group` reserved nothing: the same on every backend.
-    pub const ReserveSchedulingGroupError = core.scheduling.ReserveSchedulingGroupError;
-    /// Why `call` sent nothing: the same on every backend (decision 32).
-    pub const CallError = core.call.CallError;
 
     pub const Options = struct {
         /// The most operations in flight, which is the slots in the table:
@@ -162,11 +147,8 @@ pub const Loop = struct {
         }
 
         /// These options for sizing memory for the backend `tag` names, which reads no registry.
-        /// The named groups are the program's root declaration, for every loop (decision 30), so
-        /// two loops of a program cannot disagree on them.
         fn sizing(options: *const Options, comptime tag: Tag) module(tag).Loop.Options {
             return .{
-                .named_groups = scheduling.root_groups.table,
                 .operations = options.operations,
                 .entries = options.entries,
                 .sampling = options.sampling,
@@ -262,58 +244,6 @@ pub const Loop = struct {
         };
     }
 
-    /// Adds `poller`, which the loop calls once in each tick (decision 26).
-    pub fn add_poller(loop: *Loop, poller: *core.Poller) AddPollerError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.add_poller(poller),
-        };
-    }
-
-    /// Removes `poller`, which must have been added.
-    pub fn remove_poller(loop: *Loop, poller: *core.Poller) void {
-        switch (loop.inner) {
-            inline else => |*inner| inner.remove_poller(poller),
-        }
-    }
-
-    /// Asks the loop to call `task.run` once, later (decision 27), in `.default`. A library names
-    /// its group with `schedule_in` instead: `SharedLoop` refuses this call (decision 30).
-    pub fn schedule(loop: *Loop, task: *core.Task) ScheduleError!void {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.schedule(task),
-        };
-    }
-
-    /// True while `task` is queued in a group of this loop.
-    pub fn is_scheduled(loop: *const Loop, task: *const core.Task) bool {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.is_scheduled(task),
-        };
-    }
-
-    /// The tasks queued now, in every group.
-    pub fn tasks_queued(loop: *const Loop) u32 {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.tasks_queued(),
-        };
-    }
-
-    /// `tasks_per_tick_max` less the tasks the current run started, and 0 outside a run. While
-    /// another group holds a task, at most the whole units left in the visit of the task's group.
-    pub fn task_budget_left(loop: *const Loop) u32 {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.task_budget_left(),
-        };
-    }
-
-    /// Unlinks every queued task of every group without a call, after `drain` returned
-    /// `TasksStillQueued`. It resets each group's deficit.
-    pub fn discard_tasks(loop: *Loop) u32 {
-        return switch (loop.inner) {
-            inline else => |*inner| inner.discard_tasks(),
-        };
-    }
-
     /// Operations that have not had their final event.
     pub fn in_flight(loop: *const Loop) u32 {
         return switch (loop.inner) {
@@ -369,34 +299,32 @@ pub const Loop = struct {
     }
 
     /// The host's last call before it sleeps in its own wait (decision 29). Returns how long it may
-    /// sleep, on the loop's clock: `.now` while a task is queued, an operation waits to be
-    /// submitted, a result waits to be handed over, a ring holds a message or a worker's result,
-    /// the last tick kept a kernel error, or the nearest timer or poller limit is due. A poller that returned `.now`, a wake the last tick took, and a record
-    /// or a task the last tick called each give `.now`. Otherwise `.at` of the nearest limit, or
-    /// `.none`. It reads no clock and changes no state. Only the program calls it, on the loop's
-    /// thread, between ticks: inside a tick it halts. `SharedLoop` does not declare it.
+    /// sleep, on the loop's clock: `.now` while an operation waits to be submitted, a result waits
+    /// to be handed over, a ring holds a message or a worker's result, the last tick kept a kernel
+    /// error, or the nearest timer or the limit of `wait_until` is due. Otherwise `.at` of the
+    /// nearest limit, or `.none`. It reads no clock and changes no state. Only the program calls
+    /// it, on the loop's thread, between ticks.
     pub fn wait_limit(loop: *Loop) core.WaitLimit {
         return switch (loop.inner) {
             inline else => |*inner| inner.wait_limit(),
         };
     }
 
+    /// Bounds the wait of each tick that follows at `limit`, until the next call (decision 33).
+    /// `.none`, the value at init, bounds nothing, and `.now` makes each tick wait 0 ns. The tick
+    /// compares the limit with its own stamp, as it compares the nearest timer, so a program that
+    /// holds several deadlines writes the least of them. Only the program calls it, on the loop's
+    /// thread. A reactor refuses it at compile time: its pollers bound its wait.
+    pub fn wait_until(loop: *Loop, limit: core.WaitLimit) void {
+        switch (loop.inner) {
+            inline else => |*inner| inner.wait_until(limit),
+        }
+    }
+
     pub fn statistics(loop: *const Loop) *const core.statistics.Statistics {
         return switch (loop.inner) {
             inline else => |*inner| inner.statistics(),
         };
-    }
-
-    /// The view that the program hands to each library at init (decision 28). Its address is this
-    /// loop's, and it declares only the calls a library may make: `tick`, `drain`, `deinit`,
-    /// `cancel_all`, `discard_tasks`, `schedule`, `reserve_scheduling_group` and
-    /// `set_scheduling_group_shares` fail to compile on it. Only the program calls this, on the
-    /// loop's thread.
-    pub fn shared(loop: *Loop) *SharedLoop {
-        switch (loop.inner) {
-            inline else => |*inner| inner.assert_owner(),
-        }
-        return @ptrCast(loop);
     }
 
     /// The loop's heartbeat, for a thread that the program starts (decision 28). That thread
@@ -429,18 +357,6 @@ pub const Loop = struct {
             inline else => |*inner| inner.assert_empty(),
         }
     }
-
-    // The scheduling groups of decision 30: `rotor_loop_scheduling.zig`.
-    pub const schedule_in = scheduling.schedule_in;
-    pub const charge_task = scheduling.charge_task;
-    pub const reserve_scheduling_group = scheduling.reserve_scheduling_group;
-    pub const set_scheduling_group_shares = scheduling.set_scheduling_group_shares;
-
-    // The cross-core calls of decision 32: `rotor_loop_calls.zig`. Only `Service` calls them.
-    pub const call = calls.call;
-    pub const answer = calls.answer;
-    pub const serve = calls.serve;
-    pub const stop_serving = calls.stop_serving;
 
     // The buffers of decisions 3, 12 and 29: `rotor_loop_buffers.zig`.
     pub const register_buffers = buffers.register_buffers;

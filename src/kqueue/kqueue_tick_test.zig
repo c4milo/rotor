@@ -21,16 +21,13 @@ const wait_past_early_timer = tick_module.wait_past_early_timer;
 
 const testing = std.testing;
 
-/// A record that counts the final events it receives (decision 26).
-const Record = struct {
-    completion: core.Completion = .init(Record, "completion", called),
-    finals: u32 = 0,
-
-    fn called(record: *Record, event: Event) void {
-        assert(!event.flags.more);
-        record.finals += 1;
-    }
-};
+/// `operation` with the bit that a reactor's `Completion.mark` sets: a plain loop hands its event
+/// to the caller, with the bit set (decision 33, open question 5).
+fn marked(operation: core.Operation) core.Operation {
+    var named = operation;
+    named.dispatched = true;
+    return named;
+}
 
 test "a tick whose call fails after it produced events returns them, and the next tick fails" {
     if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
@@ -51,12 +48,11 @@ test "a tick whose call fails after it produced events returns them, and the nex
     try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &.{}));
     try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
 
-    // Two timers end in the next tick before its call: one with a record, one without. A socket
+    // Two timers end in the next tick before its call: one marked for a record, one not. A socket
     // in place of the kqueue makes the call fail.
-    var record: Record = .{};
     const timers = [_]Operation{
         .timer(2, 0, 0),
-        Operation.timer(0, 0, 0).completion(&record.completion),
+        marked(.timer(3, 0, 0)),
     };
     try testing.expectEqual(@as(u32, 2), loop.submit(&timers, &.{}));
     const queue = loop.queue.descriptor;
@@ -64,16 +60,18 @@ test "a tick whose call fails after it produced events returns them, and the nex
     try testing.expect(saved >= 0);
     try testing.expectEqual(queue, std.c.dup2(ends[1], queue));
 
-    // The tick hands over the timer without a record and calls the other's record. The kept
-    // error takes the next tick off the fast path.
-    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
-    try testing.expectEqual(@as(u64, 2), events[0].user_data);
-    try testing.expectEqual(@as(u32, 1), record.finals);
-    try testing.expect(!loop.tables.dispatch.idle());
+    // The tick hands over both timers: a plain loop calls no record, and hands the marked one
+    // over with its bit set. The kept error takes the next tick off the fast path.
+    try testing.expectEqual(@as(u32, 2), try loop.tick(&events, 0));
+    // The two fire in one tick, in either order.
+    try testing.expect(events[0].flags.dispatched != events[1].flags.dispatched);
+    const plain = if (events[0].flags.dispatched) events[1] else events[0];
+    try testing.expectEqual(@as(u64, 2), plain.user_data);
+    try testing.expectEqual(@as(u32, 1), loop.tables.outstanding);
     // The next tick returns the kept error before anything else. A tick that produced nothing
     // returns its own error at once.
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
-    try testing.expect(loop.tables.dispatch.idle());
+    try testing.expectEqual(@as(u32, 0), loop.tables.outstanding);
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
 
     _ = std.c.dup2(saved, queue);

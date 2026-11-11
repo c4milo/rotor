@@ -22,7 +22,7 @@
 //!   itself, and the program exits with `unsupported_status`.
 //! - `task`: one task scheduled and run by one tick (decision 27): the whole of a tick that exists
 //!   only to run a task.
-//! - `tasks-64`: `core.constants.tasks_per_tick_max` tasks scheduled and run by one tick: the run
+//! - `tasks-64`: `reactor.constants.tasks_per_tick_max` tasks scheduled and run by one tick: the run
 //!   loop.
 //! - `record`: one timer of no delay that names a completion record, submitted and handed to its
 //!   record by one tick (decision 26). The tick takes `tick_dispatched`, the cold path of decision
@@ -132,20 +132,20 @@ var first_reactor: ReactorSide align(@alignOf(ReactorSide)) = .{};
 var second_reactor: ReactorSide align(@alignOf(ReactorSide)) = .{};
 var batch: [batch_operations]Operation align(@alignOf(Operation)) = undefined;
 
-fn ran_nothing(_: *core.Task) void {}
+fn ran_nothing(_: *reactor.Task) void {}
 
-const ran_nothing_call: core.Task.Call = .{ .name = "ran_nothing", .function = ran_nothing };
+const ran_nothing_call: reactor.Task.Call = .{ .name = "ran_nothing", .function = ran_nothing };
 
 /// The tasks of `task` and `tasks-64`, each run once in each iteration.
-var tasks: [core.constants.tasks_per_tick_max]core.Task align(@alignOf(core.Task)) =
+var tasks: [reactor.constants.tasks_per_tick_max]reactor.Task align(@alignOf(reactor.Task)) =
     @splat(.{ .call = &ran_nothing_call });
 
 /// What `record` and `poller` count: each call of the record or the poller adds one, and an
 /// iteration fails unless its tick made exactly one call.
 const Calls = struct {
     count: u64 = 0,
-    completion: core.Completion = .init(Calls, "completion", completed),
-    poller: core.Poller = .init(Calls, "poller", polled),
+    completion: reactor.Completion = .init(Calls, "completion", completed),
+    poller: reactor.Poller = .init(Calls, "poller", polled),
 
     fn completed(calls: *Calls, _: Event) void {
         calls.count += 1;
@@ -168,7 +168,7 @@ var counted: Calls align(@alignOf(Calls)) = .{};
 
 /// The service of `call`: loop 1's handler answers with the request plus one.
 const Echo = struct {
-    fn handle(_: *Echo, call: *EchoCall) core.call.Answer(u64) {
+    fn handle(_: *Echo, call: *EchoCall) reactor.Answer(u64) {
         return .{ .now = call.request_of().* + 1 };
     }
 };
@@ -181,7 +181,7 @@ const Caller = struct {
     call: EchoCall = .init(Caller, "call", finished),
     replies: u64 = 0,
 
-    fn finished(caller: *Caller, result: core.call.CallResult(u64)) void {
+    fn finished(caller: *Caller, result: reactor.CallResult(u64)) void {
         switch (result) {
             .replied => |reply| caller.replies += reply.*,
             .expired, .target_stopped => {},
@@ -264,7 +264,7 @@ noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
     defer if (workload == .call) service.stop_serving(second_reactor.reactor.shared());
     const spread = groups_of(workload);
     for (groups[1..spread]) |*group| {
-        group.* = try first_reactor.reactor.reserve_scheduling_group(core.constants.scheduling_shares_default);
+        group.* = try first_reactor.reactor.reserve_scheduling_group(reactor.constants.scheduling_shares_default);
     }
     for (0..iterations) |_| try run(workload);
 }
@@ -320,7 +320,7 @@ fn run(comptime workload: Workload) !void {
             try first_reactor.expect(0);
         },
         .record => {
-            try submit_to_reactor(&first_reactor, &.{Operation.timer(0, 0, 0).completion(&counted.completion)});
+            try submit_to_reactor(&first_reactor, &.{reactor.Completion.mark(&counted.completion, Operation.timer(0, 0, 0))});
             try first_reactor.expect(0);
             try counted.expect_one();
         },

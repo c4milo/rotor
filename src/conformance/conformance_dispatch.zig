@@ -7,6 +7,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
 
@@ -24,7 +25,7 @@ const wait_ns = 10 * ms;
 const Library = struct {
     /// The events the record received, `more` ones included.
     events: u32 = 0,
-    completion: core.Completion = stall.completion(Library, "completion", called),
+    completion: reactor_module.Completion = stall.completion(Library, "completion", called),
     /// The final events the record received.
     finals: u32 = 0,
     /// Set by `called` when it should submit a timer without a record from inside its callback.
@@ -70,10 +71,10 @@ test "two libraries on one loop each get their own events, whichever of them tic
     var second: Library = .{};
     // The first library: a repeating timer, cancelled after three fires, and a one-shot timer.
     var handles: [1]core.Handle = undefined;
-    try harness.submit(&.{Operation.timer(0, ms, ms).completion(&first.completion)}, &handles);
-    try harness.submit(&.{Operation.timer(0, 2 * ms, 0).completion(&first.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&first.completion, Operation.timer(0, ms, ms))}, &handles);
+    try harness.submit(&.{reactor_module.Completion.mark(&first.completion, Operation.timer(0, 2 * ms, 0))}, &.{});
     // The second library: one one-shot timer.
-    try harness.submit(&.{Operation.timer(0, 3 * ms, 0).completion(&second.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&second.completion, Operation.timer(0, 3 * ms, 0))}, &.{});
     var events: [8]Event = undefined;
     var round: u32 = 0;
     while (first.events < 3 and round < rounds_max) : (round += 1) {
@@ -92,7 +93,7 @@ test "an event of an operation without a record reaches the caller, and the othe
     defer harness.deinit();
     var library: Library = .{};
     try harness.submit(&.{
-        Operation.timer(0, ms, 0).completion(&library.completion),
+        reactor_module.Completion.mark(&library.completion, Operation.timer(0, ms, 0)),
         Operation.timer(7, ms, 0),
     }, &.{});
     var events: [8]Event = undefined;
@@ -116,7 +117,7 @@ test "a callback may submit, and the next tick serves what it submitted" {
     try harness.init(0, null);
     defer harness.deinit();
     var library: Library = .{ .submit_into = &harness };
-    try harness.submit(&.{Operation.timer(0, ms, 0).completion(&library.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&library.completion, Operation.timer(0, ms, 0))}, &.{});
     var events: [8]Event = undefined;
     var seen: ?Event = null;
     var round: u32 = 0;
@@ -130,7 +131,7 @@ test "a callback may submit, and the next tick serves what it submitted" {
 
 const Polling = struct {
     calls: u32 = 0,
-    poller: core.Poller = stall.poller(Polling, "poller", polled),
+    poller: reactor_module.Poller = stall.poller(Polling, "poller", polled),
     worked: bool = false,
 
     fn polled(polling: *Polling) core.WaitLimit {
@@ -188,7 +189,7 @@ const datagrams = 25;
 const Receiver = struct {
     harness: *ReactorHarness,
     group: core.BufferGroup,
-    completion: core.Completion = stall.completion(Receiver, "completion", received),
+    completion: reactor_module.Completion = stall.completion(Receiver, "completion", received),
     datagrams: u32 = 0,
     finals: u32 = 0,
 
@@ -242,7 +243,7 @@ test "a multishot receive that names a record hands every datagram and its end t
     defer sync.close_now(sender);
 
     var receiver: Receiver = .{ .harness = &harness, .group = group };
-    const receive = Operation.receive_from(0, socket, group).completion(&receiver.completion);
+    const receive = reactor_module.Completion.mark(&receiver.completion, Operation.receive_from(0, socket, group));
     var handles: [1]core.Handle = undefined;
     try harness.submit(&.{receive}, &handles);
     try send_datagrams(&sending, sender, socket);

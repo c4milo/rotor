@@ -15,19 +15,18 @@ const assert = std.debug.assert;
 const constants = @import("constants.zig");
 const statistics_module = @import("statistics.zig");
 
-const dispatch = @import("dispatch/dispatch.zig");
-const Poller = dispatch.Poller;
 const Statistics = statistics_module.Statistics;
 const Stall = statistics_module.Stall;
-const SchedulingGroup = @import("scheduling/scheduling.zig").SchedulingGroup;
+const SchedulingGroup = @import("core.zig").SchedulingGroup;
 
 /// What `beat_ns` holds while the loop is in a kernel wait, and before its first tick. A span
 /// from it saturates at 0, so a wait is never a stall and needs no branch of its own.
 pub const asleep: u64 = std.math.maxInt(u64);
 
 /// The name of the callback at `field` of `Parent`, for example `colibri.client.Client.receive`.
-/// `Completion.init`, `Poller.init` and `Task.init` name their static `Call` with it, so a stall
-/// and a watch can say which callback held the loop, with no new parameter at a call site.
+/// The reactor's `Completion.init`, `Poller.init` and `Task.init` name their static `Call` with it,
+/// so a stall and a watch can say which callback held the loop, with no new parameter at a call
+/// site.
 pub fn name_of(comptime Parent: type, comptime field: []const u8) [:0]const u8 {
     return @typeName(Parent) ++ "." ++ field;
 }
@@ -42,7 +41,10 @@ const never: u64 = std.math.maxInt(u64);
 /// What the loop's thread writes so that another thread can see that it is stuck (decision 28).
 /// Another thread reads `beat_ns`, `running` and `watchers`. The loop's own fields share the line.
 /// Each loop carves one from its caller's memory (`Layout.take`), and `Tables` holds a pointer to
-/// it, so `Tables` and the loop keep their own alignment. Size 128 B, alignment 128.
+/// it, so `Tables` and the loop keep their own alignment. The reactor names each callback on it,
+/// through the six calls of the line of decision 33's port: `enter`, `leave`, `leave_polling`,
+/// `leave_tasks`, `leave_group_tasks` and `name_poller`. On a plain loop no callback runs, so the
+/// names stay null. Size 128 B, alignment 128.
 pub const Heartbeat = struct {
     /// The stamp that started the open turn, or `asleep`. The loop stores it with release order.
     beat_ns: std.atomic.Value(u64) align(constants.heartbeat_alignment),
@@ -57,9 +59,13 @@ pub const Heartbeat = struct {
     /// The callbacks that the loop called in the open turn. Only the loop's thread reads it.
     turn: Turn,
     /// The name of the last record or task of the open turn. Only the loop's thread reads it. A
-    /// stall of one poller takes the poller's name from the table of pollers instead, so `begin`
-    /// stores no name.
+    /// stall of one poller takes `poller_name` instead, so the pollers store no name.
     turn_name: ?*const Name,
+    /// The name of the reactor's first poller, or null while it has none (decision 33). The reactor
+    /// writes it at each `add_poller` and `remove_poller`, through `name_poller`, and no tick
+    /// writes it. A stall of one poller reads it, because a turn of one poller called the first.
+    /// It sits in the padding of the line. Only the loop's thread reads it.
+    poller_name: ?*const Name,
     /// The scheduling group of the last task of the groups' run (decision 30). Only that run
     /// stores it, and a stall reads it only when the turn's `ended` counts a task of that run, so
     /// a store of an earlier turn is never read. Only the loop's thread reads it.
@@ -107,6 +113,7 @@ pub const Heartbeat = struct {
             .turn = .zero,
             .turn_ns = stall_turn_ns orelse never,
             .turn_name = null,
+            .poller_name = null,
             .turn_group = 0,
         };
     }
@@ -117,16 +124,10 @@ pub const Heartbeat = struct {
     /// or for a null threshold: `check_turn` handles both, and only a span at or above the
     /// threshold reaches it. A watch needs the stamp with or without a threshold, so the stores
     /// stay here. Only the loop's thread writes `beat_ns`, so it reads its own stamp with a plain
-    /// load. The compiler then loads the stamp and `turn_ns` with one instruction. `pollers` is
-    /// the loop's table of pollers, which only a stall of one poller reads.
-    pub fn note_clock(
-        heartbeat: *Heartbeat,
-        statistics: *Statistics,
-        pollers: *const [constants.pollers_max]*Poller,
-        now_ns: u64,
-    ) void {
+    /// load. The compiler then loads the stamp and `turn_ns` with one instruction.
+    pub fn note_clock(heartbeat: *Heartbeat, statistics: *Statistics, now_ns: u64) void {
         if (now_ns -% heartbeat.beat_ns.raw >= heartbeat.turn_ns) {
-            heartbeat.check_turn(statistics, pollers, now_ns);
+            heartbeat.check_turn(statistics, now_ns);
         }
         heartbeat.beat_ns.store(now_ns, .release);
         heartbeat.turn = .zero;
@@ -139,16 +140,11 @@ pub const Heartbeat = struct {
     /// `maxInt(u64)` under a null threshold. It is `noinline`, so its code stays out of each
     /// backend's tick, which then counts 3 instructions fewer on arm64 Linux (decision 7, ledger
     /// row H5).
-    noinline fn check_turn(
-        heartbeat: *const Heartbeat,
-        statistics: *Statistics,
-        pollers: *const [constants.pollers_max]*Poller,
-        now_ns: u64,
-    ) void {
+    noinline fn check_turn(heartbeat: *const Heartbeat, statistics: *Statistics, now_ns: u64) void {
         if (heartbeat.turn_ns == never) return;
         const span_ns = now_ns -| heartbeat.beat_ns.load(.monotonic);
         if (span_ns < heartbeat.turn_ns) return;
-        heartbeat.note_stall(statistics, heartbeat.name_of_one(pollers), now_ns, span_ns);
+        heartbeat.note_stall(statistics, heartbeat.name_of_one(), now_ns, span_ns);
     }
 
     /// The group of the one task of the open turn, or null when the turn called a record, a
@@ -163,14 +159,12 @@ pub const Heartbeat = struct {
     }
 
     /// The name of the one callback of the open turn, or null when it called none or several. A
-    /// turn of one poller called the first poller of the table: `begin` called the pollers of the
-    /// table, and nothing adds or removes one between `begin` and the stamp that reads this.
-    fn name_of_one(
-        heartbeat: *const Heartbeat,
-        pollers: *const [constants.pollers_max]*Poller,
-    ) ?*const Name {
+    /// turn of one poller called the reactor's first poller, whose name `poller_name` holds: the
+    /// reactor called its pollers in order, and nothing adds or removes one between the pollers of
+    /// a tick and the stamp that reads this.
+    fn name_of_one(heartbeat: *const Heartbeat) ?*const Name {
         if (heartbeat.turn.callbacks() != 1) return null;
-        if (heartbeat.turn.polled == 1) return &pollers[0].call.name;
+        if (heartbeat.turn.polled == 1) return heartbeat.poller_name;
         return heartbeat.turn_name;
     }
 
@@ -223,11 +217,18 @@ pub const Heartbeat = struct {
 
     /// `begin` called `polled` pollers, at least one, and runs none now. It keeps the count for the
     /// turn, and stores null in `running` with release order. It keeps no name: `name_of_one`
-    /// finds a poller's name in the table of pollers.
+    /// reads `poller_name`.
     pub fn leave_polling(heartbeat: *Heartbeat, polled: u32) void {
         assert(polled != 0);
         heartbeat.turn.polled = polled;
         heartbeat.running.store(null, .release);
+    }
+
+    /// The reactor's first poller is now the one named `name`, or none (decision 33). The reactor
+    /// calls it at each `add_poller` and `remove_poller`, between ticks or inside a callback, and
+    /// never while its pollers run. `name` is static data: the name in a `Call`.
+    pub fn name_poller(heartbeat: *Heartbeat, name: ?*const Name) void {
+        heartbeat.poller_name = name;
     }
 
     /// Keeps the last name of a record or a task for the turn, and stores null in `running` with
@@ -271,15 +272,10 @@ pub fn text_of(name: ?*const Name) ?[*:0]const u8 {
 }
 
 comptime {
-    // The most callbacks one turn holds: one `end` and one `begin` (`Heartbeat.Turn`).
-    const turn_callbacks_max = constants.pollers_max + constants.batch_max +
-        constants.tasks_per_tick_max;
-    assert(turn_callbacks_max < std.math.maxInt(u32));
-    // The three fields of `Turn.ended` hold their counts: the records of one batch, and the tasks
-    // of one run in each of the other two (decision 30).
+    // The first field of `Turn.ended` holds the records of one batch. The reactor's
+    // `constants.zig` holds its tasks of one run to the other two fields (decision 30).
     const task_bits = Heartbeat.Turn.group_task_shift - Heartbeat.Turn.task_shift;
     assert(constants.batch_max < @as(u64, 1) << Heartbeat.Turn.task_shift);
-    assert(constants.tasks_per_tick_max < @as(u64, 1) << task_bits);
     assert(Heartbeat.Turn.group_task_shift + task_bits == @bitSizeOf(u64));
     assert(@sizeOf(Heartbeat) == constants.heartbeat_alignment);
     assert(@alignOf(Heartbeat) == constants.heartbeat_alignment);
@@ -295,27 +291,16 @@ const testing = std.testing;
 /// Names of callbacks in the tests, static as a `Call`'s are.
 const receive_name: Name = "library.Client.receive";
 
-/// A library's poller, for the tests of a stall of one poller.
-const Server = struct {
-    poller: Poller = .init(Server, "poller", polled),
+/// The name of a reactor's first poller, for the tests of a stall of one poller.
+const poller_name: Name = "library.Server.poller";
 
-    fn polled(server: *Server) dispatch.WaitLimit {
-        _ = server;
-        return .none;
-    }
-};
-
-/// A `Statistics` with one slot of starts, and the loop's table of pollers, for the tests of the
-/// turn check. The table holds one poller.
+/// A `Statistics` with one slot of starts, for the tests of the turn check.
 const Counted = struct {
     starts: [1]u64 = .{0},
     statistics: Statistics = undefined,
-    server: Server = .{},
-    pollers: [constants.pollers_max]*Poller = undefined,
 
     fn init(counted: *Counted) void {
         counted.statistics.init(.{}, &counted.starts);
-        counted.pollers[0] = &counted.server.poller;
     }
 };
 
@@ -324,25 +309,25 @@ test "a turn at the threshold is a stall, a turn below it is not, and a wait is 
     counted.init();
     var heartbeat: Heartbeat = .init(100);
     // Before the first tick no turn is open, so the first stamp counts nothing.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 1_000);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 1_099);
+    heartbeat.note_clock(&counted.statistics, 1_000);
+    heartbeat.note_clock(&counted.statistics, 1_099);
     try testing.expectEqual(@as(u64, 0), counted.statistics.stalls);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 1_199);
+    heartbeat.note_clock(&counted.statistics, 1_199);
     try testing.expectEqual(@as(u64, 1), counted.statistics.stalls);
     try testing.expectEqual(@as(u64, 100), counted.statistics.stall_ns_max);
     try testing.expectEqual(@as(u64, 1_199), counted.statistics.last_stall.end_ns);
     // A wait of any length between two stamps is no turn. The stamp after a wait starts one.
     heartbeat.note_asleep();
     heartbeat.note_woken(5_000);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 5_150);
+    heartbeat.note_clock(&counted.statistics, 5_150);
     try testing.expectEqual(@as(u64, 2), counted.statistics.stalls);
     try testing.expectEqual(@as(u64, 150), counted.statistics.last_stall.span_ns);
     heartbeat.note_asleep();
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 90_000);
+    heartbeat.note_clock(&counted.statistics, 90_000);
     try testing.expectEqual(@as(u64, 2), counted.statistics.stalls);
     // The longest stall stays when a shorter one follows.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 90_500);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 90_600);
+    heartbeat.note_clock(&counted.statistics, 90_500);
+    heartbeat.note_clock(&counted.statistics, 90_600);
     try testing.expectEqual(@as(u64, 4), counted.statistics.stalls);
     try testing.expectEqual(@as(u64, 500), counted.statistics.stall_ns_max);
     try testing.expectEqual(@as(u64, 100), counted.statistics.last_stall.span_ns);
@@ -354,11 +339,11 @@ test "a null threshold counts no stall" {
     var heartbeat: Heartbeat = .init(null);
     // The longest span a turn can have: it reaches the threshold that `null` stores, so only a
     // turn check that a null threshold skips leaves it uncounted.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 0);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, std.math.maxInt(u64));
+    heartbeat.note_clock(&counted.statistics, 0);
+    heartbeat.note_clock(&counted.statistics, std.math.maxInt(u64));
     try testing.expectEqual(@as(u64, 0), counted.statistics.stalls);
     // The stamp is stored all the same, because a watch reads it with or without a threshold.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 5);
+    heartbeat.note_clock(&counted.statistics, 5);
     try testing.expectEqual(@as(u64, 5), heartbeat.beat_ns.load(.monotonic));
 }
 
@@ -366,36 +351,59 @@ test "a stall names its callback only when the turn called one" {
     var counted: Counted = .{};
     counted.init();
     var heartbeat: Heartbeat = .init(10);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 100);
+    heartbeat.note_clock(&counted.statistics, 100);
     // One record in a tick's `end`. The next tick's `begin` has no poller, so it calls nothing.
     heartbeat.enter(&receive_name);
     heartbeat.leave(1);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 200);
+    heartbeat.note_clock(&counted.statistics, 200);
     const one = counted.statistics.last_stall;
     try testing.expectEqual(@as(u32, 1), one.callbacks);
     try testing.expectEqualStrings("library.Client.receive", std.mem.span(one.name.?));
 
-    // One poller in the next tick's `begin`, and no record before it: the first of the table.
-    const poller_name = &counted.server.poller.call.name;
-    heartbeat.enter(poller_name);
+    // One poller in the next tick's `begin`, and no record before it: the reactor's first poller,
+    // which it named when it added the poller.
+    heartbeat.name_poller(&poller_name);
+    heartbeat.enter(&poller_name);
     heartbeat.leave_polling(1);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 300);
+    heartbeat.note_clock(&counted.statistics, 300);
     const polled = counted.statistics.last_stall;
     try testing.expectEqual(@as(u32, 1), polled.callbacks);
-    try testing.expectEqualStrings(@typeName(Server) ++ ".poller", std.mem.span(polled.name.?));
+    try testing.expectEqualStrings("library.Server.poller", std.mem.span(polled.name.?));
 
     // A record in one `end` and a poller in the next `begin`: the stall names neither.
     heartbeat.enter(&receive_name);
     heartbeat.leave(1);
-    heartbeat.enter(poller_name);
+    heartbeat.enter(&poller_name);
     heartbeat.leave_polling(1);
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 400);
+    heartbeat.note_clock(&counted.statistics, 400);
     try testing.expectEqual(@as(u32, 2), counted.statistics.last_stall.callbacks);
     try testing.expectEqual(@as(?[*:0]const u8, null), counted.statistics.last_stall.name);
 
     // No callback: the program's own code held the loop. The stamp at 400 zeroed both counts.
-    heartbeat.note_clock(&counted.statistics, &counted.pollers, 500);
+    heartbeat.note_clock(&counted.statistics, 500);
     try testing.expectEqual(@as(u32, 0), counted.statistics.last_stall.callbacks);
     try testing.expectEqual(@as(?[*:0]const u8, null), counted.statistics.last_stall.name);
     try testing.expectEqual(@as(u64, 4), counted.statistics.stalls);
+}
+
+test "a stall of one poller names the poller the reactor named last, and none after it removed it" {
+    var counted: Counted = .{};
+    counted.init();
+    var heartbeat: Heartbeat = .init(10);
+    heartbeat.note_clock(&counted.statistics, 100);
+    heartbeat.name_poller(&poller_name);
+    heartbeat.leave_polling(1);
+    heartbeat.note_clock(&counted.statistics, 200);
+    try testing.expectEqualStrings("library.Server.poller", std.mem.span(counted.statistics.last_stall.name.?));
+    // The reactor removed its last poller: a stall of one poller names none.
+    heartbeat.name_poller(null);
+    heartbeat.leave_polling(1);
+    heartbeat.note_clock(&counted.statistics, 300);
+    try testing.expectEqual(@as(?[*:0]const u8, null), counted.statistics.last_stall.name);
+    try testing.expectEqual(@as(u64, 2), counted.statistics.stalls);
+}
+
+test "the poller's name sits in the padding of the line, which stays 128 B" {
+    try testing.expectEqual(@as(usize, 128), @sizeOf(Heartbeat));
+    try testing.expect(@offsetOf(Heartbeat, "poller_name") + 8 <= 128);
 }

@@ -2,11 +2,12 @@
 //! backend (decision 33): a full task queue, a full table of pollers, a full slot table while
 //! records are owed, a batch that the table takes in part, the run bound of one tick, and the bound
 //! of `drain`. Each oracle is an exact count.
-//! The scenarios read `tables.dispatch.callbacks_outstanding` directly, because no call of the surface
+//! The scenarios read `tables.outstanding` directly, because no call of the surface
 //! reports it, and a wrong count shows only later, as a tick that skips its dispatch.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const conformance = @import("conformance.zig");
 
 const ReactorHarness = conformance.ReactorHarness;
@@ -25,7 +26,7 @@ const ticks_max = 1_000_000;
 
 /// The callbacks the loop has outstanding now.
 fn owed(harness: *const ReactorHarness) u32 {
-    return harness.reactor.loop.tables.dispatch.callbacks_outstanding;
+    return harness.reactor.loop.tables.outstanding;
 }
 
 /// The runs of every task of one scenario.
@@ -33,7 +34,7 @@ const Tally = struct { runs: u32 = 0 };
 
 /// A task that counts its own runs and the runs of its scenario.
 const Counted = struct {
-    task: core.Task = .init(Counted, "task", ran),
+    task: reactor_module.Task = .init(Counted, "task", ran),
     tally: ?*Tally = null,
     runs: u32 = 0,
     /// A task this one queues from its first run.
@@ -51,7 +52,7 @@ const Counted = struct {
 
 /// A poller that counts the ticks. It never asks a tick not to block.
 const TickCount = struct {
-    poller: core.Poller = .init(TickCount, "poller", polled),
+    poller: reactor_module.Poller = .init(TickCount, "poller", polled),
     ticks: u32 = 0,
 
     fn polled(tick_count: *TickCount) core.WaitLimit {
@@ -61,17 +62,17 @@ const TickCount = struct {
 };
 
 /// Ticks a full queue takes to drain: each tick runs `tasks_per_tick_max` of them.
-const full_queue_ticks = constants.tasks_queued_max / constants.tasks_per_tick_max;
+const full_queue_ticks = reactor_module.constants.tasks_queued_max / reactor_module.constants.tasks_per_tick_max;
 
 comptime {
     // A full queue drains within the bound of `drain`, so the scenario below can count its ticks.
-    std.debug.assert(constants.tasks_queued_max % constants.tasks_per_tick_max == 0);
+    std.debug.assert(reactor_module.constants.tasks_queued_max % reactor_module.constants.tasks_per_tick_max == 0);
     std.debug.assert(full_queue_ticks <= constants.drain_rounds_max);
 }
 
 /// The tasks of the full queue, and one more that the loop refuses. Tasks are the caller's memory,
 /// and this is too large for a stack.
-var full_queue: [constants.tasks_queued_max + 1]Counted align(@alignOf(Counted)) = undefined;
+var full_queue: [reactor_module.constants.tasks_queued_max + 1]Counted align(@alignOf(Counted)) = undefined;
 
 test "a full task queue refuses one more task and changes nothing, then drains in exact ticks" {
     if (conformance.unsupported()) return error.SkipZigTest;
@@ -80,14 +81,14 @@ test "a full task queue refuses one more task and changes nothing, then drains i
     defer harness.deinit();
     var tally: Tally = .{};
     for (&full_queue) |*one| one.* = .{ .tally = &tally };
-    for (full_queue[0..constants.tasks_queued_max]) |*one| try harness.reactor.schedule(&one.task);
-    try testing.expectEqual(constants.tasks_queued_max, harness.reactor.tasks_queued());
-    try testing.expectEqual(constants.tasks_queued_max, owed(&harness));
-    const refused = &full_queue[constants.tasks_queued_max];
+    for (full_queue[0..reactor_module.constants.tasks_queued_max]) |*one| try harness.reactor.schedule(&one.task);
+    try testing.expectEqual(reactor_module.constants.tasks_queued_max, harness.reactor.tasks_queued());
+    try testing.expectEqual(reactor_module.constants.tasks_queued_max, owed(&harness));
+    const refused = &full_queue[reactor_module.constants.tasks_queued_max];
     try testing.expectError(error.TasksFull, harness.reactor.schedule(&refused.task));
     // The refusal queued nothing and counted nothing.
-    try testing.expectEqual(constants.tasks_queued_max, harness.reactor.tasks_queued());
-    try testing.expectEqual(constants.tasks_queued_max, owed(&harness));
+    try testing.expectEqual(reactor_module.constants.tasks_queued_max, harness.reactor.tasks_queued());
+    try testing.expectEqual(reactor_module.constants.tasks_queued_max, owed(&harness));
     try testing.expect(!harness.reactor.is_scheduled(&refused.task));
 
     var tick_count: TickCount = .{};
@@ -96,8 +97,8 @@ test "a full task queue refuses one more task and changes nothing, then drains i
     var scratch: [8]Event = undefined;
     try harness.reactor.drain(&scratch);
     try testing.expectEqual(full_queue_ticks, tick_count.ticks);
-    try testing.expectEqual(constants.tasks_queued_max, tally.runs);
-    for (full_queue[0..constants.tasks_queued_max]) |*one| try testing.expectEqual(@as(u32, 1), one.runs);
+    try testing.expectEqual(reactor_module.constants.tasks_queued_max, tally.runs);
+    for (full_queue[0..reactor_module.constants.tasks_queued_max]) |*one| try testing.expectEqual(@as(u32, 1), one.runs);
     try testing.expectEqual(@as(u32, 0), refused.runs);
     try testing.expectEqual(@as(u32, 0), owed(&harness));
 }
@@ -107,14 +108,14 @@ test "a full table of pollers refuses one more, and each added poller runs once 
     var harness: ReactorHarness = undefined;
     try harness.init(0, null);
     defer harness.deinit();
-    var counts: [constants.pollers_max + 1]TickCount = @splat(.{});
-    const last = &counts[constants.pollers_max];
-    for (counts[0..constants.pollers_max]) |*one| try harness.reactor.add_poller(&one.poller);
+    var counts: [reactor_module.constants.pollers_max + 1]TickCount = @splat(.{});
+    const last = &counts[reactor_module.constants.pollers_max];
+    for (counts[0..reactor_module.constants.pollers_max]) |*one| try harness.reactor.add_poller(&one.poller);
     try testing.expectError(error.PollersFull, harness.reactor.add_poller(&last.poller));
-    try testing.expectEqual(constants.pollers_max, harness.reactor.loop.tables.dispatch.poller_count);
+    try testing.expectEqual(reactor_module.constants.pollers_max, harness.reactor.dispatch.poller_count);
     var events: [8]Event = undefined;
     try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
-    for (counts[0..constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 1), one.ticks);
+    for (counts[0..reactor_module.constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 1), one.ticks);
     try testing.expectEqual(@as(u32, 0), last.ticks);
     // A removal makes room for exactly one more.
     harness.reactor.remove_poller(&counts[0].poller);
@@ -122,15 +123,15 @@ test "a full table of pollers refuses one more, and each added poller runs once 
     try testing.expectError(error.PollersFull, harness.reactor.add_poller(&counts[0].poller));
     try testing.expectEqual(@as(u32, 0), try harness.reactor.tick(&events, 0));
     try testing.expectEqual(@as(u32, 1), counts[0].ticks);
-    for (counts[1..constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 2), one.ticks);
+    for (counts[1..reactor_module.constants.pollers_max]) |*one| try testing.expectEqual(@as(u32, 2), one.ticks);
     try testing.expectEqual(@as(u32, 1), last.ticks);
     for (counts[1..]) |*one| harness.reactor.remove_poller(&one.poller);
-    try testing.expectEqual(@as(u8, 0), harness.reactor.loop.tables.dispatch.poller_count);
+    try testing.expectEqual(@as(u8, 0), harness.reactor.dispatch.poller_count);
 }
 
 /// A library's record that counts the events it receives.
 const Owed = struct {
-    completion: core.Completion = .init(Owed, "completion", called),
+    completion: reactor_module.Completion = .init(Owed, "completion", called),
     finals: u32 = 0,
     canceled: u32 = 0,
 
@@ -162,7 +163,7 @@ test "a full slot table refuses an operation with a record, and the count of owe
     try harness.init(0, null);
     defer harness.deinit();
     var record: Owed = .{};
-    const named = Operation.timer(0, long_delay_ns, 0).completion(&record.completion);
+    const named = reactor_module.Completion.mark(&record.completion, Operation.timer(0, long_delay_ns, 0));
     const fill: [conformance.operations]Operation = @splat(named);
     try testing.expectEqual(@as(u32, conformance.operations), harness.reactor.submit(&fill, &.{}));
     try testing.expectEqual(@as(u32, conformance.operations), owed(&harness));
@@ -182,7 +183,7 @@ test "a full slot table refuses an operation with a record, and the count of owe
     try testing.expectEqual(@as(u32, conformance.operations), record.finals);
     try testing.expectEqual(@as(u32, conformance.operations), record.canceled);
     try testing.expectEqual(@as(u32, 0), owed(&harness));
-    try testing.expect(harness.reactor.loop.tables.dispatch.idle());
+    try testing.expect((harness.reactor.dispatch.poller_count == 0 and harness.reactor.loop.tables.outstanding == 0));
 }
 
 /// Slots the partial batch scenario leaves free, so the table takes two operations of four.
@@ -200,9 +201,9 @@ test "a batch the table takes in part counts only the records it took" {
     var refused_record: Owed = .{};
     // The first two are taken. The third names a record and is refused, so it is not counted.
     const batch = [_]Operation{
-        Operation.timer(0, long_delay_ns, 0).completion(&taken_record.completion),
+        reactor_module.Completion.mark(&taken_record.completion, Operation.timer(0, long_delay_ns, 0)),
         Operation.timer(2, long_delay_ns, 0),
-        Operation.timer(0, long_delay_ns, 0).completion(&refused_record.completion),
+        reactor_module.Completion.mark(&refused_record.completion, Operation.timer(0, long_delay_ns, 0)),
         Operation.timer(3, long_delay_ns, 0),
     };
     var handles: [batch.len]core.Handle = undefined;
@@ -218,11 +219,11 @@ test "a batch the table takes in part counts only the records it took" {
     try testing.expectEqual(@as(u32, 1), taken_record.finals);
     try testing.expectEqual(@as(u32, 0), refused_record.finals);
     try testing.expectEqual(@as(u32, 0), owed(&harness));
-    try testing.expect(harness.reactor.loop.tables.dispatch.idle());
+    try testing.expect((harness.reactor.dispatch.poller_count == 0 and harness.reactor.loop.tables.outstanding == 0));
 }
 
 /// Tasks the run bound scenario queues: two full runs and five more.
-const backlog = 2 * constants.tasks_per_tick_max + 5;
+const backlog = 2 * reactor_module.constants.tasks_per_tick_max + 5;
 
 /// Ticks one tick with no event, and checks the runs so far and the tasks left.
 fn tick_tasks(harness: *ReactorHarness, tally: *const Tally, runs: u32, left: u32) !void {
@@ -245,7 +246,7 @@ test "each tick runs the tasks queued at its start, up to the bound of one run" 
     queued[0].then = &extra;
     queued[0].harness = &harness;
     for (&queued) |*one| try harness.reactor.schedule(&one.task);
-    const per_tick = constants.tasks_per_tick_max;
+    const per_tick = reactor_module.constants.tasks_per_tick_max;
     try tick_tasks(&harness, &tally, per_tick, backlog - per_tick + 1);
     // The run is FIFO: the first full run took the head of the backlog.
     for (queued[0..per_tick]) |*one| try testing.expectEqual(@as(u32, 1), one.runs);
@@ -259,7 +260,7 @@ test "each tick runs the tasks queued at its start, up to the bound of one run" 
 
 /// A task that schedules itself again on every run, as a library with endless work would.
 const Forever = struct {
-    task: core.Task = .init(Forever, "task", ran),
+    task: reactor_module.Task = .init(Forever, "task", ran),
     tally: *Tally,
     harness: *ReactorHarness,
 
@@ -271,7 +272,7 @@ const Forever = struct {
 
 /// A record that notes the tick it ran in, and the task runs before it.
 const Noted = struct {
-    completion: core.Completion = .init(Noted, "completion", called),
+    completion: reactor_module.Completion = .init(Noted, "completion", called),
     tick: *const u32,
     tally: *const Tally,
     fired_at: ?u32 = null,
@@ -285,7 +286,7 @@ const Noted = struct {
 };
 
 /// Tasks that never stop in the backlog scenario: more than one run takes.
-const endless = constants.tasks_per_tick_max + 36;
+const endless = reactor_module.constants.tasks_per_tick_max + 36;
 
 test "a backlog of tasks does not delay a record's callback past the tick of its event" {
     if (conformance.unsupported()) return error.SkipZigTest;
@@ -300,7 +301,7 @@ test "a backlog of tasks does not delay a record's callback past the tick of its
     // Two timers with one deadline end in one tick. The one without a record shows the caller
     // which tick that is.
     try harness.submit(&.{
-        Operation.timer(0, 2 * ms, 0).completion(&noted.completion),
+        reactor_module.Completion.mark(&noted.completion, Operation.timer(0, 2 * ms, 0)),
         Operation.timer(5, 2 * ms, 0),
     }, &.{});
     var events: [8]Event = undefined;
@@ -314,15 +315,15 @@ test "a backlog of tasks does not delay a record's callback past the tick of its
     // The record ran in that tick, before the tasks of that tick and after every earlier run.
     const at = tick - 1;
     try testing.expectEqual(@as(?u32, at), noted.fired_at);
-    try testing.expectEqual(at * constants.tasks_per_tick_max, noted.runs_before);
-    try testing.expectEqual(tick * constants.tasks_per_tick_max, tally.runs);
+    try testing.expectEqual(at * reactor_module.constants.tasks_per_tick_max, noted.runs_before);
+    try testing.expectEqual(tick * reactor_module.constants.tasks_per_tick_max, tally.runs);
     try testing.expectEqual(@as(u32, endless), harness.reactor.discard_tasks());
     try testing.expectEqual(@as(u32, 0), owed(&harness));
 }
 
 /// A task that schedules itself again `again` times.
 const Again = struct {
-    task: core.Task = .init(Again, "task", ran),
+    task: reactor_module.Task = .init(Again, "task", ran),
     harness: *ReactorHarness,
     again: u32,
     runs: u32 = 0,

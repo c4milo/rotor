@@ -4,6 +4,7 @@
 //! against a timer, the check accepts either outcome.
 const std = @import("std");
 const core = @import("core");
+const reactor_module = @import("reactor");
 const program_module = @import("conformance_program.zig");
 const ledger_module = @import("conformance_program_ledger.zig");
 
@@ -103,7 +104,7 @@ pub const Posts = struct {
 
 /// A library's poller. It may queue a task, and may say that work is left.
 pub const Library = struct {
-    poller: core.Poller = .init(Library, "poller", polled),
+    poller: reactor_module.Poller = .init(Library, "poller", polled),
     program: *Program,
     added: bool = false,
     polls: u32 = 0,
@@ -172,7 +173,7 @@ fn submit(program: *Program, entry: *Entry, operation: Operation, kind: Kind) !v
     entry.kind = kind;
     entry.cancel_requested = false;
     entry.record = program.random.chance(2, 3);
-    const named = if (entry.record) operation.completion(&entry.completion) else with_user_data(operation, entry);
+    const named = if (entry.record) reactor_module.Completion.mark(&entry.completion, operation) else with_user_data(operation, entry);
     var handles: [1]core.Handle = undefined;
     if (program.main.reactor.submit(&.{named}, &handles) != 1) return error.SubmitRefused;
     program.ledger.started(entry, handles[0]);

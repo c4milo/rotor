@@ -6,6 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
 
@@ -28,7 +29,7 @@ const long_wait_ns = 2 * core.constants.ns_per_s;
 /// for 94 ms inside one run that used 11 µs of CPU. The timed run then failed with
 /// `CallbackStalled`. The run only counts and schedules, so a long run can come only from the host.
 const Forever = struct {
-    task: core.Task = .init(Forever, "task", ran),
+    task: reactor_module.Task = .init(Forever, "task", ran),
     harness: *ReactorHarness,
     runs: u32 = 0,
 
@@ -40,7 +41,7 @@ const Forever = struct {
 
 /// A library with a timer that names a record.
 const Timed = struct {
-    completion: core.Completion = stall.completion(Timed, "completion", fired),
+    completion: reactor_module.Completion = stall.completion(Timed, "completion", fired),
     fires: u32 = 0,
 
     fn fired(timed: *Timed, event: Event) void {
@@ -57,7 +58,7 @@ test "a task that never stops runs once a tick, and another library's timer stil
     var forever: Forever = .{ .harness = &harness };
     var timed: Timed = .{};
     try harness.reactor.schedule(&forever.task);
-    try harness.submit(&.{Operation.timer(0, 5 * ms, 0).completion(&timed.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&timed.completion, Operation.timer(0, 5 * ms, 0))}, &.{});
     var events: [8]Event = undefined;
     var ticks: u32 = 0;
     while (timed.fires == 0 and ticks < ticks_max) : (ticks += 1) {
@@ -77,7 +78,7 @@ test "a task that never stops runs once a tick, and another library's timer stil
 
 /// Where each task ran: the tick count of the harness when its run came.
 const Placed = struct {
-    task: core.Task = stall.task(Placed, "task", ran),
+    task: reactor_module.Task = stall.task(Placed, "task", ran),
     tick: *const u32,
     ran_at: ?u32 = null,
     /// A task this one queues from its own run.
@@ -93,7 +94,7 @@ const Placed = struct {
 
 /// A record that queues `queued` when its event arrives.
 const Queueing = struct {
-    completion: core.Completion = stall.completion(Queueing, "completion", called),
+    completion: reactor_module.Completion = stall.completion(Queueing, "completion", called),
     harness: *ReactorHarness,
     queued: *Placed,
 
@@ -105,7 +106,7 @@ const Queueing = struct {
 
 /// A poller that queues `queued` once, in the tick numbered `at`.
 const Polling = struct {
-    poller: core.Poller = stall.poller(Polling, "poller", polled),
+    poller: reactor_module.Poller = stall.poller(Polling, "poller", polled),
     harness: *ReactorHarness,
     queued: *Placed,
     tick: *const u32,
@@ -130,7 +131,7 @@ test "a task runs in the tick that queued it from a record or a poller, and a ta
     var polling: Polling = .{ .harness = &harness, .queued = &from_poller, .tick = &tick, .at = 0 };
     try harness.reactor.add_poller(&polling.poller);
     defer harness.reactor.remove_poller(&polling.poller);
-    try harness.submit(&.{Operation.timer(0, ms, 0).completion(&queueing.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&queueing.completion, Operation.timer(0, ms, 0))}, &.{});
     var events: [8]Event = undefined;
     // Tick 0: the poller queues its task, which runs in the same tick.
     _ = try harness.tick(&events, 0);
@@ -154,7 +155,7 @@ test "a task runs in the tick that queued it from a record or a poller, and a ta
 
 /// A task that counts its runs.
 const Counted = struct {
-    task: core.Task = stall.task(Counted, "task", ran),
+    task: reactor_module.Task = stall.task(Counted, "task", ran),
     runs: u32 = 0,
 
     fn ran(counted: *Counted) void {

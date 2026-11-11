@@ -19,7 +19,6 @@ var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
 var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
-var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 var read_bytes: [16]u8 = undefined;
 var out: core.offload.OutArray align(@alignOf(core.offload.OutArray)) = undefined;
 
@@ -58,7 +57,7 @@ fn sleep_with_an_operation_held_and_none_out() void {
 /// Tables with one read submitted and taken off the pending list, as a backend's flush takes it
 /// before it tries the read. Returns the read's slot index.
 fn queued_read(tables: *core.Tables) u32 {
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     const read = core.Operation.read(1, read_descriptor, &read_bytes, 0);
     _ = tables.submit(&.{read}, &.{});
     const index = tables.next_pending().?;
@@ -107,7 +106,7 @@ fn hand_out_a_held_operation_whose_cancel_was_not_noted() void {
 /// A close of a descriptor that cannot be open.
 fn end_the_held_operations_of_a_negative_descriptor() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     var in_flight: InFlight = .empty;
     scenario.reached_violation();
     in_flight.end_descriptor(&tables, -1);
@@ -146,7 +145,7 @@ fn close_nowhere(tables: *core.Tables, index: u32, slot: *Slot) void {
 /// once, so the drain must find none marked. With the check deleted, the backend's close runs.
 fn settle_a_kept_close_whose_cancel_came() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     _ = tables.submit(&.{core.Operation.close(1, read_descriptor)}, &.{});
     const index = tables.next_pending().?;
     tables.take_pending(index);
@@ -168,7 +167,7 @@ fn close_kept_again(in_flight: *InFlight, index: u32, slot: *Slot) void {
 /// the list.
 fn settle_a_close_kept_with_nothing_out() void {
     var tables: core.Tables = undefined;
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     _ = tables.submit(&.{core.Operation.close(1, read_descriptor)}, &.{});
     const index = tables.next_pending().?;
     tables.take_pending(index);

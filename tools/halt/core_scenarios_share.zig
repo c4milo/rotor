@@ -60,13 +60,12 @@ var slots: [slots_count]Slot align(@alignOf(Slot)) = undefined;
 var entries: [slots_count]TimerHeap.Entry align(@alignOf(TimerHeap.Entry)) = undefined;
 var starts: [slots_count]u64 = undefined;
 var heartbeat: core.Heartbeat align(@alignOf(core.Heartbeat)) = undefined;
-var groups: core.scheduling.Groups align(@alignOf(core.scheduling.Groups)) = undefined;
 var tables: core.Tables align(@alignOf(core.Tables)) = undefined;
 
 /// A share of the lists larger than the events. With the check deleted, both lists are empty and
 /// the drain returns 0.
 fn drain_the_lists_into_more_places_than_events() void {
-    tables.init(&slots, &entries, &starts, &heartbeat, &groups, .{});
+    tables.init(&slots, &entries, &starts, &heartbeat, .{});
     scenario.reached_violation();
     _ = tables.drain_lists(&events, events.len + 1);
 }

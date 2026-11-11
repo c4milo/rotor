@@ -102,11 +102,19 @@
 # On 2026-11-08 decisions 30 and 32 landed, and CI's run 42500991545 at `c10b361` printed the
 # x86-64 rows. Camilo raised x86-64 epoll `poller` from 619 to 634, CI's count there; main counted
 # 629 before. The x86-64 lines of `tasks-groups-4`, `tasks-groups-16` and `call` are CI's counts.
+# On 2026-11-11 decision 33, step 3, moved the reactor out of the core, and the gate asked for
+# lower lines. They are its counts: macOS kqueue `timer` (each of 5 runs on `mac`, at a load
+# average of about 5), and on arm64 Linux, io_uring `post`, `post-operation`, `timer`, `task` and
+# `poller`, and epoll `post-operation` and `timer` (cachegrind of Valgrind 3.23.0 in an arm64
+# container on `mac`). Camilo raised `call` to step 3's counts the same day, by decision 33's
+# amendment of 2026-11-11: the push through the port and the hook cost 16 to 63 instructions in
+# each round trip. The arm64 lines are cachegrind's counts above. The `mac` line is the median of 5
+# runs on `mac` at a load average of about 5, which counted 2582 once and 2581 four times.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
 post-operation 3114
-timer 1151
+timer 1124
 batch 24624
 wait 5296
 task 615
@@ -115,7 +123,7 @@ record 1283
 poller 562
 tasks-groups-4 12943
 tasks-groups-16 13639
-call 2529
+call 2581
 section linux-x86_64-uring
 post-operation 3169
 timer 1165
@@ -142,21 +150,21 @@ tasks-groups-4 12297
 tasks-groups-16 13113
 call 2690
 section linux-aarch64-uring
-post 1039
-post-operation 2905
-timer 1082
+post 994
+post-operation 2780
+timer 1039
 batch 23757
-task 545
+task 534
 tasks-64 3910
 record 1199
-poller 505
+poller 493
 tasks-groups-4 12313
 tasks-groups-16 13009
-call 2307
+call 2323
 section linux-aarch64-epoll
 post 1150
-post-operation 3039
-timer 1104
+post-operation 2978
+timer 1077
 batch 23845
 wait 632
 task 593
@@ -165,4 +173,4 @@ record 1228
 poller 557
 tasks-groups-4 12360
 tasks-groups-16 13056
-call 2442
+call 2505

@@ -6,6 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const call_scenarios = @import("conformance_call.zig");
@@ -317,7 +318,7 @@ test "calls in two named groups at shares 100 and 300 run their handlers 1 to 3"
     const expected_high = 3 * low;
     const gap = if (high > expected_high) high - expected_high else expected_high - high;
     try testing.expect(low >= measured_ticks);
-    try testing.expect(gap < constants.task_charge_max);
+    try testing.expect(gap < reactor_module.constants.task_charge_max);
     // Every call that is out ends: the callers stop sending and the loops tick until the last
     // `finish` ran.
     tally.left = 0;

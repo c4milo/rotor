@@ -12,7 +12,6 @@ const assert_class_a = @import("assertion_class.zig").assert_class_a;
 const constants = @import("constants.zig");
 const datagram = @import("datagram.zig");
 const BufferGroup = @import("buffer_group.zig").BufferGroup;
-const Completion = @import("dispatch/dispatch.zig").Completion;
 
 /// An open file, socket or listener. An integer, so a consumer's deterministic twin of the
 /// surface can hand out indices.
@@ -81,18 +80,12 @@ pub const Operation = struct {
     /// source 1). A `close` names a descriptor of the process, always: a registered descriptor
     /// lives as long as the loop.
     descriptor_registered: bool = false,
-    /// True when `user_data` is the address of a `dispatch.Completion` that the tick calls for each
-    /// event of this operation (decision 26). Set it with `completion`.
+    /// True when `user_data` is the address of a reactor's `Completion`, which the reactor calls for
+    /// each event of this operation (decision 26). The reactor's `Completion.mark` sets it. The
+    /// core copies the bit into the slot and each event, and never reads it (decision 33, open
+    /// question 5). A plain loop hands each event to the caller of `tick`, with the bit as it is.
     dispatched: bool = false,
     kind: Kind,
-
-    /// This operation with its events sent to `record`, which stays valid until the final event.
-    pub fn completion(operation: Operation, record: *Completion) Operation {
-        var named = operation;
-        named.user_data = @intFromPtr(record);
-        named.dispatched = true;
-        return named;
-    }
 
     /// The tag of `Kind`, 8 bits, which is what a `Slot` stores.
     pub const Tag = enum(u8) {

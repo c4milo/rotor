@@ -22,11 +22,10 @@ const timer_heap_module = @import("../timer_heap.zig");
 const waiters_module = @import("../waiters.zig");
 const deadline = @import("tables_deadline.zig");
 const finish_module = @import("tables_finish.zig");
-const Dispatch = @import("../dispatch/dispatch.zig").Dispatch;
 const Heartbeat = @import("../stall.zig").Heartbeat;
-const Groups = @import("../scheduling/scheduling_groups.zig").Groups;
-const NamedTable = @import("../scheduling/scheduling.zig").NamedTable;
+const Hook = @import("../reserved.zig").Hook;
 const Shuffle = @import("../shuffle.zig").Shuffle;
+const WaitLimit = @import("../core.zig").WaitLimit;
 
 const Code = event_module.Code;
 const Descriptor = operation_module.Descriptor;
@@ -77,9 +76,6 @@ pub const Tables = struct {
     /// another thread reads that line, so the words of `Tables`, which every tick reads, stay on
     /// lines that a watch never moves. Each clock stamp writes it, next to `now_ns`.
     heartbeat: *Heartbeat,
-    /// The loop's scheduling groups, carved from the caller's memory (decision 30). A tick reads
-    /// it only while a group other than `.default` holds a task.
-    groups: *Groups,
     /// Operations accepted since init: what a sampling decision is a function of (decision 9).
     operation_sequence: u64,
     /// What the loop counts about itself, sampled (decision 9). The loop writes here and never
@@ -94,9 +90,17 @@ pub const Tables = struct {
     id: LoopId,
     /// The spin budget from the options, and when the loop last handed over an event (decision 13).
     spin: spin_module.Window,
-    /// The pollers, the count of operations that named a record (decision 26), and the task queue
-    /// (decision 27).
-    dispatch: Dispatch,
+    /// The word that takes a tick off the fast path while it is above 0 (decision 33, "The port").
+    /// The core raises it for a kept tick error. A reactor raises it for each operation with a
+    /// record in flight, each queued task and each call (decision 27, item 1).
+    outstanding: u32,
+    /// The limit that bounds the wait of each tick (decision 33). `init` writes `.none`. On a plain
+    /// loop only the program writes it, with `wait_until`. On a reactor only the reactor's own code
+    /// writes it, for its pollers (decision 29).
+    stored_limit: WaitLimit,
+    /// The function and the context that the drain hands each wake, call and return: a reactor's,
+    /// which `attach_reserved` stores, or none on a plain loop (decision 33).
+    hook: Hook,
     /// The generator of the seeded shuffle of each reaped batch, which only a test build carries
     /// (decision 10, amendment of 2026-11-06). Off, it has no bytes.
     shuffle: Shuffle,
@@ -107,21 +111,17 @@ pub const Tables = struct {
         spin_budget_ns: u64 = 0,
         /// A turn at or above this is a stall, and null counts none (decision 28).
         stall_turn_ns: ?u64 = constants.stall_turn_ns_default,
-        /// The program's named groups, which `init` reserves as ids 1 to n (decision 30).
-        named_groups: NamedTable = .empty,
     };
 
     /// Must run on the thread that will own the loop. `starts` holds one nanosecond stamp per
     /// slot, for the sampled operations in flight. `heartbeat` is the loop's line for a watch
-    /// (decision 28), which a backend carves with `Layout.take`; `init` writes it. So is `groups`
-    /// (decision 30).
+    /// (decision 28), which a backend carves with `Layout.take`; `init` writes it.
     pub fn init(
         tables: *Tables,
         slots: []Slot,
         entries: []TimerHeap.Entry,
         starts: []u64,
         heartbeat: *Heartbeat,
-        groups: *Groups,
         options: Options,
     ) void {
         assert(options.id < constants.loops_max);
@@ -137,15 +137,15 @@ pub const Tables = struct {
         tables.now_ns = 0;
         heartbeat.* = .init(options.stall_turn_ns);
         tables.heartbeat = heartbeat;
-        groups.init(&options.named_groups);
-        tables.groups = groups;
         tables.operation_sequence = 0;
         tables.owner = thread_identity();
         tables.descriptors_registered = 0;
         tables.buffers_registered = 0;
         tables.id = options.id;
         tables.spin = .{ .budget_ns = options.spin_budget_ns, .active_ns = 0 };
-        tables.dispatch = .empty;
+        tables.outstanding = 0;
+        tables.stored_limit = .none;
+        tables.hook = .none;
         tables.shuffle = .init(options.id);
     }
 
@@ -189,7 +189,7 @@ pub const Tables = struct {
     /// heartbeat counts when it is a stall (decision 28).
     pub fn note_clock(tables: *Tables, now_ns: u64) void {
         tables.now_ns = now_ns;
-        tables.heartbeat.note_clock(&tables.statistics, &tables.dispatch.pollers, now_ns);
+        tables.heartbeat.note_clock(&tables.statistics, now_ns);
     }
 
     /// The tick is about to block in a kernel wait, which is in no turn (decision 28).
@@ -204,23 +204,14 @@ pub const Tables = struct {
         tables.heartbeat.note_woken(now_ns);
     }
 
-    /// What every backend's `deinit` checks: the loop is empty, no tick runs, and no watch reads
-    /// its heartbeat (decisions 5, 26, 27 and 28). No call is out or held, and no station serves
-    /// (decision 32, class C). With nothing in flight and no task queued, the only callback that
-    /// may still count is a kept tick error, which `kept` says.
+    /// What every backend's `deinit` checks: the loop is empty, and no watch reads its heartbeat
+    /// (decisions 5 and 28). With nothing in flight, the only thing that may still count in
+    /// `outstanding` is a kept tick error, which `kept` says: a reactor's `deinit` checks that its
+    /// records, tasks and calls left the count first (decision 33, class C).
     pub fn assert_ended(tables: *const Tables, kept: bool) void {
         tables.assert_empty();
-        assert_calls_ended(&tables.dispatch, tables.groups, kept);
+        assert(tables.outstanding == @intFromBool(kept));
         tables.heartbeat.assert_unwatched();
-    }
-
-    /// The part of `assert_ended` that decision 32 adds, which a halt scenario reaches through its
-    /// parameters: no call out or held, no station that serves, and no station that the groups
-    /// count, which a later loop of the id would find (class C).
-    pub fn assert_calls_ended(dispatch: *const Dispatch, groups: *const Groups, kept: bool) void {
-        assert(dispatch.callbacks_outstanding == @intFromBool(kept));
-        assert(groups.serving == 0);
-        assert(groups.stations == 0);
     }
 
     /// Halts when an operation has not had its final event (decision 5, rule 7).
@@ -229,7 +220,6 @@ pub const Tables = struct {
         // A slot on a list is a slot in use, so no caller's mistake reaches this line alone: it
         // holds the lists to the table.
         assert(tables.pending.count == 0 and tables.finished.count == 0 and tables.fired.count == 0);
-        tables.dispatch.assert_empty();
     }
 
     /// Operations submitted whose final event the caller has not been handed.
@@ -244,8 +234,6 @@ pub const Tables = struct {
         assert(operations.len <= constants.batch_max);
         assert(handles.len == 0 or handles.len == operations.len);
         var taken: u32 = 0;
-        // Summed here and added once after the loop, so the count stays in a register.
-        var records: u32 = 0;
         for (operations) |*operation| {
             operation.assert_valid();
             if (operation.descriptor_registered) {
@@ -262,7 +250,6 @@ pub const Tables = struct {
             if (slot.flags.buffer_registered) assert(slot.buffer_index < tables.buffers_registered);
             const sequence = tables.operation_sequence +% taken;
             tables.statistics.submitted(sequence, index, slot, tables.now_ns);
-            records += @intFromBool(operation.dispatched);
             // A loop that posts to itself would wait on an event only its own tick can produce.
             assert_class_a(slot.tag != .post or slot.descriptor != tables.id);
             tables.pending.push(tables.table.slots, index);
@@ -270,7 +257,6 @@ pub const Tables = struct {
             taken += 1;
         }
         tables.operation_sequence +%= taken;
-        tables.dispatch.note_submitted(records);
         assert(taken <= operations.len);
         return taken;
     }
@@ -436,7 +422,7 @@ pub const Tables = struct {
     pub const arm = deadline.arm;
     /// How long a tick may block: `tables_deadline.zig`.
     pub const wait_bound = deadline.wait_bound;
-    /// The nearest timer or poller limit, where a spin stops: `tables_deadline.zig`.
+    /// The nearest timer or the stored limit, where a spin stops: `tables_deadline.zig`.
     pub const earliest_deadline_ns = deadline.earliest_deadline_ns;
     /// Core's part of a host's `wait_limit`: `tables_deadline.zig`.
     pub const wait_limit = deadline.wait_limit;
@@ -457,8 +443,13 @@ comptime {
     // the build, because only a test build carries the shuffle.
     assert(@alignOf(Tables) == 8);
     assert(@sizeOf(*Heartbeat) == 8);
-    assert(@sizeOf(*Groups) == 8);
+    // Decision 33 took `Dispatch`, 104 B, and the pointer to the groups, 8 B, out, and put
+    // `outstanding`, the stored limit and the hook in, 28 B and 4 B of padding.
+    assert(@sizeOf(Tables) == tables_bytes + @sizeOf(Shuffle));
 }
+
+/// The size of `Tables` with no shuffle: the build of a program, and of every benchmark.
+const tables_bytes = 2304;
 
 /// What a cancelled operation's final event says: `timeout` when the loop cancelled it for its
 /// deadline, `canceled` when the caller did (decision 5, rule 4).

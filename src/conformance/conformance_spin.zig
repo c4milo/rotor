@@ -15,6 +15,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -152,7 +153,7 @@ test "a timer due inside the budget ends the spin before it starts, and the loop
 
 /// A library's poller that answers a deadline until the loop's clock reaches it.
 const Deadline = struct {
-    poller: core.Poller = .init(Deadline, "poller", polled),
+    poller: reactor_module.Poller = .init(Deadline, "poller", polled),
     reactor: *conformance.Reactor,
     at_ns: u64,
 

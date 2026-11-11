@@ -1,10 +1,11 @@
 //! rotor's public API: the one module a consumer imports, and the whole of what rotor supports.
 //!
-//! What a consumer needs is a `Loop`, the types it takes and returns, and the helpers that open a
-//! socket and size the memory it hands a loop. That is what this file names, and nothing else of
-//! the tree is reachable through it. The build registers this module alone, so a dependent package
-//! cannot name a backend, and the types below carry exactly the surface `core/surface.zig` lists,
-//! which the tests at the bottom hold them to. A backend's other public functions exist for its own
+//! What a consumer needs is a `Loop`, or a `Reactor(Loop)` for records with callbacks, pollers,
+//! tasks, scheduling groups, cross-core calls and libraries that share it (decision 33), the types
+//! they take and return, and the helpers that open a socket and size the memory it hands a loop.
+//! That is what this file names, and nothing else of the tree is reachable through it. The build
+//! registers this module alone, so a dependent package cannot name a backend, and `Loop` carries
+//! exactly the surface `core/surface.zig` lists, which `rotor_loop_test.zig` holds it to. A backend's other public functions exist for its own
 //! files, the benchmarks and the conformance suite, which live in this tree: they are not API, and
 //! no dependent package can reach them (Camilo's ruling of 2026-09-22).
 //!
@@ -25,7 +26,6 @@ const kqueue = @import("kqueue");
 const reactor = @import("reactor");
 const loop_module = @import("rotor_loop.zig");
 const reactor_calls = @import("rotor_reactor.zig");
-const service_module = @import("rotor_service.zig");
 
 const linux = builtin.os.tag == .linux;
 
@@ -36,36 +36,38 @@ pub const Delivery = core.Delivery;
 pub const Descriptor = core.Descriptor;
 pub const Error = core.Error;
 pub const Event = core.Event;
-pub const Completion = core.Completion;
-pub const Poller = core.Poller;
 pub const WaitLimit = core.WaitLimit;
 pub const BufferGroup = core.BufferGroup;
-pub const Task = core.Task;
-/// A task queue with shares on one loop (decision 30). `Loop.reserve_scheduling_group` makes one,
-/// and `NamedSchedulingGroup.scheduling_group` gives one of the program's named groups.
-pub const SchedulingGroup = core.SchedulingGroup;
-/// A group that is the same group on every loop of the program: one of the names of the root
-/// file's `rotor_scheduling_groups` (decision 30). A cross-core call names one (decision 32).
-pub const NamedSchedulingGroup = core.NamedSchedulingGroup;
-/// The program's names, from the root file's `rotor_scheduling_groups`: `enum { quic, dns }` for
-/// `.{ .quic = 400, .dns = 100 }`. Empty when the root declares none.
-pub const SchedulingGroupName = loop_module.root_groups.Name;
 pub const Handle = core.Handle;
 pub const LoopId = core.LoopId;
 pub const Message = core.Message;
 pub const Operation = core.Operation;
+/// A task queue with shares on one reactor (decision 30). `reserve_scheduling_group` makes one, and
+/// `NamedSchedulingGroup.group` gives one of the program's named groups.
+pub const SchedulingGroup = core.SchedulingGroup;
 
-pub const Service = service_module.Service; // The cross-core call (decision 32).
-pub const CallRecord = service_module.CallRecord;
-pub const Answer = service_module.Answer;
-pub const CallResult = service_module.CallResult;
-pub const CallOptions = service_module.CallOptions;
-pub const CallError = service_module.CallError;
-pub const CallLink = core.call.CallLink;
-pub const CallStation = core.call.CallStation;
+// The reactor's types (decision 33), which name no view, so a twin's program writes them too.
+pub const Completion = reactor.Completion;
+pub const Poller = reactor.Poller;
+pub const Task = reactor.Task;
+/// A group that is the same group on every reactor of the program: one of the names of the root
+/// file's `rotor_scheduling_groups` (decision 30). A cross-core call names one (decision 32).
+pub const NamedSchedulingGroup = reactor.NamedSchedulingGroup;
+/// The program's names, from the root file's `rotor_scheduling_groups`: `enum { quic, dns }` for
+/// `.{ .quic = 400, .dns = 100 }`. Empty when the root declares none.
+pub const SchedulingGroupName = reactor.root_groups.Name;
+pub const Answer = reactor.Answer; // The cross-core call (decision 32).
+pub const CallResult = reactor.CallResult;
+pub const CallOptions = reactor.CallOptions;
+pub const CallError = reactor.CallError;
+pub const CallLink = reactor.CallLink;
+pub const CallStation = reactor.CallStation;
+/// One kind of cross-core call over the host's reactor, and the caller's record of one call.
+pub const Service = Reactor(Loop).Service;
+pub const CallRecord = Reactor(Loop).CallRecord;
 
-/// Every named limit (CLAUDE.md, non-negotiable 1).
-pub const constants = core.constants;
+/// Every named limit (CLAUDE.md, non-negotiable 1): the core's and the reactor's.
+pub const constants = @import("rotor_constants.zig");
 
 /// The alignment of every block of memory a caller hands a loop or a registry.
 pub const memory_alignment = core.layout.memory_alignment;
@@ -121,7 +123,7 @@ pub fn backend() Backend {
 /// The named group `name` of the program's root declaration, `rotor_scheduling_groups`. The program
 /// calls it, and hands each library its group at init. An undeclared name fails to compile.
 pub fn named_scheduling_group(comptime name: SchedulingGroupName) NamedSchedulingGroup {
-    return loop_module.named_scheduling_group(name);
+    return reactor.root_groups.group(name);
 }
 
 /// Why `require_backend` left the process's backend as it was: `Unsupported` when this host cannot
@@ -189,22 +191,28 @@ pub const Loop = loop_module.Loop;
 /// names it `HeartbeatView`, because `core.Heartbeat` is what the loop writes.
 pub const Heartbeat = core.HeartbeatView;
 
-/// The loop as the program hands it to a library (decision 28). `Loop.shared` returns it. A library
-/// keeps it, and may submit, cancel, post, schedule tasks in its group, add pollers and use buffer
-/// groups on it. `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile on it,
-/// with a message that states the rule: only the program ticks a shared loop (decision 27, ruling
-/// 1). So do `schedule`, `reserve_scheduling_group` and `set_scheduling_group_shares`: a library
-/// names its group in each `schedule_in`, and only the program sets the groups (decision 30).
-pub const SharedLoop = loop_module.SharedLoop;
+/// The host's reactor as the program hands it to a library (decision 28). `shared` returns it. A
+/// library keeps it, and may submit, cancel, post, schedule tasks in its group, add pollers and use
+/// buffer groups on it. `tick`, `drain`, `deinit`, `cancel_all` and `discard_tasks` fail to compile
+/// on it, with a message that states the rule: only the program ticks a shared loop (decision 27,
+/// ruling 1). So do `schedule`, `reserve_scheduling_group` and `set_scheduling_group_shares`: a
+/// library names its group in each `schedule_in`, and only the program sets the groups (decision
+/// 30). So does `wait_until`: a library bounds the wait with a poller (decision 33).
+pub const SharedLoop = Reactor(Loop).SharedLoop;
 
 /// The reactor over a loop (decision 33): a program that wants records with callbacks, pollers,
 /// tasks, scheduling groups, cross-core calls or libraries that share its loop makes a
-/// `Reactor(Loop)` in place of a `Loop`, and passes the loop's options as `.loop`. Each call does
-/// what the loop's call of the same name does. `Reactor(Loop)` is the host's reactor, and its
-/// functions are in `rotor_reactor.zig`. Any other type is a twin of decision 10, which declares the
-/// core's surface and the port of decision 33: the build names each declaration that it lacks.
+/// `Reactor(Loop)` in place of a `Loop`, and passes the loop's options as `.loop`. Each call of the
+/// loop's does what the loop's call of the same name does, and the reactor's part of it. A reactor
+/// bounds its wait with a poller, so `wait_until` fails to compile on it. `Reactor(Loop)` is the
+/// host's reactor, and its functions are in `rotor_reactor.zig`. Any other type is a twin of
+/// decision 10, which declares the core's surface and the port of decision 33: the build names
+/// each declaration that it lacks.
 pub fn Reactor(comptime Base: type) type {
     if (Base == Loop) return struct {
+        /// The reactor's state: its pollers, its tasks and its scheduling groups. It comes before
+        /// the loop, as in `reactor.Reactor(Loop)`.
+        dispatch: reactor.Dispatch,
         /// The loop that the reactor runs, held by value, so `Reactor(T)` holds a `T`. No call
         /// gives it out: a call on it would skip the reactor's part of that call.
         loop: Loop,
@@ -213,38 +221,103 @@ pub fn Reactor(comptime Base: type) type {
         /// reactor's own is written through it.
         const Host = @This();
         const calls = reactor_calls;
+        const shared_module = reactor.shared;
 
         /// What `init` takes. `loop` has no default, because `Loop.Options.operations` has none.
-        pub const Options = struct { loop: Loop.Options };
-        /// The reactor as the program hands it to a library (decision 28). `shared` returns it.
-        pub const SharedLoop = core.shared_loop.SharedLoop(Host);
+        pub const Options = struct {
+            loop: Loop.Options,
+            /// The groups that `init` reserves as ids 1 to n (decision 30).
+            named_groups: reactor.scheduling.NamedTable = reactor.root_groups.table,
+        };
+
+        // The error sets of the loop, and the four of the reactor's own calls.
+        pub const InitError = Loop.InitError;
+        pub const TickError = Loop.TickError;
+        pub const DrainError = TickError || error{ StillInFlight, TasksStillQueued };
+        pub const RegisterError = Loop.RegisterError;
+        pub const ProvideError = Loop.ProvideError;
+        pub const PostError = Loop.PostError;
+        pub const AddPollerError = reactor.AddPollerError;
+        pub const ScheduleError = reactor.ScheduleError;
+        pub const ReserveSchedulingGroupError = reactor.ReserveSchedulingGroupError;
+        pub const CallError = reactor.CallError;
+
+        /// The view of a library: `reactor_shared.zig` of the module `reactor`.
+        pub const SharedLoop = opaque {
+            const library = shared_module.Library(Host, @This());
+            pub const submit = library.submit;
+            pub const cancel = library.cancel;
+            pub const post = library.post;
+            pub const now_ns = library.now_ns;
+            pub const schedule_in = library.schedule_in;
+            pub const charge_task = library.charge_task;
+            pub const is_scheduled = library.is_scheduled;
+            pub const task_budget_left = library.task_budget_left;
+            pub const add_poller = library.add_poller;
+            pub const remove_poller = library.remove_poller;
+            pub const provide_buffers = library.provide_buffers;
+            pub const provide_datagram_buffers = library.provide_datagram_buffers;
+            pub const datagram = library.datagram;
+            pub const provided_buffer = library.provided_buffer;
+            pub const give_back_buffer = library.give_back_buffer;
+            pub const release_buffers = library.release_buffers;
+            pub const reserve_buffer_group = library.reserve_buffer_group;
+            pub const call = library.call;
+            pub const answer = library.answer;
+            pub const serve = library.serve;
+            pub const stop_serving = library.stop_serving;
+            pub const refused = shared_module.refused_calls;
+            pub const tick = shared_module.refusals.tick;
+            pub const drain = shared_module.refusals.drain;
+            pub const deinit = shared_module.refusals.deinit;
+            pub const cancel_all = shared_module.refusals.cancel_all;
+            pub const discard_tasks = shared_module.refusals.discard_tasks;
+            pub const schedule = shared_module.refusals.schedule;
+            pub const reserve_scheduling_group = shared_module.refusals.reserve_scheduling_group;
+            pub const set_scheduling_group_shares = shared_module.refusals.set_scheduling_group_shares;
+            pub const wait_until = shared_module.refusals.wait_until;
+        };
+
         /// One kind of cross-core call over this reactor's view (decision 32).
         pub fn Service(
             comptime Context: type,
             comptime Request: type,
             comptime Reply: type,
-            comptime handler: fn (context: *Context, record: *Host.CallRecord(Request, Reply)) core.call.Answer(Reply),
+            comptime handler: fn (context: *Context, record: *Host.CallRecord(Request, Reply)) Answer(Reply),
         ) type {
-            return core.call.Service(Host.SharedLoop, Context, Request, Reply, handler);
+            return struct {
+                /// One station for each loop, indexed by `LoopId`. Program memory, 128 B each.
+                stations: [constants.loops_max]CallStation,
+
+                const service = reactor.call.service.Service(@This(), Host.SharedLoop, Context, Request, Reply, handler);
+                /// Every station unused.
+                pub const init: @This() = .{ .stations = @splat(CallStation.unused) };
+                pub const Call = Host.CallRecord(Request, Reply);
+                /// The static entry that a call's task runs on the target.
+                pub const entry: Task.Call = .{ .name = @typeName(@This()), .function = service.run, .call_record = true };
+                pub const serve = service.serve;
+                pub const stop_serving = service.stop_serving;
+                pub const send = service.send;
+            };
         }
-        /// The caller's record of one call over this reactor's view (decision 32).
+
+        /// The caller's record of one call over this reactor's view (decision 32). Size 64 B plus
+        /// `Request` and `Reply`.
         pub fn CallRecord(comptime Request: type, comptime Reply: type) type {
-            return core.call.CallRecord(Host.SharedLoop, Request, Reply);
+            return struct {
+                link: CallLink,
+                request: Request,
+                reply: Reply,
+
+                const record = reactor.call.service.CallRecord(@This(), Host.SharedLoop, Request, Reply);
+                pub const init = record.init;
+                pub const is_out = record.is_out;
+                pub const request_of = record.request_of;
+                pub const answer = record.answer;
+            };
         }
 
-        // The error sets of `Loop`, the same on the reactor.
-        pub const InitError = Loop.InitError;
-        pub const TickError = Loop.TickError;
-        pub const DrainError = Loop.DrainError;
-        pub const RegisterError = Loop.RegisterError;
-        pub const ProvideError = Loop.ProvideError;
-        pub const PostError = Loop.PostError;
-        pub const AddPollerError = Loop.AddPollerError;
-        pub const ScheduleError = Loop.ScheduleError;
-        pub const ReserveSchedulingGroupError = Loop.ReserveSchedulingGroupError;
-        pub const CallError = Loop.CallError;
-
-        // Each name of `Loop`, in `rotor_reactor.zig`.
+        // The core's surface, in `rotor_reactor.zig`.
         pub const memory_bytes = calls.memory_bytes;
         pub const init = calls.init;
         pub const deinit = calls.deinit;
@@ -253,18 +326,6 @@ pub fn Reactor(comptime Base: type) type {
         pub const cancel = calls.cancel;
         pub const post = calls.post;
         pub const tick = calls.tick;
-        pub const add_poller = calls.add_poller;
-        pub const remove_poller = calls.remove_poller;
-        pub const schedule = calls.schedule;
-        pub const is_scheduled = calls.is_scheduled;
-        pub const tasks_queued = calls.tasks_queued;
-        pub const task_budget_left = calls.task_budget_left;
-        pub const discard_tasks = calls.discard_tasks;
-        pub const schedule_in = calls.schedule_in;
-        pub const charge_task = calls.charge_task;
-        pub const reserve_scheduling_group = calls.reserve_scheduling_group;
-        pub const set_scheduling_group_shares = calls.set_scheduling_group_shares;
-        pub const shared = calls.shared;
         pub const heartbeat = calls.heartbeat;
         pub const in_flight = calls.in_flight;
         pub const now_ns = calls.now_ns;
@@ -283,6 +344,21 @@ pub fn Reactor(comptime Base: type) type {
         pub const provided_buffer = calls.provided_buffer;
         pub const reserve_buffer_group = calls.reserve_buffer_group;
         pub const wait_limit = calls.wait_limit;
+        /// A reactor bounds its wait with a poller, so it refuses the plain loop's call.
+        pub const wait_until = shared_module.refusals.reactor_wait_until;
+        // The calls of the reactor, in `rotor_reactor.zig`.
+        pub const add_poller = calls.add_poller;
+        pub const remove_poller = calls.remove_poller;
+        pub const schedule = calls.schedule;
+        pub const is_scheduled = calls.is_scheduled;
+        pub const tasks_queued = calls.tasks_queued;
+        pub const task_budget_left = calls.task_budget_left;
+        pub const discard_tasks = calls.discard_tasks;
+        pub const schedule_in = calls.schedule_in;
+        pub const charge_task = calls.charge_task;
+        pub const reserve_scheduling_group = calls.reserve_scheduling_group;
+        pub const set_scheduling_group_shares = calls.set_scheduling_group_shares;
+        pub const shared = calls.shared;
         pub const call = calls.call;
         pub const answer = calls.answer;
         pub const serve = calls.serve;
@@ -298,160 +374,11 @@ comptime {
     core.surface.check_remote(Remote);
 }
 
-const testing = std.testing;
-
-/// The declarations of `Loop` beyond the surface: its error sets, and nothing else.
-const loop_error_sets = [_][]const u8{
-    "InitError",                   "TickError", "DrainError",     "RegisterError",
-    "ProvideError",                "PostError", "AddPollerError", "ScheduleError",
-    "ReserveSchedulingGroupError", "CallError",
-};
-const remote_error_sets = [_][]const u8{ "InitError", "PostError" };
-const registry_declarations = [_][]const u8{
-    "memory_bytes", "init", "loop_count", "GroupError", "AttachError", "init_group", "attach", "release",
-    "deinit",
-};
-
-fn named(comptime T: type, comptime lists: []const []const []const u8) bool {
-    inline for (@typeInfo(T).@"struct".decls) |declaration| {
-        var found = false;
-        inline for (lists) |list| {
-            for (list) |name| {
-                if (std.mem.eql(u8, name, declaration.name)) found = true;
-            }
-        }
-        if (!found) return false;
-    }
-    return true;
-}
-
-test "the public types carry the surface and their error sets, and nothing else" {
-    const surface = core.surface;
-    try testing.expect(named(Loop, &.{ &surface.loop_declarations, &loop_error_sets }));
-    try testing.expectEqual(surface.loop_declarations.len + loop_error_sets.len, @typeInfo(Loop).@"struct".decls.len);
-    try testing.expect(named(Remote, &.{ &surface.remote_declarations, &remote_error_sets }));
-    try testing.expectEqual(surface.remote_declarations.len + remote_error_sets.len, @typeInfo(Remote).@"struct".decls.len);
-    try testing.expect(named(Registry, &.{&registry_declarations}));
-    try testing.expectEqual(registry_declarations.len, @typeInfo(Registry).@"struct".decls.len);
-    // One field each: what is wrapped, and no state of this file's own.
-    try testing.expectEqual(1, @typeInfo(Loop).@"struct".fields.len);
-    try testing.expectEqual(1, @typeInfo(Remote).@"struct".fields.len);
-    try testing.expectEqual(1, @typeInfo(Registry).@"struct".fields.len);
-}
-
-/// The declarations of the host's reactor beyond the surface and the error sets of `Loop`.
-const reactor_types = [_][]const u8{ "SharedLoop", "Service", "CallRecord" };
-
-test "the host's reactor carries the loop's surface, its error sets and its view, and nothing else" {
-    const Host = Reactor(Loop);
-    try testing.expect(named(Host, &.{ &core.surface.loop_declarations, &loop_error_sets, &reactor_types }));
-    const count = core.surface.loop_declarations.len + loop_error_sets.len + reactor_types.len;
-    try testing.expectEqual(count, @typeInfo(Host).@"struct".decls.len);
-    // One field: what it holds, and at step 2 of decision 33 no state of its own.
-    try testing.expectEqual(1, @typeInfo(Host).@"struct".fields.len);
-    comptime core.shared_loop.check(Host.SharedLoop);
-}
-
-const test_operations = 4;
-const test_options: Loop.Options = .{ .operations = test_operations };
-const test_timer_ns = constants.ns_per_ms;
-const test_wait_ms = 50;
-const test_wait_ns = test_wait_ms * constants.ns_per_ms;
-
-test "a loop built through the public module runs, cancels, drains and counts" {
-    if (!supported) return error.SkipZigTest;
-    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    try loop.init(&memory, &test_options);
-    defer loop.deinit();
-    var handles = [_]Handle{.none};
-    var events: [4]Event = undefined;
-
-    // A timer fires, with its user data, inside one waiting tick. No clock is read before the first
-    // tick, and the tick that hands the fire over read at least the timer's wait.
-    try testing.expectEqual(0, loop.now_ns());
-    try testing.expectEqual(1, loop.submit(&.{Operation.timer(7, test_timer_ns, 0)}, &handles));
-    try testing.expect(handles[0] != Handle.none);
-    try testing.expectEqual(1, loop.in_flight());
-    try testing.expectEqual(1, try loop.tick(&events, test_wait_ns));
-    try testing.expect(loop.now_ns() >= test_timer_ns);
-    try testing.expectEqual(7, events[0].user_data);
-    try testing.expectEqual(0, try events[0].outcome());
-    try testing.expectEqual(0, loop.in_flight());
-    // The statistics are reachable; what they hold is sampled and decision 9's to define.
-    try testing.expect(loop.statistics().sample_mask >= 1);
-
-    // A cancelled timer ends with Canceled, and drain leaves nothing in flight.
-    _ = loop.submit(&.{Operation.timer(8, constants.ns_per_s, 0)}, &handles);
-    loop.cancel(handles[0]);
-    try testing.expectEqual(1, try loop.tick(&events, test_wait_ns));
-    try testing.expectError(error.Canceled, events[0].outcome());
-    _ = loop.submit(&.{Operation.timer(9, constants.ns_per_s, 0)}, &.{});
-    loop.cancel_all();
-    try loop.drain(&events);
-    loop.assert_empty();
-}
-
-test "a registry and a remote work through the public module" {
-    if (!supported) return error.SkipZigTest;
-    // Three slots: the loop, the remote, and one that runs nothing.
-    var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
-    var registry: Registry = undefined;
-    registry.init(&registry_memory, 3);
-    defer registry.deinit();
-    try testing.expectEqual(3, registry.loop_count());
-    var memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
-    var loop: Loop = undefined;
-    var options = test_options;
-    options.registry = &registry;
-    try loop.init(&memory, &options);
-    defer loop.deinit();
-    var remote: Remote = undefined;
-    try remote.init(&registry, 1);
-    defer remote.deinit();
-
-    try remote.post(0, .{ .payload = 41, .tag = 3 });
-    var events: [4]Event = undefined;
-    try testing.expectEqual(1, try loop.tick(&events, test_wait_ns));
-    try testing.expect(events[0].flags.message);
-    try testing.expectEqual(41, events[0].user_data);
-    try testing.expectEqual(3, events[0].result);
-    try testing.expectError(error.LoopNotFound, remote.post(2, .{ .payload = 0, .tag = 0 }));
-}
-
-test "a loop posts to another loop through the public module, with no event of its own" {
-    if (!supported) return error.SkipZigTest;
-    // Two loops on this thread, and a third id that runs nothing.
-    var registry_memory: [Registry.memory_bytes(3)]u8 align(memory_alignment) = undefined;
-    var registry: Registry = undefined;
-    registry.init(&registry_memory, 3);
-    defer registry.deinit();
-    var options = test_options;
-    options.registry = &registry;
-    var sender_memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
-    var sender: Loop = undefined;
-    try sender.init(&sender_memory, &options);
-    defer sender.deinit();
-    options.id = 1;
-    var receiver_memory: [Loop.memory_bytes(&test_options)]u8 align(memory_alignment) = undefined;
-    var receiver: Loop = undefined;
-    try receiver.init(&receiver_memory, &options);
-    defer receiver.deinit();
-
-    try sender.post(1, .{ .payload = 41, .tag = 3 });
-    try testing.expectError(error.LoopNotFound, sender.post(2, .{ .payload = 0, .tag = 0 }));
-    var events: [4]Event = undefined;
-    try testing.expectEqual(0, try sender.tick(&events, 0));
-    try testing.expectEqual(1, try receiver.tick(&events, test_wait_ns));
-    try testing.expect(events[0].flags.message);
-    try testing.expectEqual(41, events[0].user_data);
-    try testing.expectEqual(3, events[0].result);
-}
-
 test {
     _ = loop_module;
     _ = @import("rotor_loop_backend.zig");
     _ = @import("rotor_loop_registry.zig");
     _ = @import("rotor_loop_test.zig");
     _ = @import("rotor_test.zig");
+    _ = @import("rotor_reactor_test.zig");
 }

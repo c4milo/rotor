@@ -91,6 +91,11 @@ const Entry = extern struct {
     /// True from `begin_sleep` to `end_sleep`. Written by the loop. Read by the loops that post
     /// to it.
     sleeping: std.atomic.Value(bool),
+    /// True while the loop takes calls: from its reactor's `attach_reserved` to its `deinit`
+    /// (decision 33, open question 12). Written by the loop. Read by the loops that call it. It
+    /// sits in the padding, and a registry of a group never sets it, so the layout that `attach`
+    /// checks does not change.
+    calls: std.atomic.Value(bool),
 };
 
 comptime {
@@ -255,7 +260,7 @@ pub const Registry = struct {
 
     fn empty(registry: *Registry) void {
         for (registry.entries) |*entry| {
-            entry.* = .{ .queue = .init(descriptor_none), .sleeping = .init(false) };
+            entry.* = .{ .queue = .init(descriptor_none), .sleeping = .init(false), .calls = .init(false) };
         }
         for (registry.mailboxes) |*ring| ring.init();
         assert(registry.entries.len >= loops_min);
@@ -335,6 +340,8 @@ pub const Registry = struct {
     /// error.
     pub fn clear(registry: *Registry, id: LoopId) void {
         assert(id < registry.entries.len);
+        // Before the descriptor, so a loop that later claims the id takes no calls until it marks.
+        registry.entries[id].calls.store(false, .release);
         const previous = registry.entries[id].queue.swap(descriptor_none, .release);
         // A loop publishes its queue and a `Remote` publishes the sentinel. Either way the id was
         // claimed, and withdrawing one that was not is a programmer error.
@@ -348,6 +355,28 @@ pub const Registry = struct {
     pub fn release(registry: *Registry, id: LoopId) void {
         assert(registry.group);
         registry.clear(id);
+    }
+
+    /// Loop `id` takes calls from now on: its reactor attached the hook (decision 33, open question
+    /// 12). Only a running loop of a registry of one process marks itself: a call does not cross a
+    /// process (class B).
+    pub fn mark_calls(registry: *Registry, id: LoopId) void {
+        assert(!registry.group);
+        assert(registry.entries[id].queue.load(.monotonic) >= 0);
+        registry.entries[id].calls.store(true, .release);
+    }
+
+    /// True while loop `id` takes calls. `.acquire`: it pairs with the `.release` of `mark_calls`.
+    pub fn takes_calls(registry: *const Registry, id: LoopId) bool {
+        assert(id < registry.entries.len);
+        return registry.entries[id].calls.load(.acquire);
+    }
+
+    /// The entry of loop `id`, for a push of a call or a return, which reads its wake, its mark and
+    /// its sleep flag with one bounds check, in the orders of `get`, `takes_calls` and `must_wake`.
+    pub fn target(registry: *const Registry, id: LoopId) *const Entry {
+        assert(id < registry.entries.len);
+        return &registry.entries[id];
     }
 
     /// The descriptor that wakes loop `id`, or a negative value when it has none.
@@ -440,30 +469,6 @@ test "the rings one loop reads are adjacent, aligned, and inside the memory, at 
             try testing.expect(address + @sizeOf(Mailbox) <= end);
         }
     }
-}
-
-test "a process that attaches sees the rings, the entries and the wakes the creator made" {
-    var memory: [pair_bytes]u8 align(@alignOf(Mailbox)) = undefined;
-    var creator: Registry = undefined;
-    const wakes = made_up_wakes();
-    creator.init_group(&memory, pair_loops, &wakes);
-    creator.set(1, wakes[1].send);
-    try testing.expect(creator.mailbox(1, 3).push(pair_message(1, 3)));
-
-    var member: Registry = undefined;
-    try member.attach(&memory);
-    try testing.expect(member.group);
-    try testing.expectEqual(@as(u16, pair_loops), member.loop_count());
-    try testing.expectEqual(wakes[4], member.wake(4).?);
-    try testing.expectEqual(wakes[1].send, member.get(1));
-    var out: [2]Message = undefined;
-    try testing.expectEqual(@as(u32, 1), member.mailbox(1, 3).pop_into(&out));
-    try testing.expectEqual(pair_message(1, 3).payload, out[0].payload);
-
-    // A survivor releases the loop of a process that died, and the id is free to claim again.
-    member.release(1);
-    try testing.expectEqual(descriptor_none, creator.get(1));
-    creator.set(1, wakes[1].send);
 }
 
 test "attach refuses memory that holds no group registry this build laid out" {

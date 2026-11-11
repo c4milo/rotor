@@ -12,6 +12,7 @@
 //! in the program, and the program returns it after the tick.
 const std = @import("std");
 const core = @import("core");
+const reactor_module = @import("reactor");
 const program_module = @import("conformance_program.zig");
 const actions = @import("conformance_program_actions.zig");
 
@@ -36,7 +37,7 @@ pub const Route = enum { caller, record };
 
 /// One operation of the program, from its submit to its final event.
 pub const Entry = struct {
-    completion: core.Completion = .init(Entry, "completion", called),
+    completion: reactor_module.Completion = .init(Entry, "completion", called),
     program: *Program,
     index: u32,
     /// Counts the uses of this entry, so a plain event of an older use does not match.
@@ -173,7 +174,7 @@ pub const Origin = enum { program, poller, record, task };
 
 /// One task of a library, and what the program knows of it.
 pub const Job = struct {
-    task: core.Task = .init(Job, "task", ran),
+    task: reactor_module.Task = .init(Job, "task", ran),
     program: *Program,
     queued: bool = false,
     /// The number of the tick whose `end` must run the task.
@@ -261,7 +262,7 @@ pub const Jobs = struct {
             if (job.scheduled != settled) return error.TaskOnceRuleBroken;
         }
         if (jobs.scheduled != jobs.ran + jobs.discarded + jobs.queued) return error.TaskCountDrift;
-        reactor.loop.tables.dispatch.tasks.assert_queue();
+        reactor.dispatch.tasks.assert_queue();
     }
 };
 
@@ -269,10 +270,10 @@ pub const Jobs = struct {
 pub fn check_after_tick(program: *Program) !void {
     if (program.failure) |failure| return failure;
     const reactor = &program.main.reactor;
-    const dispatch = &reactor.loop.tables.dispatch;
+    const dispatch = &reactor.dispatch;
     if (dispatch.phase != .idle) return error.TickStillMarked;
     const owed = program.ledger.records_in_flight + program.jobs.queued;
-    if (dispatch.callbacks_outstanding != owed) return error.CallbacksOwedDrift;
+    if (reactor.loop.tables.outstanding != owed) return error.CallbacksOwedDrift;
     if (reactor.in_flight() != program.ledger.in_flight) return error.InFlightDrift;
     try program.jobs.check(program);
 }

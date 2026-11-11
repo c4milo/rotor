@@ -97,7 +97,7 @@ pub const Harness = struct {
 
     /// A loop whose options hold the named groups of `table`, which its `init` reserves as ids 1
     /// to n (decision 30). A scenario chooses its own table, the empty one included.
-    pub fn init_named(harness: *Harness, table: *const core.scheduling.NamedTable) !void {
+    pub fn init_named(harness: *Harness, table: *const reactor_module.scheduling.NamedTable) !void {
         try harness.loop.init(&harness.memory, &.{
             .operations = operations,
             .entries = entries,
@@ -267,6 +267,7 @@ test {
     _ = @import("conformance_scheduling.zig");
     _ = @import("conformance_call.zig");
     _ = @import("conformance_call_threads.zig");
+    _ = @import("conformance_call_plain.zig");
     _ = @import("conformance_stall.zig");
     _ = @import("conformance_stall_watch.zig");
     _ = @import("conformance_shutdown.zig");

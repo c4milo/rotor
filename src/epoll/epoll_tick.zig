@@ -63,7 +63,13 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     var produced = first.produced;
     produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
-    const wait = if (produced == 0) loop.settle_to_sleep(wait_for(loop, wait_ns)) else null;
+    // A drain that handed a call or a return to a reactor's hook queued a task, which the next
+    // tick runs: this tick does not block, as after an event (decision 33, "The reserved hook").
+    // Only a tick that would block takes the flag, so a poll of the spin of decision 13 keeps it
+    // for the tick that ends the spin.
+    const limit = if (produced == 0) wait_for(loop, wait_ns) else null;
+    const blocks = limit != null and !loop.inbox.take_handed();
+    const wait = if (blocks) loop.settle_to_sleep(limit) else null;
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
     if (wait != null) tables.note_asleep();
     const room = @min(events.len - produced, constants.readiness_max);
@@ -87,7 +93,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A failed call after events were produced returns those events, whose slots are released
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
-        return loop.kept_error.keep(&tables.dispatch, failure, produced);
+        return loop.kept_error.keep(&tables.outstanding, failure, produced);
     return after_kernel(loop, events, produced, ready_count, offloads, first.capped);
 }
 
@@ -343,16 +349,13 @@ test "a wait whose timer the kernel refuses carries its timeout and still takes 
     try testing.expect(clock_ns() - again >= wait_ns - core.constants.ns_per_ms);
 }
 
-/// A record that counts the final events it receives (decision 26).
-const Record = struct {
-    completion: core.Completion = .init(Record, "completion", called),
-    finals: u32 = 0,
-
-    fn called(record: *Record, event: Event) void {
-        assert(!event.flags.more);
-        record.finals += 1;
-    }
-};
+/// `operation` with the bit that a reactor's `Completion.mark` sets: a plain loop hands its event
+/// to the caller, with the bit set (decision 33, open question 5).
+fn marked(operation: core.Operation) core.Operation {
+    var named = operation;
+    named.dispatched = true;
+    return named;
+}
 
 test "a tick whose call fails after it produced events returns them, and the next tick fails" {
     if (!epoll.supported) return error.SkipZigTest;
@@ -375,28 +378,29 @@ test "a tick whose call fails after it produced events returns them, and the nex
     try testing.expectEqual(@as(u32, 1), loop.submit(&.{receive}, &.{}));
     try testing.expectEqual(@as(u32, 0), try loop.tick(&events, 0));
 
-    // Two timers end in the next tick before its call: one with a record, one without. A socket
+    // Two timers end in the next tick before its call: one marked for a record, one not. A socket
     // in place of the epoll instance makes the call fail with EINVAL.
-    var record: Record = .{};
     const timers = [_]core.Operation{
         .timer(2, 0, 0),
-        core.Operation.timer(0, 0, 0).completion(&record.completion),
+        marked(.timer(3, 0, 0)),
     };
     try testing.expectEqual(@as(u32, 2), loop.submit(&timers, &.{}));
     const instance = loop.queue.descriptor;
     const saved: i32 = @intCast(linux.dup(instance));
     try testing.expectEqual(@as(usize, @intCast(instance)), linux.dup3(ends[1], instance, 0));
 
-    // The tick hands over the timer without a record and calls the other's record. The kept
-    // error takes the next tick off the fast path.
-    try testing.expectEqual(@as(u32, 1), try loop.tick(&events, 0));
-    try testing.expectEqual(@as(u64, 2), events[0].user_data);
-    try testing.expectEqual(@as(u32, 1), record.finals);
-    try testing.expect(!loop.tables.dispatch.idle());
+    // The tick hands over both timers: a plain loop calls no record, and hands the marked one
+    // over with its bit set. The kept error takes the next tick off the fast path.
+    try testing.expectEqual(@as(u32, 2), try loop.tick(&events, 0));
+    // The two fire in one tick, in either order.
+    try testing.expect(events[0].flags.dispatched != events[1].flags.dispatched);
+    const plain = if (events[0].flags.dispatched) events[1] else events[0];
+    try testing.expectEqual(@as(u64, 2), plain.user_data);
+    try testing.expectEqual(@as(u32, 1), loop.tables.outstanding);
     // The next tick returns the kept error before anything else. A tick that produced nothing
     // returns its own error at once.
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
-    try testing.expect(loop.tables.dispatch.idle());
+    try testing.expectEqual(@as(u32, 0), loop.tables.outstanding);
     try testing.expectError(error.Unexpected, loop.tick(&events, 0));
     // A tick that waits and fails reads the clock after the failure, so a turn is open: the time
     // until the next tick can be a stall, and a watch can see it (decision 28).

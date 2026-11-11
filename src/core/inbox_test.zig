@@ -1,5 +1,5 @@
 //! Tests of `inbox.zig`: the sender cursor of `Inbox.drain_mailboxes` (W3, ruled 2026-11-07), and
-//! the drain of a `Message.wake` (decision 29). In a file of their own because the property test
+//! the drain of the reserved tags into the loop's hook (decisions 29, 32 and 33). In a file of their own because the property test
 //! holds a registry of 64 loops in a static, which a library file may not declare (tools/lint
 //! global-state).
 const std = @import("std");
@@ -9,13 +9,10 @@ const inbox_module = @import("inbox.zig");
 const mailbox = @import("mailbox.zig");
 const operation = @import("operation.zig");
 
-const Dispatch = @import("dispatch/dispatch.zig").Dispatch;
-const Groups = @import("scheduling/scheduling_groups.zig").Groups;
 const Event = event.Event;
+const Hook = @import("reserved.zig").Hook;
 const Inbox = inbox_module.Inbox;
 const Message = operation.Message;
-const Poller = @import("dispatch/dispatch.zig").Poller;
-const WaitLimit = @import("dispatch/dispatch.zig").WaitLimit;
 const LoopId = operation.LoopId;
 const Registry = mailbox.Registry;
 const testing = std.testing;
@@ -31,14 +28,32 @@ const TestInbox = struct {
     memory: [test_registry_bytes]u8 align(layout.memory_alignment),
     registry: Registry,
     inbox: Inbox,
-    dispatch: Dispatch,
-    groups: Groups,
+    hook: Hook,
+    /// What the hook took: the reserved messages, and the sender of the last one.
+    taken: u32,
+    last_sender: LoopId,
+    /// True after the last drain handed a call or a return to the hook.
+    handed: bool,
 
     fn init(fixture: *TestInbox) void {
         fixture.registry.init(&fixture.memory, test_loops);
         fixture.inbox = Inbox.init(&fixture.registry, &.{}, null);
-        fixture.dispatch = .empty;
-        fixture.groups.init(&.empty);
+        fixture.hook = .none;
+        fixture.taken = 0;
+        fixture.last_sender = 0;
+        fixture.handed = false;
+    }
+
+    /// Attaches the hook that counts what it takes, as a reactor attaches its own.
+    fn attach(fixture: *TestInbox) void {
+        fixture.hook = .{ .take = take, .context = fixture };
+    }
+
+    fn take(context: *anyopaque, sender: LoopId, message: Message) void {
+        const fixture: *TestInbox = @ptrCast(@alignCast(context));
+        std.debug.assert(message.tag > constants.message_tag_max);
+        fixture.taken += 1;
+        fixture.last_sender = sender;
     }
 
     /// Pushes `count` messages from `sender` to `receiver`, each tagged with the sender's id.
@@ -52,6 +67,7 @@ const TestInbox = struct {
     /// One drain into `events`. It writes the sender of each event, its tag, to `senders`.
     fn drain(fixture: *TestInbox, receiver: LoopId, events: []Event, senders: []u8) !u32 {
         const count = fixture.inbox.drain_mailboxes(receiver, events, inbox_module.TestTake(TestInbox).take);
+        fixture.handed = fixture.inbox.take_handed();
         for (events[0..count], senders[0..count]) |message, *sender| {
             try testing.expect(message.flags.message);
             sender.* = '0' + @as(u8, @intCast(message.result));
@@ -126,16 +142,7 @@ test "an empty ring costs a visit and no room" {
     try testing.expectEqual(@as(LoopId, 3), fixture.inbox.sender_cursor);
 }
 
-/// A poller that answers `.none`, so the table is not empty.
-const Idle = struct {
-    poller: Poller = .init(Idle, "poller", polled),
-
-    fn polled(_: *Idle) WaitLimit {
-        return .none;
-    }
-};
-
-test "a wake writes no event, counts in its ring's visit, and stores now only with a poller" {
+test "a wake writes no event, counts in its ring's visit, and goes to the hook when there is one" {
     var fixture: TestInbox = undefined;
     fixture.init();
     const ring = fixture.registry.mailbox(1, 0);
@@ -145,27 +152,28 @@ test "a wake writes no event, counts in its ring's visit, and stores now only wi
     var events: [2 * constants.messages_per_drain]Event = undefined;
     var senders: [2 * constants.messages_per_drain]u8 = undefined;
     // The wakes fill sender 1's visit, so its message waits, and sender 2's is the one event.
+    // A loop with no hook drops the wakes, as a plain loop does.
     try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
     try testing.expectEqual(@as(u8, '2'), senders[0]);
-    // With no poller in the table, the wakes store nothing.
-    try testing.expectEqual(WaitLimit.none, fixture.dispatch.until_ns);
+    try testing.expectEqual(@as(u32, 0), fixture.taken);
     try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
     try testing.expectEqual(@as(u8, '1'), senders[0]);
-    // With a poller, a wake stores now.
-    var idle: Idle = .{};
-    try fixture.dispatch.add_poller(&idle.poller);
+    // With a hook, each wake goes to it, with its sender, and no call was handed.
+    fixture.attach();
+    try testing.expect(ring.push(Message.wake));
     try testing.expect(ring.push(Message.wake));
     try testing.expect(fixture.inbox.holds_messages(0));
     try testing.expectEqual(@as(u32, 0), try fixture.drain(0, &events, &senders));
-    try testing.expectEqual(WaitLimit.now, fixture.dispatch.until_ns);
+    try testing.expectEqual(@as(u32, 2), fixture.taken);
+    try testing.expectEqual(@as(LoopId, 1), fixture.last_sender);
+    try testing.expect(!fixture.handed);
     try testing.expect(!fixture.inbox.holds_messages(0));
 }
 
-test "a drain from a cursor stores now for a wake in a ring before the last one it visits" {
+test "a drain from a cursor hands the hook a wake in a ring before the last one it visits" {
     var fixture: TestInbox = undefined;
     fixture.init();
-    var idle: Idle = .{};
-    try fixture.dispatch.add_poller(&idle.poller);
+    fixture.attach();
     // From cursor 3 the drain visits 3, 4, 1 and 2. The wake is in the first ring, and the one
     // message in the last, so the drain must sum what every visit took.
     try testing.expect(fixture.registry.mailbox(3, 0).push(Message.wake));
@@ -175,7 +183,31 @@ test "a drain from a cursor stores now for a wake in a ring before the last one 
     var senders: [4]u8 = undefined;
     try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
     try testing.expectEqual(@as(u8, '2'), senders[0]);
-    try testing.expectEqual(WaitLimit.now, fixture.dispatch.until_ns);
+    try testing.expectEqual(@as(u32, 1), fixture.taken);
+    try testing.expectEqual(@as(LoopId, 3), fixture.last_sender);
+}
+
+test "a call and a return go to the hook in the order of their ring, and the drain says so" {
+    var fixture: TestInbox = undefined;
+    fixture.init();
+    fixture.attach();
+    const call: Message = .{ .payload = 7, .tag = constants.message_tag_call };
+    const answer: Message = .{ .payload = 8, .tag = constants.message_tag_return };
+    try fixture.fill(4, 0, 1);
+    try testing.expect(fixture.registry.mailbox(4, 0).push(call));
+    try testing.expect(fixture.registry.mailbox(4, 0).push(answer));
+    var events: [4]Event = undefined;
+    var senders: [4]u8 = undefined;
+    try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
+    try testing.expectEqual(@as(u32, 2), fixture.taken);
+    try testing.expectEqual(@as(LoopId, 4), fixture.last_sender);
+    try testing.expect(fixture.handed);
+    // The read cleared the flag, so a second read finds nothing.
+    try testing.expect(!fixture.inbox.take_handed());
+    // A drain that took no call or return says so, whatever it wrote.
+    try fixture.fill(4, 0, 1);
+    try testing.expectEqual(@as(u32, 1), try fixture.drain(0, &events, &senders));
+    try testing.expect(!fixture.handed);
 }
 
 test "holds_messages reads every ring to the receiver, and not the ring from itself" {

@@ -7,6 +7,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -19,12 +20,12 @@ const constants = core.constants;
 /// The reactor as a library holds it, which a service takes.
 pub const View = conformance.Reactor.SharedLoop;
 /// The record of one call of the echo service.
-pub const Call = core.call.CallRecord(View, u64, u64);
-pub const EchoService = core.call.Service(View, Echo, u64, u64, Echo.handle);
-pub const NamedSchedulingGroup = core.NamedSchedulingGroup;
+pub const Call = conformance.Reactor.CallRecord(u64, u64);
+pub const EchoService = conformance.Reactor.Service(Echo, u64, u64, Echo.handle);
+pub const NamedSchedulingGroup = reactor_module.NamedSchedulingGroup;
 
 /// The named groups of the scenario at shares 100 and 300 (decision 30, "How tests name groups").
-pub const Declared = core.scheduling.Named(.{ .low = 100, .high = 300 });
+pub const Declared = reactor_module.scheduling.Named(.{ .low = 100, .high = 300 });
 
 /// Ticks a scenario may take: each one waits 0, so they are short.
 pub const ticks_max = 100_000;
@@ -40,7 +41,7 @@ pub const Echo = struct {
     held: [2 * constants.calls_per_pair_max]*Call = undefined,
     held_len: u32 = 0,
 
-    fn handle(echo: *Echo, call: *Call) core.call.Answer(u64) {
+    fn handle(echo: *Echo, call: *Call) reactor_module.Answer(u64) {
         echo.handled += 1;
         echo.by_group[@intFromEnum(call.link.group)] += 1;
         if (echo.mode == .later) {
@@ -79,7 +80,7 @@ pub const Client = struct {
     tally: *Tally,
     request: u64 = 0,
 
-    fn finished(client: *Client, result: core.call.CallResult(u64)) void {
+    fn finished(client: *Client, result: reactor_module.CallResult(u64)) void {
         switch (result) {
             .replied => |reply| {
                 client.tally.replied += 1;
@@ -92,7 +93,7 @@ pub const Client = struct {
     }
 
     /// Sends one call, with a request that no other call of the scenario carries.
-    pub fn send(client: *Client) core.call.CallError!void {
+    pub fn send(client: *Client) reactor_module.CallError!void {
         client.request = client.tally.accepted * 1000 + 7;
         try client.service.send(client.shared, client.target, &client.call, &client.request, .{ .group = client.group });
         client.tally.accepted += 1;
@@ -101,15 +102,17 @@ pub const Client = struct {
 };
 
 /// A reactor on `registry` whose loop reserves the named groups of `table` at `init` (decision 30).
-pub fn init_reactor(harness: *ReactorHarness, id: LoopId, registry: ?*backend.Registry, table: *const core.scheduling.NamedTable) !void {
-    try harness.reactor.init(&harness.memory, &.{ .loop = .{
-        .operations = conformance.operations,
-        .entries = conformance.entries,
-        .id = id,
-        .registry = registry,
-        .spin_budget_ns = conformance.spin_budget_ns(),
+pub fn init_reactor(harness: *ReactorHarness, id: LoopId, registry: ?*backend.Registry, table: *const reactor_module.scheduling.NamedTable) !void {
+    try harness.reactor.init(&harness.memory, &.{
+        .loop = .{
+            .operations = conformance.operations,
+            .entries = conformance.entries,
+            .id = id,
+            .registry = registry,
+            .spin_budget_ns = conformance.spin_budget_ns(),
+        },
         .named_groups = table.*,
-    } });
+    });
 }
 
 /// Ticks each loop of `harnesses` once with no wait, and returns the events they handed over.
@@ -121,14 +124,14 @@ pub fn tick_all(harnesses: []const *ReactorHarness) !u32 {
 }
 
 /// Two loops, 0 and 1, on one registry, each serving the echo service.
-const Two = struct {
+pub const Two = struct {
     registry: backend.Registry,
     memory: [backend.Registry.memory_bytes(2)]u8 align(core.layout.memory_alignment),
     harnesses: [2]ReactorHarness,
     service: EchoService,
     echoes: [2]Echo,
 
-    fn start(two: *Two, table: *const core.scheduling.NamedTable) !conformance.RegistryLife {
+    pub fn start(two: *Two, table: *const reactor_module.scheduling.NamedTable) !conformance.RegistryLife {
         const life = try conformance.RegistryLife.start(&two.registry, &two.memory, 2);
         two.service = .init;
         for (&two.harnesses, &two.echoes, 0..) |*harness, *echo, id| {
@@ -139,15 +142,15 @@ const Two = struct {
         return life;
     }
 
-    fn shared(two: *Two, id: LoopId) *View {
+    pub fn shared(two: *Two, id: LoopId) *View {
         return two.harnesses[id].reactor.shared();
     }
 
-    fn tick(two: *Two) !u32 {
+    pub fn tick(two: *Two) !u32 {
         return tick_all(&.{ &two.harnesses[0], &two.harnesses[1] });
     }
 
-    fn end(two: *Two) void {
+    pub fn end(two: *Two) void {
         for (&two.harnesses) |*harness| {
             two.service.stop_serving(harness.reactor.shared());
             harness.deinit();
@@ -155,7 +158,7 @@ const Two = struct {
     }
 };
 
-fn client_of(two: *Two, tally: *Tally, target: LoopId) Client {
+pub fn client_of(two: *Two, tally: *Tally, target: LoopId) Client {
     return .{ .service = &two.service, .shared = two.shared(0), .target = target, .tally = tally };
 }
 
@@ -374,5 +377,5 @@ test "a loop that claims the id of a loop that stopped serving, and does not ser
     try testing.expectEqual(@as(u32, 1), tally.stopped);
     try testing.expectEqual(@as(u32, 0), two.echoes[1].handled);
     // The claimer owes nothing: its drain answered the call, and no task of it is queued.
-    try testing.expectEqual(@as(u32, 0), claimer.reactor.loop.callbacks_outstanding());
+    try testing.expectEqual(@as(u32, 0), claimer.reactor.loop.tables.outstanding);
 }

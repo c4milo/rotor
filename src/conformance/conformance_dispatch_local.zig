@@ -6,6 +6,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const offload = @import("conformance_offload.zig");
@@ -34,7 +35,7 @@ test "a file a killed run left at the write scenario's path does not stop the sc
 
 /// One library's record: the last event it received, and how many of them were final.
 const Library = struct {
-    completion: core.Completion = .init(Library, "completion", called),
+    completion: reactor_module.Completion = .init(Library, "completion", called),
     last: ?Event = null,
     finals: u32 = 0,
 
@@ -48,7 +49,7 @@ const Library = struct {
 /// Submits `operation` with `library`'s record, ticks until the record has the final event, and
 /// returns that event. Fails when a tick hands its caller an event, which carried no record.
 fn reach_record(reactor: *Reactor, operation: Operation, library: *Library) !Event {
-    const named = operation.completion(&library.completion);
+    const named = reactor_module.Completion.mark(&library.completion, operation);
     if (reactor.submit(&.{named}, &.{}) != 1) return error.TableFull;
     var events: [1]Event = undefined;
     var round: u32 = 0;

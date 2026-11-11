@@ -4,6 +4,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
@@ -23,7 +24,7 @@ const spin_ns_max = 10 * core.constants.ns_per_s;
 
 /// A record that holds the loop until another thread sets `release`.
 const Spinning = struct {
-    completion: core.Completion = .init(Spinning, "completion", completed),
+    completion: reactor_module.Completion = .init(Spinning, "completion", completed),
     release: std.atomic.Value(bool) = .init(false),
     released: bool = false,
 
@@ -82,7 +83,7 @@ test "a watch on another thread names the callback that holds the loop" {
     var spinning: Spinning = .{};
     var watcher: Watcher = .{ .heartbeat = fixture.reactor.heartbeat(), .spinning = &spinning };
     const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
-    const timer = core.Operation.timer(0, 0, 0).completion(&spinning.completion);
+    const timer = reactor_module.Completion.mark(&spinning.completion, core.Operation.timer(0, 0, 0));
     try testing.expectEqual(@as(u32, 1), fixture.reactor.submit(&.{timer}, &.{}));
     var events: [4]Event = undefined;
     var round: u32 = 0;

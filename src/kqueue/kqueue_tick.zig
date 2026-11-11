@@ -65,7 +65,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
 
     // `settle_to_sleep` answers null at once for a tick with no bound.
-    const bound = if (produced == 0) tables.wait_bound(wait_ns) else null;
+    const bound = block_bound(loop, produced, wait_ns);
     const wait = loop.settle_to_sleep(bound);
     // A tick that blocks is in no turn, from here to the stamp after the wait (decision 28).
     if (wait != null) tables.note_asleep();
@@ -104,7 +104,7 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
     // A failed call after events were produced returns those events, whose slots are released
     // already, and the next tick returns the error (decision 5, amendment of 2026-11-06).
     const ready_count = ready catch |failure|
-        return loop.kept_error.keep(&tables.dispatch, failure, produced);
+        return loop.kept_error.keep(&tables.outstanding, failure, produced);
     return after_kernel(loop, events, produced, ready_count, offloads, first.capped);
 }
 
@@ -307,6 +307,18 @@ fn arm_poll(loop: *Loop) void {
     } else {
         queue_module.Queue.wake(loop.queue.descriptor);
     }
+}
+
+/// How long a tick that produced `produced` events may block, or null when it may not. A drain
+/// that handed a call or a return to a reactor's hook queued a task, which the next tick runs: this
+/// tick does not block, as after an event (decision 33, "The reserved hook"). Only a tick that
+/// would block takes the flag, so a poll of the spin of decision 13 keeps it for the tick that
+/// ends the spin.
+fn block_bound(loop: *Loop, produced: u32, wait_ns: u64) ?u64 {
+    if (produced != 0) return null;
+    const bound = loop.tables.wait_bound(wait_ns) orelse return null;
+    if (loop.inbox.take_handed()) return null;
+    return bound;
 }
 
 /// The monotonic clock, in nanoseconds. Read once per tick, and once more after a wait that

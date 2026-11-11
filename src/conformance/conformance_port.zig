@@ -1,22 +1,25 @@
-//! The port of decision 33 on every backend: the type of each name, and what each name does over
-//! the state of today. The reactor of step 3 calls these names, and a program does not.
+//! The port of decision 33 on every backend: the type of each name, and what each name does. The
+//! reactor calls these names, and a program does not.
 //!
-//! The call scenario sends a call with `push_reserved`, as the reactor will, and the target answers
-//! it with today's `answer`. The tasks of the call are written by hand, with no `Service`.
+//! The call scenario sends a call with `push_reserved`, as the reactor's `call` does, and the target
+//! reactor's hook takes it, and its `answer` answers it. The tasks of the call are written by hand,
+//! with no `Service`.
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
-const CallLink = core.call.CallLink;
-const CallStation = core.call.CallStation;
+const CallLink = reactor_module.CallLink;
+const CallStation = reactor_module.CallStation;
 const Event = core.Event;
 const Harness = conformance.Harness;
+const ReactorHarness = conformance.ReactorHarness;
 const Loop = backend.Loop;
 const LoopId = core.LoopId;
 const Operation = core.Operation;
-const Task = core.Task;
+const Task = reactor_module.Task;
 const WaitLimit = core.WaitLimit;
 
 /// The ticks a scenario may take: each one waits 0, so they are short.
@@ -29,6 +32,7 @@ test "each name of the port has the type of decision 33" {
     try testing.expect(@TypeOf(Loop.outstanding) == fn (*Loop) *u32);
     try testing.expect(@TypeOf(Loop.stored_limit) == fn (*Loop) *WaitLimit);
     try testing.expect(@TypeOf(Loop.heartbeat_line) == fn (*Loop) *core.Heartbeat);
+    try testing.expect(@TypeOf(Loop.attach_reserved) == fn (*Loop, *anyopaque, *const core.reserved.Take) void);
     try testing.expect(@TypeOf(Loop.push_reserved) == fn (*Loop, LoopId, core.Message) PushError!*u32);
     try testing.expect(@TypeOf(Loop.assert_owner) == fn (*const Loop) void);
     try testing.expect(@TypeOf(Loop.wait_until) == fn (*Loop, WaitLimit) void);
@@ -61,14 +65,31 @@ test "the port's tick hands a timer over, and its words are the loop's own" {
     try testing.expectEqual(@as(u32, 0), loop.in_flight());
 }
 
-/// One call from loop 0 to loop 1, and what its two tasks saw.
+fn ignore_reserved(_: *anyopaque, _: LoopId, _: core.Message) void {}
+
+test "attach_reserved stores the hook and marks the loop in its registry as one that takes calls" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var registry: backend.Registry = undefined;
+    const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
+    defer life.end();
+    var harness: Harness = undefined;
+    try harness.init(target_id, &registry);
+    defer harness.deinit();
+    try testing.expect(!registry.takes_calls(target_id));
+    var context: u8 = 0;
+    harness.loop.attach_reserved(&context, ignore_reserved);
+    try testing.expect(registry.takes_calls(target_id));
+    try testing.expectEqual(@as(*anyopaque, &context), harness.loop.tables.hook.context);
+}
+
+/// One call from reactor 0 to reactor 1, and what its two tasks saw.
 const Round = struct {
     link: CallLink,
-    target: *Loop,
+    target: *conformance.Reactor,
     handled: u32 = 0,
     finished: u32 = 0,
 
-    /// The call's task on the target: it answers at once, through today's `answer`.
+    /// The call's task on the target: it answers at once, through the reactor's `answer`.
     fn handle(task: *Task) void {
         const link: *CallLink = @fieldParentPtr("task", task);
         const round: *Round = @fieldParentPtr("link", link);
@@ -81,7 +102,7 @@ const Round = struct {
         const link: *CallLink = @fieldParentPtr("task", task);
         const round: *Round = @fieldParentPtr("link", link);
         round.finished += 1;
-        _ = core.call.end_call(link);
+        _ = reactor_module.call.end_call(link);
     }
 };
 
@@ -98,7 +119,7 @@ var registry_memory: [backend.Registry.memory_bytes(ids)]u8 align(core.layout.me
 var stations: [core.constants.loops_max]CallStation align(@alignOf(CallStation)) = undefined;
 
 /// Ticks `harness` with no wait until `done` reads `count`, or fails.
-fn tick_until(harness: *Harness, done: *const u32, count: u32) !void {
+fn tick_until(harness: *ReactorHarness, done: *const u32, count: u32) !void {
     var events: [4]Event = undefined;
     var ticks: u32 = 0;
     while (done.* != count and ticks < ticks_max) : (ticks += 1) {
@@ -112,18 +133,18 @@ test "a call that push_reserved sends runs on the target, and its return lowers 
     var registry: backend.Registry = undefined;
     const life = try conformance.RegistryLife.start(&registry, &registry_memory, ids);
     defer life.end();
-    var caller: Harness = undefined;
+    var caller: ReactorHarness = undefined;
     try caller.init(caller_id, &registry);
     defer caller.deinit();
-    var target: Harness = undefined;
+    var target: ReactorHarness = undefined;
     try target.init(target_id, &registry);
     defer target.deinit();
     stations = @splat(CallStation.unused);
-    _ = target.loop.serve(&stations);
-    defer target.loop.stop_serving(&stations);
+    _ = target.reactor.serve(&stations);
+    defer target.reactor.stop_serving(&stations);
 
-    // What `call` does before and after its push, by hand, as the reactor will at step 3.
-    var round: Round = .{ .link = .idle(&finish_call), .target = &target.loop };
+    // What the reactor's `call` does before and after its push, by hand.
+    var round: Round = .{ .link = .idle(&finish_call), .target = &target.reactor };
     round.link.prepare(&stations, &handle_call, target_id, .{ .group = .default });
     round.link.origin = caller_id;
     const message: core.Message = .{
@@ -131,17 +152,18 @@ test "a call that push_reserved sends runs on the target, and its return lowers 
         .tag = core.constants.message_tag_call,
         .reserved = round.link.generation,
     };
-    try testing.expectError(error.LoopNotFound, caller.loop.push_reserved(absent_id, message));
-    const calls_out = try caller.loop.push_reserved(target_id, message);
+    const caller_loop = &caller.reactor.loop;
+    try testing.expectError(error.LoopNotFound, caller_loop.push_reserved(absent_id, message));
+    const calls_out = try caller_loop.push_reserved(target_id, message);
     try testing.expectEqual(&registry.mailbox(caller_id, target_id).calls_out, calls_out);
     try testing.expectEqual(@as(u32, 0), calls_out.*);
     round.link.calls_out = calls_out;
     calls_out.* += 1;
-    caller.loop.outstanding().* += 1;
+    caller_loop.outstanding().* += 1;
 
     try tick_until(&target, &round.handled, 1);
     try tick_until(&caller, &round.finished, 1);
     try testing.expectEqual(@as(u32, 0), calls_out.*);
-    try testing.expectEqual(@as(u32, 0), caller.loop.outstanding().*);
-    try testing.expectEqual(@as(u32, 0), target.loop.outstanding().*);
+    try testing.expectEqual(@as(u32, 0), caller_loop.outstanding().*);
+    try testing.expectEqual(@as(u32, 0), target.reactor.loop.outstanding().*);
 }

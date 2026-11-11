@@ -5,6 +5,7 @@
 //! `conformance.zig` for the 500-line limit.
 const std = @import("std");
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
@@ -65,13 +66,15 @@ pub const ReactorHarness = struct {
     }
 
     /// A reactor whose loop reserves the named groups of `table`, as `Harness.init_named`.
-    pub fn init_named(harness: *ReactorHarness, table: *const core.scheduling.NamedTable) !void {
-        try harness.reactor.init(&harness.memory, &.{ .loop = .{
-            .operations = conformance.operations,
-            .entries = conformance.entries,
-            .spin_budget_ns = conformance.spin_budget_ns(),
+    pub fn init_named(harness: *ReactorHarness, table: *const reactor_module.scheduling.NamedTable) !void {
+        try harness.reactor.init(&harness.memory, &.{
+            .loop = .{
+                .operations = conformance.operations,
+                .entries = conformance.entries,
+                .spin_budget_ns = conformance.spin_budget_ns(),
+            },
             .named_groups = table.*,
-        } });
+        });
     }
 
     /// A reactor whose loop has the spin budget `budget_ns`, as `Harness.init_spin`.

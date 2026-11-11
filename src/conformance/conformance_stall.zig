@@ -16,6 +16,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const constants = @import("constants.zig");
 
@@ -45,12 +46,12 @@ fn measure(started_ns: u64) void {
     if (elapsed_ns > constants.callback_stall_ns_max) stalled_ns = @max(stalled_ns, elapsed_ns);
 }
 
-/// `core.Completion.init`, with the handler timed.
+/// `reactor_module.Completion.init`, with the handler timed.
 pub fn completion(
     comptime Parent: type,
     comptime field: []const u8,
     comptime handler: fn (parent: *Parent, event: Event) void,
-) core.Completion {
+) reactor_module.Completion {
     return .init(Parent, field, struct {
         fn timed(parent: *Parent, event: Event) void {
             const started_ns = cpu_ns();
@@ -60,12 +61,12 @@ pub fn completion(
     }.timed);
 }
 
-/// `core.Poller.init`, with the handler timed.
+/// `reactor_module.Poller.init`, with the handler timed.
 pub fn poller(
     comptime Parent: type,
     comptime field: []const u8,
     comptime handler: fn (parent: *Parent) core.WaitLimit,
-) core.Poller {
+) reactor_module.Poller {
     return .init(Parent, field, struct {
         fn timed(parent: *Parent) core.WaitLimit {
             const started_ns = cpu_ns();
@@ -76,22 +77,22 @@ pub fn poller(
     }.timed);
 }
 
-/// `core.Task.init`, with the handler timed.
+/// `reactor_module.Task.init`, with the handler timed.
 pub fn task(
     comptime Parent: type,
     comptime field: []const u8,
     comptime handler: fn (parent: *Parent) void,
-) core.Task {
+) reactor_module.Task {
     return task_cost(Parent, field, handler, 1);
 }
 
-/// `core.Task.init_cost`, with the handler timed (decision 30).
+/// `reactor_module.Task.init_cost`, with the handler timed (decision 30).
 pub fn task_cost(
     comptime Parent: type,
     comptime field: []const u8,
     comptime handler: fn (parent: *Parent) void,
     comptime cost: u16,
-) core.Task {
+) reactor_module.Task {
     return .init_cost(Parent, field, struct {
         fn timed(parent: *Parent) void {
             const started_ns = cpu_ns();
@@ -116,9 +117,9 @@ fn hold_past_limit() void {
 
 /// A record, a poller and a task whose handlers hold the loop past the limit when `slow` is set.
 const Slow = struct {
-    completion: core.Completion = completion(Slow, "completion", completed),
-    poller: core.Poller = poller(Slow, "poller", polled),
-    task: core.Task = task(Slow, "task", ran),
+    completion: reactor_module.Completion = completion(Slow, "completion", completed),
+    poller: reactor_module.Poller = poller(Slow, "poller", polled),
+    task: reactor_module.Task = task(Slow, "task", ran),
     slow: bool,
     calls: u32 = 0,
     /// The calls of the record.
@@ -162,7 +163,7 @@ test "a record that holds the loop past the limit fails the tick that called it"
     defer harness.deinit();
     var slow: Slow = .{ .slow = true };
     const timer = core.Operation.timer(0, core.constants.ns_per_ms, 0);
-    try harness.submit(&.{timer.completion(&slow.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&slow.completion, timer)}, &.{});
     try testing.expectError(error.CallbackStalled, tick_until_called(&harness, &slow));
     // The check forgets the run it reported.
     try check();
@@ -205,7 +206,7 @@ test "callbacks under the limit pass" {
     defer harness.reactor.remove_poller(&quick.poller);
     try harness.reactor.schedule(&quick.task);
     const timer = core.Operation.timer(0, core.constants.ns_per_ms, 0);
-    try harness.submit(&.{timer.completion(&quick.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&quick.completion, timer)}, &.{});
     var events: [8]Event = undefined;
     var round: u32 = 0;
     while (quick.events == 0 and round < conformance.collect_rounds_max) : (round += 1) {
@@ -219,7 +220,7 @@ test "callbacks under the limit pass" {
 /// A record whose handler waits in the kernel past the limit and uses almost no CPU time: it ticks
 /// a second loop that has no work, as a callback that blocks in a wait would.
 const Waiting = struct {
-    completion: core.Completion = completion(Waiting, "completion", completed),
+    completion: reactor_module.Completion = completion(Waiting, "completion", completed),
     other: *Loop,
     /// The wall time the handler waited, in nanoseconds.
     waited_ns: u64 = 0,
@@ -248,7 +249,7 @@ test "a record that waits in the kernel past the limit passes, because the check
     defer other.loop.deinit();
     var waiting: Waiting = .{ .other = &other.loop };
     const timer = core.Operation.timer(0, 0, 0);
-    try harness.submit(&.{timer.completion(&waiting.completion)}, &.{});
+    try harness.submit(&.{reactor_module.Completion.mark(&waiting.completion, timer)}, &.{});
     var events: [8]Event = undefined;
     var round: u32 = 0;
     while (waiting.waited_ns == 0 and round < conformance.collect_rounds_max) : (round += 1) {
@@ -321,10 +322,10 @@ fn hold_for(span_ns: u64) void {
 }
 
 /// A record that holds the loop for `hold_ns` when its event comes. Its hold is the stall the
-/// scenario counts, so it is made with `core.Completion.init` and not timed by the harness. The
+/// scenario counts, so it is made with `reactor_module.Completion.init` and not timed by the harness. The
 /// scenario tests the loop's count, and the harness's check stays out of it.
 const Holding = struct {
-    completion: core.Completion = .init(Holding, "completion", completed),
+    completion: reactor_module.Completion = .init(Holding, "completion", completed),
     events: u32 = 0,
 
     fn completed(holding: *Holding, event: Event) void {
@@ -342,7 +343,7 @@ test "a record that holds the loop past the threshold makes a stall that names i
     var holding: Holding = .{};
     // A timer that the tick waits for, so the record runs in the turn that the stamp after the
     // wait starts.
-    const timer = core.Operation.timer(0, timer_delay_ns, 0).completion(&holding.completion);
+    const timer = reactor_module.Completion.mark(&holding.completion, core.Operation.timer(0, timer_delay_ns, 0));
     try testing.expectEqual(@as(u32, 1), fixture.reactor.submit(&.{timer}, &.{}));
     var events: [4]Event = undefined;
     var round: u32 = 0;
@@ -361,6 +362,39 @@ test "a record that holds the loop past the threshold makes a stall that names i
     try testing.expect(last.end_ns == fixture.reactor.now_ns());
     try testing.expectEqualStrings(@typeName(Holding) ++ ".completion", std.mem.span(last.name.?));
     try check();
+}
+
+/// A poller that holds the loop for `hold_ns` in each call, and reports no work. It is not timed
+/// by the harness, as `Holding` is not.
+const HoldingPoller = struct {
+    poller: reactor_module.Poller = .init(HoldingPoller, "poller", polled),
+    calls: u32 = 0,
+
+    fn polled(holding: *HoldingPoller) core.WaitLimit {
+        holding.calls += 1;
+        hold_for(hold_ns);
+        return .none;
+    }
+};
+
+test "a poller that holds the loop past the threshold makes a stall that names it" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var fixture: ReactorFixture = undefined;
+    try fixture.init(stall_turn_ns);
+    defer fixture.reactor.deinit();
+    var holding: HoldingPoller = .{};
+    try fixture.reactor.add_poller(&holding.poller);
+    defer fixture.reactor.remove_poller(&holding.poller);
+    var events: [4]Event = undefined;
+    _ = try fixture.reactor.tick(&events, 0);
+    // The next tick's first clock stamp ends the turn of the first poller call. The heartbeat
+    // names a turn of one poller by `poller_name`, which `add_poller` stored (decision 33).
+    _ = try fixture.reactor.tick(&events, 0);
+    try testing.expectEqual(@as(u32, 2), holding.calls);
+    const last = fixture.reactor.statistics().last_stall;
+    try testing.expectEqual(@as(u32, 1), last.callbacks);
+    try testing.expect(last.span_ns >= hold_ns);
+    try testing.expectEqualStrings(@typeName(HoldingPoller) ++ ".poller", std.mem.span(last.name.?));
 }
 
 test "program code that holds the loop between ticks makes a stall of no callback" {

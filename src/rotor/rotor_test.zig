@@ -4,6 +4,7 @@
 const builtin = @import("builtin");
 const std = @import("std");
 const core = @import("core");
+const reactor = @import("reactor");
 const uring = @import("uring");
 const kqueue = @import("kqueue");
 const rotor = @import("rotor.zig");
@@ -29,25 +30,44 @@ const linux = builtin.os.tag == .linux;
 
 const testing = std.testing;
 
+/// Names each function that `declarations` lists of `T`, so the compiler analyses it, and skips each
+/// name that `refused` holds: a declaration that fails to compile when named.
+fn name_each_function(
+    comptime T: type,
+    comptime declarations: []const std.builtin.Type.Declaration,
+    comptime refused: fn (comptime name: []const u8) bool,
+) void {
+    inline for (declarations) |declaration| {
+        if (comptime refused(declaration.name)) continue;
+        const value = @field(T, declaration.name);
+        if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
+    }
+}
+
+/// No declaration is refused.
+fn none_refused(comptime _: []const u8) bool {
+    return false;
+}
+
+/// A reactor's `wait_until` fails to compile when named (decision 33), as the view's refused calls
+/// do.
+fn reactor_refused(comptime name: []const u8) bool {
+    return std.mem.eql(u8, name, "wait_until");
+}
+
 test "every public function compiles for this host, not only the ones something calls" {
     // Zig analyses a function only when something names it. `register_descriptors` and
     // `register_buffers` did not compile for Linux until 2026-09-22, and no gate said so, because
     // nothing on Linux called them. Naming every function of every public type here closes that.
     @setEvalBranchQuota(10_000);
-    inline for (.{ Loop, HostReactor, Registry, Remote, sync, Heartbeat.Watch }) |T| {
-        inline for (@typeInfo(T).@"struct".decls) |declaration| {
-            const value = @field(T, declaration.name);
-            if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
-        }
+    inline for (.{ Loop, Registry, Remote, sync, Heartbeat.Watch }) |T| {
+        name_each_function(T, @typeInfo(T).@"struct".decls, none_refused);
     }
+    name_each_function(HostReactor, @typeInfo(HostReactor).@"struct".decls, reactor_refused);
     // The view's refused calls are declarations that fail to compile when named, so the walk skips
     // them; `zig build test-compile-fail` names each one.
     inline for (.{ SharedLoop, HostReactor.SharedLoop }) |View| {
-        inline for (@typeInfo(View).@"opaque".decls) |declaration| {
-            if (comptime core.shared_loop.is_refused(declaration.name)) continue;
-            const value = @field(View, declaration.name);
-            if (@typeInfo(@TypeOf(value)) == .@"fn") _ = &value;
-        }
+        name_each_function(View, @typeInfo(View).@"opaque".decls, reactor.shared.is_refused);
     }
     _ = &Heartbeat.watch;
     _ = &backend;
@@ -124,63 +144,4 @@ test "a socket from sync suits the backend: it does not block exactly when epoll
         const status: os.O = @bitCast(@as(u32, @intCast(flags)));
         try testing.expectEqual(backend() == .epoll, status.NONBLOCK);
     }
-}
-
-/// What the test of the host's reactor counts: one record, one poller and one task.
-const Counts = struct {
-    completion: rotor.Completion = .init(Counts, "completion", completed),
-    poller: rotor.Poller = .init(Counts, "poller", polled),
-    task: rotor.Task = .init(Counts, "task", ran),
-    completions: u32 = 0,
-    polls: u32 = 0,
-    runs: u32 = 0,
-
-    fn completed(counts: *Counts, _: rotor.Event) void {
-        counts.completions += 1;
-    }
-
-    fn polled(counts: *Counts) rotor.WaitLimit {
-        counts.polls += 1;
-        return .none;
-    }
-
-    fn ran(counts: *Counts) void {
-        counts.runs += 1;
-    }
-};
-
-const reactor_options: HostReactor.Options = .{ .loop = .{ .operations = 4 } };
-
-test "a reactor built through the public module runs a record, a poller and a task, and drains" {
-    if (!supported) return error.SkipZigTest;
-    var memory: [HostReactor.memory_bytes(&reactor_options)]u8 align(rotor.memory_alignment) = undefined;
-    var reactor: HostReactor = undefined;
-    try reactor.init(&memory, &reactor_options);
-    defer reactor.deinit();
-    var counts: Counts = .{};
-    var events: [4]rotor.Event = undefined;
-    // A library holds the reactor's view, whose address is the reactor's.
-    const shared = reactor.shared();
-    try testing.expectEqual(@intFromPtr(&reactor), @intFromPtr(shared));
-    try shared.add_poller(&counts.poller);
-    try shared.schedule_in(.default, &counts.task);
-    try testing.expectEqual(1, reactor.tasks_queued());
-    try testing.expectEqual(0, reactor.in_flight());
-    const timer = rotor.Operation.timer(0, rotor.constants.ns_per_ms, 0).completion(&counts.completion);
-    try testing.expectEqual(1, shared.submit(&.{timer}, &.{}));
-    try testing.expectEqual(1, reactor.in_flight());
-    var round: u32 = 0;
-    while (counts.completions == 0 and round < 100) : (round += 1) {
-        try testing.expectEqual(0, try reactor.tick(&events, 10 * rotor.constants.ns_per_ms));
-    }
-    try testing.expectEqual(1, counts.completions);
-    try testing.expectEqual(1, counts.runs);
-    try testing.expect(counts.polls >= 1);
-    shared.remove_poller(&counts.poller);
-    try reactor.drain(&events);
-    reactor.assert_empty();
-    try testing.expectEqual(0, reactor.in_flight());
-    try testing.expectEqual(backend() == .uring, reactor.wait_descriptor() == null);
-    try testing.expect(reactor.statistics().sample_mask >= 1);
-    _ = reactor.heartbeat();
 }

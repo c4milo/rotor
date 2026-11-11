@@ -14,7 +14,7 @@ const tables_module = @import("tables.zig");
 const Event = event_module.Event;
 const Slot = slot_module.Slot;
 const Tables = tables_module.Tables;
-const WaitLimit = @import("../dispatch/dispatch.zig").WaitLimit;
+const WaitLimit = @import("../core.zig").WaitLimit;
 
 /// Arms the deadline of a slot the backend has just handed to the kernel, or the delay of a timer.
 /// A slot being resubmitted keeps the deadline it has.
@@ -42,24 +42,22 @@ fn start_ns(tables: *const Tables, slot: *const Slot) u64 {
 }
 
 /// How long a tick may block: not at all while queued work waits for the next flush, and never
-/// past the nearest deadline, a timer's or a poller's limit (decision 29). Null means do not
-/// block. A limit at or before this tick's stamp gives no wait, so the next `begin` calls the
-/// poller again, and the poller sees its deadline due.
+/// past the nearest deadline, a timer's or the stored limit (decisions 29 and 33). Null means do
+/// not block. A limit at or before this tick's stamp gives no wait, so a reactor's next tick calls
+/// its pollers again, and the poller sees its deadline due. A drain that handed a call to the
+/// reactor's hook keeps the tick from blocking itself (`Inbox.handed`), so this reads no task.
 pub fn wait_bound(tables: *const Tables, wait_ns: u64) ?u64 {
     assert(wait_ns <= constants.wait_ns_max);
     if (wait_ns == 0) return null;
     const lists = tables.finished.count + tables.fired.count;
     if (tables.pending.count != 0 or lists != 0) return null;
-    // A drain of this tick queued the task of a call, which the tick's `end` runs (decision 32).
-    // Only the drain queues a task inside a tick, so only a tick that would block reads this.
-    if (tables.dispatch.tasks.count != 0 or tables.dispatch.groups_ready != 0) return null;
     const earliest = earliest_limit(tables);
     if (earliest == @intFromEnum(WaitLimit.none)) return wait_ns;
     if (earliest <= tables.now_ns) return null;
     return @min(wait_ns, earliest - tables.now_ns);
 }
 
-/// The least of the nearest timer and the pollers' limit, on the loop's clock, or null when neither
+/// The least of the nearest timer and the stored limit, on the loop's clock, or null when neither
 /// exists. A deadline inside a spin's window ends the spin before it starts, so the tick sleeps
 /// until the deadline and does not poll for it (decision 13, point 2; decision 29).
 pub fn earliest_deadline_ns(tables: *const Tables) ?u64 {
@@ -68,20 +66,19 @@ pub fn earliest_deadline_ns(tables: *const Tables) ?u64 {
     return earliest;
 }
 
-/// The least of the nearest timer and the pollers' limit, on the loop's clock: `maxInt(u64)`, the
+/// The least of the nearest timer and the stored limit, on the loop's clock: `maxInt(u64)`, the
 /// value of `.none`, when neither exists.
 fn earliest_limit(tables: *const Tables) u64 {
     const timer = tables.timers.earliest_ns() orelse @intFromEnum(WaitLimit.none);
-    return @min(timer, @intFromEnum(tables.dispatch.until_ns));
+    return @min(timer, @intFromEnum(tables.stored_limit));
 }
 
 /// Core's part of `Loop.wait_limit`, a host's last call before it sleeps (decision 29). `.now`
-/// while a task is queued, operations wait to be submitted, results wait to be handed over, or
-/// the least of the nearest timer and the pollers' limit is at or before `now_ns`. Otherwise `.at`
-/// of that least value, or `.none` when neither exists. It reads no clock and changes nothing.
-/// Halts inside a tick. The backend adds its mailboxes.
+/// while operations wait to be submitted, results wait to be handed over, or the least of the
+/// nearest timer and the stored limit is at or before `now_ns`. Otherwise `.at` of that least
+/// value, or `.none` when neither exists. It reads no clock and changes nothing. The backend adds
+/// its mailboxes, and a reactor its tasks.
 pub fn wait_limit(tables: *const Tables) WaitLimit {
-    if (tables.dispatch.limit_between_ticks() == .now) return .now;
     const lists = tables.finished.count + tables.fired.count;
     if (tables.pending.count != 0 or lists != 0) return .now;
     const earliest = earliest_limit(tables);
@@ -185,7 +182,6 @@ pub fn rearm(tables: *Tables, index: u32, slot: *Slot) void {
 }
 
 const testing = std.testing;
-const Completion = @import("../dispatch/dispatch.zig").Completion;
 const Handle = @import("../handle.zig").Handle;
 const Heartbeat = @import("../stall.zig").Heartbeat;
 const Operation = @import("../operation.zig").Operation;
@@ -203,23 +199,25 @@ const TestTables = struct {
     entries: [test_slots]TimerHeap.Entry,
     starts: [test_slots]u64,
     heartbeat: Heartbeat,
-    groups: @import("../scheduling/scheduling.zig").Groups,
     tables: Tables,
 
     fn init(fixture: *TestTables) void {
         const tables = &fixture.tables;
-        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, &fixture.groups, .{});
+        tables.init(&fixture.slots, &fixture.entries, &fixture.starts, &fixture.heartbeat, .{});
     }
 };
 
-/// A record that no tick calls here: the drain only marks the events of its operations.
-fn ignore(completion: *Completion, event: Event) void {
-    _ = completion;
-    _ = event;
-}
+/// The user data of a reactor's record, which no tick here calls: the core copies the bit into
+/// each event of the operation, and reads neither (decision 33, open question 5).
+const record_user_data = 0x1000;
 
-/// The static entry of a record written by hand (decision 28).
-const ignore_call: Completion.Call = .{ .name = "ignore", .function = &ignore };
+/// `operation` with the bit and the user data that a reactor's `Completion.mark` writes.
+fn marked(operation: Operation) Operation {
+    var named = operation;
+    named.user_data = record_user_data;
+    named.dispatched = true;
+    return named;
+}
 
 /// What a readiness backend's cancel does to an operation whose deadline passed: it ends it.
 fn end_now(tables: *Tables, index: u32, slot: *Slot) void {
@@ -232,10 +230,9 @@ test "a timer the loop fires hands its final event and its repeats to the record
     var fixture: TestTables = undefined;
     fixture.init();
     const tables = &fixture.tables;
-    var record: Completion = .{ .call = &ignore_call };
     const timers = [_]Operation{
-        Operation.timer(0, 1, 0).completion(&record),
-        Operation.timer(0, 1, 5).completion(&record),
+        marked(Operation.timer(0, 1, 0)),
+        marked(Operation.timer(0, 1, 5)),
         Operation.timer(plain_user_data, 1, 0),
     };
     try testing.expectEqual(@as(u32, timers.len), tables.submit(&timers, &.{}));
@@ -257,13 +254,12 @@ test "a deadline and a cancel in the queue end the operation with an event for i
     var fixture: TestTables = undefined;
     fixture.init();
     const tables = &fixture.tables;
-    var record: Completion = .{ .call = &ignore_call };
     var bytes: [8]u8 = @splat(0);
     var timed = Operation.receive(0, 3, &bytes);
     timed.timeout_ns = 1;
     const queued = Operation.receive(0, 4, &bytes);
     var handles: [2]Handle = undefined;
-    _ = tables.submit(&.{ timed.completion(&record), queued.completion(&record) }, &handles);
+    _ = tables.submit(&.{ marked(timed), marked(queued) }, &handles);
     // The first goes to the kernel and arms its deadline. The second is cancelled in the queue.
     const index = tables.next_pending().?;
     tables.take_pending(index);

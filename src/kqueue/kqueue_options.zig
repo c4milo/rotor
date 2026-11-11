@@ -24,10 +24,6 @@ pub const Options = struct {
     /// `statistics()`, and null counts none (decision 28). A host that sleeps in its own wait
     /// sets null, because its sleep reads as one long turn (decision 23).
     stall_turn_ns: ?u64 = core.constants.stall_turn_ns_default,
-    /// The program's named scheduling groups, which `init` reserves as ids 1 to n at their
-    /// declared shares (decision 30). Empty by default. The public module sets it from the
-    /// program's root file, so every loop of a program holds the same names.
-    named_groups: core.scheduling.NamedTable = .empty,
     /// This loop's id among the loops of `registry`.
     id: core.LoopId = 0,
     registry: ?*Registry = null,

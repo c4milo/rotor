@@ -46,12 +46,20 @@ pub fn add(
     // Each scenario file and the module it proves, beside `core`, which all of them import. The
     // kqueue scenarios build only for a Mac: that backend names libc's kevent types, which Linux
     // does not have, where the uring and epoll backends compile on a Mac and refuse at init. The
-    // public module's scenarios run the host's backend.
-    const files = [_]struct { name: []const u8, backend: ?[]const u8, darwin_only: bool = false }{
+    // public module's scenarios run the host's backend. The reactor's scenarios run its state over
+    // a loop of the port alone (decision 33). A backend's owner scenarios check the reactor's own
+    // calls over that backend's `Loop` too, so they take the `reactor` import.
+    const files = [_]struct {
+        name: []const u8,
+        backend: ?[]const u8,
+        darwin_only: bool = false,
+        reactor: bool = false,
+    }{
         .{ .name = "core_scenarios", .backend = null },
+        .{ .name = "reactor_scenarios", .backend = "reactor" },
         .{ .name = "uring_scenarios", .backend = "uring" },
-        .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true },
-        .{ .name = "epoll_scenarios", .backend = "epoll" },
+        .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true, .reactor = true },
+        .{ .name = "epoll_scenarios", .backend = "epoll", .reactor = true },
         .{ .name = "rotor_scenarios", .backend = "rotor" },
     };
     const darwin = target.result.os.tag.isDarwin();
@@ -62,6 +70,7 @@ pub fn add(
             if (file.backend) |name| {
                 executable.root_module.addImport(name, module_named(graph, name));
             }
+            if (file.reactor) executable.root_module.addImport("reactor", graph.reactor);
             step.dependOn(&run_check(b, check, executable, &.{}).step);
         }
     }
@@ -92,6 +101,7 @@ fn module_named(graph: modules.Modules, name: []const u8) *std.Build.Module {
     if (std.mem.eql(u8, name, "uring")) return graph.uring;
     if (std.mem.eql(u8, name, "kqueue")) return graph.kqueue;
     if (std.mem.eql(u8, name, "rotor")) return graph.rotor;
+    if (std.mem.eql(u8, name, "reactor")) return graph.reactor;
     std.debug.assert(std.mem.eql(u8, name, "epoll"));
     return graph.epoll;
 }

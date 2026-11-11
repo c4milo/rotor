@@ -1,6 +1,8 @@
-//! Tests of `Reactor(Loop)` at step 2 of decision 33, over a twin of decision 10 that notes each
-//! call it takes. Each call of the reactor must reach the loop's call of the same name, with its
-//! arguments, and return what that call returns. Split from `reactor.zig` for the 500-line limit.
+//! Tests of `Reactor(Loop)` over a twin of decision 10 that notes each call it takes (decision 33).
+//! A forwarder must reach the loop's call of the same name, with its arguments, and return what
+//! that call returns. A call of the reactor's own must run on the reactor's state, and reach the
+//! loop only through the core's surface and the port. Split from `reactor.zig` for the 500-line
+//! limit.
 const std = @import("std");
 const core = @import("core");
 const reactor_module = @import("reactor.zig");
@@ -8,35 +10,47 @@ const check_module = @import("reactor_check.zig");
 
 const testing = std.testing;
 
-const CallLink = core.call.CallLink;
-const CallStation = core.call.CallStation;
 const Event = core.Event;
 const Handle = core.Handle;
 const Operation = core.Operation;
+const Poller = reactor_module.Poller;
+const Task = reactor_module.Task;
 const group_alignment = core.buffer_group.group_alignment;
 
-/// A line that takes each call of the reactor and stores nothing, as a twin for replay may.
+/// A line that keeps the name of the first poller, and counts the calls it takes.
 const Line = struct {
-    pub fn enter(_: *Line, _: *const [:0]const u8) void {}
+    poller_name: ?*const [:0]const u8 = null,
+    entered: u32 = 0,
+
+    pub fn enter(line: *Line, _: *const [:0]const u8) void {
+        line.entered += 1;
+    }
     pub fn leave(_: *Line, _: u64) void {}
     pub fn leave_polling(_: *Line, _: u32) void {}
     pub fn leave_tasks(_: *Line, _: u64) void {}
     pub fn leave_group_tasks(_: *Line, _: u64, _: u8) void {}
+    pub fn name_poller(line: *Line, name: ?*const [:0]const u8) void {
+        line.poller_name = name;
+    }
 };
 
 /// A twin with each name of the core's surface and of the port. A call that may change the loop
 /// stores its name in `last` and one of its arguments in `argument`. A call that only reads the
 /// loop returns a value made from `argument`, so a test sees that the call ran.
-const Twin = struct {
+pub const Twin = struct {
     last: []const u8 = "",
     argument: u64 = 0,
     line: Line = .{},
     word: u32 = 0,
     limit: core.WaitLimit = .none,
     bytes: [8]u8 = @splat(0),
-    stations: [1]CallStation = @splat(CallStation.unused),
+    /// The hook that `attach_reserved` stored.
+    hook: core.reserved.Hook = .none,
+    /// The ticks of the backend that ran, and the kept errors taken.
+    backend_ticks: u32 = 0,
+    kept_taken: u32 = 0,
 
-    pub const Options = struct { operations: u32 };
+    pub const Options = struct { operations: u32, id: core.LoopId = 0 };
 
     /// The error sets of the twin's own, which the reactor returns as they are.
     pub const InitError = error{InitRefused};
@@ -73,48 +87,7 @@ const Twin = struct {
         if (target == 0) return error.MailboxFull;
     }
     pub fn tick(twin: *Twin, events: []Event, wait_ns: u64) TickError!u32 {
-        twin.note("tick", wait_ns);
-        if (wait_ns == 0) return error.TickRefused;
-        return @intCast(events.len);
-    }
-    pub fn add_poller(twin: *Twin, _: *core.Poller) error{PollersFull}!void {
-        twin.note("add_poller", 0);
-    }
-    pub fn remove_poller(twin: *Twin, _: *core.Poller) void {
-        twin.note("remove_poller", 0);
-    }
-    pub fn schedule(twin: *Twin, _: *core.Task) error{TasksFull}!void {
-        twin.note("schedule", 0);
-    }
-    pub fn is_scheduled(twin: *const Twin, _: *const core.Task) bool {
-        return twin.argument == 7;
-    }
-    pub fn tasks_queued(twin: *const Twin) u32 {
-        return @intCast(twin.argument + 2);
-    }
-    pub fn task_budget_left(twin: *const Twin) u32 {
-        return @intCast(twin.argument + 3);
-    }
-    pub fn discard_tasks(twin: *Twin) u32 {
-        twin.note("discard_tasks", 0);
-        return 4;
-    }
-    pub fn schedule_in(twin: *Twin, group: core.SchedulingGroup, _: *core.Task) error{TasksFull}!void {
-        twin.note("schedule_in", @intFromEnum(group));
-    }
-    pub fn charge_task(twin: *Twin, units: u16) void {
-        twin.note("charge_task", units);
-    }
-    pub fn reserve_scheduling_group(twin: *Twin, shares: u16) error{SchedulingGroupsFull}!core.SchedulingGroup {
-        twin.note("reserve_scheduling_group", shares);
-        return @enumFromInt(5);
-    }
-    pub fn set_scheduling_group_shares(twin: *Twin, group: core.SchedulingGroup, shares: u16) void {
-        twin.note("set_scheduling_group_shares", @as(u64, @intFromEnum(group)) * 1000 + shares);
-    }
-    pub fn shared(twin: *Twin) *Twin {
-        twin.note("shared", 0);
-        return twin;
+        return core.tick_error.tick(twin, events, wait_ns);
     }
     pub fn heartbeat(twin: *Twin) *Line {
         twin.note("heartbeat", 0);
@@ -137,7 +110,6 @@ const Twin = struct {
     }
     pub fn drain(twin: *Twin, scratch: []Event) error{StillInFlight}!void {
         twin.note("drain", scratch.len);
-        if (scratch.len == 0) return error.StillInFlight;
     }
     pub fn assert_empty(twin: *const Twin) void {
         std.debug.assert(twin.argument != 9);
@@ -175,25 +147,20 @@ const Twin = struct {
         twin.note("wait_limit", 0);
         return twin.limit;
     }
-    pub fn call(twin: *Twin, link: *CallLink) error{LoopNotFound}!void {
-        twin.note("call", link.target);
-    }
-    pub fn answer(twin: *Twin, link: *CallLink) void {
-        twin.note("answer", link.target);
-    }
-    pub fn serve(twin: *Twin, stations: *[core.constants.loops_max]CallStation) *CallStation {
-        twin.note("serve", @intFromEnum(stations[0].state));
-        return &twin.stations[0];
-    }
-    pub fn stop_serving(twin: *Twin, stations: *[core.constants.loops_max]CallStation) void {
-        twin.note("stop_serving", @intFromEnum(stations[0].state));
+    pub fn wait_until(twin: *Twin, limit: core.WaitLimit) void {
+        twin.limit = limit;
     }
 
-    // The port of decision 33. The reactor of step 2 calls none of them.
-    pub fn tick_backend(twin: *Twin, events: []Event, wait_ns: u64) TickError!u32 {
-        return twin.tick(events, wait_ns);
+    // The port of decision 33.
+    pub fn tick_backend(twin: *Twin, _: []Event, wait_ns: u64) TickError!u32 {
+        twin.note("tick", wait_ns);
+        twin.backend_ticks += 1;
+        if (wait_ns == 1) return error.TickRefused;
+        return 0;
     }
-    pub fn take_kept_error(_: *Twin) TickError!void {}
+    pub fn take_kept_error(twin: *Twin) TickError!void {
+        twin.kept_taken += 1;
+    }
     pub fn outstanding(twin: *Twin) *u32 {
         return &twin.word;
     }
@@ -203,13 +170,31 @@ const Twin = struct {
     pub fn heartbeat_line(twin: *Twin) *Line {
         return &twin.line;
     }
-    pub fn push_reserved(_: *Twin, _: core.LoopId, _: core.Message) error{ LoopNotFound, CallsFull, MailboxFull }!*u32 {
+    pub fn attach_reserved(twin: *Twin, context: *anyopaque, take: *const core.reserved.Take) void {
+        std.debug.assert(twin.hook.take == core.reserved.Hook.none.take);
+        twin.hook = .{ .take = take, .context = context };
+    }
+    pub fn push_reserved(_: *Twin, _: core.LoopId, _: core.Message) core.reserved.PushError!*u32 {
         return error.LoopNotFound;
     }
     pub fn assert_owner(_: *const Twin) void {}
 };
 
 const Reactor = reactor_module.Reactor(Twin);
+
+/// The memory of a reactor over a twin of 2 operations: the twin's 16 B, then the groups.
+const test_options: Reactor.Options = .{ .loop = .{ .operations = 2 } };
+const test_bytes = Reactor.memory_bytes(&test_options);
+
+/// A reactor over memory of its own, which `init` started.
+const Fixture = struct {
+    memory: [test_bytes]u8 align(core.layout.memory_alignment) = undefined,
+    reactor: Reactor = undefined,
+
+    fn init(fixture: *Fixture) !void {
+        try fixture.reactor.init(&fixture.memory, &test_options);
+    }
+};
 
 /// Fails unless the twin's last call that may change it was `name`, with `argument`.
 fn expect_last(reactor: *const Reactor, name: []const u8, argument: u64) !void {
@@ -221,137 +206,192 @@ test "a twin with each name passes the check" {
     try testing.expectEqual(null, comptime check_module.message(Twin));
 }
 
-test "the reactor takes the loop's memory and options, and returns the loop's errors" {
-    var reactor: Reactor = undefined;
-    try testing.expectEqual(24, Reactor.memory_bytes(&.{ .loop = .{ .operations = 3 } }));
-    var memory: [16]u8 align(core.layout.memory_alignment) = @splat(0);
-    try reactor.init(&memory, &.{ .loop = .{ .operations = 3 } });
-    try expect_last(&reactor, "init", 16 + 3);
-    try testing.expectError(error.InitRefused, reactor.init(&memory, &.{ .loop = .{ .operations = 0 } }));
+test "init carves the groups after the loop's memory, starts the loop, and attaches the hook" {
+    try testing.expectEqual(16 + @sizeOf(reactor_module.Groups), test_bytes);
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    try expect_last(reactor, "init", 16 + 2);
+    try testing.expectEqual(@intFromPtr(&fixture.memory) + 16, @intFromPtr(reactor.dispatch.groups));
+    try testing.expectEqual(@as(*anyopaque, reactor), reactor.loop.hook.context);
+    try testing.expect(reactor.loop.hook.take != core.reserved.Hook.none.take);
     reactor.deinit();
-    try expect_last(&reactor, "deinit", 0);
+    try expect_last(reactor, "deinit", 0);
+    var refused: Fixture = .{};
+    try testing.expectError(error.InitRefused, refused.reactor.init(&refused.memory, &.{ .loop = .{ .operations = 0 } }));
 }
 
-test "each call of the core's surface reaches the loop, with its arguments" {
-    var reactor: Reactor = .{ .loop = .{} };
-    var events: [3]Event = undefined;
-    var handles: [2]Handle = @splat(.none);
-    try testing.expectEqual(1, reactor.submit(&.{Operation.timer(0, 1, 0)}, &handles));
-    try expect_last(&reactor, "submit", 2);
+test "each forwarder of the core's surface reaches the loop, with its arguments" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
     reactor.cancel(.{ .index = 1, .generation = 4 });
-    try expect_last(&reactor, "cancel", 4);
+    try expect_last(reactor, "cancel", 4);
     try reactor.post(2, .{ .payload = 40, .tag = 0 });
-    try expect_last(&reactor, "post", 42);
+    try expect_last(reactor, "post", 42);
     try testing.expectError(error.MailboxFull, reactor.post(0, .{ .payload = 0, .tag = 0 }));
-    try testing.expectEqual(3, try reactor.tick(&events, 11));
-    try expect_last(&reactor, "tick", 11);
-    try testing.expectError(error.TickRefused, reactor.tick(&events, 0));
     reactor.cancel_all();
-    try expect_last(&reactor, "cancel_all", 0);
-    try reactor.drain(&events);
-    try expect_last(&reactor, "drain", 3);
-    try testing.expectError(error.StillInFlight, reactor.drain(events[0..0]));
+    try expect_last(reactor, "cancel_all", 0);
     try testing.expectEqual(core.WaitLimit.none, reactor.wait_limit());
-    try expect_last(&reactor, "wait_limit", 0);
+    try expect_last(reactor, "wait_limit", 0);
     reactor.loop.argument = 100;
     try testing.expectEqual(101, reactor.dropped_wakes());
     try testing.expectEqual(105, reactor.in_flight());
     try testing.expectEqual(106, reactor.now_ns());
     try testing.expectEqual(107, reactor.wait_descriptor());
     try testing.expectEqual(&reactor.loop.argument, reactor.statistics());
-    reactor.assert_empty();
+    reactor.loop.argument = 0;
     try testing.expectEqual(&reactor.loop.line, reactor.heartbeat());
-    try expect_last(&reactor, "heartbeat", 0);
-}
-
-test "each call of the buffers reaches the loop, with its arguments" {
-    var reactor: Reactor = .{ .loop = .{} };
+    try expect_last(reactor, "heartbeat", 0);
     var block: [4]u8 = @splat(0);
     try reactor.register_buffers(&.{&block});
-    try expect_last(&reactor, "register_buffers", 1);
+    try expect_last(reactor, "register_buffers", 1);
     try reactor.register_descriptors(&.{ 1, 2 });
-    try expect_last(&reactor, "register_descriptors", 2);
+    try expect_last(reactor, "register_descriptors", 2);
     const group = try reactor.reserve_buffer_group();
-    try testing.expectEqual(3, @intFromEnum(group));
-    try expect_last(&reactor, "reserve_buffer_group", 0);
     var memory: [64]u8 align(group_alignment) = @splat(0);
     try reactor.provide_buffers(group, &memory, 2, 32);
-    try expect_last(&reactor, "provide_buffers", 3 + 64 + 2 + 32);
+    try expect_last(reactor, "provide_buffers", 3 + 64 + 2 + 32);
     try reactor.provide_datagram_buffers(group, &memory, 2, 32, .{ .name_reserve = 100 });
-    try expect_last(&reactor, "provide_datagram_buffers", 3 + 64 + 2 + 32 + 100);
+    try expect_last(reactor, "provide_datagram_buffers", 3 + 64 + 2 + 32 + 100);
     try testing.expectEqual(3, reactor.datagram(group, undefined).bytes.len);
     try testing.expectEqual(2, reactor.provided_buffer(group, 5).len);
     reactor.give_back_buffer(group, 6);
-    try expect_last(&reactor, "give_back_buffer", 3006);
+    try expect_last(reactor, "give_back_buffer", 3006);
     reactor.release_buffers(group);
-    try expect_last(&reactor, "release_buffers", 3);
+    try expect_last(reactor, "release_buffers", 3);
+    reactor.deinit();
 }
 
-fn ran(_: *core.Task) void {}
+/// A library's records: a record, a poller and a task.
+const Library = struct {
+    completion: reactor_module.Completion = .init(Library, "completion", completed),
+    poller: Poller = .init(Library, "poller", polled),
+    task: Task = .init(Library, "task", ran),
+    completions: u32 = 0,
+    polls: u32 = 0,
+    runs: u32 = 0,
 
-const ran_call: core.Task.Call = .{ .name = "ran", .function = ran };
+    fn completed(library: *Library, _: Event) void {
+        library.completions += 1;
+    }
 
-fn polled(_: *core.Poller) core.WaitLimit {
-    return .none;
+    fn polled(library: *Library) core.WaitLimit {
+        library.polls += 1;
+        return .at(500);
+    }
+
+    fn ran(library: *Library) void {
+        library.runs += 1;
+    }
+};
+
+test "submit counts the operations that name a record in the loop's word, and no other" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    var library: Library = .{};
+    var handles: [3]Handle = @splat(.none);
+    const batch = [_]Operation{
+        reactor_module.Completion.mark(&library.completion, Operation.timer(0, 1, 0)),
+        Operation.timer(0, 1, 0),
+        reactor_module.Completion.mark(&library.completion, Operation.timer(0, 1, 0)),
+    };
+    try testing.expectEqual(3, reactor.submit(&batch, &handles));
+    try expect_last(reactor, "submit", 3);
+    try testing.expectEqual(2, reactor.loop.word);
+    reactor.loop.word = 0;
+    reactor.deinit();
 }
 
-const polled_call: core.Poller.Call = .{ .name = "polled", .function = polled };
-
-test "each call of the pollers, the tasks and the groups reaches the loop, with its arguments" {
-    var reactor: Reactor = .{ .loop = .{} };
-    var task: core.Task = .{ .call = &ran_call };
-    var poller: core.Poller = .{ .call = &polled_call };
-    try reactor.add_poller(&poller);
-    try expect_last(&reactor, "add_poller", 0);
-    reactor.remove_poller(&poller);
-    try expect_last(&reactor, "remove_poller", 0);
-    try reactor.schedule(&task);
-    try expect_last(&reactor, "schedule", 0);
-    try reactor.schedule_in(@enumFromInt(2), &task);
-    try expect_last(&reactor, "schedule_in", 2);
-    reactor.charge_task(9);
-    try expect_last(&reactor, "charge_task", 9);
-    try testing.expectEqual(5, @intFromEnum(try reactor.reserve_scheduling_group(300)));
-    try expect_last(&reactor, "reserve_scheduling_group", 300);
-    reactor.set_scheduling_group_shares(@enumFromInt(5), 40);
-    try expect_last(&reactor, "set_scheduling_group_shares", 5040);
-    try testing.expectEqual(4, reactor.discard_tasks());
-    try expect_last(&reactor, "discard_tasks", 0);
-    reactor.loop.argument = 7;
-    try testing.expect(reactor.is_scheduled(&task));
-    try testing.expectEqual(9, reactor.tasks_queued());
-    try testing.expectEqual(10, reactor.task_budget_left());
+test "a poller names itself on the line, bounds the wait, and its removal clears both" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    var library: Library = .{};
+    var events: [2]Event = undefined;
+    try reactor.add_poller(&library.poller);
+    try testing.expectEqual(&library.poller.call.name, reactor.loop.line.poller_name.?);
+    // A tick with a poller is dispatched: it calls the poller, which stores its limit.
+    try testing.expectEqual(0, try reactor.tick(&events, 9));
+    try testing.expectEqual(1, library.polls);
+    try testing.expectEqual(core.WaitLimit.at(500), reactor.loop.limit);
+    try testing.expectEqual(1, reactor.loop.kept_taken);
+    reactor.remove_poller(&library.poller);
+    try testing.expectEqual(@as(?*const [:0]const u8, null), reactor.loop.line.poller_name);
+    try testing.expectEqual(core.WaitLimit.none, reactor.loop.limit);
+    reactor.deinit();
 }
 
-test "the view is the reactor's, and the loop's shared makes the owner check" {
-    var reactor: Reactor = .{ .loop = .{} };
+test "a tick with no poller and nothing outstanding runs the backend alone" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    var events: [2]Event = undefined;
+    try testing.expectEqual(0, try reactor.tick(&events, 11));
+    try expect_last(reactor, "tick", 11);
+    try testing.expectEqual(0, reactor.loop.kept_taken);
+    try testing.expectError(error.TickRefused, reactor.tick(&events, 1));
+    // A task queued takes the next tick off the fast path, and its `end` runs the task.
+    var library: Library = .{};
+    try reactor.schedule(&library.task);
+    try testing.expectEqual(1, reactor.loop.word);
+    try testing.expectEqual(1, reactor.tasks_queued());
+    try testing.expectEqual(core.WaitLimit.now, reactor.wait_limit());
+    try testing.expectEqual(0, try reactor.tick(&events, 11));
+    // A task queued gives the backend no wait.
+    try expect_last(reactor, "tick", 0);
+    try testing.expectEqual(1, library.runs);
+    try testing.expectEqual(0, reactor.loop.word);
+    try testing.expectEqual(1, reactor.loop.kept_taken);
+    reactor.deinit();
+}
+
+test "a wake through the hook stores now only while a poller is added" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    const hook = reactor.loop.hook;
+    hook.take(hook.context, 1, core.Message.wake);
+    try testing.expectEqual(core.WaitLimit.none, reactor.loop.limit);
+    var library: Library = .{};
+    try reactor.add_poller(&library.poller);
+    hook.take(hook.context, 1, core.Message.wake);
+    try testing.expectEqual(core.WaitLimit.now, reactor.loop.limit);
+    reactor.remove_poller(&library.poller);
+    reactor.deinit();
+}
+
+test "the view is the reactor's, and declares the calls of a library" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
     const shared = reactor.shared();
-    try expect_last(&reactor, "shared", 0);
-    try testing.expectEqual(@intFromPtr(&reactor), @intFromPtr(shared));
-    comptime core.shared_loop.check(Reactor.SharedLoop);
+    try testing.expectEqual(@intFromPtr(reactor), @intFromPtr(shared));
+    comptime reactor_module.shared.check(Reactor.SharedLoop);
     // A library's call on the view reaches the reactor, and through it the loop.
     try testing.expectEqual(1, shared.submit(&.{Operation.timer(0, 1, 0)}, &.{}));
-    try expect_last(&reactor, "submit", 0);
+    try expect_last(reactor, "submit", 0);
+    try testing.expect(!@hasDecl(Reactor.SharedLoop, "wait_limit"));
+    try testing.expect(@hasDecl(Reactor.SharedLoop, "wait_until"));
+    reactor.deinit();
 }
 
-test "each cross-core call reaches the loop, with its link and its stations" {
-    var reactor: Reactor = .{ .loop = .{} };
-    var stations: [core.constants.loops_max]CallStation = @splat(CallStation.unused);
-    stations[0].state = .stopped;
-    const station = reactor.serve(&stations);
-    try testing.expectEqual(&reactor.loop.stations[0], station);
-    try expect_last(&reactor, "serve", @intFromEnum(CallStation.StationState.stopped));
-    reactor.stop_serving(&stations);
-    try expect_last(&reactor, "stop_serving", @intFromEnum(CallStation.StationState.stopped));
-    var link: CallLink = .idle(&ran_call);
-    link.target = 12;
-    try reactor.call(&link);
-    try expect_last(&reactor, "call", 12);
-    reactor.answer(&link);
-    try expect_last(&reactor, "answer", 12);
+test "a call to a loop that takes none is refused, and leaves the link idle" {
+    var fixture: Fixture = .{};
+    try fixture.init();
+    const reactor = &fixture.reactor;
+    var stations: [core.constants.loops_max]reactor_module.CallStation = @splat(reactor_module.CallStation.unused);
+    const library: Library = .{};
+    var link: reactor_module.CallLink = .idle(library.task.call);
+    link.prepare(&stations, library.task.call, 1, .{ .group = .default });
+    try testing.expectError(error.LoopNotFound, reactor.call(&link));
+    try testing.expect(!link.sent);
+    try testing.expectEqual(0, reactor.loop.word);
+    reactor.deinit();
 }
 
-test "the reactor holds its loop at its own address, and nothing else" {
-    try testing.expectEqual(@sizeOf(Twin), @sizeOf(Reactor));
-    try testing.expectEqual(0, @offsetOf(Reactor, "loop"));
+test "the reactor holds its loop and its state, and nothing else" {
+    try testing.expectEqual(2, @typeInfo(Reactor).@"struct".fields.len);
+    try testing.expectEqual(@sizeOf(Twin) + @sizeOf(reactor_module.Dispatch), @sizeOf(Reactor));
 }

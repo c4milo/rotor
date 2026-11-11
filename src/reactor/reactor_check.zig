@@ -19,18 +19,20 @@ const port_needs = [_]Need{
     .{ .name = "outstanding", .what = "a pointer to the word that takes a tick off the fast path" },
     .{ .name = "stored_limit", .what = "a pointer to the stored limit, which only the reactor writes" },
     .{ .name = "heartbeat_line", .what = "the line on which the reactor names each callback" },
+    .{ .name = "attach_reserved", .what = "the hook that the drain hands each wake, call and return" },
     .{ .name = "push_reserved", .what = "a call or a return into a ring's kept slots, then the wake" },
     .{ .name = "assert_owner", .what = "the owner check (class B)" },
 };
 
 /// The calls that the reactor makes on the line that `heartbeat_line` returns (decision 33,
-/// amendment of 2026-11-10). `name_poller` joins them at step 3.
+/// amendment of 2026-11-10). `name_poller` joined them at step 3, with the line's `poller_name`.
 const line_needs = [_]Need{
     .{ .name = "enter", .what = "before each callback" },
     .{ .name = "leave", .what = "after the records of a tick" },
     .{ .name = "leave_polling", .what = "after the pollers of a tick" },
     .{ .name = "leave_tasks", .what = "after a run of tasks" },
     .{ .name = "leave_group_tasks", .what = "after a run of the scheduling groups" },
+    .{ .name = "name_poller", .what = "at each add_poller and remove_poller" },
 };
 
 comptime {
@@ -123,9 +125,10 @@ const ShortLine = struct {
     pub fn leave() void {}
     pub fn leave_polling() void {}
     pub fn leave_group_tasks() void {}
+    pub fn name_poller() void {}
 };
 
-/// Five names of the port, over a line that lacks one call, and no name of the core's surface.
+/// Six names of the port, over a line that lacks one call, and no name of the core's surface.
 const Partial = struct {
     pub fn tick_backend() void {}
     pub fn take_kept_error() void {}
@@ -133,6 +136,7 @@ const Partial = struct {
     pub fn heartbeat_line() *ShortLine {
         unreachable;
     }
+    pub fn attach_reserved() void {}
     pub fn assert_owner() void {}
 };
 

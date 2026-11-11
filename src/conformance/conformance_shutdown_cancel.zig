@@ -5,6 +5,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const shutdown = @import("conformance_shutdown.zig");
@@ -54,10 +55,10 @@ test "cancel_all ends every record once, and the queued tasks still run once" {
     var records: [4]Record = @splat(.{});
     var bytes: [8]u8 = undefined;
     try harness.submit(&.{
-        Operation.timer(0, shutdown.never_ns, 0).completion(&records[0].completion),
-        Operation.timer(0, ms, period_ns).completion(&records[1].completion),
-        Operation.receive(0, pair[1], &bytes).completion(&records[2].completion),
-        Operation.accept_multishot(0, listener.descriptor).completion(&records[3].completion),
+        reactor_module.Completion.mark(&records[0].completion, Operation.timer(0, shutdown.never_ns, 0)),
+        reactor_module.Completion.mark(&records[1].completion, Operation.timer(0, ms, period_ns)),
+        reactor_module.Completion.mark(&records[2].completion, Operation.receive(0, pair[1], &bytes)),
+        reactor_module.Completion.mark(&records[3].completion, Operation.accept_multishot(0, listener.descriptor)),
         Operation.timer(plain_user_data, shutdown.never_ns, 0),
     }, &.{});
     try testing.expectEqual(@as(u32, 0), try shutdown.tick_until(&harness, &records[1], fired));
@@ -75,7 +76,7 @@ test "cancel_all ends every record once, and the queued tasks still run once" {
 /// A record whose first event cancels its own operation and the operation `other` names. It counts
 /// its events in `record`.
 const Canceller = struct {
-    completion: core.Completion = .init(Canceller, "completion", called),
+    completion: reactor_module.Completion = .init(Canceller, "completion", called),
     record: Record = .{},
     reactor: *conformance.Reactor,
     own: Handle = undefined,
@@ -109,8 +110,8 @@ test "a record that cancels its own operation and another record's operation end
     var bytes: [8]u8 = undefined;
     var handles: [2]Handle = undefined;
     try harness.submit(&.{
-        Operation.timer(0, ms, period_ns).completion(&canceller.completion),
-        Operation.receive(0, pair[1], &bytes).completion(&other.completion),
+        reactor_module.Completion.mark(&canceller.completion, Operation.timer(0, ms, period_ns)),
+        reactor_module.Completion.mark(&other.completion, Operation.receive(0, pair[1], &bytes)),
     }, &handles);
     canceller.own = handles[0];
     canceller.other = handles[1];
@@ -135,8 +136,8 @@ test "a cancel's final event and another record's more event in one batch each c
     var waiting: Record = .{};
     var handles: [2]Handle = undefined;
     try harness.submit(&.{
-        Operation.timer(0, period_ns, period_ns).completion(&repeating.completion),
-        Operation.timer(0, shutdown.never_ns, 0).completion(&waiting.completion),
+        reactor_module.Completion.mark(&repeating.completion, Operation.timer(0, period_ns, period_ns)),
+        reactor_module.Completion.mark(&waiting.completion, Operation.timer(0, shutdown.never_ns, 0)),
     }, &handles);
     _ = try shutdown.tick_until(&harness, &repeating, fired);
 
@@ -151,7 +152,7 @@ test "a cancel's final event and another record's more event in one batch each c
     try testing.expect(repeating.mores >= 2);
     try testing.expectEqual(@as(u32, 1), waiting.finals);
     // The more event kept its operation owed, and the final event ended the other one.
-    try testing.expectEqual(@as(u32, 1), harness.reactor.loop.tables.dispatch.callbacks_outstanding);
+    try testing.expectEqual(@as(u32, 1), harness.reactor.loop.tables.outstanding);
 
     harness.reactor.cancel(handles[0]);
     _ = try shutdown.tick_until(&harness, &repeating, Record.finished);

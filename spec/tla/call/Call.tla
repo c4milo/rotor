@@ -1,7 +1,7 @@
 -------------------------------- MODULE Call --------------------------------
 \* The cross-core call of decision 32, on two loops: C calls and T serves. The code is
-\* src/core/call/: `call` and `end_call` on C, `take_call`, `answer` and `take_return` in the
-\* drains, and the record's task, which runs the handler on T and `finish` on C.
+\* src/reactor/call/: `call` and `end_call` on C, `take_call`, `answer` and `take_return` in the
+\* hooks that the drains call, and the record's task, which runs the handler on T and `finish` on C.
 \*
 \* C reuses one record. The two rings, C to T and T to C, each hold `Cap` messages. A post sees
 \* `Cap - CallsMax` of them, and a return sees all of them. Each loop posts to the other at any

@@ -20,7 +20,7 @@ const constants = @import("constants.zig");
 const operation_module = @import("operation.zig");
 const slot_module = @import("slot.zig");
 
-const SchedulingGroup = @import("scheduling/scheduling.zig").SchedulingGroup;
+const SchedulingGroup = @import("core.zig").SchedulingGroup;
 const Tag = operation_module.Operation.Tag;
 const Slot = slot_module.Slot;
 

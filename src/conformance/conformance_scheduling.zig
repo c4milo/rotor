@@ -7,6 +7,7 @@
 const std = @import("std");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 const stall = @import("conformance_stall.zig");
@@ -29,13 +30,13 @@ const long_wait_ns = 2 * constants.ns_per_s;
 
 /// The tasks of each library that never stops: enough that a tick's 64 starts never run a group
 /// out of its snapshot, so the shares alone decide.
-const tasks_per_library = constants.tasks_per_tick_max;
+const tasks_per_library = reactor_module.constants.tasks_per_tick_max;
 
 /// A task of a library that schedules itself again in its group on every run.
 fn Forever(comptime cost: u16) type {
     return struct {
         const Self = @This();
-        task: core.Task = stall.task_cost(Self, "task", ran, cost),
+        task: reactor_module.Task = stall.task_cost(Self, "task", ran, cost),
         library: *Library,
 
         fn ran(forever: *Self) void {
@@ -100,7 +101,7 @@ test "two libraries at shares 100 and 300 are served 1 to 3 beside a receive and
     // largest cost. Here every task costs 1, so the ratio is 1 to 3 within one round.
     const expected_high = 3 * low.runs;
     const gap = if (high.runs > expected_high) high.runs - expected_high else expected_high - high.runs;
-    try testing.expect(gap < constants.task_charge_max);
+    try testing.expect(gap < reactor_module.constants.task_charge_max);
     try testing.expect(low.runs >= tasks_per_library / 4);
     var scratch: [8]Event = undefined;
     try testing.expectError(error.TasksStillQueued, harness.drain(&scratch));
@@ -141,7 +142,7 @@ test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a 
     defer peer.deinit();
     var costly: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(100) };
     var unit: Library = .{ .harness = &harness, .group = try harness.reactor.reserve_scheduling_group(100) };
-    var costlies: [tasks_per_library]Forever(constants.task_charge_max) = @splat(.{ .library = &costly });
+    var costlies: [tasks_per_library]Forever(reactor_module.constants.task_charge_max) = @splat(.{ .library = &costly });
     var units: [tasks_per_library]Forever(1) = @splat(.{ .library = &unit });
     errdefer _ = harness.reactor.discard_tasks();
     for (&costlies) |*one| try harness.reactor.schedule_in(costly.group, &one.task);
@@ -164,13 +165,13 @@ test "a group of tasks of cost 64 leaves a group of unit tasks its share, and a 
     // Each costly start buys 63 rounds of debt, in which the unit group takes one start each, so
     // in 16 ticks the unit group has at least 63 starts for each costly one, less one tick's.
     try testing.expect(costly.runs >= 1);
-    try testing.expect(unit.runs + constants.tasks_per_tick_max >= 63 * costly.runs);
+    try testing.expect(unit.runs + reactor_module.constants.tasks_per_tick_max >= 63 * costly.runs);
     try testing.expectEqual(@as(u32, 2 * tasks_per_library), harness.reactor.discard_tasks());
 }
 
 /// A task that runs once.
 const Once = struct {
-    task: core.Task = stall.task(Once, "task", ran),
+    task: reactor_module.Task = stall.task(Once, "task", ran),
     runs: u32 = 0,
 
     fn ran(once: *Once) void {
@@ -208,17 +209,17 @@ test "drain runs the tasks of every group, and discard_tasks unlinks every group
 
 test "a loop's init reserves the named groups of its options, and an empty table none" {
     if (conformance.unsupported()) return error.SkipZigTest;
-    const Declared = core.scheduling.Named(.{ .quic = 400, .dns = 100 });
+    const Declared = reactor_module.scheduling.Named(.{ .quic = 400, .dns = 100 });
     var harness: ReactorHarness = undefined;
     try harness.init_named(&Declared.table);
-    const groups = harness.reactor.loop.tables.groups;
+    const groups = harness.reactor.dispatch.groups;
     try testing.expectEqual(@as(u8, 2), groups.named);
     try testing.expectEqual(@as(u16, 400), groups.lanes[1].shares);
     try testing.expectEqual(@as(u16, 100), groups.lanes[2].shares);
     try testing.expectEqual(@as(u8, 3), @intFromEnum(try harness.reactor.reserve_scheduling_group(50)));
     // A named group holds tasks as a reserved one does.
     var once: Once = .{};
-    try harness.reactor.schedule_in(Declared.group(.dns).scheduling_group(), &once.task);
+    try harness.reactor.schedule_in(Declared.group(.dns).group(), &once.task);
     var events: [4]Event = undefined;
     _ = try harness.tick(&events, 0);
     try testing.expectEqual(@as(u32, 1), once.runs);
@@ -226,7 +227,7 @@ test "a loop's init reserves the named groups of its options, and an empty table
 
     try harness.init_named(&.empty);
     defer harness.deinit();
-    try testing.expectEqual(@as(u8, 0), harness.reactor.loop.tables.groups.named);
+    try testing.expectEqual(@as(u8, 0), harness.reactor.dispatch.groups.named);
     try testing.expectEqual(@as(u8, 1), @intFromEnum(try harness.reactor.reserve_scheduling_group(100)));
 }
 
@@ -236,7 +237,7 @@ test "a library schedules through its view in its group, and charges its task's 
     try harness.init(0, null);
     defer harness.deinit();
     const Charging = struct {
-        task: core.Task = stall.task(@This(), "task", ran),
+        task: reactor_module.Task = stall.task(@This(), "task", ran),
         shared: *conformance.Reactor.SharedLoop,
         budget: u32 = 0,
 
@@ -258,5 +259,5 @@ test "a library schedules through its view in its group, and charges its task's 
     // units.
     try testing.expectEqual(@as(u32, 9), charging.budget);
     // The charge of 9 took the rest: the visit closed at 0.
-    try testing.expectEqual(@as(i32, 0), harness.reactor.loop.tables.groups.lanes[@intFromEnum(group)].deficit);
+    try testing.expectEqual(@as(i32, 0), harness.reactor.dispatch.groups.lanes[@intFromEnum(group)].deficit);
 }

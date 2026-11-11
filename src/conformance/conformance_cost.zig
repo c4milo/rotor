@@ -33,6 +33,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const core = @import("core");
+const reactor_module = @import("reactor");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
 
@@ -188,12 +189,12 @@ test "one operation of a batch submit stays under its bound" {
 }
 
 /// Tasks of the task cost: one full run of the queue (decision 27).
-const task_count = core.constants.tasks_per_tick_max;
+const task_count = reactor_module.constants.tasks_per_tick_max;
 
-fn task_ran(_: *core.Task) void {}
+fn task_ran(_: *reactor_module.Task) void {}
 
-const task_ran_call: core.Task.Call = .{ .name = "task_ran", .function = task_ran };
-var cost_tasks: [task_count]core.Task align(@alignOf(core.Task)) =
+const task_ran_call: reactor_module.Task.Call = .{ .name = "task_ran", .function = task_ran };
+var cost_tasks: [task_count]reactor_module.Task align(@alignOf(reactor_module.Task)) =
     @splat(.{ .call = &task_ran_call });
 
 /// One task, scheduled and then run in the `end` of a tick, spread over a full run: `schedule`'s
@@ -231,7 +232,7 @@ test "one task of a full run in 16 groups stays under its bound" {
     var events: [events_max]Event = undefined;
     var groups: [core.constants.scheduling_groups_max]core.SchedulingGroup = undefined;
     groups[0] = .default;
-    for (groups[1..]) |*group| group.* = try reactor.reserve_scheduling_group(core.constants.scheduling_shares_default);
+    for (groups[1..]) |*group| group.* = try reactor.reserve_scheduling_group(reactor_module.constants.scheduling_shares_default);
     const per_group = task_count / core.constants.scheduling_groups_max;
 
     var best_ns: u64 = std.math.maxInt(u64);

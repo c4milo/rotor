@@ -244,34 +244,6 @@ fn end_the_remote_on_this_thread() void {
     remote.deinit();
 }
 
-fn ran_nothing(_: *core.Task) void {}
-
-const ran_nothing_call: core.Task.Call = .{ .name = "ran_nothing", .function = ran_nothing };
-var task: core.Task align(@alignOf(core.Task)) = .{ .call = &ran_nothing_call };
-
-/// `schedule` from a second thread (decision 27). With the check deleted, the task is queued and
-/// the call returns.
-fn schedule_a_task_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    on_another_thread(schedule_a_task_on_this_thread);
-}
-
-fn schedule_a_task_on_this_thread() void {
-    scenario.reached_violation();
-    loop.schedule(&task) catch {};
-}
-
-/// `shared` from a second thread (decision 28). With the check deleted, the call returns the view.
-fn hand_out_the_view_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    on_another_thread(hand_out_the_view_on_this_thread);
-}
-
-fn hand_out_the_view_on_this_thread() void {
-    scenario.reached_violation();
-    _ = loop.shared();
-}
-
 /// `heartbeat` from a second thread (decision 28). With the check deleted, the call returns the
 /// heartbeat.
 fn hand_out_the_heartbeat_from_another_thread() void {
@@ -284,71 +256,10 @@ fn hand_out_the_heartbeat_on_this_thread() void {
     _ = loop.heartbeat();
 }
 
-/// `schedule_in` from a second thread (decision 30). With the check deleted, the task is queued
-/// and the call returns.
-fn schedule_in_a_group_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    on_another_thread(schedule_in_a_group_on_this_thread);
-}
-
-fn schedule_in_a_group_on_this_thread() void {
-    scenario.reached_violation();
-    loop.schedule_in(.default, &task) catch {};
-}
-
-/// `charge_task` from a second thread, while the loop's own thread is in a task's call (decision
-/// 30): `tasks.left` is above 0 only there. With the check deleted, the charge on the path with
-/// one group changes nothing and returns.
-fn charge_a_task_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    loop.tables.dispatch.tasks.left = 1;
-    on_another_thread(charge_a_task_on_this_thread);
-}
-
-fn charge_a_task_on_this_thread() void {
-    scenario.reached_violation();
-    loop.charge_task(1);
-}
-
-/// `reserve_scheduling_group` from a second thread (decision 30). With the check deleted, the
-/// call returns the group.
-fn reserve_a_scheduling_group_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    on_another_thread(reserve_a_scheduling_group_on_this_thread);
-}
-
-fn reserve_a_scheduling_group_on_this_thread() void {
-    scenario.reached_violation();
-    _ = loop.reserve_scheduling_group(core.constants.scheduling_shares_default) catch {};
-}
-
-/// `set_scheduling_group_shares` from a second thread (decision 30). With the check deleted, the
-/// shares of `.default` change and the call returns.
-fn set_the_shares_from_another_thread() void {
-    loop.init_tables(&memory, &options);
-    on_another_thread(set_the_shares_on_this_thread);
-}
-
-fn set_the_shares_on_this_thread() void {
-    scenario.reached_violation();
-    loop.set_scheduling_group_shares(.default, core.constants.scheduling_shares_default);
-}
-
-/// A loop with tables and no kernel, for the owner checks of the cross-core call (decision 32).
-fn start_tables() void {
-    loop.init_tables(&memory, &options);
-}
-
-const owner_calls = @import("owner_calls.zig").Scenarios(Loop, &loop, start_tables, options.id);
+/// The owner checks of the reactor's own calls, over this backend's `Loop` (decision 33).
+const reactor_owner = @import("reactor_owner_calls.zig").Scenarios(Loop, options);
 
 pub const scenarios = [_]scenario.Scenario{
-    .{ .name = "owner: schedule in a group from another thread", .run = schedule_in_a_group_from_another_thread },
-    .{ .name = "owner: charge a task from another thread", .run = charge_a_task_from_another_thread },
-    .{
-        .name = "owner: reserve a scheduling group from another thread",
-        .run = reserve_a_scheduling_group_from_another_thread,
-    },
-    .{ .name = "owner: set the shares of a group from another thread", .run = set_the_shares_from_another_thread },
     .{ .name = "owner: reserve a group from another thread", .run = reserve_a_group_from_another_thread },
     .{
         .name = "owner: read the wait limit from another thread",
@@ -356,14 +267,9 @@ pub const scenarios = [_]scenario.Scenario{
     },
     .{ .name = "owner: bound the wait from another thread", .run = bound_the_wait_from_another_thread },
     .{
-        .name = "owner: hand out the view from another thread",
-        .run = hand_out_the_view_from_another_thread,
-    },
-    .{
         .name = "owner: hand out the heartbeat from another thread",
         .run = hand_out_the_heartbeat_from_another_thread,
     },
-    .{ .name = "owner: schedule a task from another thread", .run = schedule_a_task_from_another_thread },
     .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "owner: cancel from another thread", .run = cancel_from_another_thread },
     .{
@@ -393,4 +299,4 @@ pub const scenarios = [_]scenario.Scenario{
         .run = post_from_a_remote_on_another_thread,
     },
     .{ .name = "owner: end a remote from another thread", .run = end_a_remote_from_another_thread },
-} ++ owner_calls.scenarios;
+} ++ reactor_owner.scenarios;

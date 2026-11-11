@@ -2,8 +2,9 @@
 
 Machine-checked proofs, in [Lean 4](https://lean-lang.org), of rotor's timers: the timer heap in
 `src/core/timer_heap.zig`, and what `src/core/tables/tables.zig` and a backend's `flush` and `tick`
-do to a timer. Also the deficit of a scheduling group, which `src/core/scheduling/scheduling_run.zig`
-keeps (decision 30). Each proof is about a model of the Zig code, written to be read beside it. Every
+do to a timer. Also the deficit of a scheduling group, which
+`src/reactor/scheduling/scheduling_run.zig` keeps (decision 30), in the module `reactor` since step 3
+of decision 33. Each proof is about a model of the Zig code, written to be read beside it. Every
 definition names the Zig function it mirrors.
 
 ```bash

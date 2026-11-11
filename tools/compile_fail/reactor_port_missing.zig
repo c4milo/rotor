@@ -10,9 +10,10 @@ const Line = struct {
     pub fn leave_polling() void {}
     pub fn leave_tasks() void {}
     pub fn leave_group_tasks() void {}
+    pub fn name_poller() void {}
 };
 
-/// Each name of the core's surface, and four names of the port: it lacks `tick_backend`,
+/// Each name of the core's surface, and five names of the port: it lacks `tick_backend`,
 /// `stored_limit` and `push_reserved`.
 const Twin = struct {
     pub const Options = struct {};
@@ -24,18 +25,6 @@ const Twin = struct {
     pub fn cancel() void {}
     pub fn post() void {}
     pub fn tick() void {}
-    pub fn add_poller() void {}
-    pub fn remove_poller() void {}
-    pub fn schedule() void {}
-    pub fn is_scheduled() void {}
-    pub fn tasks_queued() void {}
-    pub fn task_budget_left() void {}
-    pub fn discard_tasks() void {}
-    pub fn schedule_in() void {}
-    pub fn charge_task() void {}
-    pub fn reserve_scheduling_group() void {}
-    pub fn set_scheduling_group_shares() void {}
-    pub fn shared() void {}
     pub fn heartbeat() void {}
     pub fn in_flight() void {}
     pub fn now_ns() void {}
@@ -54,16 +43,14 @@ const Twin = struct {
     pub fn provided_buffer() void {}
     pub fn reserve_buffer_group() void {}
     pub fn wait_limit() void {}
-    pub fn call() void {}
-    pub fn answer() void {}
-    pub fn serve() void {}
-    pub fn stop_serving() void {}
+    pub fn wait_until() void {}
 
     pub fn take_kept_error() void {}
     pub fn outstanding() void {}
     pub fn heartbeat_line() *Line {
         unreachable;
     }
+    pub fn attach_reserved() void {}
     pub fn assert_owner() void {}
 };
 
