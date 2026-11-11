@@ -3,18 +3,20 @@
 Status: **proposed** on 2026-11-10. The session revised it that day four times: after two reviews,
 for Camilo's first rulings, after a third review, and for his second rulings. Nothing is built, and
 no repository exists. On 2026-11-09 Camilo ruled where this work goes ("Ruling, 2026-11-09"). On
-2026-11-10 he ruled each open question up to 16, in two rounds ("Rulings, 2026-11-10"). The design
-below follows those rulings. The package calls `tick`, its type is generic over the reactor's type,
-and it builds on decision 33's reactor at v0.11.0. No review read the answers to the third review,
-or the revision for the second rulings.
+2026-11-10 he ruled each open question up to 16, in two rounds ("Rulings, 2026-11-10"). On
+2026-11-11 he ruled questions 17 and 18, and asked for question 19 ("The third round, 2026-11-11").
+The design below follows those rulings. The package calls `tick`, its type is generic over the
+reactor's type, and it builds on decision 33's reactor at v0.11.0. No review read the answers to the
+third review, or the revision for the second rulings.
 
 This record stays proposed. Camilo ruled that he accepts it after decision 33 is accepted, and after
-the twin's parts of question 14 are in this record. "Over a twin" now holds those parts, and open
-questions 17 and 18 ask about two of them. Nothing starts before decision 33 is accepted, built and
-tagged, and before Camilo accepts this record.
+the twin's parts of question 14 are in this record. "Over a twin" now holds those parts. Open
+question 19 is open. Nothing starts before decision 33 is built and tagged, and before Camilo
+accepts this record.
 
-Decision 33 is proposed and not accepted. Each v0.11.0 name in this record follows decision 33 as
-that record proposes it. If decision 33 changes, those names change here too.
+Decision 33 was accepted on 2026-11-10, and its steps 1 to 3 are on `main`. Each v0.11.0 name in
+this record follows decision 33 as that record proposed it. Some of them changed when step 3 was
+built. The session lists those changes at this record's acceptance.
 
 Nothing was measured for this record. Each number is a row of `docs/costs.md`, a row of
 `bench/baseline/work.txt`, a number that decision 22 measured, or a prior. A prior is arithmetic
@@ -150,6 +152,27 @@ What the choices said, where a ruling depends on it:
   and the twin's parts of question 14 are in this record.
 
 So each open question up to 16 is ruled, and each name of the sketch but `tejedor` is a proposal.
+
+### The third round, 2026-11-11
+
+Decision 33 was accepted on 2026-11-10, and its step 3 put `rotor.Reactor(Loop)` on `main` on
+2026-11-11. That day the session put the two questions that were left to Camilo, and one new
+question. The first choice of each row was the session's recommendation. Camilo gave no reason with
+a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| 17. Where a twin's socket calls come from | an option, `Options.sockets`; a `sync` namespace that the twin's loop type declares, read at comptime | **an option** |
+| 18. Does the package keep a twin of its own for its tests? | yes, a small one; no twin | **yes, a small one** |
+| How the record handles a deadline inside a network call, which stompy's proxy asked for | a new open question 19; keep the second task; a deadline in each call | **a new open question 19** |
+
+- **Question 17.** The choice said that the other answer needs a new public declaration on each
+  reactor type, the type of its loop, and that step 3 of decision 33 did not add one.
+- **Question 18.** The choice named decision 33's `examples/twin.zig` as the model.
+- **The deadline.** The session wrote question 19 with the proxy's two facts, what rotor's
+  operations give today, and the cost of each answer.
+
+So each open question up to 18 is ruled. Question 19 is open.
 
 ## Context
 
@@ -840,7 +863,7 @@ is rotor under decision 33.
 | a place after each other poller, or a call that keeps the tick that runs from its wait | the reactor calls its pollers in the order in which the libraries added them. A poller's answer and a queued rotor task keep a tick from its wait. So do an operation that waits for the flush, a result that waits for its hand-over, and a timer that is due (`src/core/tables/tables_deadline.zig`, `wait_bound`) | the package removes its poller and adds it again before each tick that can wait. A timer of 0 ns for each such wake is the other way. It takes a slot, which a full reactor does not have, and it makes one more final event. So this record prefers the move | one more call. Decision 29, item 2, rejected a second way to say "do not block". This record does not ask for it |
 | the name of a fiber's function in a stall and in a watch | the reactor writes the name of each callback on the heartbeat's line, through the port. Decision 33 keeps that writer out of the API ("The port") | a stall of fibers names the package's poller at most, and a watch reads a null name | a public call that writes a name on the line. This record does not ask for it |
 | a refusal of a second caller of `tick` | none: `tick` checks its thread, and not its caller | the package's check of `now_ns` halts at the package's next tick | this record does not ask for it |
-| the type of a reactor's loop, from the reactor's type | decision 33's reactor declares no name for it | a twin's sockets come through `Options.sockets`, at run time ("Over a twin") | one declaration on each reactor type, and one more name in the test of the reactor's names. Open question 17 asks |
+| the type of a reactor's loop, from the reactor's type | decision 33's reactor declares no name for it | a twin's sockets come through `Options.sockets`, at run time ("Over a twin") | one declaration on each reactor type, and one more name in the test of the reactor's names. Camilo ruled the option on 2026-11-11 (open question 17), so rotor gives none |
 | `submit`, `cancel` and `now_ns` on a twin's reactor | decision 33 lists the names of the host's reactor, and gives no list for `rotor.Reactor(Twin)` | this record reads "each other call forwards to the loop inside" for both. If that is wrong, the package does not run over a twin | one sentence in decision 33, or three forwarders on the generic reactor |
 | a row of its own in the echo comparison | `bench/echo/echo_runner_setup.zig` holds a fixed list of candidates. rotor's package holds no `bench/` (`build.zig.zon`, `.paths`) | the package builds rotor's bench programs from a checkout at the pinned tag. It drives `echo_client` itself, with the runner's rules | an option of the runner that adds one candidate by name and path. rotor still names no package |
 
@@ -900,8 +923,9 @@ those calls from the program, in `Options.sockets`:
 - `close_now` is only for a socket that the package opened and that holds no operation in flight.
   `netClose` and `fileClose` stay `close` operations, on a twin's reactor too.
 
-It costs one indirect call (C5) in each of the four calls, on the host too. Open question 17 asks
-whether those calls come at comptime, from the twin's loop type.
+It costs one indirect call (C5) in each of the four calls, on the host too. Open question 17 asked
+whether those calls come at comptime, from the twin's loop type. Camilo ruled the option on
+2026-11-11.
 
 ### A wake from another thread
 
@@ -919,8 +943,8 @@ address of a `threadlocal` variable. Each is the same on each run. The third is 
 program hands over, and which takes each call from the reactor's thread (open question 15).
 
 So a run of the package replays when three things hold: the reactor is a twin's, `rest` replays, and
-no other thread calls `futexWake`. Open question 18 asks whether the package keeps a small twin for
-its own tests.
+no other thread calls `futexWake`. Open question 18 asked whether the package keeps a small twin for
+its own tests. Camilo ruled yes on 2026-11-11.
 
 ## A Future for a cross-core call
 
@@ -1323,8 +1347,8 @@ question 6).
      slot is free before the last try.
       - Each test reads `reactor.statistics().stalls` as 0 at its end.
    - `Fibers` of a type that lacks `tick` and `shared` fails to compile, and the message names both.
-   - The calls for std tasks also run over the test's own twin, by the proposed answer to open
-     question 18. Two runs give the same order of events.
+   - The calls for std tasks also run over the test's own twin, by the ruling on open question 18.
+     Two runs give the same order of events.
    - A halt scenario for each of these eight cases:
      - a call from another thread;
      - a call that blocks in a callback;
@@ -1410,9 +1434,10 @@ to either is his to make, with the numbers.
 
 ## Open questions
 
-Camilo ruled each question up to 16 on 2026-11-10, in two rounds ("Rulings, 2026-11-10"). Questions
-17 and 18 are open, and each has a proposed answer. Each name of the sketch but `tejedor` is a
-proposal, which Camilo rules with the code.
+Camilo ruled each question up to 16 on 2026-11-10, in two rounds ("Rulings, 2026-11-10"), and
+questions 17 and 18 on 2026-11-11 ("The third round, 2026-11-11"). Question 19 is open, with a
+proposed answer. Each name of the sketch but `tejedor` is a proposal, which Camilo rules with the
+code.
 
 1. **What are the package's name and its repository?** The candidates were `tejedor`, with the type
    `tejedor.Fibers`, `rotor-fibers` and `fibra`. This record did not check whether another project
@@ -1536,6 +1561,8 @@ proposal, which Camilo rules with the code.
     that lacks a call fails to compile, and no call is indirect. It needs one thing that decision 33
     does not give: a reactor's type that names the type of its loop. That is one declaration on each
     reactor type, in a record that is not yet accepted ("What rotor does not give").
+    **Ruled on 2026-11-11: an option.** `Options.sockets` stays as "Sockets outside the reactor"
+    describes it, and rotor gains no declaration for it.
 18. **Does the package keep a twin of its own for its tests?** Proposed: yes, a small one, in the
     tests alone. It carries the core's surface and decision 33's port, with timers and endpoints in
     memory, after the model of decision 33's `examples/twin.zig`. Step 1 then runs the calls for std
@@ -1544,6 +1571,56 @@ proposal, which Camilo rules with the code.
 
     The other answer is no twin in the package. Its tests then prove only that `Fibers` runs on the
     host's reactor. The first consumer's twin finds each fault of the other path.
+    **Ruled on 2026-11-11: yes, a small one.** It follows `examples/twin.zig`, the twin of decision
+    33's step 4, and lives in the package's tests alone.
+19. **Does a network call of the package take a deadline inside the call?** stompy's proxy asked it
+    on 2026-11-11. Camilo had ruled that day that the proxy's TLS step runs on `rotor.Reactor(Loop)`
+    and on this package. In this record a deadline is a second std task: it sleeps, and then cancels
+    the receive ("How cancel works"). The proxy gave two facts:
+    - One proxy loop holds thousands of client connections, each with a receive that waits, often
+      for minutes. A second task for each receive doubles the fibers, and each fiber has its own
+      stack of 256 KiB (question 4).
+    - Before its pool lends an idle backend connection, it sends the connection a receive with a
+      deadline of 1 ns. The answer must give the queued bytes or the end of the stream before it
+      reports the timeout. So the probe tells a live idle backend from a dead one.
+
+    What rotor gives today, with no change:
+    - Each operation carries `timeout_ns`, a deadline from the tick that submits it
+      (`src/core/operation.zig`). When the deadline passes first, the loop cancels the operation,
+      and the final event is `error.Timeout`. Bytes that moved win over `Timeout` (decision 5,
+      rule 4).
+    - On io_uring the deadline is a linked timeout entry. On kqueue and epoll it is an entry in the
+      loop's timer heap (decision 5, rule 4). It takes no second operation and no second fiber.
+    - The conformance suite holds "a receive whose bytes came before its deadline ends with them
+      when the loop ticks late", with a deadline of 5 ms (`src/conformance/conformance_loop.zig`).
+      No scenario holds a deadline of 1 ns on a socket that already holds bytes, or on a socket at
+      the end of its stream.
+
+    What std gives in Zig 0.16.0 (`std/Io.zig`):
+    - `netRead` and `netWrite` take no deadline (lines 247 and 248). So `net.Stream.Reader` and
+      `net.Stream.Writer` have none.
+    - `io.operateTimeout` takes a `Timeout` for one `Io.Operation` (line 459). It calls
+      `batchAwaitConcurrent`, which this record runs for `net_receive` ("Which calls run where").
+      `Io.Operation` has no kind that sends.
+
+    The answers:
+    1. **Keep the second task.** Nothing changes. The proxy pays one fiber and its stack for each
+       receive with a deadline. Its probe is a receive and a cancel at once.
+    2. **Map std's `Timeout` to `timeout_ns`.** When `batchAwaitConcurrent` holds one `net_receive`,
+       the package sets the operation's `timeout_ns` from the `Timeout`, and runs no timer of its
+       own. A reader with a deadline then calls `io.operateTimeout`, inside std's interface. A send
+       keeps the second task, because std has no operation that sends.
+    3. **Calls of the package's own, beside the `io`.** A receive and a send that each take a
+       deadline and set `timeout_ns`. They cover a send too. A library written against `std.Io`
+       alone cannot call them.
+
+    In each answer, rotor's conformance suite gains two scenarios for the probe: a receive with a
+    deadline of 1 ns ends with the bytes on a socket that holds them, and with 0 on a socket at the
+    end of its stream. They are tests, and they change no name of rotor. A backend that fails one is
+    fixed in rotor. Proposed: answer 2. It stays inside std's interface, needs nothing new from rotor,
+    and removes the second fiber of each receive. The session has not checked whether std's contract
+    for an operation still in flight at its `Timeout` fits rotor's final event. The first step checks
+    it.
 
 ## Ask before
 
