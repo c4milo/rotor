@@ -237,7 +237,7 @@ Every `Operation` has `user_data`, an optional `timeout_ns`, `descriptor_registe
 
 Descriptors come from `rotor.sync`, which makes the calls a loop does not: `open_socket`,
 `listen(&address, .{ .backlog, .reuse_port })`, `open_datagram(family, bind_to, .{})`,
-`local_address`, `set_no_delay`, `set_option`, `set_buffer_bytes`, `close_now`, and for files
+`local_address`, `set_no_delay`, `set_buffer_bytes`, `close_now`, and for files
 `open_file`, `file_size`, `set_file_size`, `sync_directory`. `Address` is rotor's own type,
 IPv4 or IPv6 with a port and a scope id; no kernel type is part of the surface.
 
