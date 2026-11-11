@@ -189,19 +189,24 @@ was about to push.
 - `build.zig` stays short: build options and the module graph. Helpers belong in `build/`.
 - `src/rotor/rotor.zig` is the public module, the only one a dependent package can name. Its `Loop`,
   `Registry` and `Remote` wrap the host's backend and carry exactly the surface of
-  `src/core/surface.zig`; nothing else of a backend is API (decision 1, "The public module").
+  `src/core/surface.zig`. Its generic `Reactor(Loop)` is the reactor of decision 33.
+  `Reactor(Loop)` holds a `Loop` and the reactor's state, and `src/rotor/rotor_reactor.zig` holds
+  its functions. `Reactor` of any other type is a twin's, the module `reactor`'s `Reactor`. Nothing
+  else of a backend is API (decision 1, "The public module").
 - `src/<module>/` is one Zig module, declared in `build/modules.zig` with its imports listed. A
   module can only `@import` what the build gives it. The graph is in decision 1: `core` imports
   only `assertion_options`, the class A switch of decision 8 that `build/modules.zig` generates, an
   edge Camilo approved on 2026-09-24; `linux_shared` imports `core`; `uring` and `epoll` import `core` and `linux_shared`, an
-  edge Camilo approved on 2026-09-23, and `kqueue` imports `core`; the public module `rotor`
-  imports `core` and every backend, because on Linux it falls back from `uring` to `epoll`
-  (decision 20); nothing imports `bench`. There is no `adapter`: decision 22 built one and removed
-  it on 2026-11-05. `conformance`
-  imports `core` and the backend under test, which the build hands it as its `backend` import, so
-  one suite tests every backend (decision 10). `core`, `linux_shared`, `uring`, `kqueue` and
-  `epoll` exist today. `bench/` sits outside `src/` and outside the graph; `build/bench.zig` wires
-  it.
+  edge Camilo approved on 2026-09-23, and `kqueue` imports `core`; `reactor` imports `core` alone,
+  and no backend imports `reactor` (decision 33, edges Camilo confirmed on 2026-11-10); the public
+  module `rotor` imports `core`, `reactor` and every backend, because on Linux it falls back from
+  `uring` to `epoll` (decision 20) and its `Reactor(Loop)` holds the reactor's state; nothing
+  imports `bench`. There is no `adapter`: decision 22 built one and removed it on 2026-11-05.
+  `conformance` imports `core`, `reactor` and the backend under test, which the build hands it as
+  its `backend` import, so one suite tests every backend, and the reactor over each (decision 10).
+  `core`, `linux_shared`, `uring`, `kqueue`, `epoll` and `reactor` exist today. `bench/` sits
+  outside `src/` and outside the graph; `build/bench.zig` wires it, and `build/bench_work.zig` gives
+  `bench/work/work.zig` the `reactor` import for the reactor's rows.
 - Each module owns its `constants.zig`. A limit two modules share belongs in
   `src/core/constants.zig`. A comptime assert stays with the constant it pins.
 - **A file two backends need, that names no kernel type, lives in `core`.** `kqueue` and `epoll` are
