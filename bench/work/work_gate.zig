@@ -50,6 +50,9 @@ const workloads = [_]Workload{
     .{ .name = "tasks-groups-4", .time_span = 50_000, .cachegrind_span = 500 },
     .{ .name = "tasks-groups-16", .time_span = 50_000, .cachegrind_span = 500 },
     .{ .name = "call", .time_span = 500_000, .cachegrind_span = 5_000 },
+    // macOS does not run `connection` (`work.zig`, `counts_connection`), so its `time_span` is
+    // never used. Under cachegrind in an arm64 container on `mac`, each run took about 5 s.
+    .{ .name = "connection", .time_span = 2_000, .cachegrind_span = 2_000 },
 };
 
 comptime {

@@ -125,6 +125,13 @@
 # On 2026-11-11 main's CI run 43105312514 at `b9dbe0f` counted x86-64 after that fix. It gave the
 # virtual machine's counts on every row. The x86-64 lines that the gate asked to lower are its
 # counts, and so are both `call` lines, by decision 33's amendment of 2026-11-11.
+# `connection` was added on 2026-11-11: colibri's test server counted about 320 more instructions
+# for each connection at v0.10.0 than at v0.9.0. The linux-aarch64 lines are cachegrind's counts of
+# Valgrind 3.23.0 in an arm64 container on `mac`. io_uring ran with seccomp=unconfined, and epoll
+# under Docker's default profile. Each other row counted within 1 instruction of `42340bb`. The
+# x86-64 sections hold no line for it, so CI prints them after the push. macOS does not run it
+# (`work.zig`, `counts_connection`). There the count holds the kernel's work too, about 215,000
+# instructions for each connection, and six runs on `mac` spread over 3.7 percent.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -176,6 +183,7 @@ poller 493
 tasks-groups-4 10870
 tasks-groups-16 11590
 call 2323
+connection 3771
 section linux-aarch64-epoll
 post 1150
 post-operation 2978
@@ -189,3 +197,4 @@ poller 557
 tasks-groups-4 10928
 tasks-groups-16 11648
 call 2505
+connection 4937

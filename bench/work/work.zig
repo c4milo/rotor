@@ -36,16 +36,25 @@
 //!   ticks twice: its first tick takes the call on the fast path, and its second runs the
 //!   handler. Then loop 0 ticks once, which takes the return and runs `finish`. One iteration is
 //!   that round trip.
+//! - `connection`: one TCP connection's life on loopback, served by one plain loop with no
+//!   registry: an accept that waits for the connection, a receive of the request, a send of the
+//!   response and a close, one tick each (`work_connection.zig`). A client of blocking system
+//!   calls connects, writes the request, reads the response and closes. One iteration is that
+//!   connection. Linux only; on macOS the program exits with `unsupported_status`
+//!   (`counts_connection`).
 //!
 //! The rows from `task` to `call` are the reactor's: each runs on two reactors over the backend's
-//! loops, `reactor.Reactor(backend.Loop)`, and the other rows run on two loops (decision 33).
+//! loops, `reactor.Reactor(backend.Loop)`. `connection` runs on one loop, and the other rows run
+//! on two loops (decision 33).
 //!
 //! The program prints nothing. Something outside it counts: `work_gate` runs it twice, with two
 //! iteration counts, and takes the difference, so what the process does to start and stop cancels.
 const std = @import("std");
+const builtin = @import("builtin");
 const core = @import("core");
 const reactor = @import("reactor");
 const backend = @import("backend");
+const connection = @import("work_connection.zig");
 
 const Loop = backend.Loop;
 const Event = core.Event;
@@ -64,6 +73,7 @@ pub const Workload = enum {
     tasks_groups_4,
     tasks_groups_16,
     call,
+    connection,
 };
 
 /// The groups `tasks-groups-4` and `tasks-groups-16` spread their tasks over: `.default`, then
@@ -199,9 +209,19 @@ var service: EchoService align(@alignOf(EchoService)) = .init;
 var echo: Echo align(@alignOf(Echo)) = .{};
 var calling: Caller align(@alignOf(Caller)) = .{};
 
+/// The listener of `connection`, open for all its iterations, and where its receive reads.
+var listener: connection.Listener align(@alignOf(connection.Listener)) = undefined;
+var received: [connection.request.len]u8 = undefined;
+
 /// True when this backend's loop can wake itself, which `wait` needs: kqueue and epoll, whose loop
 /// holds the descriptor a post's wake would reach.
 const can_wake_itself = @hasField(Loop, "queue");
+
+/// True where the gate can hold `connection` to its line: Linux, where cachegrind counts user
+/// instructions only. On macOS `/usr/bin/time -l` counts the kernel's work too, about 215,000
+/// instructions for each connection, against fewer than 5,000 in user space on arm64 Linux. Six
+/// runs on `mac` at a load average of 30 to 40 spread over 3.7 percent, more than the tolerance.
+const counts_connection = builtin.os.tag == .linux;
 
 pub fn main(init: std.process.Init) !void {
     const arguments = try init.minimal.args.toSlice(init.arena.allocator());
@@ -209,6 +229,7 @@ pub fn main(init: std.process.Init) !void {
     const workload = workload_of(arguments[1]) orelse return error.UnknownWorkload;
     const iterations = try std.fmt.parseInt(u64, arguments[2], 10);
     if (workload == .wait and !can_wake_itself) std.process.exit(unsupported_status);
+    if (workload == .connection and !counts_connection) std.process.exit(unsupported_status);
 
     registry.init(&registry_memory, 2);
     // Runs after both loops ended: the registry keeps the wake of each until then.
@@ -229,7 +250,7 @@ pub fn main(init: std.process.Init) !void {
 /// call. It runs on two reactors, and every other row on two loops (decision 33).
 fn on_reactor(comptime workload: Workload) bool {
     return switch (workload) {
-        .post, .post_operation, .timer, .batch, .wait => false,
+        .post, .post_operation, .timer, .batch, .wait, .connection => false,
         .task, .tasks_64, .record, .poller, .tasks_groups_4, .tasks_groups_16, .call => true,
     };
 }
@@ -247,6 +268,12 @@ fn start(comptime workload: Workload, iterations: u64) !void {
         defer second_reactor.reactor.deinit();
         return run_all(workload, iterations);
     }
+    if (comptime workload == .connection) {
+        // One plain loop with no registry, as a server's loop is.
+        try first.loop.init(&first.memory, &loop_options);
+        defer first.loop.deinit();
+        return run_all(workload, iterations);
+    }
     try first.loop.init(&first.memory, &options);
     defer first.loop.deinit();
     options.id = second_id;
@@ -262,6 +289,8 @@ noinline fn run_all(comptime workload: Workload, iterations: u64) !void {
     defer if (workload == .poller) first_reactor.reactor.remove_poller(&counted.poller);
     if (workload == .call) service.serve(second_reactor.reactor.shared(), &echo);
     defer if (workload == .call) service.stop_serving(second_reactor.reactor.shared());
+    if (workload == .connection) try listener.open();
+    defer if (workload == .connection) listener.close();
     const spread = groups_of(workload);
     for (groups[1..spread]) |*group| {
         group.* = try first_reactor.reactor.reserve_scheduling_group(reactor.constants.scheduling_shares_default);
@@ -336,6 +365,7 @@ fn run(comptime workload: Workload) !void {
             try first_reactor.expect(0);
             try calling.expect_one();
         },
+        .connection => try connection.serve_one(&first.loop, &first.events, &listener, &received),
     }
 }
 
@@ -373,5 +403,6 @@ pub fn workload_of(name: []const u8) ?Workload {
     if (std.mem.eql(u8, name, "tasks-groups-4")) return .tasks_groups_4;
     if (std.mem.eql(u8, name, "tasks-groups-16")) return .tasks_groups_16;
     if (std.mem.eql(u8, name, "call")) return .call;
+    if (std.mem.eql(u8, name, "connection")) return .connection;
     return null;
 }
