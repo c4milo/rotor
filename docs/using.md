@@ -895,6 +895,70 @@ a task may add or remove a poller; a poller may not. Any of them that calls `tic
 - `timeout_ns` on a `receive_from` and a `timer` per retry are what a query needs. `cancel` with the
   handle ends either early.
 
+### A library in its own terms
+
+A library can keep rotor's types out of its API, as colibri does (decision 33, ruling item 4). It
+then takes an interface in its own terms, and the program writes an adapter for each kind of loop.
+[`examples/two_adapters.zig`](../examples/two_adapters.zig) runs one such library on a plain loop
+and on a reactor. The library has three functions:
+
+- `turn(now_ns, operations)` writes the operations that the library needs done now.
+- `complete(completion, now_ns)` takes the result of one operation.
+- `deadline()` gives the instant of the next `turn`, or null while only a result can give the
+  library work.
+
+The library does no I/O and reads no clock. Each adapter maps the library's operations to rotor's
+operations, and each final event to the library's result:
+
+| the library's part | the adapter over a plain loop | the adapter over the view |
+|---|---|---|
+| its operations, out | `submit`, with the adapter's tag and the library's id in `user_data` | `submit`, each operation marked with a record of its own |
+| its results, in | the program gives the adapter each event with the adapter's tag | the record calls `complete` |
+| its deadline | the program writes the least of it and its own with `wait_until` | a poller returns `.at(deadline)` |
+| the call of `turn` | the program makes it between two ticks | a task in the library's group makes it. The poller or a record schedules the task |
+
+On a plain loop the program owns each event and the one stored limit. Before each tick it writes the
+least of the library's deadline and its own:
+
+```zig
+loop.wait_until(.at(@min(adapter.deadline_ns(), beats.deadline_ns())));
+const count = try loop.tick(&events, rotor.constants.wait_ns_max);
+for (events[0..count]) |event| try adapter.complete(event);
+beats.run(loop.now_ns());
+```
+
+On a reactor the program cannot call `wait_until`. Each part of the library has a callback, and the
+program bounds the wait for its own deadline with a poller too. The adapter's record and poller:
+
+```zig
+fn on_event(record: *Record, event: rotor.Event) void {
+    const adapter = record.adapter;
+    adapter.pacer.complete(library_completion(record.id, event), adapter.shared.now_ns());
+    adapter.schedule_turn();
+}
+```
+
+```zig
+fn on_poll(adapter: *ReactorAdapter) rotor.WaitLimit {
+    const due_ns = adapter.pacer.deadline() orelse return .none;
+    if (due_ns > adapter.shared.now_ns()) return .at(due_ns);
+    adapter.schedule_turn();
+    return .none;
+}
+```
+
+Three facts shape the adapter over the view:
+
+- A record takes the whole `user_data` of its operation. So each operation that can be out at once
+  needs a record of its own. `Completion.init` names a field of a struct, so each record is a struct
+  that knows its adapter and the library's id.
+- A record runs after the tick's wait, and a task that it schedules runs in the same tick. So the
+  turn after a result costs no tick of its own.
+- A poller runs before the tick waits. The program sees the work that a poller ends only when that
+  tick returns, which can be its whole `wait_ns` later. So a poller that ends what the program waits
+  for returns `.now`, or leaves a task queued. The example's own poller only bounds the wait, and
+  the program runs its beats after each tick.
+
 ### Cross-core calls
 
 A cross-core call sends a request from one reactor to another reactor of the process, runs a

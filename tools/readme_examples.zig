@@ -22,6 +22,7 @@ const examples = [_]Document{
     .{ .name = "examples/offload.zig", .text = @embedFile("examples/offload.zig") },
     .{ .name = "examples/stall_watch.zig", .text = @embedFile("examples/stall_watch.zig") },
     .{ .name = "examples/twin.zig", .text = @embedFile("examples/twin.zig") },
+    .{ .name = "examples/two_adapters.zig", .text = @embedFile("examples/two_adapters.zig") },
     .{ .name = "examples/consumer/build.zig", .text = @embedFile("examples/consumer/build.zig") },
 };
 
