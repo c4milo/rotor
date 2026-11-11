@@ -5,7 +5,8 @@
 //! no group or set the groups, nor a program declare a named group that `Named` refuses
 //! (decision 30), nor a cross-core call take the wrong types or a group of one loop (decision 32).
 //! It also proves that a backend's `Loop` that lacks a name of the port of decision 33 does not
-//! compile. Each file of `tools/compile_fail/` makes
+//! compile, and that `rotor.Reactor` of such a type names each name it lacks. Each file of
+//! `tools/compile_fail/` makes
 //! one such call, and its compile must fail with the message that states the rule or names the
 //! type. A compile that succeeds, or that fails with another message, fails the step.
 //! `zig build test` depends on it.
@@ -16,8 +17,15 @@ const modules = @import("modules.zig");
 /// `program` is the root of its own executable, so the public module reads the file's
 /// `rotor_scheduling_groups` (decision 30). The others are tests, whose root is Zig's test runner.
 /// A `core` case imports the module `core` too, for a check of a backend that the public module
-/// does not export.
-const Case = struct { file: []const u8, message: []const u8, program: bool = false, core: bool = false };
+/// does not export. A `continued` case holds a later line of a message of several lines, which the
+/// compiler prints without `error: `, so the case requires the line alone.
+const Case = struct {
+    file: []const u8,
+    message: []const u8,
+    program: bool = false,
+    core: bool = false,
+    continued: bool = false,
+};
 
 /// One case for each name of `core.shared_loop.refused_calls`, with the message of its declaration
 /// in `src/core/shared_loop.zig`, then the two types of decision 29, with the compiler's message.
@@ -127,6 +135,28 @@ pub const cases = [_]Case{
         .message = "backend Loop lacks the port's declaration 'take_kept_error' (core/surface.zig)",
         .core = true,
     },
+    // Decision 33: the check of `rotor.Reactor`, whose one message names each name a twin lacks.
+    // One case for each line of it that must be there.
+    .{
+        .file = "reactor_port_missing",
+        .message = "rotor.Reactor(reactor_port_missing.Twin): the type lacks 3 declarations that " ++
+            "the reactor needs:",
+    },
+    .{
+        .file = "reactor_port_missing",
+        .message = "tick_backend: the backend's tick, with no check of a kept error",
+        .continued = true,
+    },
+    .{
+        .file = "reactor_port_missing",
+        .message = "stored_limit: a pointer to the stored limit, which only the reactor writes",
+        .continued = true,
+    },
+    .{
+        .file = "reactor_port_missing",
+        .message = "push_reserved: a call or a return into a ring's kept slots, then the wake",
+        .continued = true,
+    },
 };
 
 /// Adds `zig build test-compile-fail` and returns it for `zig build test` to depend on.
@@ -152,7 +182,8 @@ pub fn add(
             b.addExecutable(.{ .name = case.file, .root_module = module })
         else
             b.addTest(.{ .name = case.file, .root_module = module });
-        compile.expect_errors = .{ .contains = b.fmt("error: {s}", .{case.message}) };
+        const line = if (case.continued) case.message else b.fmt("error: {s}", .{case.message});
+        compile.expect_errors = .{ .contains = line };
         step.dependOn(&compile.step);
     }
     return step;

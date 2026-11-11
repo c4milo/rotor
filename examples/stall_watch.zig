@@ -3,10 +3,10 @@
 //! reports a turn that stayed open for `checks_limit` checks or more, with the name of the callback
 //! that holds the loop. A real program prints, exports a count, or aborts for a core file there.
 //!
-//! The program schedules a task that holds the loop until the watch reports it. Then it reads the
-//! stall count, which the task's turn raised, from `statistics()`. `zig build test` runs it, and
-//! the Linux gate runs it on io_uring and on epoll. It exits 0 only when the watch and the stall
-//! count both named the task.
+//! The program makes a reactor, and schedules a task that holds the loop until the watch reports it.
+//! Then it reads the stall count, which the task's turn raised, from `statistics()`. `zig build
+//! test` runs it, and the Linux gate runs it on io_uring and on epoll. It exits 0 only when the
+//! watch and the stall count both named the task.
 //!
 //! Run:  zig build examples && ./zig-out/bin/stall_watch
 const std = @import("std");
@@ -61,31 +61,35 @@ const Watcher = struct {
     }
 };
 
+/// The program's reactor: a task is the reactor's, so the program makes one in place of a loop
+/// (decision 33).
+const Reactor = rotor.Reactor(rotor.Loop);
+
 pub fn main(init: std.process.Init) !void {
     // A turn of 5 ms or more is a stall. The default is `constants.stall_turn_ns_default`.
-    const options: rotor.Loop.Options = .{
+    const options: Reactor.Options = .{ .loop = .{
         .operations = 4,
         .stall_turn_ns = 5 * rotor.constants.ns_per_ms,
-    };
-    var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
-    var loop: rotor.Loop = undefined;
-    try loop.init(&memory, &options);
-    defer loop.deinit();
+    } };
+    var memory: [Reactor.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
+    var reactor: Reactor = undefined;
+    try reactor.init(&memory, &options);
+    defer reactor.deinit();
 
-    var watcher: Watcher = .{ .heartbeat = loop.heartbeat(), .io = init.io };
+    var watcher: Watcher = .{ .heartbeat = reactor.heartbeat(), .io = init.io };
     const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
     var slow: Slow = .{ .io = init.io, .reported = &watcher.reported };
     // A library holds the view, and may schedule a task on it but not tick it.
-    const shared = loop.shared();
+    const shared = reactor.shared();
     try shared.schedule_in(.default, &slow.task);
     var events: [4]rotor.Event = undefined;
     // This tick runs the task, which holds the loop until the watch reports it.
-    _ = try loop.tick(&events, 0);
+    _ = try reactor.tick(&events, 0);
     thread.join();
     // The next tick's first clock stamp ends the task's turn, and counts it.
-    _ = try loop.tick(&events, 0);
+    _ = try reactor.tick(&events, 0);
 
-    const statistics = loop.statistics();
+    const statistics = reactor.statistics();
     const last = statistics.last_stall;
     std.debug.print("stall_watch: stalls {d}, the last of {d} ms in {s}\n", .{
         statistics.stalls, last.span_ns / rotor.constants.ns_per_ms, last.name orelse "no callback",

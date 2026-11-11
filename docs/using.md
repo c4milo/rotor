@@ -678,11 +678,12 @@ times, so a busy machine can fail it: raise a threshold that proves flaky delibe
 number beside it.
 
 A callback that never returns never ends its turn, so the count never sees it. A thread of the
-program's own sees it, through the loop's **heartbeat**. rotor starts no thread. The program takes
-`loop.heartbeat()` on the loop's thread, and hands it to its watch thread:
+program's own sees it, through the loop's **heartbeat**. rotor starts no thread. The program calls
+`heartbeat()` on the loop's thread, and hands the heartbeat to its watch thread. The example runs a
+task, so it makes a reactor (decision 33) and calls `reactor.heartbeat()`:
 
 ```zig
-var watcher: Watcher = .{ .heartbeat = loop.heartbeat(), .io = init.io };
+var watcher: Watcher = .{ .heartbeat = reactor.heartbeat(), .io = init.io };
 const thread = try std.Thread.spawn(.{}, Watcher.run, .{&watcher});
 ```
 

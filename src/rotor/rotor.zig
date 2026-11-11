@@ -22,7 +22,9 @@ const core = @import("core");
 const uring = @import("uring");
 const epoll = @import("epoll");
 const kqueue = @import("kqueue");
+const reactor = @import("reactor");
 const loop_module = @import("rotor_loop.zig");
+const reactor_calls = @import("rotor_reactor.zig");
 const service_module = @import("rotor_service.zig");
 
 const linux = builtin.os.tag == .linux;
@@ -195,6 +197,100 @@ pub const Heartbeat = core.HeartbeatView;
 /// names its group in each `schedule_in`, and only the program sets the groups (decision 30).
 pub const SharedLoop = loop_module.SharedLoop;
 
+/// The reactor over a loop (decision 33): a program that wants records with callbacks, pollers,
+/// tasks, scheduling groups, cross-core calls or libraries that share its loop makes a
+/// `Reactor(Loop)` in place of a `Loop`, and passes the loop's options as `.loop`. Each call does
+/// what the loop's call of the same name does. `Reactor(Loop)` is the host's reactor, and its
+/// functions are in `rotor_reactor.zig`. Any other type is a twin of decision 10, which declares the
+/// core's surface and the port of decision 33: the build names each declaration that it lacks.
+pub fn Reactor(comptime Base: type) type {
+    if (Base == Loop) return struct {
+        /// The loop that the reactor runs, held by value, so `Reactor(T)` holds a `T`. No call
+        /// gives it out: a call on it would skip the reactor's part of that call.
+        loop: Loop,
+
+        /// This type. The file declares `SharedLoop` and `CallRecord` too, so a name of the
+        /// reactor's own is written through it.
+        const Host = @This();
+        const calls = reactor_calls;
+
+        /// What `init` takes. `loop` has no default, because `Loop.Options.operations` has none.
+        pub const Options = struct { loop: Loop.Options };
+        /// The reactor as the program hands it to a library (decision 28). `shared` returns it.
+        pub const SharedLoop = core.shared_loop.SharedLoop(Host);
+        /// One kind of cross-core call over this reactor's view (decision 32).
+        pub fn Service(
+            comptime Context: type,
+            comptime Request: type,
+            comptime Reply: type,
+            comptime handler: fn (context: *Context, record: *Host.CallRecord(Request, Reply)) core.call.Answer(Reply),
+        ) type {
+            return core.call.Service(Host.SharedLoop, Context, Request, Reply, handler);
+        }
+        /// The caller's record of one call over this reactor's view (decision 32).
+        pub fn CallRecord(comptime Request: type, comptime Reply: type) type {
+            return core.call.CallRecord(Host.SharedLoop, Request, Reply);
+        }
+
+        // The error sets of `Loop`, the same on the reactor.
+        pub const InitError = Loop.InitError;
+        pub const TickError = Loop.TickError;
+        pub const DrainError = Loop.DrainError;
+        pub const RegisterError = Loop.RegisterError;
+        pub const ProvideError = Loop.ProvideError;
+        pub const PostError = Loop.PostError;
+        pub const AddPollerError = Loop.AddPollerError;
+        pub const ScheduleError = Loop.ScheduleError;
+        pub const ReserveSchedulingGroupError = Loop.ReserveSchedulingGroupError;
+        pub const CallError = Loop.CallError;
+
+        // Each name of `Loop`, in `rotor_reactor.zig`.
+        pub const memory_bytes = calls.memory_bytes;
+        pub const init = calls.init;
+        pub const deinit = calls.deinit;
+        pub const dropped_wakes = calls.dropped_wakes;
+        pub const submit = calls.submit;
+        pub const cancel = calls.cancel;
+        pub const post = calls.post;
+        pub const tick = calls.tick;
+        pub const add_poller = calls.add_poller;
+        pub const remove_poller = calls.remove_poller;
+        pub const schedule = calls.schedule;
+        pub const is_scheduled = calls.is_scheduled;
+        pub const tasks_queued = calls.tasks_queued;
+        pub const task_budget_left = calls.task_budget_left;
+        pub const discard_tasks = calls.discard_tasks;
+        pub const schedule_in = calls.schedule_in;
+        pub const charge_task = calls.charge_task;
+        pub const reserve_scheduling_group = calls.reserve_scheduling_group;
+        pub const set_scheduling_group_shares = calls.set_scheduling_group_shares;
+        pub const shared = calls.shared;
+        pub const heartbeat = calls.heartbeat;
+        pub const in_flight = calls.in_flight;
+        pub const now_ns = calls.now_ns;
+        pub const wait_descriptor = calls.wait_descriptor;
+        pub const statistics = calls.statistics;
+        pub const cancel_all = calls.cancel_all;
+        pub const drain = calls.drain;
+        pub const assert_empty = calls.assert_empty;
+        pub const register_buffers = calls.register_buffers;
+        pub const register_descriptors = calls.register_descriptors;
+        pub const provide_buffers = calls.provide_buffers;
+        pub const provide_datagram_buffers = calls.provide_datagram_buffers;
+        pub const datagram = calls.datagram;
+        pub const give_back_buffer = calls.give_back_buffer;
+        pub const release_buffers = calls.release_buffers;
+        pub const provided_buffer = calls.provided_buffer;
+        pub const reserve_buffer_group = calls.reserve_buffer_group;
+        pub const wait_limit = calls.wait_limit;
+        pub const call = calls.call;
+        pub const answer = calls.answer;
+        pub const serve = calls.serve;
+        pub const stop_serving = calls.stop_serving;
+    };
+    return reactor.Reactor(Base);
+}
+
 comptime {
     // The wrapped types carry the surface every backend must (decision 1). The backends check
     // this for themselves; checking it here as well is what makes this file's promise its own.
@@ -241,6 +337,19 @@ test "the public types carry the surface and their error sets, and nothing else"
     try testing.expectEqual(1, @typeInfo(Loop).@"struct".fields.len);
     try testing.expectEqual(1, @typeInfo(Remote).@"struct".fields.len);
     try testing.expectEqual(1, @typeInfo(Registry).@"struct".fields.len);
+}
+
+/// The declarations of the host's reactor beyond the surface and the error sets of `Loop`.
+const reactor_types = [_][]const u8{ "SharedLoop", "Service", "CallRecord" };
+
+test "the host's reactor carries the loop's surface, its error sets and its view, and nothing else" {
+    const Host = Reactor(Loop);
+    try testing.expect(named(Host, &.{ &core.surface.loop_declarations, &loop_error_sets, &reactor_types }));
+    const count = core.surface.loop_declarations.len + loop_error_sets.len + reactor_types.len;
+    try testing.expectEqual(count, @typeInfo(Host).@"struct".decls.len);
+    // One field: what it holds, and at step 2 of decision 33 no state of its own.
+    try testing.expectEqual(1, @typeInfo(Host).@"struct".fields.len);
+    comptime core.shared_loop.check(Host.SharedLoop);
 }
 
 const test_operations = 4;

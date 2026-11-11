@@ -1,6 +1,7 @@
 //! Halt scenarios for the public module, `rotor`: the checks that `src/rotor/` makes itself, and
 //! not through a backend's call. `Loop.shared` checks the thread itself, because it casts the loop
-//! to the view without a call into the backend (decision 28).
+//! to the view without a call into the backend (decision 28). The host reactor's `shared` casts
+//! itself to its own view, and reaches the check through the loop's call (decision 33).
 //!
 //! A scenario starts a loop of the host's backend on the main thread and calls into it from a
 //! second thread. With its check deleted, each call returns, and each scenario says how.
@@ -35,6 +36,25 @@ fn hand_out_the_view_from_another_thread() void {
 fn hand_out_the_view_on_this_thread() void {
     scenario.reached_violation();
     _ = loop.shared();
+}
+
+/// The host's reactor of decision 33, which hands out a view of its own.
+const Reactor = rotor.Reactor(Loop);
+const reactor_options: Reactor.Options = .{ .loop = options };
+
+var reactor_memory: [Reactor.memory_bytes(&reactor_options)]u8 align(rotor.memory_alignment) = undefined;
+var reactor: Reactor align(@alignOf(Reactor)) = undefined;
+
+/// The reactor's `shared` from a second thread. The check is the loop's, which the reactor's call
+/// reaches. With the reactor's call to it deleted, the call returns the view.
+fn hand_out_the_reactor_view_from_another_thread() void {
+    reactor.init(&reactor_memory, &reactor_options) catch return;
+    on_another_thread(hand_out_the_reactor_view_on_this_thread);
+}
+
+fn hand_out_the_reactor_view_on_this_thread() void {
+    scenario.reached_violation();
+    _ = reactor.shared();
 }
 
 fn ran(_: *rotor.Task) void {}
@@ -92,6 +112,10 @@ const scenarios = [_]scenario.Scenario{
     .{
         .name = "rotor: hand out the view from another thread",
         .run = hand_out_the_view_from_another_thread,
+    },
+    .{
+        .name = "rotor: hand out the reactor's view from another thread",
+        .run = hand_out_the_reactor_view_from_another_thread,
     },
     .{
         .name = "rotor: queue a task one past the named groups",
