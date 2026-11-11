@@ -223,6 +223,60 @@ So this record changes in two ways:
 "The port", "Build order" and "How it would be checked" read with this amendment. Where they say
 nine names, the port has eight after step 3.
 
+## Amendment, 2026-11-11: the `call` row
+
+Step 3 counted the work gate's `call` row over v0.10.0 on each counter. The session put open
+question 8 to Camilo twice that day, each time with its choices. The first choice of each was the
+session's recommendation. He gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| The first build counts `call` over v0.10.0 | trace the rise to its lines and cut it; build the generic `Loop`; accept the rise | **trace and cut it** |
+| After four cuts, `call` still counts over v0.10.0 | accept the rest; one more pass with forced inlining and a new signature for `push_reserved`; the generic `Loop` too | **accept the rest** |
+
+The counts of the `call` row:
+
+| counter | v0.10.0 (`9339858`) | first build | after the cuts |
+|---|---:|---:|---:|
+| arm64 io_uring, cachegrind | 2307 | 2360 | 2323 |
+| arm64 epoll, cachegrind | 2442 | 2543 | 2505 |
+| `mac`, at a load average of about 5 | 2529, the highest of five | 2638, the median of five | 2581, the median of five |
+| `mac`, at a load average of 40 to 44 | 2538, the highest of five | not counted | 2586, the median of five |
+
+The cuts, on arm64 with cachegrind, each counted after the one before:
+
+| cut | io_uring | epoll |
+|---|---:|---:|
+| the push returns its wake as a plain descriptor, not as an optional | −14 | −14 |
+| the push reads the target's entry of the registry once | −16 | −15 |
+| the hook's fields are not optional, and the drain does not switch on the tag | −5 | −7 |
+| the drain signals a handed call with one OR of the tag's two low bits | −2 | −1 |
+| `mailbox_registry.zig` split to stay under 500 lines | 0 | −1 |
+
+Where the rest sits, on arm64, for each round trip of a call and its return. Each part is rounded
+from cachegrind's counts by function, so the epoll parts add to 64, one more than its total.
+
+| part | io_uring | epoll |
+|---|---:|---:|
+| the send: `push_reserved` out of line, its error union returned through memory, the port's checks, and its call sites | +32 | +31 |
+| the take: the hook's indirect call and frame, `@alignCast`, the class C check of the hook's context, the second switch, and the signal to the tick | +20 | +32 |
+| `Service.run`, from code layout | +6 | +6 |
+| the tick's path, from code generation | −42 | −5 |
+| total | +16 | +63 |
+
+Each further cut needs a choice that Camilo ruled out or did not give: forced inlining outside
+decision 7's files, a check that is disabled or weaker, a new signature on the port, or the generic
+`Loop`. So rule 7 changes for `call` alone:
+
+1. **The `call` row is held to step 3's counts, not to v0.10.0's.** A call and its return between
+   two reactors cost 16 to 63 instructions more on arm64, 0.7 to 2.6 percent.
+2. **Each other reactor row stays at or below its count at `9339858`**, by the three methods of
+   "How a reactor row is compared".
+3. **The work gate's `call` lines rise to step 3's counts.** The arm64 lines take the counts above.
+   The `mac` line takes a count on an idle `mac`. The x86-64 lines take the counts of main's CI
+   after the push, as the ruling of 2026-11-11 under "Build order" says.
+4. **A later change that cuts the send or the take lowers the line**, as the gate asks.
+
 ## Context
 
 ### What the code does today
@@ -334,7 +388,8 @@ fewer lines for a reader to read and a twin to carry.
    the same `*rotor.SharedLoop` as today, so a library changes nothing.
 7. **A tick that runs a callback is not slower than at v0.10.0.** The reactor's rows of the work
    gate count at or below their counts at `9339858`, by the method of "How a reactor row is
-   compared".
+   compared". *Amended on 2026-11-11 for the `call` row: see "Amendment, 2026-11-11: the `call`
+   row".*
 
 ### The line
 
@@ -1328,6 +1383,25 @@ The mutations of step 3, each against the narrowest target:
    call is then direct, at the cost of a second instance of each backend in a program that runs a
    plain loop beside a reactor. Camilo rules with the counts of both forms. *Ruled on 2026-11-08,
    and confirmed on 2026-11-10: step 2 builds both forms, and Camilo chooses with the counts.*
+
+   *Ruled on 2026-11-11, with step 3's counts: no generic `Loop`. Step 3 traces the rise of `call`
+   to its lines and cuts it.* The first build of step 3 counted `call` over v0.10.0 on each of the
+   three counters:
+
+   | counter | v0.10.0 (`9339858`) | step 3, first build |
+   |---|---:|---:|
+   | arm64 io_uring, cachegrind | 2307 | 2360 |
+   | arm64 epoll, cachegrind | 2442 | 2543 |
+   | `mac`, `/usr/bin/time -l` | 2529, the highest of five | 2638, the median of five |
+
+   The prior was about 10. A profile put about half of the io_uring rise in the hook's indirect
+   call. It put the rest in the push through the port and, on epoll, in the drain's slow path. The
+   second form makes each backend's `Loop` generic over its hook's type, so a reactor's loop is no
+   longer a `rotor.Loop`, against question 16. It also removes only the hook's part. If `call`
+   still counts over v0.10.0 after the cuts, Camilo rules again with the new counts.
+
+   *Ruled again on 2026-11-11, after four cuts: accept the rest.* "Amendment, 2026-11-11: the
+   `call` row" holds the counts, the cuts and the change to rule 7.
 9. **Does decision 31's disk scheduler move into the reactor?** Proposed: yes, as a holder in front
    of the core's `submit`, so a plain loop pays nothing for it. Decision 31 is accepted, and put it
    in each backend's flush, so this record amends it. Its capacity and share rules do not change.
@@ -1343,6 +1417,14 @@ The mutations of step 3, each against the narrowest target:
     them today. A plain loop then keeps that part of decision 26's 8 instructions for each
     operation. Camilo rules with the counts of both forms. *Ruled on 2026-11-08, and confirmed on
     2026-11-10: step 2 builds both forms, and Camilo chooses with the counts.*
+
+    *Counted at step 3, 2026-11-11: the rise did not occur, so step 3 built no second form.*
+
+    | counter | v0.10.0 (`9339858`) | step 3 |
+    |---|---:|---:|
+    | arm64 io_uring, cachegrind | 1199 | 1182 |
+    | arm64 epoll, cachegrind | 1230 | 1223 |
+    | `mac`, `/usr/bin/time -l` | 1295, the highest of five | 1277, the median of five |
 12. **How does `call` refuse a target that takes no calls?** Proposed: `attach_reserved` marks the
     loop in its registry before the loop runs, and `call` returns `LoopNotFound` for a target with
     no mark. That error already covers a loop that is not running and a remote, so `CallError`
