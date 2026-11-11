@@ -119,6 +119,9 @@ pub fn build(b: *std.Build) void {
         // promises still hold.
         .{ .name = "rotor", .module = graph.rotor },
         .{ .name = "core", .module = graph.core },
+        // The optional layer over a loop (decision 33). Its tests run over a twin and need no
+        // kernel.
+        .{ .name = "reactor", .module = graph.reactor },
         // Named `linux-shared`, because `test-linux` is the Linux gate's build step.
         .{ .name = "linux-shared", .module = graph.linux_shared },
         .{ .name = "uring", .module = graph.uring },

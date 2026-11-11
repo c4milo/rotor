@@ -69,6 +69,8 @@ pub fn add(b: *std.Build, optimize: std.builtin.OptimizeMode, shuffle_seed: u64)
     // never does, because its tests need the kernel of a Mac.
     const unit_tests = [_]struct { name: []const u8, module: *std.Build.Module }{
         .{ .name = "core", .module = graph.core },
+        // The optional layer over a loop (decision 33).
+        .{ .name = "reactor", .module = graph.reactor },
         // What both Linux backends share. It needs no io_uring, so it runs confined.
         .{ .name = "linux-shared", .module = graph.linux_shared },
         // The same tests in a program that links libc, as colibri's server does. Zig's start

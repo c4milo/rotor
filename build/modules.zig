@@ -14,7 +14,8 @@
 //! approved that edge on 2026-09-24. The same import carries the seed of the shuffle of each
 //! reaped batch, which only the shuffled conformance suites set (decision 10, amendment of
 //! 2026-11-06). `linux_shared` imports `core`. `uring` and `epoll` import `core` and
-//! `linux_shared`, and `kqueue` imports `core`. `conformance` imports `core` and one
+//! `linux_shared`, and `kqueue` imports `core`. `reactor` imports `core`, and no backend imports
+//! `reactor` (decision 33). `conformance` imports `core`, `reactor` and one
 //! backend, which this file hands it as its `backend` import, so one suite tests every backend
 //! (decision 10). docs/decisions/0001-interface.md named an `adapter` module to follow version one;
 //! decision 22 built a std.Io adapter and removed it on 2026-11-05. `bench/` is outside `src/` and
@@ -45,6 +46,9 @@ pub const Modules = struct {
     /// The conformance suite with `epoll` as the backend under test. It skips off Linux, and unlike
     /// the `uring` suite it runs under Docker's default seccomp profile, which is the point of it.
     conformance_epoll: *std.Build.Module,
+    /// The optional layer over a loop: records with callbacks, pollers, tasks, scheduling groups,
+    /// cross-core calls and the shared loop (decision 33). It imports `core` alone.
+    reactor: *std.Build.Module,
 };
 
 /// Which of decision 8's assertion classes a graph compiles, and whether it shuffles each reaped
@@ -85,11 +89,16 @@ pub fn add_with(
     core.addOptions("assertion_options", assertion_options);
     const linux_shared = create(b, "src/linux_shared/linux_shared.zig", target, optimize);
     linux_shared.addImport("core", core);
+    // The three edges of decision 33, which Camilo confirmed on 2026-11-10: `reactor` to `core`,
+    // `rotor` to `reactor`, and `conformance` to `reactor`.
+    const reactor = create(b, "src/reactor/reactor.zig", target, optimize);
+    reactor.addImport("core", core);
     const uring = create(b, "src/uring/uring.zig", target, optimize);
     uring.addImport("core", core);
     uring.addImport("linux_shared", linux_shared);
     const conformance_uring = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_uring.addImport("core", core);
+    conformance_uring.addImport("reactor", reactor);
     conformance_uring.addImport("backend", uring);
     const kqueue = create(b, "src/kqueue/kqueue.zig", target, optimize);
     kqueue.addImport("core", core);
@@ -98,19 +107,23 @@ pub fn add_with(
     epoll.addImport("linux_shared", linux_shared);
     const conformance_epoll = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_epoll.addImport("core", core);
+    conformance_epoll.addImport("reactor", reactor);
     conformance_epoll.addImport("backend", epoll);
     const conformance_kqueue = create(b, "src/conformance/conformance.zig", target, optimize);
     conformance_kqueue.addImport("core", core);
+    conformance_kqueue.addImport("reactor", reactor);
     conformance_kqueue.addImport("backend", kqueue);
     // The public module sees both backends and chooses one by host. Nothing else imports both.
     const rotor = public(b, "rotor", "src/rotor/rotor.zig", target, optimize);
     rotor.addImport("core", core);
+    rotor.addImport("reactor", reactor);
     rotor.addImport("uring", uring);
     // On Linux the public module falls back to epoll where the kernel refuses io_uring (decision 20,
     // open question 5, ruled by Camilo on 2026-09-22), so it needs both Linux backends.
     rotor.addImport("epoll", epoll);
     rotor.addImport("kqueue", kqueue);
     return .{
+        .reactor = reactor,
         .rotor = rotor,
         .core = core,
         .linux_shared = linux_shared,
