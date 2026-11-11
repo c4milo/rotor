@@ -50,8 +50,11 @@ pub fn schedule(dispatch: *Dispatch, loop: anytype, task: *Task) ScheduleError!v
 /// `tasks_queued_max` tasks. `.default` is `schedule`, and touches no line of the groups. Halts on
 /// an id this reactor did not reserve.
 pub fn schedule_in(dispatch: *Dispatch, loop: anytype, group: SchedulingGroup, task: *Task) ScheduleError!void {
-    if (group == .default) return schedule(dispatch, loop, task);
+    // The owner check comes before the branch, as at v0.10.0. `schedule` checks again, and the
+    // compiler merges the two checks. After the branch, the check took one more instruction on
+    // x86-64: a load of the owner before the branch, and a compare in each branch.
     loop.assert_owner();
+    if (group == .default) return schedule(dispatch, loop, task);
     const groups = dispatch.groups;
     groups.assert_reserved(group);
     // The end mark makes every queued task's `next` not null, so this one compare finds a task

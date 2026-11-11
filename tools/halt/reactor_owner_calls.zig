@@ -22,6 +22,16 @@ const finish_call: Task.Call = .{ .name = "finish", .function = ran, .call_recor
 const entry_call: Task.Call = .{ .name = "entry", .function = ran, .call_record = true };
 const ran_call: Task.Call = .{ .name = "ran", .function = ran };
 
+const NamedTable = reactor_module.scheduling.NamedTable;
+
+/// One named group, id 1, at the default shares.
+const one_named: NamedTable = table: {
+    var table = NamedTable.empty;
+    table.count = 1;
+    table.shares[0] = reactor_module.constants.scheduling_shares_default;
+    break :table table;
+};
+
 /// The scenarios for a reactor over a backend's `Loop` with `options`, which name the loop's id.
 pub fn Scenarios(comptime Loop: type, comptime options: Loop.Options) type {
     const Reactor = reactor_module.Reactor(Loop);
@@ -38,10 +48,18 @@ pub fn Scenarios(comptime Loop: type, comptime options: Loop.Options) type {
             thread.join();
         }
 
+        /// The group that `schedule_in_on_this_thread` names.
+        var group: core.SchedulingGroup align(@alignOf(core.SchedulingGroup)) = .default;
+
         /// The reactor over the loop's tables, with no kernel, started on the main thread.
         fn start() void {
+            start_named(&.empty);
+        }
+
+        /// As `start`, with the named groups of `named` reserved as ids 1 to n.
+        fn start_named(named: *const NamedTable) void {
             reactor.loop.init_tables(&memory, &options);
-            reactor.dispatch.start(&groups, .{ .id = options.id, .in_group = false, .named_groups = &.empty });
+            reactor.dispatch.start(&groups, .{ .id = options.id, .in_group = false, .named_groups = named });
             task = .{ .call = &ran_call };
         }
 
@@ -71,7 +89,15 @@ pub fn Scenarios(comptime Loop: type, comptime options: Loop.Options) type {
 
         fn schedule_in_on_this_thread() void {
             scenario.reached_violation();
-            reactor.schedule_in(.default, &task) catch {};
+            reactor.schedule_in(group, &task) catch {};
+        }
+
+        /// A group other than `.default` takes a path with no call of `schedule`. So only the check
+        /// at the start of `schedule_in` halts this call.
+        fn schedule_in_named_from_another_thread() void {
+            start_named(&one_named);
+            group = @enumFromInt(1);
+            on_another_thread(schedule_in_on_this_thread);
         }
 
         /// While the loop's own thread is in a task's call: `tasks.left` is above 0 only there.
@@ -162,6 +188,7 @@ pub fn Scenarios(comptime Loop: type, comptime options: Loop.Options) type {
         pub const scenarios = [_]scenario.Scenario{
             .{ .name = "owner: schedule a task from another thread", .run = schedule_from_another_thread },
             .{ .name = "owner: schedule in a group from another thread", .run = schedule_in_from_another_thread },
+            .{ .name = "owner: schedule in a named group from another thread", .run = schedule_in_named_from_another_thread },
             .{ .name = "owner: charge a task from another thread", .run = charge_from_another_thread },
             .{ .name = "owner: reserve a scheduling group from another thread", .run = reserve_from_another_thread },
             .{ .name = "owner: set the shares of a group from another thread", .run = set_shares_from_another_thread },
