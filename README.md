@@ -18,8 +18,9 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 | Operations | TCP, UDP with ECN, files, timers and repeating timers, deadlines, cancellation, and messages between loops |
 | Memory | rotor allocates nothing. A program gives each loop its memory once, at startup, and every table has a fixed limit. |
 | Threads | One loop per thread, with no locks. Loops post messages to each other, across threads or processes. |
-| Safety | Assertions stay on in release builds. Misuse stops the program at a named check. A library that tries to tick a loop it shares fails to compile. |
-| Stalls | Each loop counts the turns that held it too long, and names the callback. A thread of the program can see a callback that never returns. |
+| Reactor | Optional. `rotor.Reactor(rotor.Loop)` adds records with callbacks, pollers, tasks, scheduling groups and cross-core calls, for libraries that share one loop. A program that does not name it has none of its code. |
+| Safety | Assertions stay on in release builds. Misuse stops the program at a named check. A library that tries to tick a reactor it shares fails to compile. |
+| Stalls | Each loop counts the turns that held it too long, and a reactor names the callback. A thread of the program can see a callback that never returns. |
 | Dependencies | None. Zig 0.16.0 and its standard library. |
 | Version | 0.10.0 |
 | License | Apache-2.0 |
@@ -38,8 +39,9 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
   a program's control flow can be followed and replayed.
 - **Pluggable I/O.** One API covers io_uring, kqueue and epoll. The process picks its backend once
   and reports which it chose. The API names no kernel type, so a program can put its own
-  implementation behind it, such as a simulator for tests that must replay exactly. File
-  operations that would block the loop can go to threads the program supplies.
+  implementation behind it, such as a simulator for tests that must replay exactly. The reactor
+  then runs over that implementation too. File operations that would block the loop can go to
+  threads the program supplies.
 - **Predictable memory.** rotor allocates nothing. A program gives each loop its memory once, at
   startup. Every table and queue in the loop has a fixed limit, and rotor never grows one.
 - **Safe to run in production.** Assertions stay on in release builds. Misuse, such as calling a
@@ -54,6 +56,13 @@ rotor is at version 0.10.0. Everything planned for version one is built: TCP, UD
 both kernels and segmentation offload on Linux, files, timers, deadlines and cancellation, and
 messages between loops, in one process or several. One conformance suite, written against the
 public API, passes on all three backends, and CI runs it on every push.
+
+The `main` branch splits rotor into a core and an optional reactor
+([design record 33](docs/decisions/0033-a-core-and-an-optional-layer.md)). The core is the loop and
+its I/O. The reactor holds the records, the pollers, the tasks, the scheduling groups, the
+cross-core calls and the view that libraries share. Version 0.11.0 will release the split. A
+program on version 0.10.0 that uses those pieces makes a `rotor.Reactor(rotor.Loop)` in place of a
+`rotor.Loop` when it moves.
 
 | system | backend | requires | tested on |
 |---|---|---|---|
@@ -129,9 +138,11 @@ on io_uring and on epoll: a line, 32 clients at once, 4 MiB messages, clients th
 up, and a client that closes its side. A test also checks that every line of the code above is a
 line of the example, in the same order, so this page cannot drift from a program that works.
 
-[The guide](docs/using.md) covers the rest of the API: every operation and what it promises,
-deadlines and cancellation, the three ways to hand the loop buffers, datagrams, files, and loops on
-several threads and in several processes.
+[The guide](docs/using.md) covers the rest of the API in two parts. The first part is the loop:
+every operation and what it promises, deadlines and cancellation, the three ways to hand the loop
+buffers, datagrams, files, and loops on several threads and in several processes. The second part
+is the reactor: records, pollers, tasks, scheduling groups, cross-core calls, a reactor that
+libraries share, and a twin of the loop for tests that replay.
 
 ## Performance
 
@@ -192,7 +203,7 @@ and the commands to take every number again.
 
 | document | what it covers |
 |---|---|
-| [`docs/using.md`](docs/using.md) | the guide: every operation and its promises, buffers, datagrams, files, threads, a loop that libraries share, stalls and limits |
+| [`docs/using.md`](docs/using.md) | the guide, in two parts. A loop: every operation and its promises, buffers, datagrams, files, threads, stalls and limits. A reactor: records, pollers, tasks, scheduling groups, cross-core calls, a reactor that libraries share, and a twin of the loop |
 | [`examples/`](examples) | complete programs that `zig build test` compiles |
 | [`docs/benchmarks.md`](docs/benchmarks.md) | the full measurements, and how to take them again |
 | [`docs/decisions/`](docs/decisions) | one record per design decision, with the alternatives it was chosen over |
@@ -231,9 +242,20 @@ and the commands to take every number again.
 | [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | accepted, deferred |
 | [23](docs/decisions/0023-a-host-that-owns-the-wait.md) | a host that owns the wait | accepted |
 | [24](docs/decisions/0024-a-simulated-surface.md) | a simulated surface, and a search over its orders | proposed |
+| [25](docs/decisions/0025-open-a-file-on-the-loop.md) | open a file on the loop | withdrawn |
+| [26](docs/decisions/0026-a-shared-loop.md) | a loop that several libraries share | accepted |
+| [27](docs/decisions/0027-a-task-queue.md) | a task queue on the loop | accepted |
+| [28](docs/decisions/0028-correct-use-and-stalls.md) | a shared loop that refuses wrong use, and stalls a program can see | accepted |
+| [29](docs/decisions/0029-what-libraries-ask-of-a-shared-loop.md) | what libraries on a shared loop ask of it | accepted |
+| [30](docs/decisions/0030-scheduling-groups.md) | scheduling groups | accepted |
+| [31](docs/decisions/0031-a-disk-io-scheduler.md) | a disk I/O scheduler | accepted, not built |
+| [32](docs/decisions/0032-a-cross-core-call-helper.md) | a cross-core call | accepted |
+| [33](docs/decisions/0033-a-core-and-an-optional-layer.md) | a core for the loop, and an optional reactor | accepted |
+| [34](docs/decisions/0034-a-package-for-std-io-futures.md) | a package of its own for `std.Io` and its Future API | proposed |
 
 A proposed record describes something not yet built. A declined record describes something rotor
-will not build, and why.
+will not build, and why. A withdrawn record was proposed and then withdrawn, and rotor builds
+nothing of it. Decisions 26 to 32 describe pieces that decision 33 puts in the reactor.
 
 </details>
 
