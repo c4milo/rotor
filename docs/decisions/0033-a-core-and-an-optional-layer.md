@@ -967,8 +967,8 @@ instructions, `poller` counted 562, 562 and 559, and `tasks-groups-4` counted 12
    arm64 container on `mac`, as the ledger's rows H2 and H3 were counted. This method passes or
    fails a step.
 2. **On x86-64 Linux, cachegrind decides too, before the step lands.** No x86-64 machine is named,
-   so the count comes from CI. The step goes up as a pull request, and CI's x86-64 job counts the
-   work gate on it. A run of CI started by hand on the tag `v0.10.0` gives the counts at `9339858`.
+   so the count comes from CI. CI's x86-64 job counts the work gate on the push of the step to
+   `main` (the ruling of 2026-11-11 under "Build order"). A run of CI started by hand on the tag `v0.10.0` gives the counts at `9339858`.
    The programs are built for the baseline processor, and cachegrind counts user instructions, so
    two runs on different runners compare. The two runs must name the same Valgrind version. If they
    do not, both trees run again in one pair of runs on the same day. A reactor row counts at or
@@ -1128,8 +1128,13 @@ reactor's state in the plain loop (open question 2).
 Each step keeps `zig build test` green, and passes the Linux gate and the race gate before it lands.
 Each step that changes a tick also passes the stress gate. Each step counts every row of the work
 gate at the step and at `9339858`, by the three methods of "How a reactor row is compared". Those
-methods say when each count is taken. On `mac` both trees are counted on the same day. A step lands
-on `main` only after its x86-64 counts pass, from CI on its pull request.
+methods say when each count is taken. On `mac` both trees are counted on the same day.
+
+*Ruled on 2026-11-11: no pull requests.* Camilo wrote: "No pull requests, update main, rebase and
+push". So a step lands as each change of this repository lands: a rebase on `origin/main`,
+`zig build test`, then a push to `main`. CI's x86-64 job counts the work gate on that push, and a
+count that fails the gate there is fixed on `main`. Steps 1 and 2 went up as pull requests before
+this ruling. Step 1's x86-64 counts passed before it landed.
 
 1. **The port and `wait_until`, with no move.** Each backend declares the nine port names over
    today's state, and `core/surface.zig` checks them. Until step 3, the program's limit and the
