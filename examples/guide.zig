@@ -1,8 +1,9 @@
-//! The code of `docs/using.md`, run in order as one program. Every Zig block of the guide is part of
-//! this file, line for line, and `tools/readme_examples.zig` holds it to that, so the guide shows
-//! code that compiles against the public module and does what the guide says it does. `zig build
-//! test` runs it, and the Linux gate runs it on io_uring and on epoll. It exits 0 only when every
-//! step did what the guide says.
+//! The code of `docs/using.md`, run in order as one program: its first part on a plain loop, and its
+//! second part on a reactor. Each Zig block of the guide is part of this file or of another program
+//! under `examples/`, line for line, and `tools/readme_examples.zig` holds it to that. So the guide
+//! shows code that compiles against the public module and does what the guide says it does. `zig
+//! build test` runs it, and the Linux gate runs it on io_uring and on epoll. It exits 0 only when
+//! every step did what the guide says.
 //!
 //! Run:  zig build examples && ./zig-out/bin/guide
 const std = @import("std");
@@ -27,7 +28,14 @@ const bytes = buffers.group_bytes(group_count, group_buffer_bytes);
 var backing: [bytes + buffers.group_alignment]u8 align(buffers.group_alignment) = undefined;
 
 pub fn main() !void {
-    // "A loop"
+    try run_a_loop();
+    try run_a_reactor();
+    std.debug.print("guide: every step of docs/using.md ran, on the {t} backend\n", .{rotor.backend()});
+}
+
+/// The first part of the guide, "A loop".
+fn run_a_loop() !void {
+    // "Start and end a loop"
     const options: rotor.Loop.Options = .{ .operations = 1024 };
     var memory: [rotor.Loop.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
     var loop: rotor.Loop = undefined;
@@ -67,10 +75,95 @@ pub fn main() !void {
     loop.cancel(handles[1]);
     try expect_canceled(try next_event(&loop, 2, &events));
 
+    try bound_the_wait(&loop, &events);
     try receive_into_a_group(&loop, pair, &events);
     if (loop.in_flight() != 0) return error.StillInFlight;
-    std.debug.print("guide: every step of docs/using.md ran, on the {t} backend\n", .{rotor.backend()});
 }
+
+/// "The stored limit": the program bounds the wait of each tick at a deadline of its own, and the
+/// loop keeps that limit until the program writes it again.
+fn bound_the_wait(loop: *rotor.Loop, events: []rotor.Event) !void {
+    const deadline_ns = loop.now_ns() + rotor.constants.ns_per_ms;
+    loop.wait_until(.at(deadline_ns));
+    if (loop.wait_limit() != rotor.WaitLimit.at(deadline_ns)) return error.LimitNotStored;
+    _ = try loop.tick(events, rotor.constants.ns_per_s);
+    loop.wait_until(.none);
+    if (loop.wait_limit() != rotor.WaitLimit.none) return error.LimitNotStored;
+}
+
+/// The second part of the guide, "A reactor": the program makes a reactor in place of a loop,
+/// reserves a scheduling group, and hands a library the view. The library's record, poller and
+/// task run inside the reactor's ticks.
+fn run_a_reactor() !void {
+    const Reactor = rotor.Reactor(rotor.Loop);
+    const options: Reactor.Options = .{ .loop = .{ .operations = 64 } };
+    var memory: [Reactor.memory_bytes(&options)]u8 align(rotor.memory_alignment) = undefined;
+    var reactor: Reactor = undefined;
+    try reactor.init(&memory, &options);
+    defer reactor.deinit();
+
+    var events: [64]rotor.Event = undefined;
+    // A tick reads the clock, so the exchange's deadline starts from a real `now_ns`.
+    _ = try reactor.tick(&events, 0);
+    const group = try reactor.reserve_scheduling_group(200);
+    var exchange: Exchange = .{ .shared = reactor.shared(), .group = group };
+    try exchange.start(rotor.constants.ns_per_ms, rotor.constants.ns_per_s);
+    for (0..ticks_max) |_| {
+        if (exchange.finished and reactor.in_flight() == 0) break;
+        _ = try reactor.tick(&events, rotor.constants.ns_per_s);
+    }
+    if (!exchange.finished or reactor.in_flight() != 0) return error.Stuck;
+    if (exchange.outcome != .replied) return error.Expired;
+}
+
+/// "A reactor": a library that holds the view. It sends one request, with a deadline for the whole
+/// exchange. A timer stands in for the request's I/O. The record takes the reply, the poller holds
+/// the deadline, and the task ends the exchange in the library's group.
+const Exchange = struct {
+    shared: *rotor.SharedLoop,
+    group: rotor.SchedulingGroup,
+    request: rotor.Completion = .init(Exchange, "request", on_request),
+    deadline: rotor.Poller = .init(Exchange, "deadline", on_deadline),
+    done: rotor.Task = .init(Exchange, "done", on_done),
+    handle: [1]rotor.Handle = .{.none},
+    deadline_ns: u64 = 0,
+    outcome: Outcome = .waiting,
+    finished: bool = false,
+
+    const Outcome = enum { waiting, replied, expired };
+
+    fn start(exchange: *Exchange, reply_ns: u64, timeout_ns: u64) !void {
+        exchange.deadline_ns = exchange.shared.now_ns() + timeout_ns;
+        try exchange.shared.add_poller(&exchange.deadline);
+        const request = rotor.Completion.mark(&exchange.request, rotor.Operation.timer(0, reply_ns, 0));
+        if (exchange.shared.submit(&.{request}, &exchange.handle) != 1) return error.NotTaken;
+    }
+
+    fn on_request(exchange: *Exchange, event: rotor.Event) void {
+        _ = event.outcome() catch return;
+        exchange.end(.replied);
+    }
+
+    fn on_deadline(exchange: *Exchange) rotor.WaitLimit {
+        if (exchange.outcome != .waiting) return .none;
+        if (exchange.shared.now_ns() < exchange.deadline_ns) return .at(exchange.deadline_ns);
+        exchange.shared.cancel(exchange.handle[0]);
+        exchange.end(.expired);
+        return .none;
+    }
+
+    fn end(exchange: *Exchange, outcome: Outcome) void {
+        if (exchange.outcome != .waiting) return;
+        exchange.outcome = outcome;
+        // The group holds no other task, so it has room.
+        exchange.shared.schedule_in(exchange.group, &exchange.done) catch unreachable;
+    }
+
+    fn on_done(exchange: *Exchange) void {
+        exchange.shared.remove_poller(&exchange.deadline);
+        exchange.finished = true;
+    }
+};
 
 /// "Buffers": a group id the loop reserves, a provided-buffer group whose memory is aligned
 /// forward, a multishot receive that lets the kernel pick a buffer, the bytes read from that
