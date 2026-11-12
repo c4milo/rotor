@@ -1,33 +1,32 @@
 # 34. A package of its own for `std.Io` and its Future API
 
-Status: **proposed** on 2026-11-10. The session revised it that day four times: after two reviews,
-for Camilo's first rulings, after a third review, and for his second rulings. Nothing is built, and
-no repository exists. On 2026-11-09 Camilo ruled where this work goes ("Ruling, 2026-11-09"). On
-2026-11-10 he ruled each open question up to 16, in two rounds ("Rulings, 2026-11-10"). On
-2026-11-11 he ruled questions 17 and 18, and asked for question 19 ("The third round, 2026-11-11").
-The design below follows those rulings. The package calls `tick`, its type is generic over the
+Status: **accepted** on 2026-11-11 by Camilo ("The fourth round, 2026-11-11"). It was proposed on
+2026-11-10. The session revised it that day four times: after two reviews, for Camilo's first
+rulings, after a third review, and for his second rulings. On 2026-11-09 Camilo ruled where this
+work goes ("Ruling, 2026-11-09"). On 2026-11-10 he ruled each open question up to 16, in two rounds
+("Rulings, 2026-11-10"). On 2026-11-11 he ruled questions 17 and 18, and asked for question 19
+("The third round, 2026-11-11"). Later that day he ruled question 19, and accepted this record. The
+design below follows those rulings. The package calls `tick`, its type is generic over the
 reactor's type, and it builds on decision 33's reactor at v0.11.0. No review read the answers to the
 third review, or the revision for the second rulings.
 
-This record stays proposed. Camilo ruled that he accepts it after decision 33 is accepted, and after
-the twin's parts of question 14 are in this record. "Over a twin" now holds those parts. Open
-question 19 is open. Nothing starts before decision 33 is built and tagged, and before Camilo
-accepts this record.
+Nothing of the package is built, and no repository exists. The package starts at step 0 of "Build
+order". The session makes its repository when Camilo says so ("Ask before").
 
-Decision 33 was accepted on 2026-11-10, and its steps 1 to 3 are on `main`. Each v0.11.0 name in
-this record follows decision 33 as that record proposed it. Some of them changed when step 3 was
-built. The session lists those changes at this record's acceptance.
+Decision 33 was accepted on 2026-11-10. Its steps 1 to 5 are on `main`, and v0.11.0 released them on
+2026-11-11 (`f2890f5`). Each name of rotor in this record is the name that v0.11.0 holds. "Decision
+33 as v0.11.0 built it" lists what this record changed at its acceptance to agree with that code.
 
 Nothing was measured for this record. Each number is a row of `docs/costs.md`, a row of
 `bench/baseline/work.txt`, a number that decision 22 measured, or a prior. A prior is arithmetic
 over such rows. Each table of numbers names its source.
 
-If it is accepted, it changes no source file of rotor. It amends decision 1, which still says that
-the `std.Io` table is a module of rotor, and decision 2 gains a note. Decisions 26, 27 and 28 and
-the guide, `docs/using.md`, gain a note on who ticks ("Who ticks"). Camilo ruled that the session
-writes those notes when he accepts this record, and not before. Decision 22 gained one note that
-points here, in the first commit of this record. "Ask before" lists each item that needs Camilo's
-word first.
+This record changes no source file of rotor. At its acceptance it amended decision 1, which still
+said that the `std.Io` table is a module of rotor, and decision 2 gained a note. Decisions 26, 27
+and 28 and the guide, `docs/using.md`, gained a note on who ticks ("Who ticks"). Camilo ruled that
+the session writes those notes at this record's acceptance. Decision 22 gained one note that points
+here, in the first commit of this record, and a second at its acceptance. "Ask before" lists each
+item that needs Camilo's word first.
 
 ## Ruling, 2026-11-09
 
@@ -68,8 +67,8 @@ text as a reason for it:
 
 - Open question 2 asks who calls `tick`. The answer decides whether a fiber runs inside a
   `rotor.Task`.
-- Open question 3 asks about `rotor.Reactor`. That type is decision 33's, which is proposed and not
-  built.
+- Open question 3 asks about `rotor.Reactor`. That type is decision 33's. Step 2 of that record
+  built it (`bb81c21`).
 - Item 7 of the decision proposes that rotor does not depend on the package.
 
 ## Rulings, 2026-11-10
@@ -147,7 +146,8 @@ What the choices said, where a ruling depends on it:
   `perform` and `call`, the nine network calls and `fileClose`, with echo numbers.
 - **The names.** The choice said that each name stays a proposal, and that Camilo rules it when the
   first step shows it in a real program.
-- **The notes.** The session writes both when Camilo accepts this record, and not before.
+- **The notes.** The choice said that the session writes both when Camilo accepts this record, and
+  not before. The session wrote them on 2026-11-11 ("The fourth round, 2026-11-11").
 - **Acceptance.** The choice said that this record stays proposed until decision 33 is accepted
   and the twin's parts of question 14 are in this record.
 
@@ -155,10 +155,10 @@ So each open question up to 16 is ruled, and each name of the sketch but `tejedo
 
 ### The third round, 2026-11-11
 
-Decision 33 was accepted on 2026-11-10, and its step 3 put `rotor.Reactor(Loop)` on `main` on
-2026-11-11. That day the session put the two questions that were left to Camilo, and one new
-question. The first choice of each row was the session's recommendation. Camilo gave no reason with
-a choice.
+Decision 33 was accepted on 2026-11-10, and its step 2 put `rotor.Reactor(Loop)` on `main` on
+2026-11-11 (`bb81c21`). That day the session put the two questions that were left to Camilo, and one
+new question. The first choice of each row was the session's recommendation. Camilo gave no reason
+with a choice.
 
 | question | the choices | Camilo chose |
 |---|---|---|
@@ -172,7 +172,35 @@ a choice.
 - **The deadline.** The session wrote question 19 with the proxy's two facts, what rotor's
   operations give today, and the cost of each answer.
 
-So each open question up to 18 is ruled. Question 19 is open.
+So each open question up to 18 is ruled. The fourth round ruled question 19.
+
+### The fourth round, 2026-11-11
+
+Later on 2026-11-11 the session put question 19 to Camilo, and then the acceptance of this record.
+This record proposed answer 2 to question 19. Camilo gave no reason with a choice.
+
+| question | the choices | Camilo chose |
+|---|---|---|
+| 19. A deadline inside a network call | keep the second task; map std's `Timeout` to `timeout_ns`; calls of the package's own | **map std's `Timeout` to `timeout_ns`** |
+| Does Camilo accept this record now? | accept now; not yet | **accept now** |
+
+What the choices said, where a ruling depends on it:
+
+- **Question 19.** When `batchAwaitConcurrent` holds one `net_receive`, the package sets the
+  operation's `timeout_ns` from the `Timeout`. It runs no timer of its own for that deadline. A send
+  with a deadline keeps the second task, because std has no operation that sends. rotor's
+  conformance suite gains the two scenarios for the probe of 1 ns, in a change of their own. The
+  batch calls are in step 6 ("Which calls run where"), which question 6 left out of the first
+  release.
+- **Acceptance.** The session put it after question 19, with three changes to rotor's documents.
+  The second round ruled the first two. The session made each of them the same day:
+  - a note on who ticks in decisions 26, 27 and 28, and in the guide's section "A library on a
+    reactor" ("Who ticks");
+  - an amendment in the header of decision 1, and a note in decision 2 ("What changes in rotor");
+  - this record's status in the README's table of decision records.
+
+So each open question has a ruling, and this record is accepted. Each name of the sketch but
+`tejedor` is still a proposal, which Camilo rules with the code (open question 1).
 
 ## Context
 
@@ -265,16 +293,38 @@ Since 2026-11-05 rotor gained records and pollers (decisions 26 and 29). It gain
 and scheduling groups (decisions 27 and 30), `Message.wake` (decision 29) and cross-core calls
 (decision 32). v0.10.0 holds each of them.
 
-Decision 33 is proposed and not accepted. It splits rotor into a plain `rotor.Loop` and
-`rotor.Reactor(rotor.Loop)`, which holds each of those things. It would ship as v0.11.0. Camilo
-ruled on 2026-11-10 that the package waits for that release (open question 3). So this record
-describes the package on decision 33's names only. Three facts about that record bear on this one:
+Decision 33 splits rotor into a plain `rotor.Loop` and `rotor.Reactor(rotor.Loop)`, which holds each
+of those things. Camilo accepted it on 2026-11-10, and v0.11.0 released it on 2026-11-11
+(`f2890f5`). Camilo ruled on 2026-11-10 that the package waits for that release (open question 3).
+So this record describes the package on the names of v0.11.0 only. Three facts about decision 33
+bear on this one:
 
-- Its status line says that ten of its sixteen open questions hold no ruling.
-- Its open questions 13 and 16 leave the inside of the host's reactor to the counts of its step 2.
-  The name that a program types, `rotor.Reactor(rotor.Loop)`, does not depend on those counts.
-- A plain `rotor.Loop` of decision 33 calls no record, and has no poller and no view. The package
-  does not run on one.
+- Each of its sixteen open questions holds a ruling.
+- Camilo ruled its open questions 13 and 16 on 2026-11-11, with the counts of its step 2: form H.
+  The host's reactor holds its own state and a `rotor.Loop` by value (`src/rotor/rotor.zig`,
+  `Reactor`). The name that a program types, `rotor.Reactor(rotor.Loop)`, did not change.
+- A plain `rotor.Loop` calls no record, and has no poller and no view. The package does not run on
+  one.
+
+### Decision 33 as v0.11.0 built it
+
+Before its acceptance, this record named rotor's types as decision 33 proposed them. At its
+acceptance the session checked each name against v0.11.0, and changed these places:
+
+| this record said | v0.11.0 holds |
+|---|---|
+| `rotor.Reactor` is proposed and not built, and step 3 put it on `main` | step 2 built it (`bb81c21`), and step 3 moved the reactor's code to `src/reactor/` (`7679de4`) |
+| ten of decision 33's sixteen open questions hold no ruling, and questions 13 and 16 are open | each question holds a ruling. Camilo ruled form H for questions 13 and 16 on 2026-11-11 |
+| the reactor declares the 43 names of today's `rotor.Loop`, and `tick` is one of its seven calls that wrap | the reactor declares the loop's 28 names and 16 names of its own. Eight of the 28 do the reactor's part: `memory_bytes`, `init`, `deinit`, `submit`, `tick`, `drain`, `assert_empty` and `wait_limit`. `wait_until` fails to compile (decision 33, status; the guide, "Make a reactor") |
+| whether the reactor declares `TickError` is open | both reactors declare `TickError` and `DrainError`. The host's reactor also declares `InitError`, `RegisterError`, `ProvideError` and `PostError`. Both declare `AddPollerError`, `ScheduleError`, `ReserveSchedulingGroupError` and `CallError` |
+| decision 33 gives no list of names for `rotor.Reactor(Twin)`, so this record asked for one sentence there | `src/reactor/reactor.zig` declares each name that `Fibers` asks for on `reactor.Reactor(Loop)`, which `rotor.Reactor(Twin)` returns. Decision 33 was accepted without the sentence |
+| `src/core/dispatch/dispatch.zig` | `src/reactor/dispatch/dispatch.zig` |
+| the guide's section "A library that shares a loop" | "A library on a reactor", with the same sentence on who ticks |
+| the README's list of decision records stops at decision 24 | it lists each record up to 34 |
+
+What this record says of the port, and of the view's 21 library calls, agrees with v0.11.0. The
+package's poller answers `.now` or `.none` alone, so the package needs no `WaitLimit.least`, which
+v0.11.0 added.
 
 ## The decision, as proposed
 
@@ -363,7 +413,7 @@ const std = @import("std");
 const rotor = @import("rotor");
 const tejedor = @import("tejedor");
 
-const Reactor = rotor.Reactor(rotor.Loop); // decision 33, as proposed
+const Reactor = rotor.Reactor(rotor.Loop); // decision 33
 const Fibers = tejedor.Fibers(Reactor);
 
 fn run(reactor: *Reactor, memory: []align(tejedor.memory_alignment) u8, rest: std.Io) !void {
@@ -493,7 +543,7 @@ that builds the row. Until its step is built, a row goes to `rest`.
 | `netListenIp`, `netBindIp` | 2 | `rotor.sync.listen` and `rotor.sync.open_datagram`, at once, on the caller's stack | 4 |
 | `netAccept`, `netConnectIp`, `netRead`, `netWrite`, `netSend`, `netShutdown` | 6 | one operation each: `accept`, `connect`, `receive`, `send`, `send_to`, `shutdown` | 4 |
 | `netClose`, `fileClose` | 2 | one `close` operation, which blocks the context, in each place. rotor's `close` first cancels each operation in flight for the descriptor (decision 5, rule 6). `rotor.sync.close_now` cancels none, so the package does not use it for these calls | 4 |
-| `operate`, `batchAwaitAsync`, `batchAwaitConcurrent`, `batchCancel` | 4 | the package, for `net_receive`. The other three kinds of `Io.Operation` go to `rest` | 6 |
+| `operate`, `batchAwaitAsync`, `batchAwaitConcurrent`, `batchCancel` | 4 | the package, for `net_receive`. When `batchAwaitConcurrent` holds one `net_receive`, its `Timeout` becomes the operation's `timeout_ns`, and the package runs no timer for it (open question 19). The other three kinds of `Io.Operation` go to `rest` | 6 |
 | `fileReadPositional`, `fileWritePositional`, `fileSync` | 3 | `read`, `write`, `fsync`, under the reactor's file policy (decision 18). A file operation that the reactor refuses goes to `rest` | 6 |
 | `crashHandler`, the 26 directory calls, 24 file calls, the 15 process calls, `clockResolution`, `random`, `randomSecure`, 6 network calls, and `now` for the other clocks | 75 | `rest` | none |
 
@@ -712,7 +762,7 @@ The poller has two jobs:
 The reactor calls its pollers in the order in which the libraries added them (decision 26). The
 package's poller must run after each other poller. So before each tick that can wait, the package
 removes its poller and adds it again, which puts it last. After the last poller, a tick calls no
-code of a library before its wait (`src/core/dispatch/dispatch.zig`, `begin`).
+code of a library before its wait (`src/reactor/dispatch/dispatch.zig`, `Dispatch.begin`).
 
 ### When the reactor is full
 
@@ -825,34 +875,33 @@ on before it (decision 5).
 
 ## What the package needs from rotor
 
-Camilo ruled that the package waits for v0.11.0. So the rows below check each name against decision
-33's proposed surface, as that record is at `e7bfcb1`. Decision 33 is not accepted, and a change
-there changes a row here.
+Camilo ruled that the package waits for v0.11.0. So the rows below check each name against the code
+of that tag (`f2890f5`). No row leaves a question open.
 
-| the package names | where decision 33 gives it | what decision 33 leaves open |
-|---|---|---|
-| `rotor.Reactor(rotor.Loop)`, which the program makes | "The public module": the one export for the reactor | its inside, by its open questions 13 and 16. Camilo ruled the name |
-| on the reactor: `tick`, `submit`, `cancel`, `now_ns`, `shared`, `add_poller`, `remove_poller` | "The public module": the reactor declares the 43 names of today's `rotor.Loop`, and `tick` is one of its seven calls that wrap | nothing |
-| the error of `tick` | its sketch of the reactor's `tick` returns `TickError!u32` | whether the reactor declares `TickError`. Decision 33 names four error sets that move to the reactor, and this one is not among them. The package names no set: it reads the error from the call |
-| the reactor's view, `rotor.SharedLoop` on the host, for `Service.send` | `reactor.shared()` gives it, with the same 21 library calls | nothing |
-| `rotor.Completion.mark(&record, operation)` | "The line": it replaces `Operation.completion` | nothing: its open question 5 holds a ruling |
-| `rotor.Completion` and `rotor.Poller`, each with `init`, and `rotor.WaitLimit` | "The public module": the same names | nothing |
-| `rotor.Operation`, with `timer`, `accept`, `connect`, `receive`, `send`, `send_to`, `shutdown`, `close`, `read`, `write`, `fsync`, `receive_from`, and its `kind`, which `perform` reads | "The line": the core's | nothing |
-| `rotor.Event`, with `is_final`, `rotor.Handle`, `rotor.Code`, `rotor.Error`, `rotor.Address`, `rotor.Descriptor` | "The line": the operations and their completions stay in the core | nothing |
-| `rotor.Message.wake`, `rotor.LoopId`, and `post` on a `rotor.Remote`, on a view or on a plain `rotor.Loop`, through `WakePath.init` | "The line": the core's | nothing |
-| `rotor.sync`: `listen`, `open_socket`, `open_datagram`, `local_address`, `close_now`, and the types in their forms, for `Sockets` | decision 33 does not name `sync`. It moves no I/O out of the core | nothing |
-| `rotor.Service`, `rotor.CallRecord`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError` | "The public module": the same names. `Service` and `CallRecord` are those of the host's reactor | nothing |
-| for datagrams, in step 6: `reserve_buffer_group`, `provide_datagram_buffers`, `datagram`, `give_back_buffer`, `release_buffers` | "The line": the core's | nothing |
-| `rotor.constants`: `timeout_ns_max`, `wait_ns_max` | "The module graph": neither moves to `src/reactor/constants.zig` | nothing |
+| the package names | where v0.11.0 gives it |
+|---|---|
+| `rotor.Reactor(rotor.Loop)`, which the program makes | `src/rotor/rotor.zig`, `Reactor`: the one export for the reactor. By form H it holds its own state and a `rotor.Loop` by value |
+| on the reactor: `tick`, `submit`, `cancel`, `now_ns`, `shared`, `add_poller`, `remove_poller` | `src/rotor/rotor.zig` and `src/reactor/reactor.zig` declare each, on the host's reactor and on the generic one. `tick` and `submit` are two of the eight calls that do the reactor's part |
+| the error of `tick` | `TickError`, which both reactors declare. The package reads the error from the call, or names `Reactor.TickError` |
+| the reactor's view, `rotor.SharedLoop` on the host, for `Service.send` | `reactor.shared()` gives it, with 21 library calls and nine refused calls |
+| `rotor.Completion.mark(&record, operation)` | `src/reactor/reactor.zig`. It replaced `Operation.completion` (decision 33, open question 5) |
+| `rotor.Completion` and `rotor.Poller`, each with `init`, and `rotor.WaitLimit` | `src/rotor/rotor.zig`: the same names. `Completion` and `Poller` are the reactor's, and `WaitLimit` is the core's |
+| `rotor.Operation`, with `timer`, `accept`, `connect`, `receive`, `send`, `send_to`, `shutdown`, `close`, `read`, `write`, `fsync`, `receive_from`, and its `kind`, which `perform` reads | the core's (`src/core/operation.zig`) |
+| `rotor.Event`, with `is_final`, `rotor.Handle`, `rotor.Code`, `rotor.Error`, `rotor.Address`, `rotor.Descriptor` | the core's: the operations and their completions stay in the core |
+| `rotor.Message.wake`, `rotor.LoopId`, and `post` on a `rotor.Remote`, on a view or on a plain `rotor.Loop`, through `WakePath.init` | the core's, and each reactor's `post` |
+| `rotor.sync`: `listen`, `open_socket`, `open_datagram`, `local_address`, `close_now`, and the types in their forms, for `Sockets` | the backend's, through `src/rotor/rotor.zig`. Decision 33 moved no I/O out of the core |
+| `rotor.Service`, `rotor.CallRecord`, `rotor.CallResult`, `rotor.CallOptions`, `rotor.CallError` | `src/rotor/rotor.zig`: the same names. `Service` and `CallRecord` are those of the host's reactor |
+| for datagrams, in step 6: `reserve_buffer_group`, `provide_datagram_buffers`, `datagram`, `give_back_buffer`, `release_buffers` | the core's, and each reactor declares them too |
+| `rotor.constants`: `timeout_ns_max`, `wait_ns_max` | `src/core/constants.zig`. Neither moved to `src/reactor/constants.zig` |
 
-So shape (a) needs no name that decision 33 does not propose. It names more of the reactor than
-shape (b) did: the reactor's type, and its `tick`.
+So shape (a) needs no name that v0.11.0 does not give. It names more of the reactor than shape (b)
+did: the reactor's type, and its `tick`.
 
 ### What rotor does not give
 
 Each row is an ask-before item. rotor adds none of them for the package without Camilo's word. The
 column "without it" says what the package does, so no row stops a step. "rotor" in the second column
-is rotor under decision 33.
+is rotor at v0.11.0.
 
 | the package would use | rotor | without it | cost to rotor |
 |---|---|---|---|
@@ -860,11 +909,10 @@ is rotor under decision 33.
 | the peer's address of an accepted socket | `accept` reports the descriptor alone. `sync` has `local_address` and no call for the peer | `Sockets.host` calls `getpeername`, one system call for each accept | one more name on `sync`, on each backend. The test of its 24 names changes |
 | the options `ip6_only` and `allow_broadcast` at a bind | `sync.open_datagram` sets neither | the bind answers `OptionUnsupported`, as in decision 22 | fields in `DatagramOptions`, on each backend |
 | a wake from a thread that holds no `Remote` and no loop | none. Decision 29 rejected a second call across threads | the program gives each such thread a `Remote`: one id of the registry each, of `loops_max` (256) | an amendment of non-negotiable 4, decision 4 and the wake model. This record does not ask for it |
-| a place after each other poller, or a call that keeps the tick that runs from its wait | the reactor calls its pollers in the order in which the libraries added them. A poller's answer and a queued rotor task keep a tick from its wait. So do an operation that waits for the flush, a result that waits for its hand-over, and a timer that is due (`src/core/tables/tables_deadline.zig`, `wait_bound`) | the package removes its poller and adds it again before each tick that can wait. A timer of 0 ns for each such wake is the other way. It takes a slot, which a full reactor does not have, and it makes one more final event. So this record prefers the move | one more call. Decision 29, item 2, rejected a second way to say "do not block". This record does not ask for it |
+| a place after each other poller, or a call that keeps the tick that runs from its wait | the reactor calls its pollers in the order in which the libraries added them. A poller's answer and a queued rotor task keep a tick from its wait (`src/reactor/dispatch/dispatch.zig`, `Dispatch.begin`). So do an operation that waits for the flush, a result that waits for its hand-over, and a timer that is due (`src/core/tables/tables_deadline.zig`, `wait_bound`) | the package removes its poller and adds it again before each tick that can wait. A timer of 0 ns for each such wake is the other way. It takes a slot, which a full reactor does not have, and it makes one more final event. So this record prefers the move | one more call. Decision 29, item 2, rejected a second way to say "do not block". This record does not ask for it |
 | the name of a fiber's function in a stall and in a watch | the reactor writes the name of each callback on the heartbeat's line, through the port. Decision 33 keeps that writer out of the API ("The port") | a stall of fibers names the package's poller at most, and a watch reads a null name | a public call that writes a name on the line. This record does not ask for it |
 | a refusal of a second caller of `tick` | none: `tick` checks its thread, and not its caller | the package's check of `now_ns` halts at the package's next tick | this record does not ask for it |
-| the type of a reactor's loop, from the reactor's type | decision 33's reactor declares no name for it | a twin's sockets come through `Options.sockets`, at run time ("Over a twin") | one declaration on each reactor type, and one more name in the test of the reactor's names. Camilo ruled the option on 2026-11-11 (open question 17), so rotor gives none |
-| `submit`, `cancel` and `now_ns` on a twin's reactor | decision 33 lists the names of the host's reactor, and gives no list for `rotor.Reactor(Twin)` | this record reads "each other call forwards to the loop inside" for both. If that is wrong, the package does not run over a twin | one sentence in decision 33, or three forwarders on the generic reactor |
+| the type of a reactor's loop, from the reactor's type | neither reactor declares a name for it (`src/reactor/reactor.zig`, `src/rotor/rotor.zig`) | a twin's sockets come through `Options.sockets`, at run time ("Over a twin") | one declaration on each reactor type, and one more name in the test of the reactor's names. Camilo ruled the option on 2026-11-11 (open question 17), so rotor gives none |
 | a row of its own in the echo comparison | `bench/echo/echo_runner_setup.zig` holds a fixed list of candidates. rotor's package holds no `bench/` (`build.zig.zon`, `.paths`) | the package builds rotor's bench programs from a checkout at the pinned tag. It drives `echo_client` itself, with the runner's rules | an option of the runner that adds one candidate by name and path. rotor still names no package |
 
 ## Over a twin
@@ -879,21 +927,22 @@ proposal: the ruling names the generic type, and no part of this section.
 `Fibers` checks `Reactor` at comptime, before it makes a type. One compile error names each
 declaration that `Reactor` lacks, as decision 33's check of the port does. This is the whole list:
 
-| `Fibers(Reactor)` asks for | its form | where decision 33 gives it to a twin's reactor |
+| `Fibers(Reactor)` asks for | its form | where v0.11.0 gives it to a twin's reactor |
 |---|---|---|
-| `tick` | `(reactor: *Reactor, events: []rotor.Event, wait_ns: u64) E!u32`. `Fibers` reads the error set from the call | "The port": the reactor's `tick`, over the loop's `tick_backend` |
-| `submit`, `cancel`, `now_ns` | the forms of the core's surface | "The public module": "each other call forwards to the loop inside". That text describes the host's reactor |
-| `add_poller`, `remove_poller`, `shared` | `shared` returns `*Reactor.SharedLoop` | "The public module": three of the 16 calls of the reactor |
-| `SharedLoop` | the reactor's view | "`SharedLoop` and the conformance suite": each reactor type declares its own |
-| for `call` alone: a `Service` of that reactor | its `send` takes `*Reactor.SharedLoop` | the same section: each reactor type declares `Service` and `CallRecord` over its own view |
+| `tick` | `(reactor: *Reactor, events: []rotor.Event, wait_ns: u64) Reactor.TickError!u32`. `Fibers` reads the error set from the call | `src/reactor/reactor.zig`: the reactor's `tick`, over the loop's `tick_backend`. `TickError` is the error set of `tick_backend` |
+| `submit`, `cancel`, `now_ns` | the forms of the core's surface | `src/reactor/reactor.zig`: each forwards to the loop inside, and `submit` also counts the operations that name a record |
+| `add_poller`, `remove_poller`, `shared` | `shared` returns `*Reactor.SharedLoop` | `src/reactor/reactor.zig`: three of the 16 names of the reactor |
+| `SharedLoop` | the reactor's view | `src/reactor/reactor.zig`: each reactor type declares its own |
+| for `call` alone: a `Service` of that reactor | its `send` takes `*Reactor.SharedLoop` | `src/reactor/reactor.zig`: each reactor type declares `Service` and `CallRecord` over its own view |
 
 `Fibers` asks for no type of a twin's own. Over a twin too, the operations, the events, the handles,
 the records and the pollers are rotor's types. Decision 33, "The port", holds a twin to the same
 rule. Each type of the port is a Zig type, a type that the public module exports, or the twin's own.
 
-One row is not certain. Decision 33 lists the names of `rotor.Reactor(rotor.Loop)`, and it gives no
-list for `rotor.Reactor(Twin)`. This record reads "each other call forwards to the loop inside" for
-both. "Ask before" lists one sentence in decision 33 that says so.
+Decision 33's text lists the names of `rotor.Reactor(rotor.Loop)` alone. The code gives the list
+for a twin. `rotor.Reactor(Twin)` returns `reactor.Reactor(Twin)`, and `src/reactor/reactor.zig`
+declares each name of the table on that type. It also declares `TickError`, `DrainError` and the
+error sets of the reactor's own calls.
 
 ### What it asks of a twin's behaviour
 
@@ -1079,7 +1128,7 @@ Three texts of rotor say who calls `tick`:
 - Decision 27, ruling 1: "Only the program ticks a shared loop. A library never calls `tick` on a
   loop it does not own. It submits, returns, and finishes its work in records, pollers and tasks."
 - Decision 26, ruling 2, as Camilo corrected it: "only the program ticks a shared loop".
-- The guide, "A library that shares a loop": "Only the program calls `tick`".
+- The guide, "A library on a reactor": "Only the program calls `tick`".
 
 Decision 28 builds on them. Its view refuses `tick` at compile time, and it calls `tick`, `drain`,
 `deinit`, `cancel_all` and `discard_tasks` "the calls that only the program makes".
@@ -1102,10 +1151,10 @@ How the package stands to those texts:
 
 Camilo ruled on 2026-11-10 that the package calls `tick`. That ruling answers open question 2 of
 this record, and "Rulings, 2026-11-10" names no other decision. So the texts above and the ruling do
-not agree as they are written, and this record changes none of them. In the second round Camilo
-ruled a note for decisions 26, 27 and 28 and for the guide. The session writes it when he accepts
-this record, and not before. This record proposes its words: a program may hand its reactor to one
-package that ticks in its place. The program then calls no `tick` while that package's value lives.
+not agree as they are written. This record changes none of their words. In the second round Camilo
+ruled a note for decisions 26, 27 and 28 and for the guide. The session wrote it on 2026-11-11, at
+this record's acceptance, beside each text. Its words: a program may hand its reactor to one package
+that ticks in its place. The program then calls no `tick` while that package's value lives.
 
 ### What it keeps
 
@@ -1132,7 +1181,8 @@ package that ticks in its place. The program then calls no `tick` while that pac
 
 ### What it cannot keep
 
-- **The texts on who ticks,** as "Who ticks" says.
+- **The words of the texts on who ticks,** as "Who ticks" says. Each text holds a note that points
+  here.
 - **An error value for each limit, and for each error of the kernel.** rotor's rule is that a limit
   reached returns an error value. Five paths end in a halt, because no error value can reach a
   caller there. Open question 9 lists them, and Camilo accepted all five.
@@ -1200,31 +1250,30 @@ package that ticks in its place. The program then calls no `tick` while that pac
 - **No source file, no build file and no dependency.** rotor does not depend on the package. No file
   under `src/`, `build/`, `bench/`, `tools/` or `examples/` names it.
 - **No module and no edge.** The package is not decision 1's `adapter` module.
-- **Decision 1 gains an amendment, when Camilo accepts this record.** Decision 1 is accepted, and
-  four parts of it still put the `std.Io` table in rotor:
+- **Decision 1 gained an amendment on 2026-11-11, at this record's acceptance.** Four parts of
+  decision 1 still put the `std.Io` table in rotor:
   - its title, "with a std.Io adapter over it";
   - its decision, "A std.Io adapter sits over it, as a separate module that the core never imports";
   - its section "The adapter";
   - the `adapter` row of its module table.
 
-  Its header holds no amendment for the removal of 2026-11-05. The amendment says that rotor holds
-  no `std.Io` table, and names decisions 22 and 34. Camilo ruled it in the second round: the session
-  writes it when he accepts this record, and not before.
-- **Decision 2 gains a note with it,** by the same ruling. Its line "The std.Io adapter" stays under
-  "Not in version one", because rotor still holds no `std.Io`. That line points at decision 1's
-  module, so the note points here.
+  Its header held no amendment for the removal of 2026-11-05. The amendment says that rotor holds no
+  `std.Io` table, and names decisions 22 and 34. Camilo ruled it in the second round.
+- **Decision 2 gained a note with it,** by the same ruling. Its line "The std.Io adapter" stays
+  under "Not in version one", because rotor still holds no `std.Io`. That line points at decision
+  1's module, so the note points here.
 - **Decision 22 gained one note** under "Why it was removed", which points here. It is in the first
-  commit of this record.
+  commit of this record. A second note there states the acceptance.
 - **`docs/using.md` and the README each gain one sentence, and only after the package's first
   release.** Each says today that a `std.Io` adapter is not in version one, and that decision 2 says
   what would bring it in. The sentence would say where code written against `std.Io` runs. Before a
   release there is no package to name. This is an ask-before item.
-- **The README's list of decision records is not changed here.** It stops at decision 24, and its
-  row for decision 22 still reads "accepted, deferred".
+- **The README's list of decision records changed in one row.** Its row for this record reads
+  "accepted, not built" since 2026-11-11. Its row for decision 22 still reads "accepted, deferred".
 - **`docs/costs.md` gains no row.** "The fiber switch has no measured cell" says why.
-- **Decisions 26, 27 and 28 and the guide gain a note on who ticks, when Camilo accepts this
-  record.** "Who ticks" gives the texts and the words that this record proposes. Camilo ruled the
-  note in the second round: the session writes it at acceptance, and not before.
+- **Decisions 26, 27 and 28 and the guide gained a note on who ticks on 2026-11-11, at this
+  record's acceptance.** "Who ticks" gives the texts and the words of the note. Camilo ruled the
+  note in the second round. In the guide the note is in "A library on a reactor".
 
 ## Where the code starts
 
@@ -1320,8 +1369,9 @@ do not bound the fibers.
 
 ## Build order
 
-Nothing starts before decision 33 is accepted, built and tagged as v0.11.0, and before Camilo
-accepts this record. Each step is one or more commits in the package's repository, and each step
+The package could start only after decision 33 was accepted, built and tagged as v0.11.0, and after
+Camilo accepted this record. Each of these holds since 2026-11-11. The package's repository waits
+for Camilo's word ("Ask before"). Each step is one or more commits in that repository, and each step
 states how it is checked. Each check is proved by mutation, as rotor's are. No step changes rotor.
 Camilo ruled that the first release goes through the network calls, which are steps 0 to 5 (open
 question 6).
@@ -1434,10 +1484,10 @@ to either is his to make, with the numbers.
 
 ## Open questions
 
-Camilo ruled each question up to 16 on 2026-11-10, in two rounds ("Rulings, 2026-11-10"), and
-questions 17 and 18 on 2026-11-11 ("The third round, 2026-11-11"). Question 19 is open, with a
-proposed answer. Each name of the sketch but `tejedor` is a proposal, which Camilo rules with the
-code.
+Camilo ruled each question up to 16 on 2026-11-10, in two rounds ("Rulings, 2026-11-10"). He ruled
+questions 17 and 18 on 2026-11-11 ("The third round, 2026-11-11"), and question 19 later that day
+("The fourth round, 2026-11-11"). Each name of the sketch but `tejedor` is a proposal, which Camilo
+rules with the code.
 
 1. **What are the package's name and its repository?** The candidates were `tejedor`, with the type
    `tejedor.Fibers`, `rotor-fibers` and `fibra`. This record did not check whether another project
@@ -1457,7 +1507,7 @@ code.
    item 5 of "Alternatives it beat".
 3. **Does the package start on v0.10.0, or wait for v0.11.0?** This record proposed v0.10.0.
    **Ruled on 2026-11-10: it waits for v0.11.0.** The package starts only after decision 33 is
-   accepted, built and tagged.
+   accepted, built and tagged. Each of the three holds since 2026-11-11 (`f2890f5`).
 4. **What are the default count of fibers, the default stack, and `fibers_max`?** This record
    proposed 256 fibers of 256 KiB, and a limit of 8,192 for the timer row of shape (b).
    **Ruled on 2026-11-10: 256 fibers of 256 KiB, with a limit of 4,096.** That is 64 MiB by default.
@@ -1560,7 +1610,7 @@ code.
     The other answer reads a `sync` namespace from the twin's loop type, at comptime. Then a twin
     that lacks a call fails to compile, and no call is indirect. It needs one thing that decision 33
     does not give: a reactor's type that names the type of its loop. That is one declaration on each
-    reactor type, in a record that is not yet accepted ("What rotor does not give").
+    reactor type, which step 3 of decision 33 did not add ("What rotor does not give").
     **Ruled on 2026-11-11: an option.** `Options.sockets` stays as "Sockets outside the reactor"
     describes it, and rotor gains no declaration for it.
 18. **Does the package keep a twin of its own for its tests?** Proposed: yes, a small one, in the
@@ -1621,21 +1671,26 @@ code.
     and removes the second fiber of each receive. The session has not checked whether std's contract
     for an operation still in flight at its `Timeout` fits rotor's final event. The first step checks
     it.
+    **Ruled on 2026-11-11: answer 2.** When `batchAwaitConcurrent` holds one `net_receive`, the
+    package sets the operation's `timeout_ns` from the `Timeout`, and runs no timer of its own. A
+    send with a deadline keeps the second task. The two scenarios for the probe of 1 ns come to
+    rotor's conformance suite in a change of their own.
 
 ## Ask before
 
 For rotor:
 
-- Each row of "What rotor does not give". This record asks for none of them now, but one: the
-  sentence of the next item.
-- One sentence in decision 33, before Camilo accepts that record: `rotor.Reactor(Twin)` declares
-  `submit`, `cancel` and `now_ns`, as the host's reactor does ("Over a twin").
+- Each row of "What rotor does not give". This record asks for none of them.
 - One sentence in `docs/using.md` and one in the README, after the package's first release.
 - A row for the fiber switch in `docs/costs.md`, with its probe in `bench/costs/`, if a decision
   record of rotor needs the number.
 
-Camilo ruled two items in the second round, and neither is an ask-before item now. The session
-writes both when he accepts this record, and not before:
+This record asked for one sentence in decision 33, which would say that `rotor.Reactor(Twin)`
+declares `submit`, `cancel` and `now_ns`. Camilo accepted decision 33 without it, and the code says
+it: `src/reactor/reactor.zig` declares the three on each reactor type ("Over a twin").
+
+Camilo ruled two items in the second round, and neither is an ask-before item. The session wrote
+both on 2026-11-11, at this record's acceptance:
 
 - the note on who ticks in decisions 26, 27 and 28 and in `docs/using.md` ("Who ticks");
 - the amendment in the header of decision 1, with the note in decision 2 ("What changes in rotor").
@@ -1643,8 +1698,10 @@ writes both when he accepts this record, and not before:
 For the package:
 
 - The repository. Camilo ruled its name, and the session makes none before he says so.
-- The start: decision 33 accepted, built and tagged as v0.11.0, and this record accepted.
 - pepegrillo as its lint tools, and CI on GitHub's runners.
+
+The start had two conditions: decision 33 accepted, built and tagged as v0.11.0, and this record
+accepted. Both hold since 2026-11-11.
 
 ## Sources
 
@@ -1693,3 +1750,9 @@ For the package:
   it. Decisions 10 and 24, for a twin. Decision 33: "The port", "The public module", "How a twin's
   author learns the port" and "`SharedLoop` and the conformance suite". For the forms of the
   `rotor.sync` calls: `src/kqueue/kqueue_sync_socket.zig`.
+- For the acceptance, at `f2890f5`, the tag of v0.11.0: decision 33 as accepted and built.
+  `src/reactor/reactor.zig`, `src/rotor/rotor.zig`, `src/rotor/rotor_reactor.zig`,
+  `src/reactor/reactor_calls.zig`, `src/core/surface.zig`, `src/reactor/dispatch/dispatch.zig`,
+  `src/core/stall.zig` and `src/core/tables/tables_deadline.zig`. `docs/using.md`, "Make a reactor"
+  and "A library on a reactor", and the README's table of decision records. The rulings of "The
+  fourth round, 2026-11-11", as the session relayed them.

@@ -250,7 +250,7 @@ and the commands to take every number again.
 | [31](docs/decisions/0031-a-disk-io-scheduler.md) | a disk I/O scheduler | accepted, not built |
 | [32](docs/decisions/0032-a-cross-core-call-helper.md) | a cross-core call | accepted |
 | [33](docs/decisions/0033-a-core-and-an-optional-layer.md) | a core for the loop, and an optional reactor | accepted |
-| [34](docs/decisions/0034-a-package-for-std-io-futures.md) | a package of its own for `std.Io` and its Future API | proposed |
+| [34](docs/decisions/0034-a-package-for-std-io-futures.md) | a package of its own for `std.Io` and its Future API | accepted, not built |
 
 A proposed record describes something not yet built. A declined record describes something rotor
 will not build, and why. A withdrawn record was proposed and then withdrawn, and rotor builds
