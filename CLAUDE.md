@@ -471,7 +471,7 @@ day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes 
 row of `docs/costs.md` that either machine can measure.
 
 **Decision 33 split rotor into a core and an optional reactor.** Camilo accepted it on 2026-11-10,
-and its steps 1 to 5 were built on 2026-11-11. `rotor.Loop` keeps 28 names. The module `reactor`
+and its steps 1 to 5 were built on 2026-11-11 and released as v0.11.0 the same day. `rotor.Loop` keeps 28 names. The module `reactor`
 holds records, pollers, tasks, scheduling groups, cross-core calls and `SharedLoop`.
 `rotor.Reactor(rotor.Loop)` holds a `rotor.Loop`, and a twin runs under the reactor through the
 port's 8 names (`examples/twin.zig`). The work gate's `call` row rose by 16 to 63 instructions on

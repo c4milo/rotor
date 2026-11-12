@@ -25,13 +25,13 @@ consumer project in [`examples/consumer/`](../examples/consumer), line for line.
 [`examples/guide.zig`](../examples/guide.zig) runs the code of both parts in order. `zig build test`
 builds and runs each program, and the Linux gate runs each one with io_uring and with epoll.
 
-This guide describes the tree on `main`. Release v0.10.0 does not have the split of decision 33.
-Release v0.11.0 will carry it.
+This guide describes release v0.11.0, the first release with the split of decision 33. Release
+v0.10.0 does not have the split.
 
 ## Getting the module
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#v0.10.0
+zig fetch --save git+https://github.com/c4milo/rotor#v0.11.0
 ```
 
 In `build.zig`:

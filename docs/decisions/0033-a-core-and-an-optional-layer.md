@@ -8,7 +8,7 @@ approved each item of "Ask before". The rulings on questions 8, 11, 13 and 16 le
 to the counts of step 2. The build starts at step 1. The same day Camilo amended the port at each
 step ("Amendment, 2026-11-10: the port at each step").
 
-Built on 2026-11-11: steps 1 to 5 are on `main`, and step 6, the release, waits for Camilo's word.
+Built on 2026-11-11: steps 1 to 5 are on `main`, and step 6 released them as v0.11.0 the same day.
 "Amendment, 2026-11-11: the `call` row" holds the one change to rule 7. The build differs from the
 text below in one more place. "The public module" names seven calls that do the reactor's part.
 `submit` is an eighth: it counts the operations that name a record, because step 3 kept the first

@@ -22,7 +22,7 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 | Safety | Assertions stay on in release builds. Misuse stops the program at a named check. A library that tries to tick a reactor it shares fails to compile. |
 | Stalls | Each loop counts the turns that held it too long, and a reactor names the callback. A thread of the program can see a callback that never returns. |
 | Dependencies | None. Zig 0.16.0 and its standard library. |
-| Version | 0.10.0 |
+| Version | 0.11.0 |
 | License | Apache-2.0 |
 
 ## Why rotor
@@ -52,17 +52,16 @@ Linux, kqueue on macOS, and epoll on Linux where io_uring is not available.
 
 ## Status
 
-rotor is at version 0.10.0. Everything planned for version one is built: TCP, UDP with ECN on
+rotor is at version 0.11.0. Everything planned for version one is built: TCP, UDP with ECN on
 both kernels and segmentation offload on Linux, files, timers, deadlines and cancellation, and
 messages between loops, in one process or several. One conformance suite, written against the
 public API, passes on all three backends, and CI runs it on every push.
 
-The `main` branch splits rotor into a core and an optional reactor
+Version 0.11.0 splits rotor into a core and an optional reactor
 ([design record 33](docs/decisions/0033-a-core-and-an-optional-layer.md)). The core is the loop and
 its I/O. The reactor holds the records, the pollers, the tasks, the scheduling groups, the
-cross-core calls and the view that libraries share. Version 0.11.0 will release the split. A
-program on version 0.10.0 that uses those pieces makes a `rotor.Reactor(rotor.Loop)` in place of a
-`rotor.Loop` when it moves.
+cross-core calls and the view that libraries share. A program on version 0.10.0 that uses those
+pieces makes a `rotor.Reactor(rotor.Loop)` in place of a `rotor.Loop` when it moves.
 
 | system | backend | requires | tested on |
 |---|---|---|---|
@@ -88,7 +87,7 @@ program on version 0.10.0 that uses those pieces makes a `rotor.Reactor(rotor.Lo
 Add rotor to a project:
 
 ```bash
-zig fetch --save git+https://github.com/c4milo/rotor#v0.10.0
+zig fetch --save git+https://github.com/c4milo/rotor#v0.11.0
 ```
 
 In `build.zig`:
