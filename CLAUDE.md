@@ -464,8 +464,8 @@ has code,
 except five: decision 16, which Camilo declined on 2026-09-24; decision 22, the std.Io adapter,
 which was built to its step 3 on 2026-11-05 and removed the same day by Camilo's choice, with its
 check 1, row C26; decision 17, which is proposed and names a component this
-repository does not hold; decision 31, which is accepted and not built; and decision 34, which is
-proposed and names a package outside this repository. Decision 13 Camilo accepted on 2026-09-24,
+repository does not hold; decision 31, which is accepted and not built; and decision 34, which
+Camilo accepted on 2026-11-11 and which names a package outside this repository, `tejedor`. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.

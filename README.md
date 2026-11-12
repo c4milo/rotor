@@ -238,7 +238,7 @@ and the commands to take every number again.
 | [19](docs/decisions/0019-the-comparison-measures-one-core.md) | the comparison measures one core | accepted |
 | [20](docs/decisions/0020-an-epoll-backend.md) | an epoll backend | accepted |
 | [21](docs/decisions/0021-loops-in-several-processes.md) | loops in several processes | accepted |
-| [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | accepted, deferred |
+| [22](docs/decisions/0022-a-std-io-adapter.md) | a `std.Io` adapter | built to step 3, then removed |
 | [23](docs/decisions/0023-a-host-that-owns-the-wait.md) | a host that owns the wait | accepted |
 | [24](docs/decisions/0024-a-simulated-surface.md) | a simulated surface, and a search over its orders | proposed |
 | [25](docs/decisions/0025-open-a-file-on-the-loop.md) | open a file on the loop | withdrawn |
