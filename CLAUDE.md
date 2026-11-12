@@ -330,9 +330,10 @@ was about to push.
   installs, so it is a step of its own and not part of `zig build test`. A change to a function a
   model mirrors changes the model in the same commit; `proofs/README.md` lists the models.
 - Compile-fail check: `zig build test-compile-fail` builds each program of `tools/compile_fail/`,
-  and each must fail to compile with the message decision 28 states: a library that calls `tick`,
-  `drain`, `deinit`, `cancel_all` or `discard_tasks` through a `SharedLoop`. `zig build test` runs
-  it.
+  and each must fail to compile with the message its record states. Decision 28's cases are a
+  library that calls `tick`, `drain`, `deinit`, `cancel_all` or `discard_tasks` through a
+  `SharedLoop`. Decisions 29, 30, 32 and 33 add cases of their own, such as a twin that lacks a
+  name of the port. `zig build test` runs it.
 - Models: `zig build tla` — TLC over every configuration under `spec/tla/`, through pepegrillo's
   `tla` tool. `spec/tla/wake/` models the sleep handshake of decision 12, point 6, and decision 18:
   its configurations must hold, and each mutant, which breaks one step of the handshake, must fail.
@@ -460,13 +461,21 @@ Every row of decision 2's scope table is built. Camilo added posts between proce
 memory, and it was built the same day; crossing a process measured as costing a message nothing on
 `mac`, `orbstack` and `github`. Every other decision record
 has code,
-except three: decision 16, which Camilo declined on 2026-09-24; decision 22, the std.Io adapter,
+except five: decision 16, which Camilo declined on 2026-09-24; decision 22, the std.Io adapter,
 which was built to its step 3 on 2026-11-05 and removed the same day by Camilo's choice, with its
-check 1, row C26; and decision 17, which is proposed and names a component this
-repository does not hold. Decision 13 Camilo accepted on 2026-09-24,
+check 1, row C26; decision 17, which is proposed and names a component this
+repository does not hold; decision 31, which is accepted and not built; and decision 34, which is
+proposed and names a package outside this repository. Decision 13 Camilo accepted on 2026-09-24,
 after its idle case was measured, with the spin budget off by default, and it was built the same
 day: `spin_budget_ns` in a loop's options, and `core/spin.zig`. The cost probes cover every
 row of `docs/costs.md` that either machine can measure.
+
+**Decision 33 split rotor into a core and an optional reactor.** Camilo accepted it on 2026-11-10,
+and its steps 1 to 5 were built on 2026-11-11. `rotor.Loop` keeps 28 names. The module `reactor`
+holds records, pollers, tasks, scheduling groups, cross-core calls and `SharedLoop`.
+`rotor.Reactor(rotor.Loop)` holds a `rotor.Loop`, and a twin runs under the reactor through the
+port's 8 names (`examples/twin.zig`). The work gate's `call` row rose by 16 to 63 instructions on
+arm64, which Camilo accepted that day. Each other reactor row counts at or below v0.10.0.
 
 Decision 18's caller-supplied offload is built, on Camilo's ruling of 2026-09-21 that brought it
 ahead of measurement. On kqueue a loop's `file_policy` is `refuse` by default, so **a file operation
