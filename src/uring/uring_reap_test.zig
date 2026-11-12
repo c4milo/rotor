@@ -176,6 +176,28 @@ test "bytes that moved win over a cancel, and an operation that finished first k
     try testing.expectEqual(@as(u32, 1), fixture.loop.cancels.count);
 }
 
+test "bytes that moved win over the cancel the loop asked for when a deadline passed" {
+    var fixture: Fixture = undefined;
+    fixture.init();
+    const loop = &fixture.loop;
+    const timed = fixture.timed_receive(1);
+    const slot = loop.tables.table.lookup(timed).?;
+    // What `expire` does when the deadline passes: it marks the slot, and the cancel waits for an
+    // entry. The bytes complete before the cancel reaches the kernel.
+    const due = loop.tables.timers.pop_due(core.constants.ns_per_ms);
+    try testing.expectEqual(@as(?u32, timed.index), due);
+    slot.flags.timed_out = true;
+    cancel_module.request(loop, timed.index, slot);
+    try testing.expectEqual(@as(u32, 1), loop.cancels.count);
+    const event = fixture.complete(timed.to_bits(), 5, 0).?;
+    try testing.expectEqual(@as(u64, 1), event.user_data);
+    try testing.expectEqual(@as(u32, 5), try event.outcome());
+    try testing.expect(event.is_final());
+    // The handle that waits for a cancel entry names nothing now, so the flush drops it.
+    try testing.expectEqual(@as(?*core.Slot, null), loop.tables.table.lookup(timed));
+    try testing.expectEqual(@as(u32, 0), loop.in_flight());
+}
+
 test "a cancel the loop issued for a deadline says timeout, and a completion disarms the deadline" {
     var fixture: Fixture = undefined;
     fixture.init();
