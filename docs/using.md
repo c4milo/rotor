@@ -424,7 +424,8 @@ _ = try loop.tick(events, rotor.constants.ns_per_s);
   29, item 2).
 
 A program with several deadlines of its own, such as those of a QUIC stack, writes the least of them
-before each tick. A deadline that moves then needs no timer, and no cancel of the old timer.
+before each tick. `a.least(b)` gives the earlier of two limits: `.now` is earlier than each limit,
+and `.none` is later than each. A deadline that moves then needs no timer, and no cancel of the old timer.
 `wait_until` makes the owner check, as each call of the program does. A reactor refuses it at
 compile time, because its pollers bound its wait (Pollers, below).
 
@@ -921,7 +922,7 @@ On a plain loop the program owns each event and the one stored limit. Before eac
 least of the library's deadline and its own:
 
 ```zig
-loop.wait_until(.at(@min(adapter.deadline_ns(), beats.deadline_ns())));
+loop.wait_until(adapter.limit().least(beats.limit()));
 const count = try loop.tick(&events, rotor.constants.wait_ns_max);
 for (events[0..count]) |event| try adapter.complete(event);
 beats.run(loop.now_ns());

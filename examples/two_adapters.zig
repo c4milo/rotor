@@ -232,6 +232,11 @@ const PlainAdapter = struct {
         return adapter.pacer.deadline() orelse std.math.maxInt(u64);
     }
 
+    /// The library's deadline as a wait limit.
+    fn limit(adapter: *const PlainAdapter) rotor.WaitLimit {
+        return .at(adapter.deadline_ns());
+    }
+
     /// Hands the library the result of one of its operations. The program has no operation out
     /// during the run, so an event of another owner is a mistake.
     fn complete(adapter: *PlainAdapter, event: rotor.Event) !void {
@@ -352,6 +357,11 @@ const Beats = struct {
     /// before the tick waits, so a tick after the last beat would wait its whole `wait_ns` before
     /// the program could see that the run ended.
     fn on_poll(beats: *Beats) rotor.WaitLimit {
+        return beats.limit();
+    }
+
+    /// The next beat's deadline as a wait limit: `.none` after the last beat.
+    fn limit(beats: *const Beats) rotor.WaitLimit {
         return .at(beats.deadline_ns());
     }
 };
@@ -395,7 +405,7 @@ fn run_plain() !Report {
         try adapter.turn_when_due();
         if (pacer.failed) return error.LibraryFailed;
         if (pacer.ended() and beats.ended()) return report_of(&pacer, &beats, loop.now_ns() - start_ns);
-        loop.wait_until(.at(@min(adapter.deadline_ns(), beats.deadline_ns())));
+        loop.wait_until(adapter.limit().least(beats.limit()));
         const count = try loop.tick(&events, rotor.constants.wait_ns_max);
         for (events[0..count]) |event| try adapter.complete(event);
         beats.run(loop.now_ns());

@@ -14,6 +14,11 @@ text below in one more place. "The public module" names seven calls that do the 
 `submit` is an eighth: it counts the operations that name a record, because step 3 kept the first
 form of open question 11. `docs/using.md` names the eight.
 
+*Ruled on 2026-11-11: `WaitLimit.least`.* Step 5's example wrote `.at(@min(a, b))` to keep two
+deadlines. That form works only because `.now` is 0 and `.none` is the largest value. Camilo chose a
+helper over a note in the guide. `least` returns the earlier of two limits, and v0.11.0 carries it
+with the rest of this record.
+
 Every number here is a row of `docs/costs.md`, a row of `bench/baseline/work.txt`, a count that an
 earlier record measured, or a prior. A prior is an instruction count from arithmetic over the code
 at `e05a549`. Nothing was measured for this record. Each table says where its numbers come from.

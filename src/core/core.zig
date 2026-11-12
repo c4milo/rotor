@@ -63,6 +63,13 @@ pub const WaitLimit = enum(u64) {
     pub fn at(at_ns: u64) WaitLimit {
         return @enumFromInt(at_ns);
     }
+
+    /// The earlier of two limits, which keeps both. `.now` is earlier than each limit, and `.none`
+    /// is later than each. A program with a deadline of its own beside a library's writes `least`
+    /// of the two with `wait_until`. Each pair has one answer, so `least` has no assertion.
+    pub fn least(first: WaitLimit, second: WaitLimit) WaitLimit {
+        return @enumFromInt(@min(@intFromEnum(first), @intFromEnum(second)));
+    }
 };
 
 /// A task queue with shares on one loop (decision 30). Only the reactor's
@@ -98,6 +105,15 @@ test "a limit at the two ends of the clock is now and none" {
     try testing.expectEqual(WaitLimit.now, WaitLimit.at(0));
     try testing.expectEqual(WaitLimit.none, WaitLimit.at(std.math.maxInt(u64)));
     try testing.expectEqual(@as(u64, 5), @intFromEnum(WaitLimit.at(5)));
+}
+
+test "the least of two limits is the earlier, with now first and none last" {
+    try testing.expectEqual(WaitLimit.now, WaitLimit.now.least(.none));
+    try testing.expectEqual(WaitLimit.now, WaitLimit.at(5).least(.now));
+    try testing.expectEqual(WaitLimit.at(5), WaitLimit.at(5).least(.none));
+    try testing.expectEqual(WaitLimit.at(5), WaitLimit.none.least(.at(5)));
+    try testing.expectEqual(WaitLimit.at(5), WaitLimit.at(9).least(.at(5)));
+    try testing.expectEqual(WaitLimit.none, WaitLimit.none.least(.none));
 }
 
 test "the core prints the names of the two types it declares" {
