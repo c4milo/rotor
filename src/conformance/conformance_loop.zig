@@ -6,6 +6,7 @@ const testing = std.testing;
 const core = @import("core");
 const backend = @import("backend");
 const conformance = @import("conformance.zig");
+const fair = @import("conformance_fair.zig");
 const tcp = @import("conformance_tcp.zig");
 const timers = @import("conformance_timers.zig");
 
@@ -333,4 +334,77 @@ test "a receive whose bytes came before its deadline ends with them when the loo
     try testing.expectEqual(@as(u64, 1), events[0].user_data);
     try testing.expectEqual(@as(u32, 2), try events[0].outcome());
     try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+}
+
+/// The deadline of the probe of decision 34, question 19. Before a pool lends an idle connection,
+/// it sends the connection a receive with this deadline. When the socket holds bytes or the end of
+/// the stream, the receive must end with them and not with `Timeout`. So the probe tells a live
+/// connection from a dead one.
+const probe_timeout_ns = 1;
+
+/// Submits the probe's receive on `socket`, and returns its one event.
+fn probe(harness: *Harness, socket: core.Descriptor, buffer: []u8) !Event {
+    try harness.submit(&.{receive(1, socket, buffer, probe_timeout_ns)}, &.{});
+    var events: [1]Event = undefined;
+    try harness.collect(&events);
+    try testing.expectEqual(@as(u64, 1), events[0].user_data);
+    try testing.expectEqual(@as(u32, 0), harness.loop.in_flight());
+    return events[0];
+}
+
+test "a receive with a deadline of 1 ns ends with the bytes that the socket already holds" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try tcp.connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+
+    // The bytes are in the socket before the receive is submitted.
+    try harness.submit(&.{Operation.send(9, pair[0], "hi")}, &.{});
+    var sent: [1]Event = undefined;
+    try harness.collect(&sent);
+    try testing.expectEqual(@as(u32, 2), try sent[0].outcome());
+    try fair.wait_readable(pair[1]);
+    var buffer: [8]u8 = undefined;
+    const received = try probe(&harness, pair[1], &buffer);
+    try testing.expectEqual(@as(u32, 2), try received.outcome());
+    try testing.expectEqualStrings("hi", buffer[0..2]);
+}
+
+test "a receive with a deadline of 1 ns ends with 0 when the peer closed the connection" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try tcp.connected_pair(&harness, &listener);
+    defer sync.close_now(pair[1]);
+
+    // The peer closes its end, as a server that stopped does. The end of the stream is in the
+    // socket before the receive is submitted.
+    sync.close_now(pair[0]);
+    try fair.wait_readable(pair[1]);
+    var buffer: [8]u8 = undefined;
+    const received = try probe(&harness, pair[1], &buffer);
+    try testing.expectEqual(@as(u32, 0), try received.outcome());
+}
+
+test "a receive with a deadline of 1 ns on an idle connection ends with timeout" {
+    if (conformance.unsupported()) return error.SkipZigTest;
+    var harness: Harness = undefined;
+    try harness.init(0, null);
+    defer harness.deinit();
+    const listener = try tcp.Listener.open();
+    defer sync.close_now(listener.descriptor);
+    const pair = try tcp.connected_pair(&harness, &listener);
+    defer for (pair) |descriptor| sync.close_now(descriptor);
+
+    // The peer is open and sends nothing, as a live server with no work does.
+    var buffer: [8]u8 = undefined;
+    const received = try probe(&harness, pair[1], &buffer);
+    try testing.expectError(error.Timeout, received.outcome());
 }
