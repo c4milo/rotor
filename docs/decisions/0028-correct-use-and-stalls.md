@@ -29,6 +29,12 @@ The programs of `tools/compile_fail/` take a `*rotor.SharedLoop`, which is now t
 host's reactor. Two new cases, `reactor_wait_until.zig` and `shared_wait_until.zig`, hold the
 refusal of `wait_until`.
 
+Noted on 2026-11-11 by decision 34. This record calls `tick`, `drain`, `deinit`, `cancel_all` and
+`discard_tasks` the calls that only the program makes. Decision 34 adds one case: a program may hand
+its reactor to one package that ticks in its place. The program then calls no `tick` while that
+package's value lives. The package holds the reactor and not the view, so the view's refusals do not
+reach it.
+
 ## Ruling, 2026-11-06
 
 Camilo accepted this record with the proposed answer to each open question, and the "Ask before"

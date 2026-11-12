@@ -35,6 +35,11 @@ rules of the queue do not change. Where this record names a file or a name, read
 | `tools/halt/core_scenarios_tasks.zig`, `tools/halt/core_scenarios_dispatch.zig` | `tools/halt/reactor_scenarios_tasks.zig`, `tools/halt/reactor_scenarios_dispatch.zig` |
 | the owner checks in each backend's owner file | `tools/halt/kqueue_scenarios_owner.zig` and `tools/halt/epoll_scenarios_owner.zig` add the scenarios of `tools/halt/reactor_owner_calls.zig`, which check through the port's `assert_owner`. The io_uring scenarios add none of them |
 
+Noted on 2026-11-11 by decision 34. Ruling 1 below says that only the program ticks a shared loop.
+Decision 34 adds one case: a program may hand its reactor to one package that ticks in its place.
+The program then calls no `tick` while that package's value lives. Each other library on the
+reactor still holds the view, and does not tick.
+
 ## Ruling, 2026-11-06
 
 Camilo ruled on these points:

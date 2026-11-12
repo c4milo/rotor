@@ -329,6 +329,9 @@ adapter for its `serve` module, so colibri needs another path.
 package of its own that depends on rotor's public module. Camilo chose that path on 2026-11-09.
 Nothing of it is built.
 
+**Noted on 2026-11-11.** Camilo accepted decision 34. Nothing of the package is built, and rotor
+does not depend on it.
+
 ## Open questions
 
 1. **Build it, and when?** Proposed: after the macOS cross-core work and a number on the Linux

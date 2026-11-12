@@ -41,6 +41,19 @@ Amended on 2026-11-11 by decision 33, step 3. The module graph and the public mo
 - Item 9 of the amendment of 2026-11-07 changes again. `AddPollerError` and `ScheduleError` are
   error sets of `rotor.Reactor(rotor.Loop)`, and `rotor.Loop` declares neither.
 
+Amended on 2026-11-11 by decision 34. rotor holds no `std.Io` table. Four parts of this record still
+put one in rotor:
+
+- the title, "with a std.Io adapter over it";
+- the sentence of "Decision" that puts the adapter over the core, as a separate module;
+- the section "The adapter";
+- the `adapter` row of the module table.
+
+Decision 22 built that adapter in the public module, and Camilo removed it on 2026-11-05
+(`46235cb`). Decision 34 puts a `std.Io` on fibers in a package of its own, `tejedor`, outside
+rotor's module graph. rotor does not depend on that package, and no source file of rotor names it.
+The four parts stay as they are, the record of what Camilo accepted on 2026-09-19.
+
 ## Context
 
 Zig 0.16 defines `std.Io`, an interface of function pointers. rotor can implement that table

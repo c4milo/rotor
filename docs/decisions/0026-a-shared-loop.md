@@ -30,6 +30,11 @@ Where this record names a file or a name, read:
 
 The scenarios of `conformance_dispatch.zig` run on `reactor.Reactor(backend.Loop)`.
 
+Noted on 2026-11-11 by decision 34. Item 2 of the ruling below, as Camilo corrected it, says that
+only the program ticks a shared loop. Decision 34 adds one case: a program may hand its reactor to
+one package that ticks in its place. The program then calls no `tick` while that package's value
+lives. Each other library on the reactor still holds the view, and does not tick.
+
 ## Context
 
 colibri asked for this in rotor issue 14. colibri's client and server and cocuyo's resolver will

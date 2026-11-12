@@ -73,6 +73,11 @@ TLS, DNS, Windows and process spawning, as proposed, and also:
   and covered by six conformance scenarios. **Unix sockets are still excluded**, and nothing has
   asked for them.
 - **The std.Io adapter** (`0001-interface.md`). The core's numbers come first.
+
+  **Noted on 2026-11-11 by `0034-a-package-for-std-io-futures.md`: the adapter stays out of
+  rotor.** Decision 22 built it, and Camilo removed it on 2026-11-05. Decision 34 puts a `std.Io` on
+  fibers in a package of its own, outside rotor. Decision 1's amendment of that day says that rotor
+  holds no `std.Io` table. rotor still holds no `std.Io`, so this row stays.
 - **An epoll backend.** A Linux host that refuses `io_uring_setup` gets `error.Unsupported`
   from init. That has a real cost: Docker's default seccomp profile refuses io_uring, which is
   why stompy's Linux tests run with `seccomp=unconfined`. The alternative is a third backend to

@@ -718,6 +718,10 @@ or loop of its own. Several libraries can share one reactor (decision 26). Only 
 `tick`. A library submits, returns, and finishes its work in records, pollers and tasks (decision
 27).
 
+Since 2026-11-11, decision 34 adds one case. A program may hand its reactor to one package that
+ticks in its place. The program then calls no `tick` while that package's value lives. Each other
+library still holds the view, and does not tick.
+
 The library of this example sends one request, with a deadline for the whole exchange. A timer
 stands in for the request's I/O:
 
