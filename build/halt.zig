@@ -57,7 +57,7 @@ pub fn add(
     }{
         .{ .name = "core_scenarios", .backend = null },
         .{ .name = "reactor_scenarios", .backend = "reactor" },
-        .{ .name = "uring_scenarios", .backend = "uring" },
+        .{ .name = "uring_scenarios", .backend = "uring", .reactor = true },
         .{ .name = "kqueue_scenarios", .backend = "kqueue", .darwin_only = true, .reactor = true },
         .{ .name = "epoll_scenarios", .backend = "epoll", .reactor = true },
         .{ .name = "rotor_scenarios", .backend = "rotor" },

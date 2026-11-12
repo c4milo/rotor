@@ -2,8 +2,10 @@
 //! that does not own the loop under the reactor: `schedule`, `schedule_in`, `charge_task`,
 //! `reserve_scheduling_group`, `set_scheduling_group_shares`, `shared`, `call`, `answer`, `serve`
 //! and `stop_serving`. Each makes the check through the port's `assert_owner` of the backend's
-//! `Loop`. Each backend's owner file adds these scenarios for its own `Loop`, so a scenario that
-//! deletes the check of one backend fails there.
+//! `Loop`. Three files add these scenarios, each for the `Loop` of its backend:
+//! `kqueue_scenarios_owner.zig`, `epoll_scenarios_owner.zig` and `uring_scenarios.zig`. So a
+//! mutation that deletes the check of one backend fails there. With the check deleted, the path
+//! after it makes no system call, so `zig build halt-check` on a Mac proves them for io_uring too.
 //!
 //! The reactor is started by hand over the loop's tables, with no kernel, and calls itself, so no
 //! registry is needed. With its owner check deleted, each call returns.

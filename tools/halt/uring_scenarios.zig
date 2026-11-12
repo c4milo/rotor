@@ -24,7 +24,9 @@
 //!
 //! With its assertion deleted, no scenario here makes a Linux system call: `submit`, `cancel`,
 //! `cancel_all`, `assert_empty`, `reserve_buffer_group`, `wait_limit` and the registry make none, and each remote `post` answers
-//! `LoopNotFound` from the registry before it pushes a message or wakes anything.
+//! `LoopNotFound` from the registry before it pushes a message or wakes anything. The reactor's
+//! own calls make none either (`reactor_owner_calls.zig`). Each writes only the memory of the
+//! reactor and its loop, and a `call` to the reactor itself goes through no ring.
 const std = @import("std");
 const core = @import("core");
 const uring = @import("uring");
@@ -296,6 +298,9 @@ fn post_a_tag_above_the_limit() void {
     _ = remote_one.post(0, .{ .payload = 0, .tag = core.constants.message_tag_wake + 1 }) catch {};
 }
 
+/// The owner checks of the reactor's own calls, over this backend's `Loop` (decision 33).
+const reactor_owner = @import("reactor_owner_calls.zig").Scenarios(Loop, options);
+
 const scenarios = [_]scenario.Scenario{
     .{ .name = "owner: submit from another thread", .run = submit_from_another_thread },
     .{ .name = "owner: cancel from another thread", .run = cancel_from_another_thread },
@@ -344,7 +349,7 @@ const scenarios = [_]scenario.Scenario{
         .run = read_the_wait_limit_from_another_thread,
     },
     .{ .name = "owner: bound the wait from another thread", .run = bound_the_wait_from_another_thread },
-};
+} ++ reactor_owner.scenarios;
 
 pub fn main(init: std.process.Init) !void {
     return scenario.main(init, &scenarios);
