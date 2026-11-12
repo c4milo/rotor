@@ -288,6 +288,43 @@ decision 7's files, a check that is disabled or weaker, a new signature on the p
    after the push, as the ruling of 2026-11-11 under "Build order" says.
 4. **A later change that cuts the send or the take lowers the line**, as the gate asks.
 
+## Amendment, 2026-11-11: the cost of one connection
+
+colibri's test server runs a plain loop with no registry. colibri counted about 320 more user
+instructions for each of its connections at v0.10.0 than at v0.9.0, on epoll, with callgrind on a
+laptop. Those numbers are colibri's and are not published here. Camilo asked for a trace before the
+release. No row of the work gate held a connection's path, so `connection` joined the gate: one
+loopback connection on a plain loop with no registry, with an accept, a receive, a send and a close.
+
+| `connection`, cachegrind in an arm64 container on `mac` | io_uring | epoll |
+|---|---:|---:|
+| v0.9.0 (`5a5d7d7`) | 3711 | 4836 |
+| v0.10.0 (`9339858`) | 3905 | 5006 |
+| step 3, at `42340bb` | 3772 | 4938 |
+| with the mailbox cut (`a16aba9`) | 3771 | 4712 |
+| with both io_uring cuts below (not landed) | 3490 | 4712 |
+
+Most of the rise is costs that a decision accepted: decision 26's count at submit, which step 3
+removed, W3's share of the tick, decision 28's stamp, and the kept error. The largest cost that no
+decision named was the mailbox drain: each tick called it twice on a loop with no registry, and each
+call returned 0. On epoll and kqueue the tick now skips it there (`a16aba9`). The rest is code shape,
+which only forced inlining outside decision 7's files would cut.
+
+On io_uring two cuts fell on arm64 and rose on x86-64. One skips the drain the same way, and one
+gives the poll an enter of its own. On x86-64, in a virtual machine that gives CI's counts, the rows
+of a loop with a registry rose:
+
+| row, x86-64 io_uring | line | with both cuts |
+|---|---:|---:|
+| `post` | 1111 | 1125 |
+| `task` | 598 | 606 |
+| `call` | 2530 | 2548 |
+
+*Ruled on 2026-11-11: io_uring stays as it is for v0.11.0.* `call` would break rule 7 as amended,
+and the drain cut helps only a loop with no registry. stompy runs its loops with a registry. The
+cuts are kept as `47f48cf` on the local branch `uring-connection-cuts`, which is not on GitHub. A
+later release may take them in a form that raises no x86-64 row.
+
 ## Context
 
 ### What the code does today
