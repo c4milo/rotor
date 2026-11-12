@@ -76,6 +76,10 @@ Bytes transferred still win over `Timeout`.
   operation and the pair costs `2 × C8`.
 - On kqueue and in the simulator the deadline is an entry in the timer heap below.
 
+Amended on 2026-09-19 by decision 11, point 1: on io_uring too the deadline is an entry in the
+timer heap. When it passes, the loop issues an ordinary cancel with `timed_out` set, and rule 2
+decides the outcome. This note was added on 2026-11-11, after decision 34 quoted the first bullet.
+
 ### Rule 5: timers live in user space
 
 A standalone timer is an entry in a 4-ary min-heap the loop owns, indexed by slot and bounded

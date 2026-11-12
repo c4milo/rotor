@@ -1434,6 +1434,8 @@ question 6).
    - A checker drives the echo server on each backend.
 5. **The numbers.** "The measurement plan", below. Camilo reads the results before a release.
 6. **Datagrams, batches and files,** when a consumer asks. Decision 22's step 3 is the start.
+   One part moves to step 4, by the ruling of 2026-11-11 under question 19: `operate`,
+   `batchAwaitConcurrent` and `batchCancel` for one `net_receive` with its deadline.
 
 ### The timer program
 
@@ -1639,8 +1641,11 @@ rules with the code.
       (`src/core/operation.zig`). When the deadline passes first, the loop cancels the operation,
       and the final event is `error.Timeout`. Bytes that moved win over `Timeout` (decision 5,
       rule 4).
-    - On io_uring the deadline is a linked timeout entry. On kqueue and epoll it is an entry in the
-      loop's timer heap (decision 5, rule 4). It takes no second operation and no second fiber.
+    - On each backend the deadline is an entry in the loop's timer heap (decision 11, point 1, which
+      amends decision 5, rule 4). When it passes, the loop cancels the operation; on io_uring the
+      cancel is an `ASYNC_CANCEL` entry at the next tick. It takes no second operation and no
+      second fiber. *Corrected on 2026-11-11: this item first said that io_uring uses a linked
+      timeout entry, after decision 5's text, which decision 11 had amended.*
     - The conformance suite holds "a receive whose bytes came before its deadline ends with them
       when the loop ticks late", with a deadline of 5 ms (`src/conformance/conformance_loop.zig`).
       No scenario holds a deadline of 1 ns on a socket that already holds bytes, or on a socket at
@@ -1675,6 +1680,13 @@ rules with the code.
     package sets the operation's `timeout_ns` from the `Timeout`, and runs no timer of its own. A
     send with a deadline keeps the second task. The two scenarios for the probe of 1 ns come to
     rotor's conformance suite in a change of their own.
+
+    *Ruled on 2026-11-11, after the acceptance: the first release takes the receive's batch.*
+    Answer 2 runs through `batchAwaitConcurrent`, which is step 6, and question 6 put the first
+    release at steps 0 to 5. The session put this to Camilo. He chose that the first release adds
+    `operate`, `batchAwaitConcurrent` and `batchCancel` for one `net_receive` with its
+    `timeout_ns`, so a TLS reader with a deadline and the probe of 1 ns work in the first release.
+    The rest of step 6 waits for a consumer, as before.
 
 ## Ask before
 
