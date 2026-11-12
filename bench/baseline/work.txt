@@ -129,7 +129,7 @@
 # for each connection at v0.10.0 than at v0.9.0. The linux-aarch64 lines are cachegrind's counts of
 # Valgrind 3.23.0 in an arm64 container on `mac`. io_uring ran with seccomp=unconfined, and epoll
 # under Docker's default profile. Each other row counted within 1 instruction of `42340bb`. The
-# x86-64 sections hold no line for it, so CI prints them after the push. macOS does not run it
+# x86-64 lines are the counts of main's CI run 43144837482 at `a16aba9`. macOS does not run it
 # (`work.zig`, `counts_connection`). There the count holds the kernel's work too, about 215,000
 # instructions for each connection, and six runs on `mac` spread over 3.7 percent.
 # The same day a tick of a loop with no registry stopped its two calls to drain the mailboxes, on
@@ -164,6 +164,7 @@ poller 564
 tasks-groups-4 11520
 tasks-groups-16 12324
 call 2530
+connection 4043
 section linux-x86_64-epoll
 post 1289
 timer 1186
@@ -177,6 +178,7 @@ poller 634
 tasks-groups-4 11590
 tasks-groups-16 12394
 call 2747
+connection 5141
 section linux-aarch64-uring
 post 994
 post-operation 2780
