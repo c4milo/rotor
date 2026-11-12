@@ -132,6 +132,12 @@
 # x86-64 sections hold no line for it, so CI prints them after the push. macOS does not run it
 # (`work.zig`, `counts_connection`). There the count holds the kernel's work too, about 215,000
 # instructions for each connection, and six runs on `mac` spread over 3.7 percent.
+# The same day a tick of a loop with no registry stopped its two calls to drain the mailboxes, on
+# epoll and kqueue. epoll `connection` fell from 4937 to 4712, and its linux-aarch64 line is that
+# count. On arm64 Linux each other row counted the same or up to 4 fewer. An x86-64 virtual
+# machine under QEMU, its clock driven by the count of instructions, counted the rows too. There
+# each epoll row counted the same or up to 6 fewer, and each io_uring row the same. On `mac` the
+# median of five runs of each row stayed under the highest of five runs before.
 tolerance_percent 2
 section macos-aarch64-kqueue
 post 1217
@@ -197,4 +203,4 @@ poller 557
 tasks-groups-4 10928
 tasks-groups-16 11648
 call 2505
-connection 4937
+connection 4712

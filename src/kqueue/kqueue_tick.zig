@@ -62,7 +62,13 @@ pub fn tick(loop: *Loop, events: []Event, wait_ns: u64) TickError!u32 {
         constants.kernel_room_max,
     );
     var produced = first.produced;
-    produced += loop.drain_mailboxes(events[produced .. events.len - first.kernel_min]);
+    // A loop with no registry has no mailbox, so the tick makes no call to drain one. On epoll the
+    // two calls cost each tick of such a loop 45 instructions on arm64 Linux (cachegrind, the work
+    // gate's `connection`, 2026-11-11). kqueue is not measured: `/usr/bin/time -l` on macOS counts
+    // the kernel's work too.
+    if (loop.inbox.registry) |mailboxes| {
+        produced += drain_mailboxes(loop, mailboxes, events[produced .. events.len - first.kernel_min]);
+    }
 
     // `settle_to_sleep` answers null at once for a tick with no bound.
     const bound = block_bound(loop, produced, wait_ns);
@@ -140,7 +146,7 @@ fn after_kernel(
     // A test build permutes the batch the kernel answered (decision 10, amendment of 2026-11-06).
     if (core.shuffle.enabled) tables.shuffle.reaped(events[produced..][0..reaped]);
     produced += reaped;
-    produced += loop.drain_mailboxes(events[produced..]);
+    if (loop.inbox.registry) |mailboxes| produced += drain_mailboxes(loop, mailboxes, events[produced..]);
     // A worker may have answered while this tick waited, and the wake is what ended the wait.
     const moved = offloads and offload_module.drain(loop) != 0;
     if (capped or moved) produced += tables.drain_finished(events[produced..]);
@@ -307,6 +313,12 @@ fn arm_poll(loop: *Loop) void {
     } else {
         queue_module.Queue.wake(loop.queue.descriptor);
     }
+}
+
+/// Moves the messages other loops posted, to the mailboxes of `registry`, into `events`: what
+/// `Loop.drain_mailboxes` does, for a tick that read the loop's registry and found it set.
+fn drain_mailboxes(loop: *Loop, registry: *core.mailbox.Registry, events: []Event) u32 {
+    return loop.inbox.drain_registry(registry, loop.tables.id, events, reap_module.take_reserved);
 }
 
 /// How long a tick that produced `produced` events may block, or null when it may not. A drain

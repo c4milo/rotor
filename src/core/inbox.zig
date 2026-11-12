@@ -212,6 +212,19 @@ pub const Inbox = struct {
     /// reserved tag hands the rest of the drain to `take`.
     pub fn drain_mailboxes(inbox: *Inbox, receiver: LoopId, events: []Event, comptime take: TakeReserved) u32 {
         const registry = inbox.registry orelse return 0;
+        return inbox.drain_registry(registry, receiver, events, take);
+    }
+
+    /// `drain_mailboxes` for a loop whose `registry` the caller read and found set. Each backend's
+    /// tick reads it once, for the share of its events. It makes no call for a loop with no
+    /// registry, and passes the registry here, so the drain does not read it again.
+    pub fn drain_registry(
+        inbox: *Inbox,
+        registry: *Registry,
+        receiver: LoopId,
+        events: []Event,
+        comptime take: TakeReserved,
+    ) u32 {
         if (inbox.sender_cursor != 0) return inbox.drain_from_cursor(registry, receiver, events, take);
         var visit: Visit = .{ .out = events };
         for (0..registry.loop_count()) |sender| {
