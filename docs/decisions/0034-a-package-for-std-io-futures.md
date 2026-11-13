@@ -13,6 +13,11 @@ third review, or the revision for the second rulings.
 Nothing of the package is built, and no repository exists. The package starts at step 0 of "Build
 order". The session makes its repository when Camilo says so ("Ask before").
 
+**Noted on 2026-11-13.** Camilo made the repository, github.com/c4milo/tejedor, on 2026-11-12. Step
+0 of "Build order" is on its `main` at `ded6989`: the fiber switch, its tests and its probe. The
+probe ran only on busy machines, so no number of it is final. Step 1 waits for Camilo's word.
+"Upkeep" and "Where the code starts" each hold a note on what step 0 changed.
+
 Decision 33 was accepted on 2026-11-10. Its steps 1 to 5 are on `main`, and v0.11.0 released them on
 2026-11-11 (`f2890f5`). Each name of rotor in this record is the name that v0.11.0 holds. "Decision
 33 as v0.11.0 built it" lists what this record changed at its acceptance to agree with that code.
@@ -1245,6 +1250,23 @@ that ticks in its place. The program then calls no `tick` while that package's v
   optimized build (decision 22). On Linux each test runs with io_uring and with epoll. The wake from
   another thread runs under ThreadSanitizer, and each halt scenario runs in a child process.
 
+**Noted on 2026-11-13.** Step 0 of the package found two more errors in std's clobber lists. Camilo
+ruled a correction for each, and tejedor's records hold them:
+
+- **Record 2, `f00f094`, ruled on 2026-11-12.** The x86-64 list names `xmm0` to `xmm15`. std names
+  only `zmm0` to `zmm31`, and the compiler ignores those names on a processor with no AVX-512.
+- **Record 3, `d790342`, ruled on 2026-11-13.** The aarch64 list names `nzcv`, the condition flags.
+- **Record 3 also sets the form of the call.** On aarch64 each caller holds a copy of the switch.
+  On x86-64 each caller calls it, and the compiler never inlines that call. The clobber type of Zig
+  0.16.0 has no name for the x87 registers, `k0` to `k7`, `r16` to `r31` or `xmm16` to `xmm31`.
+  The calling convention covers them.
+- **Record 3 and `27a6403` leave the control registers to the thread.** The switch saves neither
+  MXCSR nor the x87 control word on x86-64, nor FPCR on aarch64. A fiber that changes the rounding
+  mode or the exception masks restores them before it blocks.
+
+So at a Zig upgrade, the read of std's switch covers five corrections, the form of the call, and
+the entry of record 4 ("Where the code starts").
+
 ## What changes in rotor
 
 - **No source file, no build file and no dependency.** rotor does not depend on the package. No file
@@ -1296,6 +1318,15 @@ tag in `user_data`. The line counts are from that commit's own summary.
 The library files hold 2,300 lines together, which is decision 22's count. The removed code ticked
 the loop and kept a ready list, as the package does. So it is nearer to the package than it was to
 shape (b). Most of the change is in `adapter_scheduler.zig`, where a tick now calls callbacks.
+
+**Noted on 2026-11-13.** The row of `adapter_switch.zig` says "nothing but the names", and step 0
+changed more. The package added the two clobber names and the form of the call that "Upkeep" notes.
+Its record 4, `ded6989`, ruled on 2026-11-13, also changed the entry of a new fiber:
+
+- **The word of the argument is above the first stack pointer.** std's `Kqueue.mainIdleEntry` reads
+  it below the stack pointer on aarch64. In a test of the package, a signal on Linux wrote over it.
+- **`main` starts with a return address of zero.** Before, a stack trace from a fiber read a stale
+  link register on aarch64, and the argument as a return address on x86-64.
 
 ## colibri, cocuyo and stompy
 
