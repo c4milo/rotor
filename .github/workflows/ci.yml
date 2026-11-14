@@ -447,11 +447,25 @@ jobs:
       # the same on every run whatever the runner is doing, so the gate holds them to 2 percent.
       # Valgrind is Ubuntu's own package. A processor section the baseline lacks is printed and
       # held to nothing, as the echo baseline does.
+      #
+      # The install refreshes the package index first, and tries three times. A runner's image
+      # holds an index from the day it was built. On 2026-11-14 that index named a version of
+      # `libc6-dbg` the mirror no longer held, and the install failed with a 404. On 2026-11-11
+      # the mirror's name did not resolve. Each failed the nightly run with rotor unchanged.
       - name: Hold rotor's own instructions per operation to the baseline
         if: ${{ runner.os == 'Linux' }}
         run: |
           set -euo pipefail
-          sudo apt-get install -y -q valgrind
+          installed=no
+          for attempt in 1 2 3; do
+            if sudo apt-get update -q && sudo apt-get install -y -q valgrind; then
+              installed=yes
+              break
+            fi
+            echo "attempt $attempt to install Valgrind failed"
+            sleep 15
+          done
+          [ "$installed" = yes ]
           zig build work-gate
 
   commits:
