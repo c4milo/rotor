@@ -13,10 +13,11 @@ third review, or the revision for the second rulings.
 Nothing of the package is built, and no repository exists. The package starts at step 0 of "Build
 order". The session makes its repository when Camilo says so ("Ask before").
 
-**Noted on 2026-11-13.** Camilo made the repository, github.com/c4milo/tejedor, on 2026-11-12. Step
-0 of "Build order" is on its `main` at `ded6989`: the fiber switch, its tests and its probe. The
-probe ran only on busy machines, so no number of it is final. Step 1 waits for Camilo's word.
-"Upkeep" and "Where the code starts" each hold a note on what step 0 changed.
+**Noted on 2026-11-13, and amended on 2026-11-14.** Camilo made the repository,
+github.com/c4milo/tejedor, on 2026-11-12. Step 0 of "Build order" is on its `main` at `ba1daf0`: the
+fiber switch, its tests and its probe. The probe ran only on busy machines, so no number of it is
+final. Step 1 waits for Camilo's word. "Upkeep" and "Where the code starts" each hold a note on what
+step 0 changed.
 
 Decision 33 was accepted on 2026-11-10. Its steps 1 to 5 are on `main`, and v0.11.0 released them on
 2026-11-11 (`f2890f5`). Each name of rotor in this record is the name that v0.11.0 holds. "Decision
@@ -1263,9 +1264,17 @@ ruled a correction for each, and tejedor's records hold them:
 - **Record 3 and `27a6403` leave the control registers to the thread.** The switch saves neither
   MXCSR nor the x87 control word on x86-64, nor FPCR on aarch64. A fiber that changes the rounding
   mode or the exception masks restores them before it blocks.
+- **Record 5, `29e0bdd` to `cd9c02e`, ruled on 2026-11-13.** The aarch64 list does not name `ffr`.
+  LLVM reserves FFR on a processor with SVE, and warns at each copy of the switch, so the name
+  protects nothing. This sixth change is no correction. The declaration of `switch_context` now
+  fixes the form of the call. The probe compares the call with a switch that resumes with a jump.
+  `supported` is false on Windows.
+- **A choice that Camilo has not ruled.** The aarch64 list names `x18` only where LLVM does not
+  reserve it. Record 5 lists this choice and the others of the session.
 
-So at a Zig upgrade, the read of std's switch covers five corrections, the form of the call, and
-the entry of record 4 ("Where the code starts").
+So at a Zig upgrade, the read of std's switch covers five corrections, the removal of `ffr`, the
+form of the call, and the entry of record 4 ("Where the code starts"). tejedor's
+`docs/zig-report.md` is a draft of a report of these errors to Zig. Camilo posts it himself.
 
 ## What changes in rotor
 
