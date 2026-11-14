@@ -14,7 +14,7 @@ Nothing of the package is built, and no repository exists. The package starts at
 order". The session makes its repository when Camilo says so ("Ask before").
 
 **Noted on 2026-11-13, and amended on 2026-11-14.** Camilo made the repository,
-github.com/c4milo/tejedor, on 2026-11-12. Step 0 of "Build order" is on its `main` at `ba1daf0`: the
+github.com/c4milo/tejedor, on 2026-11-12. Step 0 of "Build order" is on its `main` at `4f5f215`: the
 fiber switch, its tests and its probe. The probe ran only on busy machines, so no number of it is
 final. Step 1 waits for Camilo's word. "Upkeep" and "Where the code starts" each hold a note on what
 step 0 changed.
@@ -1269,12 +1269,18 @@ ruled a correction for each, and tejedor's records hold them:
   protects nothing. This sixth change is no correction. The declaration of `switch_context` now
   fixes the form of the call. The probe compares the call with a switch that resumes with a jump.
   `supported` is false on Windows.
-- **A choice that Camilo has not ruled.** The aarch64 list names `x18` only where LLVM does not
-  reserve it. Record 5 lists this choice and the others of the session.
+- **Choices that Camilo accepted on 2026-11-14.** The aarch64 list names `x18` only where LLVM does
+  not reserve it. Record 5 lists this choice and the others of the session.
+- **Record 6, ruled on 2026-11-14.** On x86-64 the switch is the jump of `src/switch_jump.zig`, a
+  naked function in assembly that each caller calls. It saves the six callee-saved registers itself,
+  and its context is one word. On three CI runners of `ba1daf0`, in the shape closest to step 1, a
+  switch pair of the jump took 34 to 41 percent less time than one of the call. `supported` is false
+  on Fuchsia, whose C code keeps a second stack for each thread by default.
 
-So at a Zig upgrade, the read of std's switch covers five corrections, the removal of `ffr`, the
-form of the call, and the entry of record 4 ("Where the code starts"). tejedor's
-`docs/zig-report.md` is a draft of a report of these errors to Zig. Camilo posts it himself.
+So at a Zig upgrade, the read of std's switch covers aarch64 alone: the corrections of its list, the
+removal of `ffr`, the copy in each caller, and the entry of record 4 ("Where the code starts"). For
+x86-64, tejedor's record 6 lists what that upgrade reads. tejedor's `docs/zig-report.md` is a draft
+of a report of these errors to Zig. Camilo posts it himself.
 
 ## What changes in rotor
 
@@ -1336,6 +1342,11 @@ Its record 4, `ded6989`, ruled on 2026-11-13, also changed the entry of a new fi
   it below the stack pointer on aarch64. In a test of the package, a signal on Linux wrote over it.
 - **`main` starts with a return address of zero.** Before, a stack trace from a fiber read a stale
   link register on aarch64, and the argument as a return address on x86-64.
+
+**Noted on 2026-11-14.** tejedor's record 6 replaced the switch and the entry of x86-64 with the
+jump. So "What it keeps" no longer holds as written: the switch is assembly in two named files,
+`src/switch.zig` for aarch64 and `src/switch_jump.zig` for x86-64. Each file has rows in the
+package's ledger.
 
 ## colibri, cocuyo and stompy
 
