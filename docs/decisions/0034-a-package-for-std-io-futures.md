@@ -13,11 +13,12 @@ third review, or the revision for the second rulings.
 Nothing of the package is built, and no repository exists. The package starts at step 0 of "Build
 order". The session makes its repository when Camilo says so ("Ask before").
 
-**Noted on 2026-11-13, and amended on 2026-11-14.** Camilo made the repository,
+**Noted on 2026-11-13, and amended on 2026-11-14 and 2026-11-15.** Camilo made the repository,
 github.com/c4milo/tejedor, on 2026-11-12. Step 0 of "Build order" is on its `main` at `4f5f215`: the
-fiber switch, its tests and its probe. The probe ran only on busy machines, so no number of it is
-final. Step 1 waits for Camilo's word. "Upkeep" and "Where the code starts" each hold a note on what
-step 0 changed.
+fiber switch, its tests and its probe. The final numbers of the probe on aarch64 are from `mac` and
+`orbstack` on 2026-11-15, in tejedor's `bench/results/`. Its numbers on x86-64 are from CI. Camilo
+started step 1 on 2026-11-14, and its first commit on tejedor's `main` is `a043623`. "Upkeep" and
+"Where the code starts" each hold a note on what step 0 changed.
 
 Decision 33 was accepted on 2026-11-10. Its steps 1 to 5 are on `main`, and v0.11.0 released them on
 2026-11-11 (`f2890f5`). Each name of rotor in this record is the name that v0.11.0 holds. "Decision
