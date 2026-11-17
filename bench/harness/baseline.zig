@@ -42,6 +42,10 @@
 //! - **A row whose runs disagree.** `series.unreliable()` means the run could not decide anything,
 //!   so gating it would fail on noise. Such a row is named in the verdict and counted apart, never
 //!   silently passed.
+//!
+//! One measurement cannot hold every row to the margin, so the runner measures a configuration
+//! once more when one of its rows falls behind, and counts a row only when it fell behind both
+//! times (`baseline_rerun.zig`).
 const std = @import("std");
 const assert = std.debug.assert;
 const Writer = std.Io.Writer;

@@ -90,7 +90,7 @@ pub fn main(init: std.process.Init) !void {
         }
     }
     if (recorded.found) {
-        try writer.print("echo_runner: {d} row(s) fell behind the baseline\n", .{regressed});
+        try writer.print("echo_runner: {d} row(s) fell behind the baseline in both measurements\n", .{regressed});
     }
     try writer.flush();
     if (rowless != 0) return error.CandidateProducedNoRow;
@@ -127,8 +127,12 @@ fn read_baseline(
 }
 
 const Configuration = setup.Configuration;
+const Verdict = baseline.Verdict;
+const rerun = harness.baseline_rerun;
 
-/// One configuration: every candidate, `rounds` times, alternating.
+/// One configuration: every candidate, `rounds` times, alternating. When a row falls behind the
+/// baseline, the configuration is measured once more, and a row counts only when it fell behind
+/// both times (`bench/harness/baseline_rerun.zig`).
 fn one_configuration(
     init: std.process.Init,
     options: Options,
@@ -143,6 +147,63 @@ fn one_configuration(
     recorded: []const baseline.Row,
     /// Rises once per row that fell further behind than the baseline allows.
     regressed: *u32,
+) !u16 {
+    var measurer: Measurer = .{
+        .init = init,
+        .options = options,
+        .configuration = configuration,
+        .port = port_from,
+        .writer = writer,
+        .rowless = rowless,
+        .recorded = recorded,
+    };
+    regressed.* += try rerun.count_behind(candidates.len, &measurer);
+    return measurer.port;
+}
+
+/// What `rerun.count_behind` measures through: `measure` with the arguments of one configuration,
+/// and the next free port, which each measurement moves on.
+const Measurer = struct {
+    init: std.process.Init,
+    options: Options,
+    configuration: Configuration,
+    port: u16,
+    writer: *std.Io.Writer,
+    rowless: *u32,
+    recorded: []const baseline.Row,
+
+    pub fn measure(measurer: *Measurer, verdicts: *[candidates.len]Verdict, second: bool) !void {
+        if (second) {
+            try measurer.writer.print("echo_runner: a row fell behind at {d} connections and " ++
+                "{d} bytes; this configuration is measured once more\n", .{
+                measurer.configuration.connections,
+                measurer.configuration.payload_bytes,
+            });
+        }
+        measurer.port = try measure_configuration(
+            measurer.init,
+            measurer.options,
+            measurer.configuration,
+            measurer.port,
+            measurer.writer,
+            measurer.rowless,
+            measurer.recorded,
+            verdicts,
+        );
+    }
+};
+
+/// Measures one configuration, prints its rows, and writes each candidate's verdict against the
+/// baseline into `verdicts`, at the candidate's index. Returns the next free port.
+fn measure_configuration(
+    init: std.process.Init,
+    options: Options,
+    configuration: Configuration,
+    port_from: u16,
+    writer: *std.Io.Writer,
+    rowless: *u32,
+    recorded: []const baseline.Row,
+    verdicts: *[candidates.len]Verdict,
 ) !u16 {
     var counts: [candidates.len]u32 = @splat(0);
     // The other work on the machine while each candidate's runs were taken. One window per candidate, and one
@@ -170,7 +231,7 @@ fn one_configuration(
 
     var built: [candidates.len]?Series = @splat(null);
     try build_series(&counts, &other_work, &built, writer, rowless);
-    try render_rows(options, &built, writer, recorded, regressed);
+    try render_rows(options, &built, writer, recorded, verdicts);
     try writer.flush();
     return port;
 }
@@ -198,17 +259,18 @@ fn build_series(
     }
 }
 
-/// One table row per series, then whatever the baseline has to say about it.
+/// One table row per series, then whatever the baseline has to say about it, which goes into
+/// `verdicts` at the series' index as well.
 fn render_rows(
     options: Options,
     built: *const [candidates.len]?Series,
     writer: *std.Io.Writer,
     recorded: []const baseline.Row,
-    regressed: *u32,
+    verdicts: *[candidates.len]Verdict,
 ) !void {
     const rotor = rotor_series(built);
     const rotor_per_second = if (rotor) |series| series.median_per_second() else 0;
-    for (built) |maybe| {
+    for (built, 0..) |maybe, index| {
         const series = maybe orelse continue;
         try series.render_markdown_row(writer);
         try writer.writeByte('\n');
@@ -216,7 +278,7 @@ fn render_rows(
             try baseline.render_row(writer, @tagName(options.workload), &series, rotor_per_second);
         }
         if (recorded.len != 0) {
-            try report_verdict(writer, options, recorded, &series, rotor, regressed);
+            verdicts[index] = try report_verdict(writer, options, recorded, &series, rotor);
         }
     }
 }
@@ -235,24 +297,22 @@ fn rotor_series(built: *const [candidates.len]?Series) ?*const Series {
 /// The candidate every ratio is measured against.
 const rotor_candidate_name = "rotor";
 
-/// Names this row's standing against the baseline, and counts it when rotor fell behind. A row the
-/// baseline does not hold, or one whose runs disagreed, is named and not counted: neither decides
-/// anything, and a silent pass would read as one.
+/// Names this row's standing against the baseline, and returns it. A row the baseline does not
+/// hold, or one whose runs disagreed, is named too: neither decides anything, and a silent pass
+/// would read as one.
 fn report_verdict(
     writer: *std.Io.Writer,
     options: Options,
     recorded: []const baseline.Row,
     series: *const Series,
     rotor: ?*const Series,
-    regressed: *u32,
-) !void {
+) !Verdict {
     const workload = @tagName(options.workload);
     const verdict = baseline.judge(recorded, workload, series, rotor);
     const name = series.runs[0].candidate;
     switch (verdict) {
         .within => {},
         .regressed => {
-            regressed.* += 1;
             try writer.print("echo_runner: **{s} GAINED ON ROTOR** past the baseline\n", .{name});
         },
         .undecided => try writer.print(
@@ -265,6 +325,7 @@ fn report_verdict(
             .{name},
         ),
     }
+    return verdict;
 }
 
 /// Starts `candidate`'s server on `port`, measures it, and stops it.

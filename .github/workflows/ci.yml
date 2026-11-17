@@ -350,7 +350,9 @@ jobs:
       # candidates of one run, never throughputs, and one section of them per processor, because
       # this pool hands out a different processor each time and the ratios move with it
       # (`bench/harness/baseline.zig`). A run on a processor the file does not name is held to
-      # nothing and prints its section instead. It runs every night rather than on every push: the
+      # nothing and prints its section instead. When a row of a configuration fails, the runner
+      # measures that configuration once more, and the step fails only on a row that failed both
+      # times (`bench/harness/baseline_rerun.zig`). It runs every night rather than on every push: the
       # comparison takes about half an hour of a runner, and the calls job catches an added call per
       # echo on every push already.
       - name: Echo, against the baseline

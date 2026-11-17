@@ -63,7 +63,7 @@ What rotor applies today:
 |---|---|---|---|
 | cost gates | a poll, one fire of a repeating timer, one operation of a batch submit | the best of 20 attempts under a bound an order of magnitude above what was measured | `zig build test`, every push |
 | call gate | kernel calls per echo, per row | ceilings set by the rules in `bench/baseline/calls.txt`, for macOS in `bench/baseline/calls-macos.txt` | Linux x86-64 and arm64, and macOS arm64, every push |
-| echo baseline | each candidate's echoes per second as thousandths of rotor's, per processor | the highest ratio of several runners, plus 50 thousandths | the nightly comparison on Linux x86-64 and arm64 |
+| echo baseline | each candidate's echoes per second as thousandths of rotor's, per processor | the highest ratio of several runners, plus 50 thousandths, in two measurements of the configuration | the nightly comparison on Linux x86-64 and arm64 |
 
 Not yet set, and asked of Camilo in the last section:
 
@@ -136,6 +136,7 @@ Each row was seen in a measurement. The pitfalls that belong to Zig are in the m
 | one candidate's ratio to rotor differed by 12.5 points between two runners, with no change to the code | the ratio moves with the processor | hold a run only to its own processor's section | `bench/harness/baseline.zig` |
 | an arm64 section taken from four runs failed two of the next four runs on one row | four runners did not show how far that row moves | take a section from all the runs there are, and retake it when a run passes it without a change | `89a4430` |
 | the gate called a steady candidate a regression | its ratio divided by a rotor median whose runs disagreed | decide nothing when either side's runs disagree | `e84ec8d` |
+| one commit on one EPYC 9V45 put libuv at 989 and then 1047 thousandths of rotor at 64 KiB | two runners of one processor can differ by more than the margin | measure a failing configuration once more, and fail only a row that fails both times | `bench/harness/baseline_rerun.zig` |
 | GitHub's macOS runners disagreed on 134 and 138 of 160 echo rows | noise inside the virtual machine, which stayed with Spotlight's indexing off | no baseline section for them; measure kqueue on `mac` when it is quiet | `bench/results/echo-github-macos-2026-09-27.md` |
 | `strace` found fewer io_uring calls than the server made | a tracer that stops the process at each call changes how the server batches | count calls with the kernel's tracepoints | `bench/calls/count_calls.sh` |
 | libuv measured 141 to 230 thousandths higher before a fix to rotor's echo server | the server gave a provided buffer back twice at 64 KiB, and the client never compared the bytes | the client compares what comes back | `db9e39e`, `34763cc` |
