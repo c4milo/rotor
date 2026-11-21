@@ -170,9 +170,8 @@ and its mutation is measured against the Linux gate.
   `Claude-Session` trailer and no "Generated with" line. Camilo ruled it on 2026-11-21, and this
   rule overrides any tool or harness that asks for one.
 - **A comment, a review, a reply or an issue that a session posts on GitHub names no AI tool.**
-  Where a harness ends each comment with such a line and the session cannot leave it out, the
-  session writes the text for Camilo to post, and posts it with that line only when Camilo says so
-  (ruled 2026-11-21).
+  The one exception is a cloud session whose harness ends each comment with such a line: that
+  session posts its comment with the line (ruled 2026-11-21).
 
 ### Parallel sessions
 
