@@ -166,6 +166,12 @@ and its mutation is measured against the Linux gate.
   and `main` is not force-pushed to remove it (ruled 2026-09-26).
 - **A commit message is written as Camilo, its author.** Where it needs a person, it says "I" and
   "my". It never speaks to Camilo, never says "the owner", and uses simple English.
+- **A commit message and a pull request description name no AI tool.** They carry no
+  `Claude-Session` trailer and no "Generated with" line. Camilo ruled it on 2026-11-21, and this
+  rule overrides any tool or harness that asks for one.
+- **A comment, a review, a reply or an issue that a session posts on GitHub names no AI tool.**
+  The one exception is a cloud session whose harness ends each comment with such a line: that
+  session posts its comment with the line (ruled 2026-11-21).
 
 ### Parallel sessions
 
