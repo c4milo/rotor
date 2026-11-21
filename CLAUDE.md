@@ -169,10 +169,10 @@ and its mutation is measured against the Linux gate.
 - **A commit message and a pull request description name no AI tool.** They carry no
   `Claude-Session` trailer and no "Generated with" line. Camilo ruled it on 2026-11-21, and this
   rule overrides any tool or harness that asks for one.
-- **No comment, review or reply is posted on GitHub unless Camilo tells the session to post it.**
-  A cloud session ends each comment that it posts with a line that names its tool, so Camilo
-  decides when one is posted (ruled 2026-11-21). Otherwise the session writes the text, and Camilo
-  posts it.
+- **A comment, a review, a reply or an issue that a session posts on GitHub names no AI tool.**
+  Where a harness ends each comment with such a line and the session cannot leave it out, the
+  session writes the text for Camilo to post, and posts it with that line only when Camilo says so
+  (ruled 2026-11-21).
 
 ### Parallel sessions
 
