@@ -17,5 +17,6 @@ test {
     _ = group;
     _ = sync_file;
     _ = sync_socket;
+    _ = @import("linux_shared_sync_socket_test.zig");
     _ = testing;
 }

@@ -240,6 +240,10 @@ pub fn open_datagram(
     // inside one `recvmsg`.
     prepare_accepted(rc) catch return error.Unexpected;
     @import("kqueue_datagram.zig").apply_options(rc, family, options);
+    // A socket this function just opened takes the option, so a refusal here has no name.
+    if (options.reuse_port) {
+        set_option(rc, c.SOL.SOCKET, c.SO.REUSEPORT, true) catch return error.Unexpected;
+    }
     if (bind_to) |address| {
         assert(address.family == family);
         var storage: kqueue_address.Storage = undefined;

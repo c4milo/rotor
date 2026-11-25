@@ -72,6 +72,11 @@ pub const DatagramOptions = struct {
     /// behaves oddly with it. On macOS the option does nothing: macOS has no GRO (decision 15,
     /// amendment of 2026-11-05).
     coalesce: bool = true,
+    /// SO_REUSEPORT, set before the bind: several datagram sockets bind one address, as several
+    /// listeners do with `ListenOptions.reuse_port`. Each socket of the group must ask. Linux hands
+    /// each datagram to one socket by a hash of its addresses and ports, so a peer whose address
+    /// changes can reach another socket of the group (decision 15, amendment of 2026-11-25).
+    reuse_port: bool = false,
 };
 
 /// `open(2)` refused. `DirectIoUnsupported` on Linux: the filesystem does not carry O_DIRECT. On

@@ -224,6 +224,11 @@ pub fn open_datagram(
     const socket = descriptor_of(rc);
     errdefer close_now(socket);
     datagram.apply_options(socket, family, options);
+    // A socket this function just opened takes the option, so a refusal here has no name.
+    if (options.reuse_port) {
+        set_option(socket, linux.SOL.SOCKET, linux.SO.REUSEPORT, true) catch
+            return error.Unexpected;
+    }
     if (bind_to) |address| {
         assert(address.family == family);
         var storage: address_module.Storage = undefined;

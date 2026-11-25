@@ -401,3 +401,21 @@ test "a datagram socket asks the kernel not to fragment, unless told otherwise" 
     const sent = c.sendto(fragmenting, &oversized, oversized.len, 0, @ptrCast(&storage), to_len);
     try testing.expectEqual(E.SUCCESS, posix.errno(sent));
 }
+
+test "datagram sockets share a port only when each asks for reuse_port" {
+    if (!builtin.os.tag.isDarwin()) return error.SkipZigTest;
+    const loopback = Address.ipv4(.{ 127, 0, 0, 1 }, 0);
+    const first = try open_datagram(.ipv4, &loopback, .{ .reuse_port = true });
+    defer close_now(first);
+    const shared = try local_address(first);
+    const second = try open_datagram(.ipv4, &shared, .{ .reuse_port = true });
+    defer close_now(second);
+    try testing.expectEqual(shared.port, (try local_address(second)).port);
+    // A socket that does not ask cannot join the group.
+    try testing.expectError(error.AddressInUse, open_datagram(.ipv4, &shared, .{}));
+    // A socket that asks cannot join one that did not.
+    const lone = try open_datagram(.ipv4, &loopback, .{});
+    defer close_now(lone);
+    const lone_address = try local_address(lone);
+    try testing.expectError(error.AddressInUse, open_datagram(.ipv4, &lone_address, .{ .reuse_port = true }));
+}

@@ -555,3 +555,25 @@ to 1,009 ms.
 
 Mutations, 2, each CAUGHT against the Linux gate: no split check in `uring_tick.zig`'s `wait_for`,
 and no split check in `epoll_tick.zig`'s `wait_for`.
+
+## Amendment, 2026-11-25: a datagram socket may share its port
+
+Camilo ruled on 2026-11-25 that a datagram socket may share its port with others, as a listener
+may with `ListenOptions.reuse_port`. colibri asked for it
+([colibri#155](https://github.com/c4milo/colibri/issues/155)). Its server binds a TCP listener and
+an h3 UDP socket on one port. A second server on the port then failed at the UDP bind, and so did
+a server that started while the socket of the last run still existed.
+
+1. `DatagramOptions.reuse_port` sets SO_REUSEPORT before the bind, on both Linux backends and on
+   kqueue. It is false by default, so a socket that names no option stays as it was.
+2. Each socket of the group must ask. A socket that does not ask cannot join a group, and a socket
+   that asks cannot join a socket that did not.
+3. Linux hands each datagram to one socket of the group by a hash of its addresses and ports. So
+   a peer whose address or port changes can reach another socket of the group. A caller that
+   keeps state for each peer, as a QUIC server does for each connection, must accept that, or
+   steer datagrams itself. rotor does not steer them.
+
+The scenario is "datagram sockets share a port only when each asks for reuse_port", in
+`linux_shared_sync_socket_test.zig` and `kqueue_sync_socket_test.zig`. Mutations, 2, each CAUGHT
+against `zig build test-linux-shared`: the option never set, and the option set whatever the
+caller asks. The kqueue copy runs on macOS alone, and this change was not run there.
